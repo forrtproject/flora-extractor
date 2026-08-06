@@ -230,19 +230,29 @@ or abstract contains a parseable `(Author, Year)` citation. Many abstracts — c
 and life-sciences ones especially — carry none, so for those papers the ladder starts
 at 4.5.
 
-**Rungs 4, 4.5 and 5 are one prompt.** `build_target_prompt()` asks the same question
-at all three — which previously published study or studies does this paper re-test —
-and only the evidence blocks differ: the abstract stage sends the abstract and the
-candidates, 4.5 adds the reference list, the full-text stage adds the PDF abstract's
-tail, the introduction and the methods. The three prompts it replaces asked three
-different questions ("pick a candidate number", "pick a reference number", "how many
-originals?"), so one rung could resolve a single original for a paper another had just
-read as targeting twenty-eight.
+**Rungs 4, 4.5 and 5 are one prompt, and it asks both questions.**
+`build_target_outcome_prompt()` (and its reproduction twin) asks the same thing at all
+three — which previously published study or studies does this paper re-test, and what
+did it conclude about each — and only the evidence blocks differ: the abstract stage
+sends the abstract and the candidates, 4.5 adds the reference list, the full-text stage
+adds the PDF abstract's tail, the introduction, the methods and the DISCUSSION /
+CONCLUSION slice. The three prompts it replaces asked three different questions ("pick
+a candidate number", "pick a reference number", "how many originals?"), so one rung
+could resolve a single original for a paper another had just read as targeting
+twenty-eight.
+
+Coding the outcome here is what makes it answerable at all. Asked separately it was
+handed the target as an asserted header it could not check, and its full-text
+escalation could never fire — a row resolved from the abstract never acquired a
+document, so 5 of 285 rows in `data/extracted.csv` carry any `pdf_source` and every
+stored `out_quote_source` is a title or an abstract. A rung now ends the row only when
+it resolved AND settled the outcome; an unsettled verdict carries the resolution down
+the ladder (`OUTCOME_DESCENT`).
 
 Candidates and references are shown as ONE deduplicated `@smith2009` namespace
 (`assign_target_keys()` in `shared/target_keys.py`): a work in both lists is offered
 once, and a returned key is only ever resolved against the key_map from the same call.
-`identify_targets_with_llm()` (`shared/llm_client.py`) makes the call and trusts
+`resolve_targets_and_outcomes()` (`shared/llm_client.py`) makes the call and trusts
 nothing the model says about a key — an invented key is demoted to an unmatched target,
 a repeated key keeps its first entry, and `doi_o` comes from the mapped record rather
 than from the model. `stated_count` / `unidentified_count` are reported so a shortfall
@@ -325,20 +335,22 @@ extract_outcome(doi_r, abstract_r, fulltext, title_r, record_type=…)
     │   abstract; fulltext is never keyword-scanned, because an introduction's
     │   background prose about OTHER studies' outcomes misfires the patterns
     │
-    └── otherwise → _llm_outcome():
-            abstract pass (OUTCOME_MODEL; retries go to the SAME model,
-                           there is no provider fallback)
-            └── leaves the verdict unsettled (a reproduction: EITHER axis at
-                cannot_be_determined), or there is no abstract, and parsed fulltext
-                exists → second call over the paper's DISCUSSION AND CONCLUSION
-                (8,000-char cap), whose answer replaces the first entirely — never
-                one axis from each; disable with OUTCOME_FULLTEXT_ESCALATION=false
-            only that full-text call judges record_type_check: "neither" →
-                not_a_replication; the other vocabulary → the row is re-coded once
-                under the other prompt and `type` is corrected (one hop, no loop)
+    └── the target call already coded it → that block is the outcome, no second call
+    │
+    └── otherwise (a deterministic rule resolved the link) → _llm_outcome():
+            ONE call over every passage the row has: the abstract, and — when a
+                document was acquired — INTRODUCTION and DISCUSSION / CONCLUSION,
+                each named, the latter with its provenance
+            the named original is evidence to CHECK, with the link evidence that
+                produced it: target_check answers whether the text bears it out
+            with any text sent, record_type_check and target_check are asked:
+                "neither" / "no_original" → not_a_replication; "other_original" →
+                link_confidence low, noted in link_evidence; the other vocabulary →
+                the row is re-coded once under the other prompt and `type` is
+                corrected (one hop, no loop)
 ```
 
-The escalation text is chosen by `pdf_parsing.outcome_text()`, which slices from the
+The closing text is chosen by `pdf_parsing.outcome_text()`, which slices from the
 last discussion/conclusion heading to the reference list, and falls back to the closing
 pages before the references when no heading is found. That is FLoRA's rule — "what
 replication authors say in the abstract, or if not stated there, what is written in the
@@ -484,7 +496,7 @@ python -m extract.promote_test --all --dry-run # preview
 | `classify_replication()` | `shared/llm_client.py` | Two-model front-door vote |
 | `screen_references_with_llm()` | `shared/llm_client.py` | Rung 4.5: threads the verdict in, delegates the pick |
 | `run_for_doi()` | `extract/link_original.py` | The resolution ladder |
-| `identify_targets_with_llm()` | `shared/llm_client.py` | The merged target prompt: the three LLM rungs (4 abstract, 4.5 reference-list, 5 full-text) |
+| `resolve_targets_and_outcomes()` | `shared/llm_client.py` | The merged target+outcome prompt: rungs 4, 4.5 and 7 |
 | `assign_target_keys()` | `shared/target_keys.py` | One `@key` namespace over candidates + references |
 | `extract_outcome()` | `extract/code_outcome.py` | Outcome coding |
 | `find_all_candidates()` | `shared/openalex_client.py` | Candidate search |

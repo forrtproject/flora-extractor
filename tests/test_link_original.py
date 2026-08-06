@@ -12,7 +12,7 @@ from extract.link_original import (
     run_for_doi,
 )
 from extract.run_extract import _map_method
-from shared.prompts import TARGET_INTRO_CHARS, build_target_prompt
+from shared.prompts import TARGET_INTRO_CHARS, build_target_outcome_prompt
 
 
 class TestExtractCitContexts:
@@ -289,7 +289,7 @@ class TestTitleSearchGate:
 
 class TestAbstractStageExcludeDoi:
     def test_abstract_llm_receives_the_real_doi_r(self):
-        """identify_targets_with_llm uses its doi_r argument as exclude_doi.
+        """resolve_targets_and_outcomes uses its doi_r argument as exclude_doi.
 
         A suffixed key ("<doi>_abstract") never equals a real DOI, so the "never
         link a paper to itself" exclusion could not fire on this path at all.
@@ -307,7 +307,7 @@ class TestAbstractStageExcludeDoi:
              patch.object(link_original, "_resolve_rule_based",
                           return_value={"resolved": False,
                                         "resolution_method": "needs_fulltext"}), \
-             patch.object(link_original, "identify_targets_with_llm",
+             patch.object(link_original, "resolve_targets_and_outcomes",
                           return_value={"resolved": False,
                                         "resolution_method": "llm_no_target",
                                         "llm_source": "gemini"}) as llm, \
@@ -328,9 +328,11 @@ class TestAbstractStageExcludeDoi:
 def _run_to_fulltext(abstract_r: str, parsed: dict) -> tuple[dict, dict]:
     """Drive run_for_doi to the full-text rung and return (row, LLM kwargs).
 
-    The parsers' output is *parsed*; the returned kwargs are what run_for_doi handed
-    to identify_targets_with_llm, which passes them straight to build_target_prompt —
-    so a test can render the prompt the model actually got.
+    The parsers' output is *parsed*; the returned kwargs are the evidence blocks
+    run_for_doi handed to resolve_targets_and_outcomes, which passes them straight to
+    build_target_outcome_prompt — so a test can render the prompt the model actually
+    got. record_type and rung select the builder rather than describing evidence, so
+    they are dropped here.
     """
     cands_df = pd.DataFrame([{
         "doi_r": "10.1/rep", "study_r": "A study", "abstract_r": abstract_r,
@@ -350,12 +352,14 @@ def _run_to_fulltext(abstract_r: str, parsed: dict) -> tuple[dict, dict]:
                                     "pdf_ok": True, "pdf_url_tried": []}), \
          patch.object(link_original, "_parse_all", return_value={"grobid": parsed}), \
          patch.object(link_original, "_write_parse_cache"), \
-         patch.object(link_original, "identify_targets_with_llm",
+         patch.object(link_original, "resolve_targets_and_outcomes",
                       return_value={"resolved": False,
                                     "resolution_method": "llm_no_target",
                                     "llm_source": "gemini"}) as llm:
         row = run_for_doi("10.1/rep", cands_df=cands_df)
-    return row, llm.call_args.kwargs
+    evidence = {k: v for k, v in llm.call_args.kwargs.items()
+                if k not in ("record_type", "rung")}
+    return row, evidence
 
 
 class TestStoredEvidenceMatchesThePrompt:
@@ -368,7 +372,7 @@ class TestStoredEvidenceMatchesThePrompt:
 
     def test_sections_are_stored_as_the_prompt_carries_them(self):
         row, kwargs = _run_to_fulltext("OpenAlex abstract.", self._PARSED)
-        prompt = build_target_prompt("A study", "OpenAlex abstract.", [], **kwargs)
+        prompt = build_target_outcome_prompt("A study", "OpenAlex abstract.", [], **kwargs)
         assert len(row["grobid_intro"]) == TARGET_INTRO_CHARS
         # Not just the right length — the same text the prompt carries. The abstract
         # is stored as the tail _abstract_tail sends, not as the section it came from.
@@ -442,14 +446,21 @@ class TestMayStopAtARule:
             2020) is False
 
 
+# A verdict the ladder may stop on, and one it must read on for. Every answer below
+# carries the settled one unless a test says otherwise: the descent is a separate
+# behaviour from the gate, and the gate tests are about the gate.
+_SETTLED   = {"outcome": "failure", "outcome_phrase": "did not replicate"}
+_UNSETTLED = {"outcome": "cannot_be_determined", "outcome_phrase": ""}
+
+
 def _answer(**over) -> dict:
-    """What identify_targets_with_llm returns. target_stage is what tells an answer
+    """What resolve_targets_and_outcomes returns. target_stage is what tells an answer
     apart from a provider failure, so it is on every answer and on no failure."""
     base = {"resolved": False, "resolution_method": "llm_no_target",
             "llm_source": "gemini", "llm_model": "gemini-heavy", "llm_error": "",
             "target_stage": "llm_gemini", "targets": [], "multi_target": False,
             "unidentified_count": 0, "resolved_study_r": "", "llm_evidence": "",
-            "llm_reasoning": "no second target"}
+            "llm_reasoning": "no second target", "outcome_block": dict(_SETTLED)}
     base.update(over)
     return base
 
@@ -458,7 +469,7 @@ def _failed_answer(error: str = "quota exhausted") -> dict:
     """A provider failure: no target_stage, and an llm_error the row must keep."""
     return {"resolved": False, "resolution_method": "llm_failed", "llm_source": "none",
             "llm_model": "", "llm_error": error, "target_stage": "", "targets": [],
-            "multi_target": False, "llm_reasoning": ""}
+            "multi_target": False, "llm_reasoning": "", "outcome_block": {}}
 
 
 def _gate_target(doi: str, title: str, author: str = "Smith", year: int = 2010,
@@ -466,6 +477,7 @@ def _gate_target(doi: str, title: str, author: str = "Smith", year: int = 2010,
     target = {"key": f"@{author.lower()}{year}", "match_certain": True,
               "target_as_named": title, "study_numbers": "",
               "replication_study_numbers": "", "evidence_quote": "q",
+              "outcome_block": dict(_SETTLED),
               "record": {"doi": doi, "title": title, "first_author": author,
                          "year": year, "openalex_id": ""}}
     target.update(over)
@@ -478,7 +490,7 @@ def _run_gate(title_r: str, abstract_r: str, candidates: list,
               screen: "dict | None" = None,
               pdf_ok: bool = True, no_llm: bool = False, no_pdf: bool = False,
               oa_xml: "dict | None" = None, parse: "dict | None" = None,
-              identify=None) -> dict:
+              identify=None, record_type: str = "replication") -> dict:
     """Drive run_for_doi with the title-pattern rule able to fire.
 
     *abstract_answer* is what the Stage 4 abstract call returns and *llm_answer* what
@@ -515,9 +527,10 @@ def _run_gate(title_r: str, abstract_r: str, candidates: list,
                                                         "abstract": "", "intro": "i",
                                                         "references": []}}), \
          patch.object(link_original, "_write_parse_cache"), \
-         patch.object(link_original, "identify_targets_with_llm",
+         patch.object(link_original, "resolve_targets_and_outcomes",
                       side_effect=identify or _identify):
-        return run_for_doi("10.1/rep", cands_df=cands_df, no_llm=no_llm, no_pdf=no_pdf)
+        return run_for_doi("10.1/rep", cands_df=cands_df, no_llm=no_llm,
+                           no_pdf=no_pdf, record_type=record_type)
 
 
 _GATE_CANDS = [{"title": "Time flies from left to right", "year": 2010,
@@ -598,7 +611,7 @@ class TestGateRestoresWhenNothingEnumerates:
 
         OpenAlex's TEI has no <head> elements, so parse_tei_sections cannot split it
         and returns the body whole in raw_text. Before raw_text was carried into
-        sections, build_target_prompt saw abstract/intro/methods only: a document with
+        sections, build_target_outcome_prompt saw abstract/intro/methods only: a document with
         text but no abstract and no references passed the "we have a document" guard
         and was then dropped as no_context, with the text never sent anywhere."""
         body = ("INTRODUCTION\nWe re-test the finding reported by Smith (2010) that "
@@ -849,3 +862,124 @@ class TestLadderReadsTheParseCache:
                                     "references": [], "raw_text": "", "error": None}})
         row = _run_gate(_GATE_TITLE, _TWO_PAIRS, _GATE_CANDS, parse=self._FRESH)
         assert row["parse_method"] == "pdfminer"
+
+
+# ── OUTCOME_DESCENT: an unsettled verdict keeps the ladder going ─────────────
+# The escalation this replaces lived in code_outcome and could never fire: a row
+# resolved from the abstract never acquired a document, so 5 of 285 rows in
+# data/extracted.csv carry any pdf_source. Reading on is the ladder's job.
+
+class TestOutcomeDescent:
+    _CANDS = [{"title": "Time flies from left to right", "year": 2010,
+               "first_author": "Smith", "all_authors": ["Smith"],
+               "doi": "10.9/orig", "openalex_id": "W9"}]
+
+    @staticmethod
+    def _resolved(outcome_block, **over) -> dict:
+        return _answer(**{"resolved": True, "resolution_method": "llm_gemini",
+                          "resolved_doi_o": "10.9/orig",
+                          "resolved_title_o": "Original", "resolved_year_o": 2010,
+                          "resolved_author_o": "Smith", "resolution_score": 1.0,
+                          "llm_confidence": "high", "outcome_block": outcome_block,
+                          **over})
+
+    def test_a_settled_outcome_ends_the_row_at_the_abstract_rung(self):
+        """Nothing is read that the verdict does not need: the abstract named the
+        target AND said how it came out, so no PDF is acquired."""
+        acquired: list = []
+        with patch.object(link_original, "acquire_pdf",
+                          side_effect=lambda *a, **k: acquired.append(1) or {
+                              "pdf_path": None, "openalex_xml": None,
+                              "pdf_source": "none", "pdf_url": "", "pdf_ok": False,
+                              "pdf_url_tried": []}):
+            row = _run_gate("A study", _ONE_PAIR, self._CANDS,
+                            abstract_answer=self._resolved(dict(_SETTLED)))
+        assert row["resolved"] is True
+        assert row["outcome_block"]["outcome"] == "failure"
+        assert acquired == [], "a settled row must not pay for a document"
+
+    def test_an_unsettled_outcome_descends_to_the_full_text(self):
+        """The link stands; what is missing is the verdict, and the closing sections
+        state it. The full-text call's reading replaces the carried one."""
+        row = _run_gate("A study", _ONE_PAIR, self._CANDS,
+                        abstract_answer=self._resolved(dict(_UNSETTLED)),
+                        llm_answer=self._resolved(dict(_SETTLED),
+                                                  resolution_method="llm_fulltext"))
+        assert row["resolution_method"] == "llm_fulltext"
+        assert row["outcome_block"]["outcome"] == "failure"
+
+    def test_a_carried_resolution_survives_a_no_document_exit(self):
+        """No document means nothing further can settle the verdict — but the link was
+        ACCEPTED, and dropping it for target_pending would lose a resolution the
+        pipeline already paid for."""
+        row = _run_gate("A study", _ONE_PAIR, self._CANDS,
+                        abstract_answer=self._resolved(dict(_UNSETTLED)),
+                        pdf_ok=False)
+        assert row["resolved"] is True
+        assert row["resolved_doi_o"] == "10.9/orig"
+        assert row["outcome_block"]["outcome"] == "cannot_be_determined"
+
+    def test_a_full_text_provider_failure_keeps_the_carried_resolution(self):
+        """A failure is not an answer. The row keeps the accepted link and records the
+        error, rather than reading "we never asked" as target_pending."""
+        row = _run_gate("A study", _ONE_PAIR, self._CANDS,
+                        abstract_answer=self._resolved(dict(_UNSETTLED)),
+                        llm_answer=_failed_answer("quota exhausted"))
+        assert row["resolved"] is True
+        assert row["resolved_doi_o"] == "10.9/orig"
+        assert "quota exhausted" in row["llm_error"]
+
+    def test_a_settled_outcome_is_not_overwritten_by_a_later_unsettled_one(self):
+        """Two readings of one work: the later rung read different evidence, not better
+        evidence, about a verdict the earlier one already stated plainly."""
+        early = _gate_target("10.9/orig", "Original")
+        late = _gate_target("10.9/orig", "Original")
+        late["outcome_block"] = dict(_UNSETTLED)
+        late["outcome_stage"] = "llm_fulltext"
+        merged = link_original._union_targets([early], [late])
+        assert len(merged) == 1
+        assert merged[0]["outcome_block"]["outcome"] == "failure"
+
+    def test_a_later_settled_outcome_does_win(self):
+        early = _gate_target("10.9/orig", "Original")
+        early["outcome_block"] = dict(_UNSETTLED)
+        late = _gate_target("10.9/orig", "Original")
+        late["outcome_block"] = {"outcome": "success"}
+        merged = link_original._union_targets([early], [late])
+        assert merged[0]["outcome_block"]["outcome"] == "success"
+
+    def test_an_unsettled_reproduction_axis_is_enough_to_descend(self):
+        """Either axis unresolved is a reason to read on: half a verdict must not stop
+        the ladder as though the paper had been read to the end."""
+        half = {"outcome_computation": "computationally reproducible",
+                "outcome_robustness": "cannot_be_determined"}
+        both = {"outcome_computation": "computationally reproducible",
+                "outcome_robustness": "robust"}
+        row = _run_gate("A study", _ONE_PAIR, self._CANDS,
+                        abstract_answer=self._resolved(half),
+                        llm_answer=self._resolved(both,
+                                                  resolution_method="llm_fulltext"),
+                        record_type="reproduction")
+        assert row["resolution_method"] == "llm_fulltext"
+        assert row["outcome_block"]["outcome_robustness"] == "robust"
+
+    def test_the_full_text_rung_is_sent_the_closing_sections(self):
+        """The block that makes the outcome answerable, with the provenance that says
+        what it is — a real discussion heading or simply the end of the paper."""
+        paper = ("Introduction. " + "x" * 400 + " Discussion\n"
+                 + "We conclude the effect did not replicate. " + "y" * 300)
+        seen: dict = {}
+
+        def _identify(*a, **k):
+            seen.update(k)
+            return _answer()
+
+        row = _run_gate("A study", _ONE_PAIR, [],
+                        parse={"markitdown": {"source": "markitdown", "abstract": "",
+                                              "intro": "", "raw_text": paper,
+                                              "references": []}},
+                        identify=_identify)
+        assert seen["rung"] == "fulltext"
+        assert "did not replicate" in seen["discussion"]
+        assert seen["discussion_provenance"] in ("discussion", "tail")
+        assert row["grobid_discussion"] == seen["discussion"]

@@ -32,19 +32,21 @@ from shared.config import GROBID_CACHE_DIR, LLM_CACHE_DIR, OA_CACHE_DIR, PARSE_C
 from shared.disambiguation import is_umbrella_paper, jaccard_similarity
 from shared import token_counter
 from shared.llm_client import (
-    SCREEN_QUALIFYING, identify_targets_with_llm, screen_references_with_llm,
+    SCREEN_QUALIFYING, resolve_targets_and_outcomes, screen_references_with_llm,
 )
 from shared.pdf_parsing import (
     parse_all as _parse_all,
     best_parse_result as _best_parse_shared,
+    outcome_text,
     parse_result_is_empty,
     read_parse_cache,
 )
 from shared.openalex_client import author_matches, extract_author_year_patterns, find_all_candidates, fetch_opencitations_references, fetch_referenced_works_metadata, _search_crossref_by_title, _search_openalex_by_title
 from shared.prompts import (
-    TARGET_INTRO_CHARS, TARGET_METHODS_CHARS,
+    TARGET_DISCUSSION_CHARS, TARGET_INTRO_CHARS, TARGET_METHODS_CHARS,
     _abstract_tail, rendered_reference_entries,
 )
+from shared.schema import outcome_is_settled
 from shared.target_keys import assign_target_keys
 from shared.pdf_sources import acquire_pdf
 from shared.utils import cache_key, clean_doi
@@ -283,7 +285,7 @@ def _resolve_rule_based(
     """
     Unified pre-LLM resolver covering both citation-context and same-author/year cases.
 
-    Returns the same shape dict as identify_targets_with_llm().
+    Returns the same shape dict as resolve_targets_and_outcomes().
     """
     base: dict = _unresolved("needs_fulltext")
 
@@ -404,6 +406,25 @@ def _resolve_rule_based(
 # lost — the row costs one extra cached LLM call, and possibly a PDF, to get there.
 _HELD_ONLY_METHODS = frozenset({"single_candidate_after_requery",
                                 "same_author_year_title_overlap"})
+
+# A rung that resolved a target but could not settle its outcome does NOT end the row:
+# the ladder carries the resolution and keeps descending, towards the closing sections
+# that state the verdict. It replaces the escalation that used to live in
+# code_outcome.py, which could never fire — a row resolved from the abstract never
+# acquired a document, so 5 of 285 rows in data/extracted.csv carry any pdf_source and
+# every stored quote came from a title or an abstract.
+#
+# Not settable, for the same reason the escalation was not: it changes what a row is
+# CODED AS — the same paper reads cannot_be_determined instead of failure — so it must
+# not vary between the machines writing into one corpus.
+OUTCOME_DESCENT = True
+
+# What the ladder was when a row was written. Bump it when the ANSWER a row would get
+# changes, not when the code moves: rung order or membership, the acceptance rule
+# (match_certain), may_stop_at_a_rule / _HELD_ONLY_METHODS, the PDF acquisition tier
+# order, best_parse_result's scoring, or assign_target_keys' namespace rule. Nothing
+# reads it yet; a later engine tier will, to decide which rows a re-run must revisit.
+EXTRACT_LADDER_VERSION: int = 1
 
 
 # Columns to pass through from the input row (no renaming). Only columns
@@ -574,7 +595,7 @@ _TARGET_KEYS = ("targets", "multi_target", "unidentified_count", "target_stage",
 def _enumerated(answer: dict) -> bool:
     """Whether a target-identifying call actually answered, as opposed to failing.
 
-    target_stage is set by identify_targets_with_llm before it decides anything, so
+    target_stage is set by resolve_targets_and_outcomes before it decides anything, so
     it is present on every answer — including a decline — and absent on a provider
     failure and on a rung whose target call never ran at all. That distinction is what
     the gate turns on: a withheld rule pick may only be overruled by a call that spoke.
@@ -612,26 +633,44 @@ def _agrees_with_held(target: dict, held: dict) -> bool:
         and _norm(record.get("first_author")) == _norm(held.get("resolved_author_o")))
 
 
-def _union_targets(*lists: list) -> list[dict]:
+def _union_targets(*lists: list, record_type: str = "replication") -> list[dict]:
     """Every distinct target across several answers, in the order first seen.
 
     Deduplicated by @key first and by the mapped record's DOI second: the same work
     reached through two rungs carries two keys (the namespaces are per call), and
     writing it twice would give two rows one pair_id.
+
+    A work seen twice keeps the LATER reading whole — it read more of the paper — with
+    one exception: a later UNSETTLED outcome does not overwrite an earlier settled one.
+    The full-text rung reads different evidence, not better evidence, about a verdict
+    the abstract already stated plainly. `outcome_stage` records which reading the
+    surviving outcome came from.
     """
-    seen_keys: set = set()
-    seen_dois: set = set()
+    at_key: dict = {}
+    at_doi: dict = {}
     merged: list[dict] = []
     for target in [t for group in lists for t in (group or [])]:
         key = target.get("key")
         doi = clean_doi(str((target.get("record") or {}).get("doi") or ""))
-        if (key and key in seen_keys) or (doi and doi in seen_dois):
-            continue
+        where = at_key.get(key) if key else None
+        if where is None and doi:
+            where = at_doi.get(doi)
+        if where is not None:
+            earlier = merged[where]
+            kept = dict(target)
+            if (outcome_is_settled(earlier.get("outcome_block") or {}, record_type)
+                    and not outcome_is_settled(target.get("outcome_block") or {},
+                                               record_type)):
+                kept["outcome_block"] = earlier.get("outcome_block")
+                kept["outcome_stage"] = earlier.get("outcome_stage", "")
+            merged[where] = kept
+        else:
+            where = len(merged)
+            merged.append(target)
         if key:
-            seen_keys.add(key)
+            at_key[key] = where
         if doi:
-            seen_dois.add(doi)
-        merged.append(target)
+            at_doi[doi] = where
     return merged
 
 
@@ -644,6 +683,7 @@ def _as_target(resolution: dict) -> dict:
         "study_numbers":   str(resolution.get("resolved_study_o") or ""),
         "replication_study_numbers": str(resolution.get("resolved_study_r") or ""),
         "evidence_quote":  str(resolution.get("llm_evidence") or ""),
+        "outcome_block":   resolution.get("outcome_block") or {},
         "record": {"doi":          str(resolution.get("resolved_doi_o") or ""),
                    "title":        str(resolution.get("resolved_title_o") or ""),
                    "first_author": str(resolution.get("resolved_author_o") or ""),
@@ -657,12 +697,17 @@ def run_for_doi(doi_r:              str,
                 force:              bool = False,
                 no_llm:             bool = False,
                 no_pdf:             bool = False,
-                classification:     Optional[dict] = None) -> dict:
+                classification:     Optional[dict] = None,
+                record_type:        str = "replication") -> dict:
     """
     Run the full disambiguation pipeline for *doi_r*.
 
     force=True clears all intermediate caches (LLM, GROBID, OpenAlex candidates)
     before running, but keeps the cached PDF so the download step is skipped.
+
+    record_type selects the outcome vocabulary the LLM rungs code in — "reproduction"
+    uses the computation/robustness axes, anything else the replication enum. It comes
+    from the screen's answer on the row.
 
     classification is the "is this a replication at all" verdict from
     classify_replication(). That screen belongs to Stage 2: run_extract reads the
@@ -742,6 +787,24 @@ def run_for_doi(doi_r:              str,
     held: dict = {}          # a deterministic pick the gate withheld
     seen: dict = {}          # the richest target answer any stage produced
     seen_certain = 0         # how many targets that answer matched and stands behind
+    # An LLM rung that ACCEPTED a link but could not settle its outcome. The row is
+    # resolved; what is missing is the verdict, and the closing sections below state
+    # it. So the ladder keeps descending and carries the resolution with it, to be
+    # returned at whichever exit is reached if nothing better answers (OUTCOME_DESCENT).
+    carried: dict = {}
+
+    def _settled(answer: dict) -> bool:
+        return outcome_is_settled(answer.get("outcome_block") or {}, record_type)
+
+    def _stamp_stage(answer: dict) -> dict:
+        """Record on each target which rung's reading its outcome came from.
+
+        _union_targets keeps a settled outcome against a later unsettled one, so the
+        surviving verdict is not always the surviving target's own rung.
+        """
+        for target in answer.get("targets") or []:
+            target.setdefault("outcome_stage", answer.get("target_stage", ""))
+        return answer
 
     def _keep(answer: dict) -> None:
         """Record an enumerating answer, keeping the one that named the most originals.
@@ -787,7 +850,15 @@ def run_for_doi(doi_r:              str,
         An incomplete screen is NOT one of these and does not come through here: there
         the provider failure is what prevented the enumerating call, so the pick stays
         withheld and a re-run settles it.
+
+        A carried resolution outranks a withheld one: a rung ACCEPTED that link and only
+        the verdict was missing, so an exit with nothing further to read settles it as
+        it stands rather than dropping it for a rule pick or for target_pending.
         """
+        if carried:
+            return _exit_resolved({**carried,
+                                   "llm_error": str(resolution.get("llm_error", "") or ""),
+                                   }, pdf, grobid, sections)
         if held and _uncontradicted():
             log.info("[%s] gate: restoring the withheld %s pick — nothing that could "
                      "enumerate targets contradicted it (%s)", doi_r,
@@ -811,7 +882,8 @@ def run_for_doi(doi_r:              str,
         """
         if seen_certain >= 2:
             merged = _union_targets(seen.get("targets"),
-                                    _certain_targets(resolution) or [_as_target(resolution)])
+                                    _certain_targets(resolution) or [_as_target(resolution)],
+                                    record_type=record_type)
             log.info("[%s] %s resolved one original, but an earlier call named %d — "
                      "writing every target instead", doi_r,
                      resolution.get("resolution_method"), seen_certain)
@@ -855,20 +927,24 @@ def run_for_doi(doi_r:              str,
         if abstract_r and distinct_pairs:
             log.info("[%s] Abstract has %d author-year patterns — early abstract LLM", doi_r, len(distinct_pairs))
             token_counter.set_stage("extract_abstract")
-            # The real doi_r goes in: identify_targets_with_llm uses it as the
+            # The real doi_r goes in: resolve_targets_and_outcomes uses it as the
             # exclude_doi for its title search, and a suffixed one never matches the
             # paper's own DOI, so the "never link a paper to itself" guard could not
             # fire on this path. abstract_only is already part of the cache key, so
             # the abstract-stage and full-text answers stay separate without it.
-            llm4 = identify_targets_with_llm(
+            llm4 = _stamp_stage(resolve_targets_and_outcomes(
                 doi_r, study_r, abstract_r, candidates, [],
-                abstract_only=True,
-            )
+                record_type=record_type, rung="abstract",
+            ))
             _keep(llm4)
             if llm4["resolved"]:
                 log.info("[%s] Resolved by abstract LLM: %s", doi_r,
                          llm4["resolved_title_o"])
-                return _exit_resolved(llm4)
+                if not OUTCOME_DESCENT or _settled(llm4):
+                    return _exit_resolved(llm4)
+                carried = llm4
+                log.info("[%s] descent: the abstract named the target but not the "
+                         "outcome — reading on", doi_r)
 
     # ── Stage 4.5: Reference-list target pick ────────────────────────────────
     # Stage 3/4 can only fire when the abstract carries a parseable "(Author, Year)"
@@ -922,6 +998,10 @@ def run_for_doi(doi_r:              str,
             # right to settle a withheld pick. Restoring would read "we never asked" as
             # "we asked and nothing contradicted it". The row goes out unresolved and a
             # re-run does the enumeration once the provider answers.
+            if carried:
+                return _exit_resolved({**carried,
+                                       "llm_error": str(screen.get("llm_error", "") or ""),
+                                       }, {}, {}, ref_sections)
             return emit({**screen, **seen}, {}, {}, ref_sections)
 
         # The gate is screen_gate(), defined once in shared/llm_client.py. The full
@@ -946,7 +1026,11 @@ def run_for_doi(doi_r:              str,
         if screen["resolved"]:
             log.info("[%s] Resolved from reference list: %s", doi_r,
                      screen["resolved_title_o"])
-            return _exit_resolved(screen, {}, {}, ref_sections)
+            if not OUTCOME_DESCENT or _settled(screen):
+                return _exit_resolved(screen, {}, {}, ref_sections)
+            carried = screen
+            log.info("[%s] descent: the reference list named the target but not the "
+                     "outcome — reading on", doi_r)
 
         # ── Stage 4.6: Title search on a named-but-unmatched target ──────────
         # The screen can recognise the target in the abstract yet fail to match it
@@ -962,7 +1046,7 @@ def run_for_doi(doi_r:              str,
         # landmark it merely cites. The result is still written as provisional
         # (link_method llm_title_search, link_confidence low, no outcome coded); the
         # gate decides whether to spend the two searches at all.
-        target_desc = screen.get("target_description", "")
+        target_desc = "" if carried else screen.get("target_description", "")
         votes = screen.get("votes", [])
         both_sure = (len(votes) == 2
                      and all(v["classification"] in SCREEN_QUALIFYING and v["confident"]
@@ -1026,27 +1110,36 @@ def run_for_doi(doi_r:              str,
              doi_r, best_src, len(best_refs),
              len(best.get("abstract") or ""), len(best.get("intro") or ""))
 
+    # The closing sections, selected by outcome_text() rather than taken off the front
+    # of the parse: an introduction routinely discusses OTHER studies' failures, and the
+    # head of a truncated paper is mostly introduction and methods. This block is what
+    # makes the outcome answerable at this rung, and its provenance travels with it so
+    # the model never attributes a quote to a section it was not shown.
+    discussion, discussion_provenance = outcome_text(
+        str(best.get("raw_text") or ""), max_chars=TARGET_DISCUSSION_CHARS)
     sections = {
         "abstract":   best.get("abstract") or "",
         "intro":      best.get("intro")    or "",
         "methods":    "",
         "references": best_refs,
+        "discussion": discussion,
+        "discussion_provenance": discussion_provenance,
     }
     # A parse can carry the whole body and still have no section split: OpenAlex's
     # TEI lost its <head> elements to an HTML round-trip, so parse_tei_sections has
     # nothing to divide the text by and returns it whole in raw_text. Without this
-    # the recovered text reached nothing — build_target_prompt only ever reads
+    # the recovered text reached nothing — the combined prompt only ever reads
     # abstract/intro/methods, so a document with body text but no abstract and no
     # references passed the "we have a document" guard and was then dropped as
     # no_context. Treat that body the way a PDF's raw text is treated and open the
     # INTRODUCTION block with it: the front of a paper is where it says what it is
     # re-testing, which is what this prompt asks about. Sliced here at the size
-    # build_target_prompt sends, so the row stores exactly what the model read.
+    # the combined prompt sends, so the row stores exactly what the model read.
     if not sections["intro"] and not sections["methods"]:
         raw = str(best.get("raw_text") or "").strip()
         if raw:
             sections["intro"] = raw[:TARGET_INTRO_CHARS]
-    # build_target_prompt sends the PDF abstract only as the tail the OpenAlex abstract
+    # the combined prompt sends the PDF abstract only as the tail the OpenAlex abstract
     # does not already carry — often "" when the two agree. Record that tail so the row
     # shows the evidence the model was given rather than the section it came from.
     sections["abstract_sent"] = _abstract_tail(abstract_r, sections["abstract"])
@@ -1080,12 +1173,16 @@ def run_for_doi(doi_r:              str,
             pdf, grobid, sections)
 
     token_counter.set_stage("extract_fulltext")
-    llm = identify_targets_with_llm(
+    llm = _stamp_stage(resolve_targets_and_outcomes(
         doi_r, study_r, abstract_r, candidates, sections.get("references") or [],
-        pdf_abstract   = sections.get("abstract", ""),
-        intro          = sections.get("intro",    ""),
-        methods        = sections.get("methods",  ""),
-    )
+        record_type    = record_type,
+        rung           = "fulltext",
+        pdf_abstract   = sections.get("abstract",   ""),
+        intro          = sections.get("intro",      ""),
+        methods        = sections.get("methods",    ""),
+        discussion     = sections.get("discussion", ""),
+        discussion_provenance = sections.get("discussion_provenance", ""),
+    ))
     log.info("[%s] LLM: resolved=%s source=%s", doi_r,
              llm["resolved"], llm["llm_source"])
     _keep(llm)
@@ -1105,7 +1202,18 @@ def run_for_doi(doi_r:              str,
                      }, pdf, grobid, sections)
 
     if llm["resolved"]:
+        # The rung the descent was aiming at has answered; its reading replaces the
+        # carried one, and _exit_resolved reconciles it against everything enumerated.
         return _exit_resolved(llm, pdf, grobid, sections)
+    if carried:
+        # Nothing below the carried resolution accepted a link of its own — the call
+        # failed, or it read the closing sections and named no target it was sure of.
+        # Neither contradicts the accepted link, so it stands, with the outcome it has.
+        log.info("[%s] descent: the full-text call accepted no link — keeping the "
+                 "carried %s resolution", doi_r, carried.get("resolution_method"))
+        return _exit_resolved({**carried,
+                               "llm_error": str(llm.get("llm_error", "") or ""),
+                               }, pdf, grobid, sections)
     return emit({**llm, **seen}, pdf, grobid, sections)
 
 
@@ -1146,7 +1254,7 @@ def _build_output(doi_r:     str,
         # that never parsed anything, which is what the row's parse_method records.
         "parse_method"          : grobid.get("parse_method", ""),
         "n_grobid_refs"         : grobid.get("n_refs_parsed",  0),
-        # Stored at the sizes build_target_prompt sends, so a reviewer reads exactly
+        # Stored at the sizes the combined prompt sends, so a reviewer reads exactly
         # what the model read. The PDF abstract reaches the model only as the part the
         # OpenAlex abstract does not already carry, which is often nothing at all —
         # run_for_doi puts that tail in "abstract_sent". The reference list is sent
@@ -1155,6 +1263,13 @@ def _build_output(doi_r:     str,
         "grobid_abstract"       : sections.get("abstract_sent", "") or "",
         "grobid_intro"          : (sections.get("intro",    "")
                                    or "")[:TARGET_INTRO_CHARS],
+        # The closing sections, which is where the outcome is stated and therefore the
+        # block a reviewer checks a verdict against. Its provenance rides beside it:
+        # "discussion" is a real heading, "tail" is the end of the paper, and a quote
+        # means something different under each.
+        "grobid_discussion"     : (sections.get("discussion", "")
+                                   or "")[:TARGET_DISCUSSION_CHARS],
+        "discussion_provenance" : sections.get("discussion_provenance", "") or "",
         # run_for_doi never populates methods today (the parsers do not split it out),
         # so this slice is a contract for a section nothing currently supplies.
         "grobid_methods"        : (sections.get("methods",  "")
@@ -1189,6 +1304,10 @@ def _build_output(doi_r:     str,
         # per original rather than discarding everything past the first.
         "targets"               : resolution.get("targets", []) or [],
         "target_stage"          : resolution.get("target_stage", ""),
+        # The accepted link's own outcome, coded in the same call that accepted it.
+        # run_extract writes it rather than paying for a second call about the same
+        # reading; {} on every exit no LLM rung resolved.
+        "outcome_block"         : resolution.get("outcome_block", {}) or {},
         "unidentified_count"    : int(resolution.get("unidentified_count") or 0),
         "multi_target"          : bool(resolution.get("multi_target", False)),
         "n_targets"             : len(resolution.get("targets", []) or []),

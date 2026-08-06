@@ -75,21 +75,28 @@ EVIDENCE_POLICY = (
     "the specified uncertainty value rather than inferring or guessing.\n\n"
 )
 
-# ── L3 / L5 / L6 — target identification (abstract, reference-list and fulltext) ─
-# ONE prompt serves all three LLM stages of the resolution ladder. The three it
-# replaces asked three different questions of the same paper — "pick a candidate
-# number", "pick a reference number", "how many originals?" — so a stage could
-# resolve one original for a paper another stage had just read as targeting
+# ── L3 / L5 / L6 — target identification AND outcome coding, in one call ──────
+# ONE prompt per vocabulary serves all three LLM rungs of the resolution ladder. The
+# three prompts it replaces asked three different questions of the same paper — "pick
+# a candidate number", "pick a reference number", "how many originals?" — so a stage
+# could resolve one original for a paper another stage had just read as targeting
 # twenty-eight, and neither answer could be reconciled with the other. What varies
-# between stages now is only which evidence blocks exist, not the task, the
+# between rungs now is only which evidence blocks exist, not the task, the
 # vocabulary or the acceptance rule.
 #
+# The outcome is coded in the SAME call because it is read off the same evidence.
+# Asked separately it was handed the target as an asserted header it could not check,
+# and its full-text escalation could not fire at all: a row resolved from the abstract
+# never acquired a document, so 5 of 285 rows in data/extracted.csv carry any
+# pdf_source and every stored out_quote_source is a title or an abstract.
+#
 # Everything below is fixed text: it renders identically for every paper, so it is
-# the cacheable prefix and prompt_version("build_target_prompt") tracks it. Per-row
-# evidence — including a validator's note — is rendered AFTER it, under PAPER.
+# the cacheable prefix and prompt_version() tracks it. Per-row evidence — including a
+# validator's note — is rendered AFTER it, under PAPER.
 
-_TARGET_PROMPT = """This paper has been classified as a replication or reproduction.
-Identify the previously published study — or studies — whose finding it re-tests.
+_TARGET_TASK = """This paper has been classified as a replication or reproduction.
+Identify the previously published study — or studies — whose finding it re-tests,
+and code what this paper concluded about each.
 
 TASK
 
@@ -151,7 +158,13 @@ If the paper states how many studies it replicates:
   than this task: "we replicated 28 studies" can be 28 studies drawn from 12 papers,
   which is 12 entries.
 
-RESPONSE FORMAT
+For each target you list, also code what this paper concluded about that original.
+The two judgments are separate: a target you are sure of may have an outcome the
+evidence does not settle, and vice versa."""
+
+# The top level of the response is the same object for both vocabularies; only the
+# outcome fields inside each target differ.
+_TARGET_RESPONSE_HEAD = """RESPONSE FORMAT
 
 Respond with ONLY a JSON object, no prose outside the braces, with keys:
 "targets" (array, one object per original paper, in the order the paper presents
@@ -159,24 +172,87 @@ them), "stated_count" (number or null), "stated_count_unit" (string or null),
 "count_evidence_quote" (string), "unidentified_count" (number), "reasoning" (one
 sentence in your own words on why these targets and not other cited works).
 
-Each target object has: "key", "match_certain", "target_as_named", "study_numbers",
-"replication_study_numbers", "evidence_quote".
+Every target object carries the identification fields "key", "match_certain",
+"target_as_named", "study_numbers", "replication_study_numbers", "evidence_quote" —
+and the outcome fields below. Code an outcome for EVERY target, including one whose
+key is null: the two judgments are made separately."""
+
+_TARGET_OUTCOME_FIELDS = """
+
+Outcome fields on each target object:
+
+- "outcome": one of "success", "failure", "mixed", "descriptive",
+  "statistically_successful_but_flawed", "uninformative", "cannot_be_determined" —
+  what this paper concludes about THIS original, from the categories below.
+- "outcome_phrase": the verbatim passage that proves that verdict, or "". Quote 1-4
+  complete consecutive sentences: the shortest passage that makes the verdict
+  self-contained to someone who has not read the paper. Where the verdict genuinely
+  needs two, join them with " | " and list both sources in the same order.
+- "out_quote_source": where that passage was copied from — "title", "abstract",
+  "introduction" or "discussion" (or two of them joined by " | ", matching the
+  quote), or "" when there is no quote. Name only a section you were given.
+- "outcome_confident": true or false — whether you would stake the verdict on the
+  evidence as written.
+- "outcome_reasoning": one sentence saying why this category and not the nearest
+  alternative.{record_type_check_field}
 
 A matched target looks like this:
-{"key": "@smith2009", "match_certain": true, "target_as_named": "Smith & Jones (2009), Study 2", "study_numbers": "2", "replication_study_numbers": "1", "evidence_quote": "we conducted a direct replication of Smith and Jones (2009, Study 2)"}
+{"key": "@smith2009", "match_certain": true, "target_as_named": "Smith & Jones (2009), Study 2", "study_numbers": "2", "replication_study_numbers": "1", "evidence_quote": "we conducted a direct replication of Smith and Jones (2009, Study 2)", "outcome": "failure", "outcome_phrase": "The original effect did not emerge in either of our samples.", "out_quote_source": "abstract", "outcome_confident": true, "outcome_reasoning": "The authors report the target effect as absent rather than reduced."}
 
 A target you can see but cannot match to a listed record looks like this — note that
-key is the JSON value null, not the text "null":
-{"key": null, "match_certain": false, "target_as_named": "Ramirez (2014), the delay-discounting result", "study_numbers": "", "replication_study_numbers": "", "evidence_quote": "we re-analysed the delay-discounting data reported by Ramirez (2014)"}"""
+key is the JSON value null, not the text "null", and that it is coded all the same:
+{"key": null, "match_certain": false, "target_as_named": "Ramirez (2014), the delay-discounting result", "study_numbers": "", "replication_study_numbers": "", "evidence_quote": "we re-analysed the delay-discounting data reported by Ramirez (2014)", "outcome": "cannot_be_determined", "outcome_phrase": "", "out_quote_source": "", "outcome_confident": false, "outcome_reasoning": "The evidence supplied never says how the re-analysis came out."}"""
+
+_REPRO_TARGET_OUTCOME_FIELDS = """
+
+Outcome fields on each target object. A reproduction is coded on two independent
+axes, each with its own quote and its own quote source:
+
+- "outcome_computation": one of "computationally reproducible", "computational
+  issues", "technical failure", "not checked", "cannot_be_determined"
+- "outcome_computational_quote": the verbatim passage proving that verdict, or ""
+- "out_quote_computational_source": "title", "abstract", "introduction" or
+  "discussion" (or two joined by " | ", matching the quote), or ""
+- "outcome_robustness": one of "robust", "robustness challenges", "not checked",
+  "cannot_be_determined"
+- "outcome_robustness_quote": the verbatim passage proving that verdict, or ""
+- "out_quote_robust_source": as above, for the robustness quote
+- "outcome_confident": true or false — whether you would stake both verdicts on the
+  evidence as written
+- "outcome_reasoning": one sentence naming both verdicts{record_type_check_field}
+
+Quote 1-4 complete consecutive sentences per axis, copied word for word from the
+evidence supplied; name only a section you were given. Do not return a combined
+"outcome" field — the two axes are joined afterwards.
+
+A matched target looks like this:
+{"key": "@smith2009", "match_certain": true, "target_as_named": "Smith & Jones (2009)", "study_numbers": "", "replication_study_numbers": "", "evidence_quote": "we re-ran the analyses on the deposited data of Smith and Jones (2009)", "outcome_computation": "computational issues", "outcome_computational_quote": "The deposited code returned a coefficient of 0.21 rather than the 0.34 reported in Table 3.", "out_quote_computational_source": "discussion", "outcome_robustness": "robust", "outcome_robustness_quote": "The sign and significance of the main effect were unchanged across all twelve alternative specifications.", "out_quote_robust_source": "discussion", "outcome_confident": true, "outcome_reasoning": "The reported number could not be recovered, but the finding survived every alternative specification."}
+
+A target you can see but cannot match to a listed record looks like this — note that
+key is the JSON value null, not the text "null", and that it is coded all the same:
+{"key": null, "match_certain": false, "target_as_named": "Ramirez (2014), the delay-discounting result", "study_numbers": "", "replication_study_numbers": "", "evidence_quote": "we re-analysed the delay-discounting data reported by Ramirez (2014)", "outcome_computation": "cannot_be_determined", "outcome_computational_quote": "", "out_quote_computational_source": "", "outcome_robustness": "cannot_be_determined", "outcome_robustness_quote": "", "out_quote_robust_source": "", "outcome_confident": false, "outcome_reasoning": "The evidence supplied never says how the re-analysis came out on either axis."}"""
+
+# Asked only when the paper's closing sections are in front of the model: it is a
+# judgment about the METHODS, and the abstract-only rungs have not seen them.
+_TARGET_RTC_FIELD = """
+- "record_type_check": one of "replication", "reproduction", "neither", "unclear" —
+  what the text shows this paper actually did about THIS original: "replication" if
+  it collected new data or used a different sample to re-test the finding,
+  "reproduction" if it re-analysed the original study's own data, "neither" if it
+  does not check that original at all, "unclear" if the text does not say. Answer it
+  from the methods, independently of the outcome fields."""
 
 _WS_RE = re.compile(r"\s+")
 
-# How much of each evidence block build_target_prompt sends. link_original stores the
+# How much of each evidence block the combined prompts send. link_original stores the
 # same slices on the row, so the dashboard shows exactly what the model was given —
 # import these rather than repeating the numbers.
-TARGET_ABSTRACT_CHARS = 3000
-TARGET_INTRO_CHARS    = 1200
-TARGET_METHODS_CHARS  = 800
+TARGET_ABSTRACT_CHARS   = 3000
+TARGET_INTRO_CHARS      = 2000
+TARGET_METHODS_CHARS    = 800
+# The closing sections, which is where a paper states its own verdict — the block
+# that makes the outcome answerable at the full-text rung.
+TARGET_DISCUSSION_CHARS = 6000
 
 
 def _target_line(entry: dict) -> str:
@@ -188,7 +264,7 @@ def _target_line(entry: dict) -> str:
 
 
 def rendered_reference_entries(entries: list[dict]) -> list[dict]:
-    """The entries build_target_prompt renders under REFERENCE LIST.
+    """The entries the combined prompts render under REFERENCE LIST.
 
     A work that is also a candidate is shown once, in the candidate block, and
     assign_target_keys has already dropped the entries with neither a title nor a DOI.
@@ -217,20 +293,40 @@ def _abstract_tail(abstract_r: str, pdf_abstract: str) -> str:
     return pdf[:1500]
 
 
-def build_target_prompt(study_r:        str,
-                        abstract_r:     str,
-                        entries:        list[dict],
-                        *,
-                        pdf_abstract:   str = "",
-                        intro:          str = "",
-                        methods:        str = "") -> str:
-    """Render the target-identification prompt.
+# What the model is told about where the closing-sections text came from, keyed by
+# the provenance `pdf_parsing.outcome_text()` returns. It travels with the text so a
+# quote is never attributed to a section the model was not shown.
+PROVENANCE_LABEL = {
+    "discussion": "the discussion / conclusion section of the paper",
+    "tail":       "the closing pages of the paper, before the reference list",
+    "sections":   "the abstract, introduction and methods only — the closing sections "
+                  "could not be parsed. Statements about replication failures in an "
+                  "introduction usually concern OTHER studies",
+}
 
-    entries come from shared.target_keys.assign_target_keys — the keys shown here are
-    only meaningful against the key_map from that same call.
+# How much closing-section text the STANDALONE outcome coder slices out of a parse.
+# Under code_outcome's own cap, which truncates from the front.
+OUTCOME_TEXT_CHARS = 7600
 
-    Every evidence block is omitted entirely, header included, when it is empty: an
-    "(not available)" placeholder is a line the model has to read and rule out.
+
+def _discussion_block(discussion: str, provenance: str) -> str:
+    label = PROVENANCE_LABEL.get(provenance, "the closing sections of the paper")
+    return f"DISCUSSION / CONCLUSION (from {label}):\n{discussion}"
+
+
+def _paper_blocks(study_r:      str,
+                  abstract_r:   str,
+                  entries:      list[dict],
+                  pdf_abstract: str,
+                  intro:        str,
+                  methods:      str,
+                  discussion:   str,
+                  discussion_provenance: str) -> list[str]:
+    """The per-row evidence blocks, in the order the model reads them.
+
+    Every block is omitted entirely, header included, when it is empty: an
+    "(not available)" placeholder is a line the model has to read and rule out. Which
+    blocks exist is the only thing that distinguishes the three ladder rungs.
     """
     blocks: list[str] = []
 
@@ -246,24 +342,77 @@ def build_target_prompt(study_r:        str,
         blocks.append("INTRODUCTION:\n" + body)
     if methods:
         blocks.append("METHODS:\n" + methods[:TARGET_METHODS_CHARS])
+    if discussion:
+        blocks.append(_discussion_block(discussion[:TARGET_DISCUSSION_CHARS],
+                                        discussion_provenance))
 
     cited = [_target_line(e) for e in entries if e.get("in_candidates")]
     if cited:
         blocks.append("WORKS THIS PAPER CITES, pre-matched on author-year:\n"
                       + "\n".join(cited))
-    # Never truncated: the whole point of this prompt is to find the target in the
+    # Never truncated: half the point of this prompt is to find the target in the
     # reference list, and a cut list can simply not contain it.
     refs = [_target_line(e) for e in rendered_reference_entries(entries)]
     if refs:
         blocks.append("REFERENCE LIST:\n" + "\n".join(refs))
+    return blocks
 
-    return (EVIDENCE_POLICY + _TARGET_PROMPT + "\n\nPAPER\n\n"
-            + "\n\n".join(blocks) + "\n\nRespond with the JSON object only.")
+
+def build_target_outcome_prompt(study_r:      str,
+                                abstract_r:   str,
+                                entries:      list[dict],
+                                *,
+                                pdf_abstract: str = "",
+                                intro:        str = "",
+                                methods:      str = "",
+                                discussion:   str = "",
+                                discussion_provenance: str = "") -> str:
+    """Targets and their replication outcomes, one prompt for all three LLM rungs.
+
+    entries come from shared.target_keys.assign_target_keys — the keys shown here are
+    only meaningful against the key_map from that same call.
+
+    Supplying *discussion* is what makes the outcome answerable and is the only thing
+    that adds record_type_check: it is a judgment about the methods, and a rung that
+    has read no closing sections has not seen them.
+    """
+    rtc = _TARGET_RTC_FIELD if discussion else ""
+    return (EVIDENCE_POLICY + _TARGET_TASK + "\n\n" + _TARGET_RESPONSE_HEAD
+            + _fill(_TARGET_OUTCOME_FIELDS, {"record_type_check_field": rtc})
+            + "\n\n" + _OUTCOME_RULES + "\n\nPAPER\n\n"
+            + "\n\n".join(_paper_blocks(study_r, abstract_r, entries, pdf_abstract,
+                                        intro, methods, discussion,
+                                        discussion_provenance))
+            + "\n\nRespond with the JSON object only.")
+
+
+def build_repro_target_outcome_prompt(study_r:      str,
+                                      abstract_r:   str,
+                                      entries:      list[dict],
+                                      *,
+                                      pdf_abstract: str = "",
+                                      intro:        str = "",
+                                      methods:      str = "",
+                                      discussion:   str = "",
+                                      discussion_provenance: str = "") -> str:
+    """Targets and their reproduction outcomes — the same task, the other vocabulary.
+
+    The two axes are returned separately and joined on our side, so nothing here asks
+    the model for the combined `outcome` string.
+    """
+    rtc = _TARGET_RTC_FIELD if discussion else ""
+    return (EVIDENCE_POLICY + _TARGET_TASK + "\n\n" + _TARGET_RESPONSE_HEAD
+            + _fill(_REPRO_TARGET_OUTCOME_FIELDS, {"record_type_check_field": rtc})
+            + "\n\n" + _REPRO_AXIS_RULES + "\n\nPAPER\n\n"
+            + "\n\n".join(_paper_blocks(study_r, abstract_r, entries, pdf_abstract,
+                                        intro, methods, discussion,
+                                        discussion_provenance))
+            + "\n\nRespond with the JSON object only.")
 
 
 # ── L4 — front-door replication screen ───────────────────────────────────────
 # Question 1 only. The target pick that used to sit beside it is now
-# build_target_prompt above, shared with the abstract and full-text stages.
+# the combined target+outcome prompts above, shared with every LLM rung.
 
 _CLASSIFY_PROMPT = """You are screening papers for a database of replication and reproduction studies.
 
@@ -427,25 +576,25 @@ def build_prescreen_prompt(title: str, abstract: str) -> str:
             .replace("{abstract}", (abstract or "(not available)")[:3000]))
 
 
-# ── L8–L11 — outcome coding ──────────────────────────────────────────────────
-# Two prompts, not four: the vocabulary (replication vs reproduction) is a genuinely
-# different document, the pass (abstract-only vs full-text escalation) is a handful of
-# lines. The pass is therefore a parameter, and it is described rather than announced —
-# the builder writes what the model is holding and omits the full-text block when there
-# is none, so quote-source legality follows from the evidence line instead of a marker
-# the model has to interpret. Both variants are constant within a pass, so cross-row
-# prefix caching is unaffected.
+# ── L8–L11 — the STANDALONE outcome coder ────────────────────────────────────
+# Two prompts, one per vocabulary. These serve the rows the combined prompt above did
+# not code: a deterministic rule resolved the link, so no LLM ever read the paper for
+# a target, and the original reaching the model is an assertion made by an earlier
+# stage rather than something this call chose. It is therefore given as evidence to
+# CHECK — with the link evidence that produced it — and the model answers target_check
+# on it, instead of being told to code the outcome of a link it cannot question.
 #
-# Both bodies carry a literal JSON example, so every substitution is .replace(), never
-# .format(). Static instructions and the response schema come first, per-row inputs
-# last.
+# Both bodies carry a literal JSON example, so every substitution goes through _fill,
+# never .format(). Static instructions and the response schema come first, per-row
+# inputs last.
 
-# The two evidence lines. The abstract pass never names "fulltext" as a legal quote
-# source, because a model that is told it holds full text will attribute quotes to it.
+# The two evidence lines. The no-text variant never names a section of the body as a
+# legal quote source, because a model that is told it holds full text will attribute
+# quotes to it.
 _EVIDENCE_ABSTRACT = ("You have the paper's title and abstract, and the original study "
                       "it has been linked to.")
 _EVIDENCE_FULLTEXT = ("You have the paper's title and abstract, the original study it "
-                      "has been linked to, and a\npassage of the paper's full text.")
+                      "has been linked to, and\npassages of the paper's own text.")
 
 _OUTCOME_TEMPLATE = """You are coding the outcome of a replication study for a database of replication studies.
 
@@ -463,7 +612,7 @@ Return exactly {field_count} fields:
 - "outcome_phrase": the verbatim passage that proves the outcome, or ""
 - "out_quote_source": where that passage was copied from
 - "confident": true or false
-- "outcome_reasoning": one sentence{record_type_check_field}
+- "outcome_reasoning": one sentence{check_fields}
 
 Use these field names, and match every categorical value exactly as listed.
 
@@ -475,24 +624,39 @@ Field meanings:
   to someone who has not read the paper. If the only evidence is the title, quote the title.
   A passage from one section is usually enough; where the verdict genuinely needs two, join
   them with " | " and list both sources in the same order.
-- "out_quote_source" — "title", "abstract" or "fulltext" (or two of them joined by " | ",
-  matching the quote), or "" when there is no quote. Name only a section you were given.
+- "out_quote_source" — "title", "abstract", "introduction" or "discussion" (or two of them
+  joined by " | ", matching the quote), or "" when there is no quote. Name only a section you
+  were given.
 - "confident" — whether you would stake the verdict on the evidence as written. Answer true
   only when the text states the conclusion plainly; answer false when your answer rests on
   inference, or when a different reading of the same sentences would change it.
-- "outcome_reasoning" — one sentence saying why this category and not the nearest alternative.{record_type_check_meaning}
+- "outcome_reasoning" — one sentence saying why this category and not the nearest alternative.{check_meanings}
 
 Example of the required JSON structure:
 
 {
   "outcome": "mixed",
   "outcome_phrase": "We replicated the main effect of construal level on donation intentions, with an effect size about half that reported originally. The predicted interaction with social distance did not emerge in either sample.",
-  "out_quote_source": "fulltext",
+  "out_quote_source": "discussion",
   "confident": true,
   "outcome_reasoning": "The authors themselves report one target effect as replicated and another as absent, which is the mixed category rather than a reduced-effect success."
 }
 
-WHEN YOU CANNOT TELL
+{outcome_rules}
+
+Base every judgment only on the evidence below.
+
+{original_block}TITLE: {title_r}
+
+ABSTRACT: {abstract_r}
+
+{intro_block}{fulltext_block}Respond with the JSON object only."""
+
+# Categories, coding rules and examples — the replication vocabulary itself, spliced by
+# both the standalone coder above and the combined target+outcome prompt. Split out so
+# the two ask the same question in the same words: they were written apart once, and
+# the definition of "mixed" drifted between them.
+_OUTCOME_RULES = """WHEN YOU CANNOT TELL
 
 Answer "cannot_be_determined" when the evidence in front of you does not state the outcome.
 Do not guess an outcome the evidence does not support, and do not withhold one it does state
@@ -509,8 +673,8 @@ OUTCOME CATEGORIES
   for example when some of several tested findings replicated and others did not. Use mixed
   only when the paper frames its own result that way; do not infer it from a reduced effect
   size, or because you would have judged the evidence differently. If this paper re-tests
-  several studies from the original paper named below and they came out differently, that is
-  mixed.
+  several studies from the original this verdict is about and they came out differently,
+  that is mixed.
 - "descriptive" — the authors describe their study as a replication and reuse the original's
   methods in a new context or population, but never compare their results against the original
   finding. If the paper does compare its results to the original's — even in a new population —
@@ -542,9 +706,9 @@ CODING RULES
 - A close replication that works alongside a conceptual replication that does not is "mixed".
 - Code the central finding the replication was designed to test. Robustness checks and
   exploratory analyses around it may be left out of the verdict.
-- Where this paper reports several of its own studies against the original named below,
-  aggregate them into one verdict, following the authors' own judgment where they state one;
-  results that conflict with each other are "mixed".
+- Where this paper reports several of its own studies against the original this verdict is
+  about, aggregate them into one verdict, following the authors' own judgment where they
+  state one; results that conflict with each other are "mixed".
 
 Examples:
 
@@ -559,22 +723,27 @@ Examples:
    regression to the mean." — statistically_successful_but_flawed.
 
 Judge the outcome of this paper's own replication, not outcomes it reports for other studies
-in its background or literature review. Base every judgment only on the evidence below.
+in its background or literature review."""
 
-{original_block}TITLE: {title_r}
+# The two checks the model can only answer once it holds some of the paper's own text.
+# They are asked together because they are the same reading: what this paper actually
+# did, and whether it did it to the original an earlier stage named.
+_OUTCOME_CHECK_FIELDS = ('\n- "record_type_check": one of "replication", "reproduction", '
+                         '"neither", "unclear"'
+                         '\n- "target_check": one of "this_original", "other_original", '
+                         '"no_original", "unclear"')
 
-ABSTRACT: {abstract_r}
-
-{fulltext_block}Respond with the JSON object only."""
-
-_OUTCOME_RTC_FIELD = '\n- "record_type_check": one of "replication", "reproduction", "neither", "unclear"'
-
-_OUTCOME_RTC_MEANING = """
-- "record_type_check" — what the full text shows this paper actually did: "replication" if it
+_OUTCOME_CHECK_MEANING = """
+- "record_type_check" — what the text shows this paper actually did: "replication" if it
   collected new data or used a different sample to re-test the finding, "reproduction" if it
   re-analysed the original study's own data, "neither" if it does not check the named original
   at all, "unclear" if the text does not say. Answer it from the methods, independently of the
-  outcome fields."""
+  outcome fields.
+- "target_check" — whether the text bears out the link stated above: "this_original" if the
+  paper re-tests the named original, "other_original" if it re-tests some other published
+  finding instead, "no_original" if it re-tests no earlier published finding at all,
+  "unclear" if the text does not say. Judge the link on the paper's own words, not on how
+  plausible the named original looks."""
 
 
 _REPRO_OUTCOME_TEMPLATE = """You are coding the outcome of a reproduction study for a database of reproduction studies.
@@ -601,14 +770,15 @@ Return exactly {field_count} fields:
 - "confident": true or false — whether you would stake both verdicts on the evidence as
   written. Answer false when either verdict rests on inference, or when a different reading of
   the same sentences would change it.
-- "outcome_reasoning": one sentence naming both verdicts{record_type_check_field}
+- "outcome_reasoning": one sentence naming both verdicts{check_fields}
 
 Use these field names, and match every categorical value exactly as listed.
 
 Each axis carries its own quote, and the two quotes are usually different sentences. Quote 1-4
 complete consecutive sentences per axis: the shortest verbatim passage that makes that verdict
 self-contained to someone who has not read the paper. Copy word for word from the evidence
-supplied. A source is "title", "abstract" or "fulltext"; where a verdict genuinely needs two
+supplied. A source is "title", "abstract", "introduction" or "discussion" — name only a section
+you were given; where a verdict genuinely needs two
 passages, join them with " | " and list both sources in the same order. Use "" for both the
 quote and its source when no supplied passage supports that axis verdict. A "not checked"
 verdict can rest on what the paper describes doing — a paper reporting only alternative
@@ -621,15 +791,27 @@ Example of the required JSON structure:
 {
   "outcome_computation": "computational issues",
   "outcome_computational_quote": "Running the authors' Stata code on the deposited data returned a coefficient of 0.21 rather than the 0.34 reported in Table 3, and we were unable to recover the published figure under any reading of the codebook.",
-  "out_quote_computational_source": "fulltext",
+  "out_quote_computational_source": "discussion",
   "outcome_robustness": "robust",
   "outcome_robustness_quote": "Across the twelve alternative specifications we estimated, including clustering at the district level and dropping the imputed covariates, the sign and significance of the main effect were unchanged.",
-  "out_quote_robust_source": "fulltext",
+  "out_quote_robust_source": "discussion",
   "confident": true,
   "outcome_reasoning": "The reported number could not be obtained from the deposited code, but the finding survived every alternative specification the authors tried."
 }
 
-WHEN YOU CANNOT TELL
+{axis_rules}
+
+Base every judgment only on the evidence below.
+
+{original_block}TITLE: {title_r}
+
+ABSTRACT: {abstract_r}
+
+{intro_block}{fulltext_block}Respond with the JSON object only."""
+
+# The two axes themselves, spliced by both the standalone coder above and the combined
+# target+outcome prompt, for the same reason as _OUTCOME_RULES.
+_REPRO_AXIS_RULES = """WHEN YOU CANNOT TELL
 
 Use "cannot_be_determined" on an axis the evidence in front of you does not settle. Do not
 guess a verdict the evidence does not support, and do not withhold one it does state (or
@@ -687,44 +869,47 @@ Rules that apply to both axes:
   a replication, not a robustness check, and does not belong on axis 2.
 - Both axes concern the central finding this paper set out to check, not incidental or
   exploratory analyses around it.
-- Where the paper reports several of its own re-analyses against the original named below,
-  settle each axis over them together rather than picking one, following the authors' own
-  judgment where they state one.
+- Where the paper reports several of its own re-analyses against the original this verdict is
+  about, settle each axis over them together rather than picking one, following the authors'
+  own judgment where they state one.
 
 Judge this paper's own reproduction attempt, not results it reports for other studies in its
-background or literature review. Base every judgment only on the evidence below.
+background or literature review."""
 
-{original_block}TITLE: {title_r}
-
-ABSTRACT: {abstract_r}
-
-{fulltext_block}Respond with the JSON object only."""
-
-_REPRO_RTC_FIELD = """
+_REPRO_CHECK_FIELDS = """
 - "record_type_check": one of "reproduction", "replication", "neither", "unclear" — what the
-  full text shows this paper actually did: "reproduction" if it re-analysed the original
-  study's own data, "replication" if it collected new data or used a different sample,
-  "neither" if it does not check the named original at all, "unclear" if the text does not say."""
-
-# The full-text block is whatever the parse waterfall supplied, so it is described
-# honestly rather than claimed to be the discussion section.
-_PAPER_TEXT_BLOCK = (
-    'PAPER TEXT (the full-text passage supplied by the extraction pipeline; treat it as "fulltext"\n'
-    "and do not infer a more specific section):\n"
-    "{text_snip}\n\n"
-)
-
-_MULTI_ORIGINAL_NOTE = ("\nThis call is about that original only. Ignore any other study the "
-                        "paper also {verb} — each is coded separately.")
+  text shows this paper actually did: "reproduction" if it re-analysed the original study's own
+  data, "replication" if it collected new data or used a different sample, "neither" if it does
+  not check the named original at all, "unclear" if the text does not say.
+- "target_check": one of "this_original", "other_original", "no_original", "unclear" — whether
+  the text bears out the link stated above: the paper re-analyses the named original, some
+  other published finding instead, no earlier published finding at all, or the text does not
+  say. Judge the link on the paper's own words, not on how plausible the named original looks."""
 
 
 def _original_block(verb_line: str, original_authors: str, original_year: str,
-                    original_title: str, multi_note: str) -> str:
-    """The block naming the original this call is about, or "" when none is known."""
+                    original_title: str, original_evidence: str) -> str:
+    """The link an earlier stage made, given as evidence to check.
+
+    It used to be an assertion ("THIS PAPER REPLICATES: …") the model had no way to
+    question, on rows where no LLM had ever chosen the original — a deterministic rule
+    did, from a citation pattern. Naming the rule's own evidence and asking the model
+    to check it is what turns the header back into something falsifiable; target_check
+    is the answer.
+
+    "" when no original is known.
+    """
     if not str(original_title or "").strip():
         return ""
-    return (f"{verb_line} {original_authors} ({original_year}). {original_title}"
-            f"{multi_note}\n\n")
+    matched = (f" — matched on: {original_evidence}"
+               if str(original_evidence or "").strip() else "")
+    return (f"{verb_line} {original_authors} ({original_year}). {original_title}{matched}\n"
+            "Check that link against the text you are given before coding the outcome.\n\n")
+
+
+def _text_block(header: str, text: str) -> str:
+    """One named passage of the paper's own text, or "" when there is none."""
+    return f"{header}\n{text}\n\n" if str(text or "").strip() else ""
 
 
 def _fill(template: str, values: dict[str, str]) -> str:
@@ -742,51 +927,61 @@ def _fill(template: str, values: dict[str, str]) -> str:
 def build_outcome_prompt(title_r: str, abstract_snip: str,
                          original_authors: str = "", original_year: str = "",
                          original_title: str = "", text_snip: str = "",
-                         multi_original: bool = False) -> str:
-    """Replication outcome, one prompt for both passes.
+                         intro_snip: str = "", original_evidence: str = "",
+                         text_provenance: str = "") -> str:
+    """Replication outcome for a link this call did not make.
 
-    Supplying *text_snip* selects the full-text pass: the model is told it holds a
-    passage of full text, the PAPER TEXT block is appended, and record_type_check is
-    asked for. Without it nothing about full text is rendered at all — an empty block
-    would offer "fulltext" as a quote source the model never saw.
+    Either passage of the paper's own text selects the checking pass: the model is
+    told what it holds, the named blocks are appended, and record_type_check and
+    target_check are asked for. With neither, nothing about the body is rendered at
+    all — an empty block would offer a quote source the model never saw.
     """
-    fulltext = bool(text_snip)
+    has_text = bool(text_snip or intro_snip)
     return _fill(_OUTCOME_TEMPLATE, {
-        "evidence_line": _EVIDENCE_FULLTEXT if fulltext else _EVIDENCE_ABSTRACT,
-        "field_count": "six" if fulltext else "five",
-        "record_type_check_field": _OUTCOME_RTC_FIELD if fulltext else "",
-        "record_type_check_meaning": _OUTCOME_RTC_MEANING if fulltext else "",
+        "evidence_line": _EVIDENCE_FULLTEXT if has_text else _EVIDENCE_ABSTRACT,
+        "field_count": "seven" if has_text else "five",
+        "check_fields": _OUTCOME_CHECK_FIELDS if has_text else "",
+        "check_meanings": _OUTCOME_CHECK_MEANING if has_text else "",
+        "outcome_rules": _OUTCOME_RULES,
         "original_block": _original_block(
-            "THIS PAPER REPLICATES:", original_authors, original_year, original_title,
-            _fill(_MULTI_ORIGINAL_NOTE, {"verb": "replicates"}) if multi_original else ""),
+            "AN EARLIER STAGE OF THE PIPELINE LINKED THIS PAPER TO:",
+            original_authors, original_year, original_title, original_evidence),
         "title_r": title_r or "(not available)",
         "abstract_r": abstract_snip or "(not available)",
-        "fulltext_block": (_fill(_PAPER_TEXT_BLOCK, {"text_snip": text_snip})
-                           if fulltext else ""),
+        "intro_block": _text_block("INTRODUCTION:", intro_snip),
+        "fulltext_block": _text_block(
+            f"DISCUSSION / CONCLUSION (from "
+            f"{PROVENANCE_LABEL.get(text_provenance, 'the closing sections of the paper')}):",
+            text_snip),
     })
 
 
 def build_repro_outcome_prompt(title_r: str, abstract_snip: str,
                                original_authors: str = "", original_year: str = "",
                                original_title: str = "", text_snip: str = "",
-                               multi_original: bool = False) -> str:
-    """Reproduction outcome, one prompt for both passes — the 4x3 grid in two coded
-    fields, each carrying its own quote and quote source.
+                               intro_snip: str = "", original_evidence: str = "",
+                               text_provenance: str = "") -> str:
+    """Reproduction outcome for a link this call did not make — the 4x3 grid in two
+    coded fields, each carrying its own quote and quote source.
 
     The pass is selected exactly as in build_outcome_prompt.
     """
-    fulltext = bool(text_snip)
+    has_text = bool(text_snip or intro_snip)
     return _fill(_REPRO_OUTCOME_TEMPLATE, {
-        "evidence_line": _EVIDENCE_FULLTEXT if fulltext else _EVIDENCE_ABSTRACT,
-        "field_count": "nine" if fulltext else "eight",
-        "record_type_check_field": _REPRO_RTC_FIELD if fulltext else "",
+        "evidence_line": _EVIDENCE_FULLTEXT if has_text else _EVIDENCE_ABSTRACT,
+        "field_count": "ten" if has_text else "eight",
+        "check_fields": _REPRO_CHECK_FIELDS if has_text else "",
+        "axis_rules": _REPRO_AXIS_RULES,
         "original_block": _original_block(
-            "THIS PAPER REPRODUCES:", original_authors, original_year, original_title,
-            _fill(_MULTI_ORIGINAL_NOTE, {"verb": "reproduces"}) if multi_original else ""),
+            "AN EARLIER STAGE OF THE PIPELINE LINKED THIS PAPER TO:",
+            original_authors, original_year, original_title, original_evidence),
         "title_r": title_r or "(not available)",
         "abstract_r": abstract_snip or "(not available)",
-        "fulltext_block": (_fill(_PAPER_TEXT_BLOCK, {"text_snip": text_snip})
-                           if fulltext else ""),
+        "intro_block": _text_block("INTRODUCTION:", intro_snip),
+        "fulltext_block": _text_block(
+            f"DISCUSSION / CONCLUSION (from "
+            f"{PROVENANCE_LABEL.get(text_provenance, 'the closing sections of the paper')}):",
+            text_snip),
     })
 
 
@@ -899,6 +1094,11 @@ def _collect(fn: FunctionType, parts: dict[str, str]) -> None:
             # are assembled at import from helpers, and the assembled text is what
             # reaches the model.
             parts[name] = repr(value)
+        elif isinstance(value, (dict, list, tuple)):
+            # A container of prompt fragments — PROVENANCE_LABEL, which supplies the
+            # line telling the model where its text came from — is prompt text like
+            # any other, and repr() of a dict is stable in insertion order.
+            parts[name] = repr(value)
         elif isinstance(value, FunctionType) and value.__module__ == __name__:
             parts[name] = _canonical_source(value)
             _collect(value, parts)
@@ -929,12 +1129,6 @@ def prompt_version(name: str) -> str:
     parts["JSON_SYSTEM_MESSAGE"] = repr(_LEGACY_JSON_SYSTEM_MESSAGE)
     blob = "\n".join(f"{k}={parts[k]}" for k in sorted(parts))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
-
-
-def prompt_versions(*names: str) -> str:
-    """Joined versions of several prompts — for a cache whose entry can be written by
-    any one of them (the outcome cache escalates from abstract to fulltext)."""
-    return "+".join(prompt_version(n) for n in names)
 
 
 PROMPT_NAMES: tuple[str, ...] = tuple(sorted(

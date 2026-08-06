@@ -159,7 +159,9 @@ EXTRACT_ADDED_COLS = [
                            #         the same way for both record types — the way flora.csv stores it.
     "outcome_phrase",      # str   — supporting quote from the paper
     "outcome_confidence",  # str   — high | medium | low
-    "out_quote_source",    # str   — abstract | title | fulltext (or two joined by " | ")
+    "out_quote_source",    # str   — title | abstract | introduction | discussion (or two
+                           #         joined by " | "). "fulltext" is the legacy value, written
+                           #         while one undifferentiated body block was sent.
     "outcome_reasoning",  # str   — one-sentence LLM note explaining the classification choice
 
     # Reproduction outcome axes — empty on a replication row. The 4x3 grid is stored
@@ -168,10 +170,10 @@ EXTRACT_ADDED_COLS = [
     # downstream analysis had to re-split a joined string to read one axis.
     "outcome_computation",             # str — COMPUTATION_OUTCOME_VALUES
     "outcome_computational_quote",     # str — verbatim passage proving the computation verdict
-    "out_quote_computational_source",  # str — abstract | title | fulltext (or two joined by " | ")
+    "out_quote_computational_source",  # str — as out_quote_source above
     "outcome_robustness",              # str — ROBUSTNESS_OUTCOME_VALUES
     "outcome_robustness_quote",        # str — verbatim passage proving the robustness verdict
-    "out_quote_robust_source",         # str — abstract | title | fulltext (or two joined by " | ")
+    "out_quote_robust_source",         # str — as out_quote_source above
     "outcome_llm_model",   # str   — exact model that coded the outcome ("keyword" for the
                            #         rule-based fallback, blank when no verdict was made);
                            #         differs from link_llm_model when a provider falls over mid-run
@@ -400,6 +402,15 @@ ROBUSTNESS_OUTCOME_VALUES = {
     "cannot_be_determined",
 }
 
+# The empty axis block a replication row carries, and the block a "neither" verdict
+# clears a reproduction row down to.
+EMPTY_OUTCOME_AXES = {
+    "outcome_computation": "", "outcome_computational_quote": "",
+    "out_quote_computational_source": "",
+    "outcome_robustness": "", "outcome_robustness_quote": "",
+    "out_quote_robust_source": "",
+}
+
 # The derived `outcome` string for a reproduction: the two settled axis values joined
 # with ", ", computation first. Either axis at cannot_be_determined derives
 # cannot_be_determined instead, so this set holds only the settled combinations.
@@ -450,6 +461,104 @@ OUTCOME_LEGACY_VALUES: set = {
 # OUTCOME_CATEGORIES — otherwise every legacy row is flagged as non-canonical.
 OUTCOME_VALUES = (OUTCOME_CATEGORIES | REPRODUCTION_OUTCOME_CATEGORIES
                   | OUTCOME_STATE_MARKERS | OUTCOME_LEGACY_VALUES)
+
+
+def _outcome_text(value) -> str:
+    """A response field as a string, with JSON null read as absent — a model saying
+    "none" for a quote must not be stored as the string "None"."""
+    return "" if value is None else str(value)
+
+
+def normalise_outcome_block(result: dict, record_type: str,
+                            has_text: bool) -> dict:
+    """The outcome half of an LLM answer as the row shape, in *record_type*'s vocabulary.
+
+    One normaliser for two producers: the per-target block of the combined
+    target+outcome call, and the standalone coder's whole response. They name the
+    confidence field differently (`outcome_confident` per target, `confident` on the
+    standalone answer) and nothing else, so both are read here.
+
+    *has_text* says whether the model was given any of the paper's own body. The two
+    check fields are only asked then, so their absence otherwise is not a verdict —
+    reading it as one would let a model that saw an abstract veto a row on the methods
+    it never read.
+    """
+    is_repro = str(record_type or "").strip().lower() == "reproduction"
+    rtc = _outcome_text(result.get("record_type_check")).strip().lower() if has_text else ""
+    target_check = (_outcome_text(result.get("target_check")).strip().lower()
+                    if has_text else "")
+
+    axes = dict(EMPTY_OUTCOME_AXES)
+    if is_repro:
+        computation = _outcome_text(result.get("outcome_computation")).strip()
+        robustness = _outcome_text(result.get("outcome_robustness")).strip()
+        # An unrecognised axis value is a value the pipeline cannot act on; recording
+        # it as unsettled is honest, recording it verbatim is not.
+        if computation not in COMPUTATION_OUTCOME_VALUES:
+            computation = "cannot_be_determined"
+        if robustness not in ROBUSTNESS_OUTCOME_VALUES:
+            robustness = "cannot_be_determined"
+        axes = {
+            "outcome_computation":            computation,
+            "outcome_computational_quote":    _outcome_text(result.get("outcome_computational_quote")),
+            "out_quote_computational_source": _outcome_text(result.get("out_quote_computational_source")),
+            "outcome_robustness":             robustness,
+            "outcome_robustness_quote":       _outcome_text(result.get("outcome_robustness_quote")),
+            "out_quote_robust_source":        _outcome_text(result.get("out_quote_robust_source")),
+        }
+        outcome = derive_reproduction_outcome(computation, robustness)
+        # A reproduction's evidence lives in the two axis quotes; the shared
+        # outcome_phrase would have to be one of them chosen arbitrarily, which is
+        # exactly the one-quote-for-two-judgments problem the axes were split to end.
+        phrase, source = "", ""
+    else:
+        outcome = _outcome_text(result.get("outcome", "cannot_be_determined")).lower()
+        # Reproductions use the computation/robustness axes, replications the
+        # success/failure/... enum. Validating against the wrong one would silently
+        # coerce every verdict to cannot_be_determined.
+        if outcome not in outcome_categories_for(record_type):
+            outcome = "cannot_be_determined"
+        phrase = _outcome_text(result.get("outcome_phrase"))
+        source = _outcome_text(result.get("out_quote_source"))
+
+    # The veto: a paper the text shows does not check the named original at all.
+    if rtc == "neither" or target_check == "no_original":
+        outcome = "not_a_replication"
+        axes = dict(EMPTY_OUTCOME_AXES)
+        phrase, source = "", ""
+
+    confident = result.get("outcome_confident", result.get("confident"))
+    if not isinstance(confident, bool):
+        confident = _outcome_text(confident).strip().lower() == "true"
+
+    return {
+        "outcome":            outcome,
+        "outcome_phrase":     phrase,
+        "outcome_confidence": "high" if confident else "low",
+        "out_quote_source":   source,
+        "outcome_reasoning":  _outcome_text(result.get("outcome_reasoning")),
+        **axes,
+        "record_type_check":  rtc,
+        "target_check":       target_check,
+    }
+
+
+def outcome_is_settled(block: dict, record_type: str) -> bool:
+    """Whether an outcome block says something the pipeline can record as a verdict.
+
+    This is what decides whether an LLM rung of the resolution ladder may END the row:
+    a resolved target whose outcome is unsettled descends towards the full text
+    instead. A reproduction has two axes, and either one unresolved is a reason to keep
+    reading — treating a settled computation verdict beside an unresolved robustness
+    verdict as done would record "not checked" as though the paper had been read to the
+    end.
+    """
+    if not block:
+        return False
+    if str(record_type or "").strip().lower() == "reproduction":
+        return (block.get("outcome_computation") not in ("", None, "cannot_be_determined")
+                and block.get("outcome_robustness") not in ("", None, "cannot_be_determined"))
+    return block.get("outcome") not in ("", None, "cannot_be_determined", "api_error")
 
 
 def outcome_categories_for(record_type: str) -> set:
