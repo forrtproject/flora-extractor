@@ -334,9 +334,9 @@ def test_a_failed_registration_names_registration_not_re_routing(con, pool):
 def _write_release_record(cache_dir: Path) -> dict:
     """The record `route` leaves beside the store, filed under this test's id.
 
-    Written directly rather than through `write_release()`, which derives the id
-    from the six inputs: the store here is routed under RELEASE, and the record
-    has to be the one `read_release(RELEASE)` finds.
+    Written directly rather than through `write_release()`, whose six-input
+    record shape is more than this test needs: the store here is routed under
+    RELEASE, and the record has to be the one `read_release(RELEASE)` finds.
     """
     from filter.engine.release import releases_dir
 
