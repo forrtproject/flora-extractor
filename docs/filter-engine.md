@@ -746,3 +746,175 @@ the normal free case (§1).
 Dry-run is the default and prints the plan — per work, the pile move, the kind, and
 how many named records are already validated versus still unvalidated. `--run` is
 the only way to write.
+
+## Milestone 6 — the extract tier
+
+Issue #146 §4 says money is spent under a claim and every judgment leaves permanent
+evidence. Stage 3 was the last place that was not true of: it decided which original
+a paper targets and what the outcome was, and the only record of it was a row
+appended to a CSV on one machine. M6 runs the same ladder as a tier.
+
+Nothing about the extraction moves. `extract/tier.py` registers a `TierSpec` whose
+`judge` calls `run_extract._process_row` — the one per-row pipeline there has ever
+been — and runs it through the same `run_tier()` spine the two screen tiers use.
+`python -m extract.run_extract` still works, unchanged; the CSV stops being the
+authority at a later phase.
+
+| Module | Contract |
+| --- | --- |
+| `extract/tier.py` | `extract_generation()` / `generation_inputs()` (the ladder version, four prompt versions and three model ids at their call sites' efforts); `extract_works(con, client, pool_dir, release_id, *, only, limit, redo, …) -> list[ExtractWork]` (the worklist); `run_extract_tier(con, client, release_id, *, mode, limit, run, batch_size, …)` (the batched claims loop); `estimate(works)` / `render_estimate(est)` (the per-rung dry run); `result_payload(source_row, doi_r, rows, observed)` and `render_payload(payload)` (the two halves of the round trip); `settled_work_ids(client)` (the checkpoint). CLI: `python -m extract.tier [--run] [--limit N] [--batch-label …] [--mode live\|validation] [--only ids] [--redo ids]`. |
+| `extract/export.py` | `latest_results(client, *, mode, current_generation_only) -> (work → result row, superseded count)`; `rows_from_results(results)`; `partition(rows) -> (main, {set-aside file: rows})`; `render(client, …)`; `write(report, out_csv)`; `check(report, out_csv)`. CLI: `python -m extract.export [--out …] [--mode …] [--check] [--current-generation-only]`. |
+
+### Two verdict-row kinds
+
+The `verdict` column tells them apart.
+
+- **`evidence`** — one per LLM call attributable to the work: the model, the version
+  of the prompt it was asked, and a summary in the blob. Written before the result
+  row that summarises them (§4's ordering), and never read back to make a decision.
+- **the RESULT row** — exactly one per work per run. Its `verdict` is the row's
+  ENDING, not a gate outcome: `resolved` · `provisional` · `not_a_replication` ·
+  `no_original_found` · `target_pending` · `api_error`. Its `prompt_hash` is the
+  extract generation and its `payload` (migration 0005) is the whole answer.
+
+### The self-sufficiency rule
+
+**A result payload rebuilds its work's `EXTRACTED_COLS` rows with no network, no
+cache, no routing store and no pool.** Not an optimisation — the definition of what
+the state authority holds. A payload that needed the pool would make the permanent
+verdict a pointer into a multi-GB artifact that is re-scanned and re-released on its
+own schedule; one that needed the cache would point into a directory that is
+explicitly expendable (`shared/cache_sync.py`). Either way the row would stop being
+evidence and become a bookmark.
+
+    {"kind": "result", "generation": …, "doi_r": …,
+     "input":   {FILTERED_COLS + SCREEN_COLS, exactly as the judge read them},
+     "link":    {which rung answered, whether it accepted a single link,
+                 n_targets, stated/unidentified counts, pdf_source, parse_method,
+                 what stopped it},
+     "targets": [one per original PAPER, post-guard, post-collapse, post-renumber:
+                 every EXTRACTED_COLS value not inherited unchanged from `input`]}
+
+`targets` is derived from the finished row dicts rather than from the ladder's
+intermediate answers, so the export is a near-identity render and the round trip is
+exact by construction. Deriving rows at export instead would put two copies of the
+row-building rules in the codebase and make the export a place a row can silently
+change shape. `tests/test_extract_export.py` is the gate: real rows from
+`data/extracted.csv` through the payload and back, field for field, plus byte
+equality of the written CSV.
+
+Four columns look derivable from `input` and are stored anyway, because none is
+derivable in general: `make_pair_id()`'s multi-original fallback hashes the target
+RECORD's OpenAlex id, which is not on the row; `oa_work_id_r` falls back to an
+OpenAlex lookup when `openalex_id_r` is blank; `bibtex_ref_r` is built from
+FILTERED_COLS values the row may have rewritten; and `screen_categories` is blank
+rather than copied on a row that reached no screen dict.
+
+DOI verification runs inside the judge, once, and its answer is stored — it costs up
+to three OpenAlex free-text searches at 10× a filter query, and an export that
+re-verified would pay that bill on every render.
+
+### `target_pending` and `api_error` do not settle
+
+The checkpoint means "has a live current-generation result row whose verdict
+settles". Those two endings are the ones a re-run is meant to redo — the same pair
+`REOPENED_SET_ASIDE_FILES` names in `shared/schema.py` — so they leave the work in
+the worklist. Counting either as decided turns a five-minute provider outage into a
+permanent hole in the corpus.
+
+That is why the tier reads its own checkpoint (`_decide`, `settled_work_ids`) rather
+than the screens' `decided_work_ids`, whose semantics is wrong here twice over: it
+calls a work decided when ANY row adds up to a decision, so a work with two evidence
+rows and no result row would read as done and never be extracted; and it has no
+notion of an ending that happened but settled nothing.
+
+Two result rows for one work are two RUNS, not two voters, so the latest wins
+(`created_at`, then the row id — the primary key is a uuid, so id order is not time
+order). `accepts_legacy` is `False`: this tier's first verdict row is written by the
+commit that adds it, so a claim with no generation is unattributable, not legacy.
+
+### The worklist
+
+Works admitted by a live, current-generation `screen_expensive` PROCEED verdict
+(`handoff.decisions()`), minus its discards, minus works this tier has settled,
+minus works held by another runner's unexpired extract claim, minus the two skip
+lists Stage 3 has always honoured (already in published FLoRA; already in the
+Supabase validation tables). Routing says "this deserves an LLM's attention"; only
+the validated pair says "this reaches Stage 3".
+
+The rows are built in process from `iter_export_rows` + `screen_columns` — the same
+two functions `handoff.py` writes `data/filtered.csv` with — so a work extracted
+through this tier reads exactly the row it would have read from that file. Writing a
+CSV and parsing it back would be a third representation of one thing, and a place
+for two of them to drift.
+
+### Claims, the lease, and the heartbeat
+
+`EXTRACT_CLAIM_BATCH = 200` works per claim under a `EXTRACT_CLAIM_TTL_MINUTES = 45`
+lease, renewed by a daemon thread every third of it. A work here is minutes of PDF
+download and full-text LLM, not seconds of abstract screening, so the lease is short
+and renewed rather than long and unattended: a host lost mid-batch frees its works in
+under an hour instead of six. A lease is only safe to make short if something renews
+it.
+
+`ClaimLeaseLost` from the heartbeat means the lease is already gone and another
+runner may hold these works, so the batch in flight finishes and records what it paid
+for and **no further batch is claimed**. Verdicts already written stand — expiry
+frees works, it never retracts evidence. A transport failure is not a lost lease: the
+next beat retries, and there are three of them before the lease could expire.
+
+`run_tier()` gained one parameter for this: `on_claim(claim_id)`, called the moment
+the batch is claimed and before the first work is judged. `run_tier` takes the claim,
+so the id is not knowable to the caller until it returns — hours too late to start
+renewing. It also now forwards a vote's `cost` and `payload` to `record_verdict` when
+the vote carries them; the two screens carry neither, and `payload` is sent only when
+given so a pre-0005 database still accepts a screen verdict.
+
+### Pricing
+
+Per RUNG, not per row, because the ladder returns at its first success and what a row
+costs is almost entirely how far down it went. `EXTRACT_RUNG_REACH` is measured:
+the `link_method` distribution of `data/extracted.csv` on 2026-08-06 (285 rows —
+`llm_references` 81, `llm_cited_candidates` 51, `llm_fulltext` 9, and 144 a
+deterministic rule resolved). It is a starting point only — that file is the output
+of runs made under an older ladder — and the numbers to replace it with are the rung
+shares in `cache/engine/runs/extract-*.json` once this tier has run.
+
+`EXTRACT_RESOLVED_SHARE` is the one judgement rather than a measurement: it cannot be
+read off `extracted.csv`, because `sanity_check` moves every unresolved row out of
+that file. It comes from the ratio of that file to the ten set-aside CSVs beside it
+(285 against 1,176).
+
+OpenAlex is reported in **credits**, on its own line, never converted to dollars:
+OpenAlex bills a daily credit budget that resets at midnight UTC, so a dollar figure
+would answer a question nobody is asked at the point of spending.
+
+### The export
+
+`python -m extract.export` renders `data/extracted.csv` from the stored verdicts. A
+pure render.
+
+**Two generations, and why the older one still counts.** `--current-generation-only`
+gives the strict view: a verdict from a superseded ladder, prompt or model says
+nothing about what today's code would find. The DEFAULT is not strict, because the
+two questions differ. The tier's worklist asks *what should I pay to extract now*,
+where a stale verdict must not stop a re-extraction. The export asks *what has this
+pipeline concluded*, where dropping a paper because a prompt was edited would delete
+a real finding and hand the validators a shorter file with no explanation. So a work
+with no current-generation result row falls back to its newest row of any generation,
+and the count is printed: `rows from a superseded generation: N`. Those are rows
+awaiting re-extraction, not rows to discard.
+
+**Mode is the claim's, not the row's.** A `validation`-mode run records real verdicts
+that must not reach the live file, and `claim.meta.mode` is where that is written
+down — the same place the screens keep it.
+
+**Quarantine happens on the way out.** `sanity_check` partitions `extracted.csv`
+after the fact; the export applies the same partition as it writes, through the same
+`classify_row()` extracted from that module. One definition of where a row belongs,
+so a row lands in the same set-aside CSV whichever hand wrote it — and the set-asides
+go to `set_aside_dir(out_csv)`, so a render to a sandbox path cannot settle a paper
+for the production resume.
+
+`--check` rebuilds in memory, diffs against the file on disk by whole-row content,
+prints the counts and exits non-zero on any difference. It writes nothing.

@@ -500,6 +500,78 @@ the ladder did not resolve), `--no-pdf` (stop the ladder before PDF acquisition)
 predicate applied chunk by chunk, so like `--limit` it bounds spend, not how much
 of the input is read.
 
+### The extract tier — `extract.tier` and `extract.export`
+
+The same ladder, run as a claimed engine tier instead of as a CSV writer. Stage 3's
+judgments become permanent verdict rows in the state authority, and the CSV becomes
+something rendered from them rather than the place they live. `python -m
+extract.run_extract` is unchanged and still works; these two commands are a second
+front door onto the same machine. Design: [`filter-engine.md`](filter-engine.md),
+"Milestone 6 — the extract tier".
+
+```bash
+# What would this cost? Dry run is the DEFAULT — nothing claimed, nothing spent
+python -m extract.tier
+
+# Claim the worklist and extract it
+python -m extract.tier --run
+
+# A first small batch, labelled so the claims name the campaign
+python -m extract.tier --run --limit 50 --batch-label wave-1
+
+# Record verdicts the live export ignores
+python -m extract.tier --run --mode validation
+
+# Specific works, and works the checkpoint would otherwise skip
+python -m extract.tier --run --only 2741809807,2884670852
+python -m extract.tier --run --redo 2741809807
+
+# Render data/extracted.csv from the stored verdicts
+python -m extract.export
+
+# Does the file on disk match the verdicts? Writes nothing; non-zero if it differs
+python -m extract.export --check
+
+# Drop works whose only result row is from a superseded generation
+python -m extract.export --current-generation-only
+```
+
+**`extract.tier` needs the routing store and the pool**, because the worklist is
+built from the routing release and the pool text — `--store`, `--pool`,
+`--spec-dir` and `--release` all default the same way the `filter.engine`
+subcommands do. A dry run runs without Supabase and estimates over the whole
+admitted pile, saying so; `--run` without it refuses before anything is claimed.
+
+**The worklist is what the screen admitted, minus what is done or held.** Works with
+a live current-generation `screen_expensive` PROCEED verdict, minus its discards,
+minus works this tier has settled, minus works under another runner's unexpired
+extract claim, minus the FLoRA and validation-table skip lists. Nothing is claimed
+twice and nothing already extracted is re-bought.
+
+**`target_pending` and `api_error` do not settle a work.** They are the two endings
+a re-run is meant to redo, so a work that ended in either is back in the next run's
+worklist with no flag to remember. Every other ending takes it out.
+
+**`--redo` is for a work that DID settle.** It re-admits the work despite the
+checkpoint and points the previous result row at the new one
+(`supersede_verdict`), so the old row stays as evidence of what was believed and
+stops being read.
+
+**The dry run prices by rung, and OpenAlex in credits.** What a row costs is almost
+entirely how far down the ladder it went, so the estimate is a weighted sum over
+rungs rather than a per-row constant. OpenAlex is reported as credits on its own
+line and never converted to dollars — it bills a daily credit budget that resets at
+midnight UTC.
+
+**`extract.export` is a pure render**: no network, no cache, no store, no pool. It
+partitions rows into the set-aside CSVs on the way out, through the same
+`classify_row()` `extract.sanity_check` uses, and the set-asides belong to the CSV
+being written (`--out data/extracted-test.csv` quarantines into
+`data/extracted-test-set-aside/`). A work whose only result row is from a superseded
+generation is carried forward and counted rather than dropped — dropping a paper
+because a prompt was edited would delete a real finding — and
+`--current-generation-only` is the strict view.
+
 ### Two flags that do not mean what they look like
 
 **`--limit N` counts rows *processed*, not rows scanned.** The counter increments
