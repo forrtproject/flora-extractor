@@ -53,7 +53,7 @@ _PAGE_SIZE = 1000
 # any server's URL limit, while a whole commit's worth would not be.
 _MARK_CHUNK = 50
 
-TIERS = ("screen_cheap", "screen_expensive", "human", "measurement")
+TIERS = ("screen_cheap", "screen_expensive", "extract", "human", "measurement")
 CLAIM_STATUSES = ("active", "complete", "cancelled", "failed")
 END_STATUSES = ("complete", "cancelled", "failed")
 
@@ -119,6 +119,16 @@ class ClaimExpiryUnsupported(ClaimsError):
             "every later batch silently skips them.")
 
 
+class ClaimLeaseLost(ClaimsError):
+    """A renewal found the lease already expired.
+
+    The claim's works are re-claimable and another machine may be spending on
+    them right now, so the run must stop its batch rather than keep writing as
+    if it still held them. Verdicts already written stand — expiry frees works,
+    it never retracts evidence.
+    """
+
+
 class ClaimConflict(ClaimsError):
     """Some work in the batch is already held by an active claim of this tier."""
 
@@ -172,6 +182,8 @@ class ClaimsClient:
             if _missing_expiry(body):
                 raise ClaimExpiryUnsupported(f"{path} → HTTP {resp.status_code}: "
                                              f"{body.strip()}")
+            if "claim_lease_lost" in body:
+                raise ClaimLeaseLost(body.strip())
             # The RPC raises unique_violation for a conflict, which PostgREST
             # returns as 409; the message prefix keeps it distinguishable from a
             # plain duplicate-key error on some other table. The tier is the one
@@ -271,6 +283,22 @@ class ClaimsClient:
         }, tier=tier)
         return _scalar(result)
 
+    def renew_claim(self, claim_id: str, ttl_seconds: Optional[int] = None) -> str:
+        """Extend a live claim's lease; returns the new lease end.
+
+        The heartbeat for a run whose batch outlives its lease. The RPC refuses
+        an already-expired lease (`ClaimLeaseLost`) because its works are
+        re-claimable and may already be held elsewhere — re-extending would
+        recreate exactly the double-claim the lease exists to prevent. It also
+        never shortens: a caller behind on the clock gets the current lease end
+        back unchanged.
+        """
+        result = self._post("rpc/engine_renew_claim", {
+            "p_claim_id": claim_id,
+            "p_expires_at": _lease_end(ttl_seconds),
+        })
+        return _scalar(result)
+
     def release_claim(self, claim_id: str, status: str) -> str:
         """End a claim: `complete` | `cancelled` | `failed`.
 
@@ -359,13 +387,19 @@ class ClaimsClient:
                        model: str = "", prompt_hash: str = "", confidence: str = "",
                        quote: str = "", response_hash: Optional[str] = None,
                        response_state: str = PENDING_UPLOAD,
-                       cost: Optional[dict] = None) -> str:
+                       cost: Optional[dict] = None,
+                       payload: Optional[dict] = None) -> str:
         """Insert one permanent verdict row. Returns its id.
 
         `response_state` follows the §4 ordering: the caller uploads the raw blob
         to HF first and passes `UPLOADED` with its `response_hash`, or passes
         `PENDING_UPLOAD` and reconciles later. `UPLOADED` without a hash is
         rejected here rather than written as a dangling reference.
+
+        *payload* is the structured answer the lean columns cannot hold (the
+        extract tier's per-target rows; migration 0005). It is sent only when
+        given, so a screen verdict written against a pre-0005 database still
+        inserts.
         """
         if response_state not in RESPONSE_STATES:
             raise ValueError(
@@ -379,11 +413,13 @@ class ClaimsClient:
             "response_hash": response_hash, "response_state": response_state,
             "cost": cost or {},
         }
+        if payload is not None:
+            row["payload"] = payload
         result = self._post("engine_verdicts", row, prefer="return=representation")
         return _first(result)["id"]
 
     def verdicts(self, tier: str, claim_ids: Optional[Iterable[str]] = None,
-                 ) -> list[dict]:
+                 *, with_payload: bool = False) -> list[dict]:
         """Live (non-superseded) verdict rows for *tier*, one per voter vote.
 
         Restricting by *claim_ids* is done here rather than in the query: a run
@@ -407,9 +443,15 @@ class ClaimsClient:
         the row Stage 3 reads (`screen_evidence`), so a set-aside row still names the
         evidence the screen acted on.
         """
+        select = ("id,claim_id,work_id,tier,model,verdict,confidence,quote,"
+                  "response_state,created_at")
+        if with_payload:
+            # Only the extract export pays for payloads (and the prompt_hash
+            # that carries a result row's generation); the screen's read stays
+            # its lean self.
+            select += ",prompt_hash,payload"
         rows = self._get_paged("engine_verdicts", {
-            "select": "id,claim_id,work_id,tier,model,verdict,confidence,quote,"
-                      "response_state,created_at",
+            "select": select,
             "tier": f"eq.{tier}",
             "superseded_by": "is.null",
         }, order="work_id.asc,id.asc")

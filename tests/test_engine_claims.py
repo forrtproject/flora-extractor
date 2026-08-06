@@ -12,6 +12,7 @@ import pytest
 
 from filter.engine import sizing
 from filter.engine.claims import (CLAIM_TTL_HOURS, PENDING_UPLOAD, UPLOADED,
+                                  ClaimLeaseLost, ClaimsError,
                                   ClaimConflict, ClaimExpiryUnsupported,
                                   ClaimsClient, ClaimsNotConfigured)
 
@@ -188,3 +189,63 @@ def test_sizing_is_deterministic_and_scales_linearly():
     assert heavier["total_mb"] > a["total_mb"]
     assert heavier["free_tier_row_capacity"] < a["free_tier_row_capacity"]
     assert sizing.estimate(1000, 0.1, dsn="")["fits_free_tier"] is True
+
+
+def test_renew_claim_extends_the_lease_and_maps_lease_lost():
+    """The heartbeat goes to engine_renew_claim; an expired lease is a named stop."""
+    client = _client()
+    new_end = "2026-08-06T12:45:00+00:00"
+    with patch("filter.engine.claims.requests.post",
+               return_value=_response(200, new_end)) as post:
+        got = client.renew_claim("claim-1", ttl_seconds=45 * 60)
+    assert got == new_end
+    url, = post.call_args.args
+    assert url.endswith("/rest/v1/rpc/engine_renew_claim")
+    sent = post.call_args.kwargs["json"]
+    assert sent["p_claim_id"] == "claim-1"
+    lease = datetime.datetime.fromisoformat(sent["p_expires_at"])
+    ahead = lease - datetime.datetime.now(datetime.timezone.utc)
+    assert datetime.timedelta(minutes=40) < ahead < datetime.timedelta(minutes=50)
+
+    lost = _response(400, text="claim_lease_lost: claim-1 expired at …")
+    lost.text = "claim_lease_lost: claim-1 expired at …"
+    with patch("filter.engine.claims.requests.post", return_value=lost):
+        with pytest.raises(ClaimLeaseLost):
+            client.renew_claim("claim-1")
+
+    stale = _response(400, text="claim_not_active: claim-1 is already complete")
+    stale.text = "claim_not_active: claim-1 is already complete"
+    with patch("filter.engine.claims.requests.post", return_value=stale):
+        with pytest.raises(ClaimsError):
+            client.renew_claim("claim-1")
+
+
+def test_record_verdict_sends_payload_only_when_given():
+    """A screen verdict against a pre-0005 database must still insert."""
+    client = _client()
+    with patch("filter.engine.claims.requests.post",
+               return_value=_response(201, [{"id": "v-1"}])) as post:
+        client.record_verdict(claim_id="c", work_id=1, tier="screen_cheap",
+                              verdict="none", response_state=PENDING_UPLOAD)
+    assert "payload" not in post.call_args.kwargs["json"]
+
+    with patch("filter.engine.claims.requests.post",
+               return_value=_response(201, [{"id": "v-2"}])) as post:
+        client.record_verdict(claim_id="c", work_id=1, tier="extract",
+                              verdict="resolved", response_state=PENDING_UPLOAD,
+                              payload={"targets": []})
+    assert post.call_args.kwargs["json"]["payload"] == {"targets": []}
+
+
+def test_verdicts_selects_payload_only_when_asked():
+    """The screen's read stays lean; the extract export pays for payloads."""
+    client = _client()
+    page = _response(200, [])
+    with patch("filter.engine.claims.requests.get", return_value=page) as get:
+        client.verdicts("screen_expensive")
+    assert "payload" not in get.call_args.kwargs["params"]["select"]
+
+    with patch("filter.engine.claims.requests.get", return_value=page) as get:
+        client.verdicts("extract", with_payload=True)
+    select = get.call_args.kwargs["params"]["select"]
+    assert "payload" in select and "prompt_hash" in select
