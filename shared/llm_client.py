@@ -337,10 +337,15 @@ def _gemini_answer_text(body: dict) -> str:
 
 # ── Gemini: JSON chat calls ───────────────────────────────────────────────────
 
-def call_gemini(prompt: str, model: str = PDF_PARSE_MODEL, *,
+def call_gemini(prompt: str, model: str, *,
                 reasoning_effort: str = "") -> tuple[Optional[dict], str]:
     """
     Call Gemini via the REST API with responseMimeType=application/json.
+
+    model is required, as it is on call_openai and call_openrouter. This is a
+    text-JSON call, reached through call_model(), which always names the model it
+    dispatched on; the default it used to carry was PDF_PARSE_MODEL — the constant
+    for a different question entirely — so it could only ever be reached by mistake.
 
     reasoning_effort is sent as `thinkingLevel` and only when set — it comes from the
     call site, so a Gemini id and an OpenAI id under the same constant think alike.

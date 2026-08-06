@@ -478,7 +478,7 @@ def test_flex_follows_the_paid_key_not_its_position(monkeypatch):
 
     monkeypatch.setattr(llm.requests, "post", post)
     monkeypatch.setattr(llm.time, "sleep", lambda s: None)
-    assert llm.call_gemini("prompt") == ({"ok": True}, "")
+    assert llm.call_gemini("prompt", model="m") == ({"ok": True}, "")
     assert "service_tier" not in posts[0][1]
     assert posts[-1][1]["service_tier"] == "flex"
 
