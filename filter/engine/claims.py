@@ -232,7 +232,8 @@ class ClaimsClient:
     # ── claims ───────────────────────────────────────────────────────────────
 
     def claim(self, release_id: str, tier: str, items: Iterable[tuple[int, str]],
-              meta: Optional[dict] = None) -> str:
+              meta: Optional[dict] = None,
+              ttl_seconds: Optional[int] = None) -> str:
         """Claim *items* — `(work_id, pile)` pairs — for *tier*. Returns the claim id.
 
         One server-side transaction (`engine_claim_batch`). Rejection is
@@ -247,6 +248,12 @@ class ClaimsClient:
         spends, not by a server default. A database without the lease column
         refuses the call (`ClaimExpiryUnsupported`, naming the migration) rather
         than taking a claim nothing can release.
+
+        *ttl_seconds* overrides `CLAIM_TTL_HOURS` for one claim, because how long a
+        run needs its works is a property of the tier and not of the client: six
+        hours suits a batch of abstract screens, and a tier whose unit of work is a
+        PDF download and a full-text call may need longer. `None` — every caller
+        today — is the constant.
         """
         if tier not in TIERS:
             raise ValueError(f"unknown tier: {tier} (expected one of {TIERS})")
@@ -258,7 +265,7 @@ class ClaimsClient:
             "p_tier": tier,
             "p_items": payload_items,
             "p_meta": meta or {},
-            "p_expires_at": _lease_end(),
+            "p_expires_at": _lease_end(ttl_seconds),
         })
         return _scalar(result)
 
@@ -486,10 +493,11 @@ def _now_iso() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
-def _lease_end() -> str:
+def _lease_end(ttl_seconds: Optional[int] = None) -> str:
     """When a claim taken now stops blocking its works."""
-    return (datetime.datetime.now(datetime.timezone.utc)
-            + datetime.timedelta(hours=CLAIM_TTL_HOURS)).isoformat()
+    lease = (datetime.timedelta(seconds=ttl_seconds) if ttl_seconds
+             else datetime.timedelta(hours=CLAIM_TTL_HOURS))
+    return (datetime.datetime.now(datetime.timezone.utc) + lease).isoformat()
 
 
 def _missing_expiry(body: str) -> bool:
