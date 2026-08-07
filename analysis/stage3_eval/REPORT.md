@@ -487,7 +487,15 @@ carries none of it.
 | dev wrong settles | 25 | **1** |
 | holdout wrong settles | — | **1** (first holdout 2) |
 
-Total spend **$2.05** of the $20 approved.
+Total spend, read off `cache/token_usage.json` against the snapshot taken before
+iteration 0 rather than added up from the table: **$2.05** of the $20 approved —
+2,373,444 input and 729,760 output tokens on `gpt-5.4-mini`, across roughly 1,200
+work-runs.
+
+`campaign.sh` beside this file is the runner the campaign uses. It gates
+`extract.export` on the tier succeeding, because `export` renders the current
+generation WHOLE and an export after a partial run replaced `data/extracted.csv`'s 285
+rows with 6 (2026-08-07).
 
 ### What the campaign needs, beyond the LLM bill
 
@@ -517,9 +525,10 @@ resumes without losing anything.
 was met. It is met and it is deleted; this file is what replaces it. The two things it
 asked for that are NOT done, and are not part of its goal:
 
-- the 29 works carrying live settling verdicts from the pre-fix runs
-  (`scratch_redo_ids.txt`) are still to be `--redo`'d. The maintainer's decision on
-  2026-08-07 was to do it after the holdout, as part of the campaign.
+- the 29 works carrying live settling verdicts from the pre-fix runs are still to be
+  `--redo`'d. Their ids are in `redo-pre-fix-29.txt`, beside this file rather than in a
+  scratch file the next cleanup would delete. The maintainer's decision on 2026-08-07
+  was to do it after the holdout, as part of the campaign.
 - issue #186 — measuring the provisional resolvers' precision on human-confirmed rows —
   is still open, and the 21 provisional links this exercise checked by hand are not a
   substitute for it.
