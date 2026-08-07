@@ -43,7 +43,8 @@ the `cache/token_usage.json` delta, taken by `python -m analysis.stage3_eval.spe
 | 2 | a citation with no title is resolved by author and year (`1f8ceb4`) | **1** | 38 | 56 | 5 | **38** | $0.04 |
 | 3 | the abstract rung's gate reads the title's citations too (`39d4218`) | **0** | 46 | 50 | 4 | **46** | $0.10 |
 | 4 | the target prompt says what identifies a target (`635f5c0`) | **4** | 54 | 38 | 4 | **54** | $0.43 |
-| 5 | the title search is given the year the paper cited | **4** | 54 | 38 | 4 | **54** | $0.02 | ✗ |
+| 5 | the title search is given the year the paper cited (`84a4751`) | **4** | 54 | 38 | 4 | **54** | $0.02 |
+| 6 | a title hit must carry the author the citation named | **2** | 54 | 40 | 4 | **54** | $0.00 |
 
 Per-work labels and the reason for each: `labels-dev-<n>.json`, one per iteration.
 
@@ -247,6 +248,29 @@ Both surviving hits carry the wrong AUTHOR — one names Snyder and Deaux, the o
 names nobody — while the citation names Bem and Svensson. That is iteration 6.
 
 **Cost $0.02.** Cumulative $0.92 of $20.
+
+### What iteration 6 says
+
+Wrong-settle 4 → 2, meeting the ≥ 2/100 threshold. Yield unchanged at 54. The two
+title-search errors iteration 5 exposed are gone: the Oxford Handbook chapter is
+dropped because it does not carry Bem, and the journal front matter because it has no
+author at all. Both works are `target_pending` again, so a better resolver is still
+offered them.
+
+**The guard's first run cost a correct link, and that is why it was re-run.**
+`extract_author_year_patterns` returns a multi-author citation as one run-on token —
+"Kaufmann, Weber, and Haisley (2013)" comes back as `kaufmann,weber,andhaisley` — and
+matching that as a word never hits an author list, so the right Management Science
+paper was dropped. The value is now split and any of its names carrying is enough.
+
+**The two wrong settles that remain** are both author-and-year picks where the author
+and the year are right and the paper is not: "Olivola & Shafir (2013)" →
+a PsycEXTRA conference abstract by Olivola, and "Hamlin & Wynn (2011)" → the authors'
+OTHER 2011 paper. Neither is reachable by a metadata rule; both are subject-matter
+judgments the model made and got wrong.
+
+**Cost: nothing** — no new question was asked, only answers filtered.
+Cumulative $0.92 of $20.
 
 ---
 
