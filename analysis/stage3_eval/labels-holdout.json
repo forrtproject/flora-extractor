@@ -1,0 +1,710 @@
+{
+  "batch": "eval-holdout",
+  "commit": "4b53cb2",
+  "adjudicated": "2026-08-07",
+  "note": "All 53 SETTLED works were adjudicated, every DOI against Crossref. The 47 open works are not split into missed/correct_open: the holdout's job is the wrong-settle rate, and an open work is recoverable either way.",
+  "labels": {
+    "2046368353": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "2266446612": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.11575/prism/9529"
+      ],
+      "label": "wrong_settle",
+      "reason": "-> 10.11575/prism/9529, a repository record whose title is all but identical to the REPLICATION's own ('Gambling and Problem Gambling Among Adolescents in Washington State'). Crossref has no metadata for it, so nothing distinguishes it from a self-link under a second DOI. Counted wrong because it cannot be shown right"
+    },
+    "2412032124": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1007/bf03395768"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1007/bf03395768 = Hughes; Barnes-Holmes 2011, On the Formation and Persistence of Implicit Attitudes: New "
+    },
+    "2415834639": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "2755082340": {
+      "verdict": "resolved",
+      "doi_o": [
+        "10.1515/jbnst-2015-0206"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1515/jbnst-2015-0206 = Gouda; Park 2015, Religious Loyalty and Acceptance of Corruption"
+    },
+    "2808486562": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "2884131073": {
+      "verdict": "resolved",
+      "doi_o": [
+        "10.1037/xhp0000029"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/xhp0000029 = Seli; Jonker; Cheyne; Cortes; Smilek 2015, Can research participants comment authoritatively on the val"
+    },
+    "2990260695": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "3011517946": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1016/j.jbankfin.2014.05.033"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1016/j.jbankfin.2014.05.033 = Dias 2014, Semiparametric estimation of multi-asset portfolio tail risk"
+    },
+    "3102574417": {
+      "verdict": "resolved",
+      "doi_o": [
+        "10.1037/0022-3514.95.2.293"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/0022-3514.95.2.293 = Risen; Gilovich 2008, Why people are reluctant to tempt fate."
+    },
+    "3126033621": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1016/j.econlet.2015.12.016"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1016/j.econlet.2015.12.016 = B\u00e9k\u00e9s; Murak\u00f6zy 2016, Measuring productivity premia with many modes of internation"
+    },
+    "3212724718": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "3214136846": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1177/0956797616634068"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1177/0956797616634068 = Seli; Risko; Smilek 2016, On the Necessity of Distinguishing Between Unintentional and"
+    },
+    "4223421156": {
+      "verdict": "resolved",
+      "doi_o": [
+        "10.1177/0261927x12438532",
+        "10.1177/0261927x12460666"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1177/0261927x12438532 = Abe 2012, Cognitive\u2013Affective Styles Associated With Position on War; 10.1177/0261927x12460666 = Matsumoto; Hwang 2012, The Language of Political Aggression"
+    },
+    "4243252210": {
+      "verdict": "resolved",
+      "doi_o": [
+        "10.1177/0956797612443835"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1177/0956797612443835 = Shalvi; Eldar; Bereby-Meyer 2012, Honesty Requires Time (and Lack of Justifications)"
+    },
+    "4283657796": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.3928/0048-5713-19951201-07"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.3928/0048-5713-19951201-07 = Loftus; Pickrell 1995, The Formation of False Memories"
+    },
+    "4311927093": {
+      "verdict": "resolved",
+      "doi_o": [
+        "10.3389/fpsyg.2020.622527"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.3389/fpsyg.2020.622527 = Wang; Singer 2021, A Cross-Cultural Study of Self-Defining Memories in Chinese "
+    },
+    "4323045275": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "4394948314": {
+      "verdict": "resolved",
+      "doi_o": [
+        "10.1525/collabra.325"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1525/collabra.325 = Lush 2020, Demand Characteristics Confound the Rubber Hand Illusion"
+    },
+    "4402771907": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1037/a0015854"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/a0015854 = Casasanto 2009, Embodiment of abstract concepts: Good and bad in right- and "
+    },
+    "4404387819": {
+      "verdict": "resolved",
+      "doi_o": [
+        "10.1038/ng.1080",
+        "10.1038/ng.639"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1038/ng.639 = ; Thye; ; Vannberg; Wong; Owusu-Dabo;  2010, Genome-wide association analyses identifies a susceptibility; 10.1038/ng.1080 = Thye; Owusu-Dabo; Vannberg; van Crevel 2012, Common variants at 11p13 are associated with susceptibility "
+    },
+    "4405352967": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "4407425168": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1017/s095834400999019x"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1017/s095834400999019x = Hong 2010, CALL teacher education as an impetus for L2 teachers in inte"
+    },
+    "4409400916": {
+      "verdict": "resolved",
+      "doi_o": [
+        "10.1111/jopy.12464"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1111/jopy.12464 = Crowe; Lynam; Campbell; Miller 2019, Exploring the structure of narcissism: Toward an integrated "
+    },
+    "4417416703": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "6887667752": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "6887701600": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1111/1467-9280.02431"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1111/1467-9280.02431 = Fox; Rottenstreich 2003, Partition Priming in Judgment Under Uncertainty"
+    },
+    "6887731467": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1016/j.cognition.2011.04.005"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1016/j.cognition.2011.04.005 = Young; Saxe 2011, When ignorance is no excuse: Different roles for intent acro"
+    },
+    "6887787855": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "6906148983": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "6906267890": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.3389/fpsyg.2013.00190"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.3389/fpsyg.2013.00190 = Blini; Cattaneo; Vallar 2013, Different Effects of Numerical Magnitude on Visual and Propr"
+    },
+    "6906330305": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1016/j.nlm.2012.09.008"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1016/j.nlm.2012.09.008 = Cognato; Bortolotto; Blazina; Christof 2012, Y-Maze memory task in zebrafish (Danio rerio): The role of g"
+    },
+    "6906373265": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1111/j.1467-9280.2008.02127.x"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1111/j.1467-9280.2008.02127.x = Kornell; Bjork 2008, Learning Concepts and Categories"
+    },
+    "6906446704": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "6906515087": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1017/xps.2015.5"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1017/xps.2015.5 = Searles; Mattes 2015, It's a Mad, Mad World: Using Emotion Inductions in a Survey"
+    },
+    "6906564708": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "6906752903": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "6907677149": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "6924914807": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1521/soco.2008.26.2.143"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1521/soco.2008.26.2.143 = Epley; Waytz; Akalis; Cacioppo 2008, When We Need A Human: Motivational Determinants of Anthropom"
+    },
+    "6925051050": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1111/j.1471-6402.2007.00389.x"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1111/j.1471-6402.2007.00389.x = Sanchez; Kwang 2007, When the Relationship Becomes Her: Revisiting Women's Body C"
+    },
+    "6925099750": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1037/0096-3445.136.2.289"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/0096-3445.136.2.289 = Van Boven; Ashworth 2007, Looking forward, looking back: Anticipation is more evocativ"
+    },
+    "6925312822": {
+      "verdict": "provisional",
+      "doi_o": [],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: A Good Lamp Is the Best Police: Darkness"
+    },
+    "6925333846": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1037/0022-3514.55.5.738"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/0022-3514.55.5.738 = Weiner; Perry; Magnusson 1988, An attributional analysis of reactions to stigmas."
+    },
+    "6939995703": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "6943387733": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "6943851090": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1007/bf00419608"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1007/bf00419608 = Hommel 1993, The role of attention for the Simon effect"
+    },
+    "6943880952": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1037/a0028770"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/a0028770 = Tentori; Crupi; Russo 2013, On the determinants of the conjunction fallacy: Probability "
+    },
+    "6944074854": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1037/a0037207"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/a0037207 = Barasch; Levine; Berman; Small 2014, Selfish or selfless? On the signal value of emotion in altru"
+    },
+    "6944111526": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1111/1467-9280.02431"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1111/1467-9280.02431 = Fox; Rottenstreich 2003, Partition Priming in Judgment Under Uncertainty"
+    },
+    "6944174174": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "6944176436": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "6945244419": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "6962307284": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "6962659170": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1016/j.obhdp.2022.104225"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1016/j.obhdp.2022.104225 = Scott; Landy 2023, \u201cGood people don\u2019t need medication\u201d: How moral character bel"
+    },
+    "6962683421": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "6962730545": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "6962785661": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1016/j.cognition.2016.06.011"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1016/j.cognition.2016.06.011 = Hopkins; Weisberg; Taylor 2016, The seductive allure is a reductive allure: People prefer sc"
+    },
+    "6962799424": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.2139/ssrn.1157085"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.2139/ssrn.1157085 = Gino; Pierce 2008, The Abundance Effect: Unethical Behavior in the Presence of "
+    },
+    "6962837484": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1111/ajps.12350"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1111/ajps.12350 = Clifford; Jerit 2018, Disgust, Anxiety, and Political Learning in the Face of Thre"
+    },
+    "6962854698": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "6963041483": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "6963213346": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "6982463097": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1037/e413802005-319"
+      ],
+      "label": "wrong_settle",
+      "reason": "'Incidental Attitude Formation via the Surveillance Task' -> 10.1037/e413802005-319, a PsycEXTRA conference record rather than Olson & Fazio (2001), the paper the surveillance task comes from. Right work, wrong kind of record \u2014 the same error as dev's 6906572393"
+    },
+    "6987928845": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1037/0096-3445.136.2.289"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/0096-3445.136.2.289 = Van Boven; Ashworth 2007, Looking forward, looking back: Anticipation is more evocativ"
+    },
+    "7004985205": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1111/j.1467-9280.2008.02090.x"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1111/j.1467-9280.2008.02090.x = Kraljic; Samuel; Brennan 2008, First Impressions and Last Resorts"
+    },
+    "7008151610": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1080/17439760.2020.1716055"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1080/17439760.2020.1716055 = Tse; Nakamura; Csikszentmihalyi 2020, Living well by \u201cflowing\u2019 well: The indirect effect of autote"
+    },
+    "7009309994": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1037/0022-3514.92.4.585"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/0022-3514.92.4.585 = Pronin; Berger; Molouki 2007, Alone in a crowd of sheep: Asymmetric perceptions of conform"
+    },
+    "7011430793": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1037/mot0000060"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/mot0000060 = Veenstra; Schneider; Koole 2017, The effects of motivational training on state anger and aggr"
+    },
+    "7015555050": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "7018327432": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "7037341528": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "7047723544": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "7056009763": {
+      "verdict": "provisional",
+      "doi_o": [],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: Can Quirks of Grammar Affect the Way You"
+    },
+    "7061642789": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "7065077404": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1080/02699931.2018.1451306"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1080/02699931.2018.1451306 = Threadgill; Gable 2018, Negative affect varying in motivational intensity influences"
+    },
+    "7075320209": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "7081570608": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "7084047619": {
+      "verdict": "provisional",
+      "doi_o": [],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: Causal Learning from Biased Sequences"
+    },
+    "7096246478": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1086/260061"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1086/260061 = Fama; MacBeth 1973, Risk, Return, and Equilibrium: Empirical Tests"
+    },
+    "7096389369": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "7110520727": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1111/j.1467-9280.2007.01983.x"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1111/j.1467-9280.2007.01983.x = Shariff; Norenzayan 2007, God Is Watching You"
+    },
+    "7110545681": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "7110560477": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "7110583266": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1037/a0028770"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/a0028770 = Tentori; Crupi; Russo 2013, On the determinants of the conjunction fallacy: Probability "
+    },
+    "7110653388": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "7110866713": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.2307/2392151"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.2307/2392151 = Pfeffer 1972, Merger as a Response to Organizational Interdependence"
+    },
+    "7114944267": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1111/j.0956-7976.2005.00799.x"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1111/j.0956-7976.2005.00799.x = Johns; Schmader; Martens 2005, Knowing Is Half the Battle"
+    },
+    "7128315827": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "7128357367": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "7128400074": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "7134126410": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "7134202210": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "7134998027": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.17851/2237-2083.25.3.1043-1074"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.17851/2237-2083.25.3.1043-1074 = Rilliard; Moraes 2017, Social affective variations in Brazilian Portuguese: a perce"
+    },
+    "7148307873": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "7154768980": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "7155379949": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.3389/feduc.2025.1595648"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.3389/feduc.2025.1595648 = Konstantinidou; Michaelides 2025, Assessment mode and inconsistent responding on a mixed-worde"
+    },
+    "7160460810": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "7163130021": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    },
+    "7163731132": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1111/0023-8333.00164"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1111/0023-8333.00164 = Hulstijn; Laufer 2001, Some Empirical Evidence for the Involvement Load Hypothesis "
+    },
+    "7165000559": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error \u2014 not adjudicated further; the holdout's primary metric is the wrong-settle rate"
+    }
+  }
+}

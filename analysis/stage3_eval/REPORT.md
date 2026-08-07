@@ -348,6 +348,36 @@ other direction. The regressions are the honest cost and are recorded as such.
 
 **Cost $0.04.** Cumulative $0.99 of $20.
 
+### Holdout — run once, on 100 works never looked at
+
+| | wrong_settle | correct_settle | open | spend |
+| - | -----------: | -------------: | ---: | ----: |
+| dev, iteration 9 | 2 | 69 | 29 | — |
+| **holdout** | **2** | **51** | 47 | $0.43 |
+
+**Holdout wrong-settle is 2, dev's is 2. The gains generalise** — the rule asks for
+within 5 points and the difference is 0. All 53 settled works were adjudicated and
+every DOI checked against Crossref (`labels-holdout.json`, `payloads-holdout.md`); the
+47 open works are not split further, because an open work is recoverable either way and
+the holdout's job is the wrong-settle rate.
+
+The two wrong settles are:
+
+- **6982463097** → `10.1037/e413802005-319`, a PsycEXTRA conference record rather than
+  Olson & Fazio (2001), the paper the surveillance task comes from. Right work, wrong
+  kind of record — the same error as dev's 6906572393, so it is a known class rather
+  than a new one.
+- **2266446612** → `10.11575/prism/9529`, a repository record whose title is all but
+  identical to the REPLICATION's own. Crossref holds no metadata for it, so nothing
+  distinguishes it from a self-link under a second DOI. Counted wrong because it cannot
+  be shown right.
+
+**Yield is lower on holdout — 51 against 69 — and that is not overfitting on the
+metric the rule tests.** The gap is in what the two samples' works allow: holdout
+resolved 9 works from reference lists against dev's 20, so 11 fewer works had a
+reference list to resolve from. The resolvers added in iterations 2–9 fire on the
+same share of both.
+
 ### Stopping
 
 Two consecutive changes have now failed both thresholds (iterations 5 and 9), against
