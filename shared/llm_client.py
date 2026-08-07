@@ -38,8 +38,8 @@ from . import token_counter, token_usage
 from .cache import content_key, read_cache, read_cache_migrating, write_cache
 from .rate_limit import throttle
 from .prompts import (
-    build_classify_prompt, build_repro_target_outcome_prompt,
-    build_target_outcome_prompt, prompt_version,
+    build_author_year_pick_prompt, build_classify_prompt,
+    build_repro_target_outcome_prompt, build_target_outcome_prompt, prompt_version,
 )
 from .schema import normalise_outcome_block
 from .target_keys import assign_target_keys
@@ -1404,6 +1404,76 @@ _UNPICKED_TARGET = {
     "targets": [], "multi_target": False, "target_stage": "",
     "unidentified_count": 0, "outcome_block": {},
 }
+
+
+def pick_author_year_original(doi_r: str, title_r: str, abstract_r: str,
+                              target_as_named: str, evidence_quote: str,
+                              candidates: list[dict]) -> dict:
+    """Which of an author-and-year shortlist is the original — or none of them.
+
+    Returns {"pick": <the candidate dict or None>, "confident": bool,
+             "reasoning": str, "llm_model": str, "llm_error": str}.
+
+    A pick is used only when the model both named a candidate IN the list and stood
+    behind it: an index the list does not hold, an unparseable reply and a `null` are
+    all "no pick", and none of them resolves anything. The row that results is
+    provisional whatever the answer, because this resolver has no measured precision
+    yet — see `link_method = llm_author_year_search`.
+
+    The candidate list is part of the cache key on its own account. It is an INPUT the
+    prompt renders, and a re-queried list that differs — a work merged, a DOI
+    backfilled, a new paper indexed under that year — must miss rather than replay a
+    pick made over other candidates.
+
+    A decline is cached; a provider failure is not.
+    """
+    if not candidates:
+        return {"pick": None, "confident": False, "reasoning": "",
+                "llm_model": "", "llm_error": ""}
+
+    prompt = build_author_year_pick_prompt(title_r, abstract_r, target_as_named,
+                                           evidence_quote, candidates)
+    identities = "|".join(f"{c.get('doi') or c.get('openalex_id') or ''}"
+                          for c in candidates)
+    key = content_key("authoryearpick", doi_r or target_as_named,
+                      prompt_version("build_author_year_pick_prompt"),
+                      cache_model_id(LINKING_MODEL, LINKING_EFFORT),
+                      identities, prompt)
+    cached = read_cache(LLM_CACHE_DIR, key)
+    if cached is not None:
+        index = cached.get("pick_index")
+        return {"pick": candidates[index] if isinstance(index, int)
+                        and 0 <= index < len(candidates) else None,
+                "confident": bool(cached.get("confident")),
+                "reasoning": str(cached.get("reasoning", "") or ""),
+                "llm_model": LINKING_MODEL, "llm_error": ""}
+
+    result, _provider, llm_error = call_model(prompt, LINKING_MODEL,
+                                              reasoning_effort=LINKING_EFFORT)
+    if not result:
+        # Never cached: an outage is not the model declining to recognise a paper.
+        return {"pick": None, "confident": False, "reasoning": "",
+                "llm_model": "", "llm_error": llm_error}
+
+    raw = result.get("pick")
+    index = None
+    if raw is not None:
+        # The prompt numbers the candidates from 1 and asks for that key back. A
+        # model that answers with a title, a DOI or "[3]" is answering a different
+        # question, and guessing which candidate it meant is how the wrong original
+        # gets linked — so anything but a number in range is no pick.
+        digits = re.findall(r"\d+", str(raw))
+        if digits:
+            n = int(digits[0])
+            if 1 <= n <= len(candidates):
+                index = n - 1
+    confident = bool(result.get("confident"))
+    reasoning = str(result.get("reasoning", "") or "")[:500]
+    write_cache(LLM_CACHE_DIR, key, {"pick_index": index, "confident": confident,
+                                     "reasoning": reasoning})
+    return {"pick": candidates[index] if index is not None else None,
+            "confident": confident, "reasoning": reasoning,
+            "llm_model": LINKING_MODEL, "llm_error": ""}
 
 
 def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,

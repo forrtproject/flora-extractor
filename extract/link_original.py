@@ -50,7 +50,7 @@ from shared.prompts import (
 from shared.schema import outcome_is_settled
 from shared.target_keys import assign_target_keys
 from shared.pdf_sources import acquire_pdf
-from shared.utils import cache_key, clean_doi
+from shared.utils import cache_key, clean_doi, usable_title
 
 # ── Unified rule-based resolver (runs before any LLM call) ───────────────────
 # Combines citation-context scoring with a same-author/year title-Jaccard fallback
@@ -430,7 +430,9 @@ OUTCOME_DESCENT = True
 #
 #   2  a named target that could not be identified writes target_pending rather than
 #      falling through to no_original_found (2026-08-07)
-EXTRACT_LADDER_VERSION: int = 2
+#   3  a target named as a citation with no title in it goes to an author-and-year
+#      shortlist judged by the linking model, not to a title search (2026-08-07)
+EXTRACT_LADDER_VERSION: int = 3
 
 
 # Columns to pass through from the input row (no renaming). Only columns
@@ -618,6 +620,38 @@ def strip_citation_prefix(text: str) -> str:
         if m and len(stripped) - m.end() >= _MIN_STRIPPED_TITLE:
             return stripped[m.end():].strip()
     return stripped
+
+
+def citation_without_title(text: str) -> bool:
+    """True when *text* is a citation that carries no title to search on.
+
+    "Ramscar et al. (2010)" and "Job, Dweck, and Walton (2010), Study 1" both name
+    an original unambiguously to a reader and give a title index nothing to match:
+    `usable_title` passes them — they are long enough and not a recognised fragment —
+    so both providers were asked, at 10x a filter query each, and both answered
+    nothing. On the frozen dev sample that shape was every one of the 24 works closed
+    as `no_original_found`.
+
+    A leading author-year citation is there, and no way of removing it leaves
+    something that could stand for a paper. `usable_title` is that second test rather
+    than `_MIN_STRIPPED_TITLE`, which is the higher floor `strip_citation_prefix` uses
+    to decide whether a strip is worth MAKING: at 20 characters it calls "The original
+    paper" a fragment, and diverting a short but real title to the author-and-year
+    route would ask the wrong question about it.
+
+    "Zhong, Bohns, & Gino (2010) Good lamps are the best police" fails this, and is
+    title-searched as before.
+    """
+    stripped = str(text or "").strip()
+    matched = False
+    for pattern in _CITATION_PREFIXES:
+        m = re.match(pattern, stripped)
+        if not m:
+            continue
+        matched = True
+        if usable_title(stripped[m.end():].strip()):
+            return False
+    return matched
 
 
 def title_search_candidates(doi_r: str, target_desc: str,

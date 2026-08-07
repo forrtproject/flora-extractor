@@ -924,6 +924,74 @@ def _fill(template: str, values: dict[str, str]) -> str:
     return pattern.sub(lambda m: values[m.group(1)], template)
 
 
+_AUTHOR_YEAR_PICK_TEMPLATE = """You are identifying which published paper a replication study re-tested.
+
+The replication names its target only as a citation — an author and a year, with no
+title. A list of papers by an author of that surname, published that year, is given
+below. Exactly one of them may be the target, or none of them may be.
+
+A surname and a year identify a person's output, not a topic. Lists like this
+routinely contain papers from unrelated fields by a different researcher of the same
+surname: a list for "Turri 2015" contains epistemology and polymer chemistry. Judge
+each candidate on whether its subject matter is what the replication says it
+re-tested. Answering "none" is the expected answer whenever nothing in the list is
+about the right thing, and it costs nothing — the pipeline asks again by other means.
+
+Do NOT pick a paper because it is the most cited, because it is the only one left, or
+because its author list matches. The subject has to match.
+
+THE REPLICATION:
+Title: {title_r}
+Abstract: {abstract_r}
+
+HOW THE REPLICATION NAMED ITS TARGET: {target_as_named}
+WHAT IT SAID ABOUT IT: {evidence_quote}
+
+CANDIDATES:
+{candidate_block}
+
+Answer with JSON and nothing else:
+{
+  "pick": "<the key of the one candidate that is the target, or null>",
+  "confident": <true|false>,
+  "reasoning": "<one sentence: what in the subject matter decided it>"
+}
+
+"confident" is false when the subject matter is merely compatible rather than a
+match. A pick that is not confident is not used.
+"""
+
+
+def build_author_year_pick_prompt(title_r: str, abstract_snip: str,
+                                  target_as_named: str, evidence_quote: str,
+                                  candidates: list) -> str:
+    """Which of an author-and-year shortlist is the original this paper re-tested.
+
+    The question a title search cannot answer, because the target description carries
+    no title. The shortlist comes from one OpenAlex author-and-year filter query
+    (`author_year_candidates`), so the model chooses from a BOUNDED set and can only
+    return a key that is in it — the same shape as the reference-list rung, and the
+    reason this is not a search of the whole literature.
+
+    "None" is offered first-class and its cost is stated, because a small model asked
+    to choose from a list picks the least-bad entry unless declining is made an
+    ordinary answer (measured for the pre-screen voters: `analysis/prescreen_eval`).
+    """
+    lines = []
+    for i, c in enumerate(candidates, 1):
+        authors = ", ".join(list(c.get("authors") or [])[:4])
+        lines.append(f"[{i}] {c.get('title') or '(no title)'}\n"
+                     f"    {authors or '(authors unknown)'} — "
+                     f"{c.get('journal') or 'venue unknown'}, {c.get('year') or '?'}")
+    return _fill(_AUTHOR_YEAR_PICK_TEMPLATE, {
+        "title_r": title_r or "(not available)",
+        "abstract_r": abstract_snip or "(not available)",
+        "target_as_named": target_as_named or "(not stated)",
+        "evidence_quote": evidence_quote or "(none)",
+        "candidate_block": "\n".join(lines) or "(none)",
+    })
+
+
 def build_outcome_prompt(title_r: str, abstract_snip: str,
                          original_authors: str = "", original_year: str = "",
                          original_title: str = "", text_snip: str = "",

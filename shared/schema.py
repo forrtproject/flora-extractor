@@ -258,6 +258,13 @@ LINK_METHOD_VALUES = RESOLVED_LINK_METHODS | {
     # it is simply not the paper's target. These rows are quarantined by sanity_check
     # for human confirmation and are NOT imported for validation.
     "llm_title_search",
+    # PROVISIONAL, and for the case a title search cannot answer at all: the paper
+    # named its target as a bare citation ("Ramscar et al. (2010)"), so one OpenAlex
+    # author-and-year query built a shortlist and the linking model said which of them
+    # it was. Bounded, unlike llm_title_search — the choice is among one author's
+    # output in one year — but it has no measured precision yet, so it gets the same
+    # quarantine and is kept apart from llm_title_search so each can be measured.
+    "llm_author_year_search",
     # Legacy rows written before the granular split, remapped by
     # tools/migrate_link_methods.py — they cannot be disaggregated retroactively.
     "author_year_match_legacy",
@@ -290,6 +297,7 @@ SET_ASIDE_DESTINATIONS = {
     "non_article": "not_a_replication.csv",
     "non_article_type": "not_a_replication.csv",
     "title_search_provisional": "provisional_title_search.csv",
+    "author_year_provisional": "provisional_author_year.csv",
     "target_pending": "target_pending.csv",
     "prescreen_discard": "prescreen_discard.csv",
     "not_a_replication": "not_a_replication.csv",

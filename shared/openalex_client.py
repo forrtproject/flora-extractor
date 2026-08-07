@@ -1025,6 +1025,98 @@ def _search_openalex_by_title_live(title: str, year: str = "") -> Optional[dict]
     return None
 
 
+# How many candidates an author-and-year query may hand on to be judged, and how
+# large the raw hit list may get before the topic words are added to narrow it.
+# Measured against six real campaign targets on 2026-08-07: an author-and-year filter
+# alone returns 12 works for "Ramscar 2010" and 154 for "Turri 2015" — a surname that
+# collides across fields drowns the right paper, and the top-cited hits for that one
+# are 3D-printing papers. Adding the replication's own topic words cut those to 5.
+AUTHOR_YEAR_MAX_OFFERED = 8
+AUTHOR_YEAR_NARROW_ABOVE = 12
+_AUTHOR_YEAR_SHAPE = "v1"
+
+
+def _author_year_query(surname: str, year: int, topic: str) -> Optional[dict]:
+    """One OpenAlex works query for an author surname, a year and optional topic."""
+    parts = [f"publication_year:{year}",
+             f"raw_author_name.search:{_openalex_filter_value(surname)[:80]}"]
+    if topic:
+        parts.append(f"title_and_abstract.search:{_openalex_filter_value(topic)[:120]}")
+    return _oa_get("https://api.openalex.org/works", {
+        "filter":   ",".join(parts),
+        "select":   "id,doi,title,publication_year,authorships,primary_location,"
+                    "cited_by_count",
+        "per-page": str(AUTHOR_YEAR_MAX_OFFERED),
+        # Most-cited first, because the paper a replication targets is the one that got
+        # noticed. It is a ranking for the shortlist, never a pick: which of these is
+        # the original is a judgment about the topic, and an LLM makes it.
+        "sort":     "cited_by_count:desc",
+        "mailto":   RESEARCHER_EMAIL,
+    })
+
+
+def author_year_candidates(surname: str, year: int,
+                           topic: str = "") -> "tuple[list[dict], int, bool]":
+    """(candidates, how many the query matched, unavailable) for an author and a year.
+
+    The resolver for a target the paper named as a bare citation — "Ramscar et al.
+    (2010)", "Turri, Buckwalter, & Blouw (2015)". A title search cannot answer that:
+    the string contains no title, so both providers return nothing and the work used
+    to be closed as though no original existed. An author-and-year filter can, and it
+    is a FILTER query rather than a free-text one for most of its shape.
+
+    Two steps, and the second only when it is needed. A surname that is rare in its
+    year returns a handful of works and they all go forward. A surname that collides
+    across fields returns hundreds, so the replication's own topic words are added;
+    if that returns nothing — the words were too specific, which happens — the
+    unnarrowed shortlist stands rather than the caller being told there is nothing.
+
+    The count is returned so the caller can record it: offering 8 of 154 and getting
+    "none of these" is not the same finding as offering all 3 there were, and a row
+    that does not say which cannot be read later.
+
+    `unavailable=True` means OpenAlex never answered, which must settle nothing.
+    """
+    surname = " ".join(str(surname or "").split())
+    if not surname or not year:
+        return [], 0, False
+
+    key = content_key("authoryear", "", surname.lower(), str(year),
+                      " ".join(sorted(str(topic or "").lower().split()))[:200],
+                      _AUTHOR_YEAR_SHAPE)
+    cached = read_cache(OA_CACHE_DIR, key)
+    if cached is not None:
+        return cached["candidates"], int(cached["total"]), False
+
+    data = _author_year_query(surname, year, "")
+    if data is None:
+        return [], 0, True
+    total = int((data.get("meta") or {}).get("count") or 0)
+    if total > AUTHOR_YEAR_NARROW_ABOVE and topic:
+        narrowed = _author_year_query(surname, year, topic)
+        if narrowed is None:
+            return [], 0, True
+        if narrowed.get("results"):
+            data, total = narrowed, int((narrowed.get("meta") or {}).get("count") or 0)
+
+    candidates = []
+    for work in (data.get("results") or [])[:AUTHOR_YEAR_MAX_OFFERED]:
+        loc = work.get("primary_location") or {}
+        src = loc.get("source") or {}
+        candidates.append({
+            "doi":          clean_doi(work.get("doi", "") or ""),
+            "openalex_id":  bare_work_id(work.get("id", "") or ""),
+            "title":        work.get("title", "") or "",
+            "year":         work.get("publication_year"),
+            "authors":      _all_authors_apa(work),
+            "first_author": (_first_author_surnames(work) or [""])[0],
+            "journal":      (src.get("display_name") or "").strip(),
+            "cited_by":     int(work.get("cited_by_count") or 0),
+        })
+    write_cache(OA_CACHE_DIR, key, {"candidates": candidates, "total": total})
+    return candidates, total, False
+
+
 def _fetch_openalex_work(doi: str) -> Optional[dict]:
     """Fetch the raw OpenAlex work for *doi*, cached once per DOI.
 

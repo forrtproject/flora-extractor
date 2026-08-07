@@ -928,7 +928,102 @@ def _aggregate_axes(members: list[dict]) -> dict:
     return merged
 
 
-def _title_searched_entry(target: dict, doi_r: str) -> "dict | None":
+def _author_year_entry(target: dict, doi_r: str, context: dict,
+                       named: str) -> "dict | None":
+    """An entry for a target named as a citation with no title in it.
+
+    One OpenAlex author-and-year query builds a bounded shortlist, and the LINKING
+    model says which of them — if any — is the paper the replication re-tested. The
+    shortlist is bounded on purpose: this is not a search of the whole literature but
+    a choice among an author's output in one year, which is the same shape as the
+    reference-list rung.
+
+    The result is PROVISIONAL whatever the model says (`llm_author_year_search`, low
+    confidence, no outcome coded, set aside for human confirmation). It is a new
+    resolver with no measured precision; `llm_title_search` is treated the same way
+    on the same grounds, and the two are kept apart so each can be measured.
+
+    The shortlist's size is recorded next to what came back. Offering 8 of 154 and
+    being told "none of these" is a different finding from offering all 3 there were,
+    and a row that does not say which cannot be read afterwards.
+    """
+    from shared.openalex_client import author_year_candidates
+    from shared.openalex_client import extract_author_year_patterns
+    from shared.llm_client import pick_author_year_original
+
+    patterns = extract_author_year_patterns(named)
+    if not patterns:
+        target["_search_attempt"] = {"named": named, "query": "",
+                                     "outcome": "unsearchable"}
+        return None
+    surname, year = patterns[0]["surname"], patterns[0]["year"]
+    candidates, total, unavailable = author_year_candidates(
+        surname, year, topic=str(context.get("title_r") or ""))
+    # The named string, not just the surname and year it was parsed into: the
+    # evidence line is what an adjudication reads, and "ramscar 2010" does not say
+    # which citation in the paper it came from.
+    attempt = {"named": named, "query": f"{named} -> {surname} {year}",
+               "candidates": candidates, "candidates_total": total}
+    target["_search_attempt"] = attempt
+
+    if unavailable:
+        # OpenAlex never answered, so nothing about this original is established. The
+        # row goes out api_error, which a re-run reopens.
+        attempt["outcome"] = "author_year_unavailable"
+        return {"rank": 0, "doi": "", "title": "", "year": None, "first_author": "",
+                "openalex_id": "", "study_number": "", "study_r": "",
+                "evidence": "author-and-year lookup did not reach OpenAlex",
+                "confidence": "low", "provisional": False, "outcome_block": {},
+                "search_unavailable": True, "title_search_candidates": []}
+    if not candidates:
+        attempt["outcome"] = "author_year_no_candidates"
+        return None
+
+    verdict = pick_author_year_original(
+        doi_r, str(context.get("title_r") or ""), str(context.get("abstract_r") or ""),
+        named, str(target.get("evidence_quote") or ""), candidates)
+    if verdict["llm_error"]:
+        attempt["outcome"] = "author_year_unavailable"
+        return {"rank": 0, "doi": "", "title": "", "year": None, "first_author": "",
+                "openalex_id": "", "study_number": "", "study_r": "",
+                "evidence": f"author-and-year pick failed: {verdict['llm_error']}",
+                "confidence": "low", "provisional": False, "outcome_block": {},
+                "search_unavailable": True, "title_search_candidates": candidates}
+
+    pick = verdict["pick"]
+    if not pick or not verdict["confident"]:
+        # Declining is an ordinary answer here — a surname and a year name a person's
+        # output, not a topic — and it is not evidence that no original exists.
+        attempt["outcome"] = ("author_year_declined" if pick is None
+                              else "author_year_unconfident")
+        attempt["reasoning"] = verdict["reasoning"]
+        return None
+
+    attempt["outcome"] = "author_year_resolved"
+    attempt["reasoning"] = verdict["reasoning"]
+    evidence = str(target.get("evidence_quote") or "")
+    note = (f"target named as a citation with no title; picked from {len(candidates)} "
+            f"of {total} works by {surname} ({year}) by {verdict['llm_model']}: "
+            f"{verdict['reasoning']}")
+    return {
+        "rank":         0,
+        "doi":          pick["doi"],
+        "title":        pick["title"],
+        "year":         pick["year"],
+        "first_author": pick["first_author"],
+        "openalex_id":  pick["openalex_id"],
+        "study_number": _clean_study_numbers(target.get("study_numbers", "")),
+        "study_r":      _clean_study_numbers(target.get("replication_study_numbers", "")),
+        "evidence":     f"{evidence} | {note}" if evidence else note,
+        "confidence":   "low",
+        "provisional":  True,
+        "provisional_method": "llm_author_year_search",
+        "outcome_block": target.get("outcome_block") or {},
+        "title_search_candidates": candidates,
+    }
+
+
+def _title_searched_entry(target: dict, doi_r: str, context: dict) -> "dict | None":
     """An entry for a target the model NAMED but no keyed record could match.
 
     The first candidate becomes the link and is marked provisional, so the row is
@@ -947,7 +1042,14 @@ def _title_searched_entry(target: dict, doi_r: str) -> "dict | None":
         target["_search_attempt"] = {"named": named, "query": "", "outcome": "unsearchable"}
         return None
 
-    from extract.link_original import strip_citation_prefix, title_search_candidates
+    from extract.link_original import (citation_without_title, strip_citation_prefix,
+                                       title_search_candidates)
+    if citation_without_title(named):
+        # A title search cannot answer a citation with no title in it, and asking it
+        # anyway costs two free-text queries at 10x a filter query each. The author
+        # and the year can be asked instead.
+        return _author_year_entry(target, doi_r, context, named)
+
     query = strip_citation_prefix(named)
     candidates, unavailable = title_search_candidates(doi_r, named, "")
     # What was asked and what came back, recorded on the work whatever the answer.
@@ -1006,7 +1108,7 @@ def _title_searched_entry(target: dict, doi_r: str) -> "dict | None":
     }
 
 
-def _target_entry(target: dict, doi_r: str) -> "dict | None":
+def _target_entry(target: dict, doi_r: str, context: dict) -> "dict | None":
     """One confirmed target as the entry shape _collapse_same_paper_originals() and
     _merge_multi_row() read.
 
@@ -1036,7 +1138,7 @@ def _target_entry(target: dict, doi_r: str) -> "dict | None":
         # Not reached when a record WAS offered and the model declined it: that is the
         # model judging the evidence, and second-guessing it by search is how a paper
         # gets linked to a landmark it merely cites.
-        return _title_searched_entry(target, doi_r)
+        return _title_searched_entry(target, doi_r, context)
     if not target.get("match_certain"):
         return None
 
@@ -1448,7 +1550,11 @@ def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | Non
     link_evidence of every row that WAS written, so it cannot vanish silently.
     """
     targets  = link.get("targets") or []
-    resolved = [(t, _target_entry(t, doi_r)) for t in targets]
+    # What the paper is ABOUT, for the resolvers that need to judge a candidate's
+    # subject matter rather than match its title.
+    context  = {"title_r": str(row.get("title_r", "") or ""),
+                "abstract_r": str(row.get("abstract_r", "") or "")}
+    resolved = [(t, _target_entry(t, doi_r, context)) for t in targets]
     entries  = [e for _, e in resolved if e]
     # A target the title search recovered is no longer missing: it has a row, so
     # reporting it as unidentified would contradict the row written next to it.
@@ -1497,7 +1603,8 @@ def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | Non
         # same rule _link_confidence applies on the single path, applied here rather
         # than writing a constant "high" onto a link nobody confirmed.
         link_method = ("api_error" if entry.get("search_unavailable")
-                       else "llm_title_search" if entry["provisional"]
+                       else entry.get("provisional_method", "llm_title_search")
+                       if entry["provisional"]
                        else _map_method(str(link.get("target_stage") or "llm_fulltext")))
         entry = {**entry, "confidence": ("low" if entry["provisional"]
                                          else entry["confidence"])}
