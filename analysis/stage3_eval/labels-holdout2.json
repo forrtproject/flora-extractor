@@ -1,0 +1,742 @@
+{
+  "batch": "eval-holdout2",
+  "commit": "HEAD",
+  "adjudicated": "2026-08-08",
+  "note": "All 68 SETTLED works adjudicated, every DOI against Crossref. The 32 open works are not split further: an open work is recoverable either way, and this holdout's job is the wrong-settle rate.",
+  "labels": {
+    "2072128297": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1080/09595238600185271"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1080/09595238600185271 = Cloke; Edwards 1986, Rurality in England and Wales 1981: A replication of the 1"
+    },
+    "2079168684": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "2236112580": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1016/j.econlet.2006.06.020"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1016/j.econlet.2006.06.020 = Toya; Skidmore 2007, Economic development and the impacts of natural disasters"
+    },
+    "2341016714": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "2512992778": {
+      "verdict": "resolved",
+      "doi_o": [
+        "10.1111/j.0963-7214.2004.01502002.x"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1111/j.0963-7214.2004.01502002.x = Meier; Robinson; Clore 2004, Why Good Guys Wear White"
+    },
+    "2592538733": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "2604089609": {
+      "verdict": "resolved",
+      "doi_o": [
+        "10.1111/twec.12025"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1111/twec.12025 = Abel\u2010Koch 2013, Who Uses Intermediaries in International Trade? Evidence f"
+    },
+    "2786859269": {
+      "verdict": "resolved",
+      "doi_o": [
+        "10.1037/0022-3514.94.1.48"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/0022-3514.94.1.48 = Correll 2008, 1/f noise and effort on implicit measures of bias."
+    },
+    "2889308897": {
+      "verdict": "resolved",
+      "doi_o": [
+        "10.1037/0735-7028.26.5.474"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/0735-7028.26.5.474 = Wetter; Corrigan 1995, Providing information to clients about psychological tests"
+    },
+    "2930554497": {
+      "verdict": "resolved",
+      "doi_o": [
+        "10.1073/pnas.0804388105"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1073/pnas.0804388105 = Yoon; Johnson; Csibra 2008, Communication-induced memory biases in preverbal infants"
+    },
+    "3025884083": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1177/1948550618815919"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1177/1948550618815919 = Eadeh; Chang 2019, Can Threat Increase Support for Liberalism? New Insights I"
+    },
+    "3166000650": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1086/421174"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1086/421174 = Miguel; Satyanath; Sergenti 2004, Economic Shocks and Civil Conflict: An Instrumental Variab"
+    },
+    "4200079180": {
+      "verdict": "resolved",
+      "doi_o": [
+        "10.1111/1745-9125.12035"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1111/1745-9125.12035 = PICKETT; BAKER 2014, THE PRAGMATIC AMERICAN: EMPIRICAL REALITY OR METHODOLOGICA"
+    },
+    "4205713717": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1016/j.jml.2012.03.008"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1016/j.jml.2012.03.008 = Messenger; Branigan; McLean; Sorac 2012, Is young children\u2019s passive syntax semantically constraine"
+    },
+    "4233581695": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1177/0956797618756862"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1177/0956797618756862 = Alves; Koch; Unkelbach 2018, A Cognitive-Ecological Explanation of Intergroup Biases"
+    },
+    "4242254557": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1037/per0000182"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/per0000182 = Gatner; Douglas; Hart 2016, Examining the incremental and interactive effects of boldn"
+    },
+    "4249749587": {
+      "verdict": "resolved",
+      "doi_o": [
+        "10.1037/0022-3514.95.2.293"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/0022-3514.95.2.293 = Risen; Gilovich 2008, Why people are reluctant to tempt fate."
+    },
+    "4310723880": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.31234/osf.io/x6gvu"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.31234/osf.io/x6gvu = Newall; Russell; Sharman; Walasek 2020, Recollected usage of legal youth gambling products: Compar"
+    },
+    "4386050766": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1111/bjso.12597"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1111/bjso.12597 = Adam\u2010Troian; Chayinska; Paladino;  2022, Of precarity and conspiracy: Introducing a\n               "
+    },
+    "4396805109": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "4405631286": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.2139/ssrn.1099464"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.2139/ssrn.1099464 = Gino; Moore; Bazerman 2009, No Harm, No Foul: The Outcome Bias in Ethical Judgments"
+    },
+    "4412366431": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1037/a0017346"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/a0017346 = Griskevicius; Tybur; Van den Bergh 2010, Going green to be seen: Status, reputation, and conspicuou"
+    },
+    "4412817638": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1027/1618-3169.56.4.236"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1027/1618-3169.56.4.236 = Cepeda; Coburn; Rohrer; Wixted; Mo 2009, Optimizing Distributed Practice"
+    },
+    "4413824880": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1037/a0017346"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/a0017346 = Griskevicius; Tybur; Van den Bergh 2010, Going green to be seen: Status, reputation, and conspicuou"
+    },
+    "4415201285": {
+      "verdict": "resolved",
+      "doi_o": [
+        "10.1016/j.cub.2015.11.035"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1016/j.cub.2015.11.035 = Mosha; Robertson 2016, Unstable Memories Create a High-Level Representation that "
+    },
+    "4417208817": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1111/j.0956-7976.2005.00799.x"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1111/j.0956-7976.2005.00799.x = Johns; Schmader; Martens 2005, Knowing Is Half the Battle"
+    },
+    "6886824403": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.2139/ssrn.1966047"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.2139/ssrn.1966047 = Abel-Koch 2011, Who Uses Intermediaries in International Trade? Evidence f"
+    },
+    "6887659333": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "6887700712": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "6887701409": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1177/0956797613515485"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1177/0956797613515485 = Schley; Peters 2014, Assessing \u201cEconomic Value\u201d"
+    },
+    "6887739870": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1016/j.neuroimage.2005.06.023"
+      ],
+      "label": "wrong_settle",
+      "reason": "'The relationship between personality and the processing of task-irrelevant emotion' -> 10.1016/j.neuroimage.2005.06.023, which Crossref gives as Sander et al. 2005, 'Emotion and attention interactions in social cognition: Brain regions involved in processing anger prosody'. The paradigm is plausible and personality is not in it. Counted wrong because it cannot be shown right."
+    },
+    "6905898140": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1257/pol.20190509"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1257/pol.20190509 = Atwood 2022, The Long-Term Effects of Measles Vaccination on Earnings a"
+    },
+    "6906215578": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1371/journal.pone.0016782"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1371/journal.pone.0016782 = Thibodeau; Boroditsky 2011, Metaphors We Think With: The Role of Metaphor in Reasoning"
+    },
+    "6906364811": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1037/0022-3514.81.1.146"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/0022-3514.81.1.146 = Lerner; Keltner 2001, Fear, anger, and risk."
+    },
+    "6906368363": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1037/0022-3514.92.1.97"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/0022-3514.92.1.97 = Norton; Frost; Ariely 2007, Less is more: The lure of ambiguity, or why familiarity br"
+    },
+    "6906453694": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "6906468738": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1521/soco.2007.25.6.833"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1521/soco.2007.25.6.833 = Maass; Pagani; Berta 2007, How Beautiful is the Goal and How Violent is the Fistfight"
+    },
+    "6906542682": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1016/j.jenvp.2014.10.008"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1016/j.jenvp.2014.10.008 = Ku; Zaroff 2014, How far is your money from your mouth? The effects of intr"
+    },
+    "6924340519": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "6924967326": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1523/jneurosci.0703-10.2010"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1523/jneurosci.0703-10.2010 = Stefanics; Hangya; Hern\u00e1di; Winkle 2010, Phase Entrainment of Human Delta Oscillations Can Mediate "
+    },
+    "6925046084": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "6925066419": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1111/jopy.12569"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1111/jopy.12569 = Jonason; \u017bemojtel\u2010Piotrowska; Piot 2020, Country\u2010level correlates of the Dark Triad traits in 49 co"
+    },
+    "6925248510": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "6925256583": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1016/s0272-4944(05)80184-7"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1016/s0272-4944(05)80184-7 = Ulrich; Simons; Losito; Fiorito; M 1991, Stress recovery during exposure to natural and urban envir"
+    },
+    "6925282739": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "6925299417": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1017/s1930297500002771"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1017/s1930297500002771 = Huang; Zeelenberg 2012, Investor regret: The role of expectation in comparing what"
+    },
+    "6925344142": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1002/tea.21643"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1002/tea.21643 = Liou 2020, Students' attitudes toward science and science achievement"
+    },
+    "6925495213": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1016/j.jesp.2021.104116"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1016/j.jesp.2021.104116 = Summers; Deska; Almaraz; Hugenberg 2021, Poverty and pain: Low-SES people are believed to be insens"
+    },
+    "6930624949": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "6943765112": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1037//0022-3514.68.5.768"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037//0022-3514.68.5.768 = Bargh; Raymond; Pryor; Strack 1995, Attractiveness of the underling: An automatic power\u2002\u2192\u2002sex "
+    },
+    "6943899185": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1521/soco.2008.26.2.143"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1521/soco.2008.26.2.143 = Epley; Waytz; Akalis; Cacioppo 2008, When We Need A Human: Motivational Determinants of Anthrop"
+    },
+    "6943987705": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1101/lm.365707"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1101/lm.365707 = Hupbach; Gomez; Hardt; Nadel 2007, Reconsolidation of episodic memories: A subtle reminder tr"
+    },
+    "6944004080": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1016/j.cognition.2016.06.011"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1016/j.cognition.2016.06.011 = Hopkins; Weisberg; Taylor 2016, The seductive allure is a reductive allure: People prefer "
+    },
+    "6944004807": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1521/soco.2015.33.3.187"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1521/soco.2015.33.3.187 = Erle; Topolinski 2015, Spatial and Empathic Perspective-Taking Correlate on a Dis"
+    },
+    "6944019604": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "6944037785": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.3758/pbr.16.1.133"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.3758/pbr.16.1.133 = Goolsby; Shapiro; Raymond 2009, Distractor devaluation requires visual working memory"
+    },
+    "6944246622": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "6962638136": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1037/apl0000876"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/apl0000876 = Landis; Fisher; Menges 2022, How employees react to unsolicited and solicited advice in"
+    },
+    "6962643705": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1038/s41598-018-36507-9"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1038/s41598-018-36507-9 = Reis; Casteen; Ilardi 2019, The antidepressant impact of minocycline in rodents: A sys"
+    },
+    "6962727591": {
+      "verdict": "provisional",
+      "doi_o": [],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: (no doi) How Do People Communicate with Others? The Effect "
+    },
+    "6962760837": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1016/j.neuron.2012.10.014"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1016/j.neuron.2012.10.014 = Huth; Nishimoto; Vu; Gallant 2012, A Continuous Semantic Space Describes the Representation o"
+    },
+    "6962762827": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1017/s1930297500007191"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1017/s1930297500007191 = Evans; Sleegers; Mlakar 2020, Individual differences in receptivity to scientific bullsh"
+    },
+    "6962914793": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "6981765091": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1016/j.ijsu.2018.11.013"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1016/j.ijsu.2018.11.013 = Myssiorek; Ahmed; Parsikia; Castal 2018, Factors predictive of the development of surgical site inf"
+    },
+    "6990200586": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "6993109126": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.5840/philtopics2001291/217"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.5840/philtopics2001291/217 = Weinberg; Nichols; Stich;  2001, Normativity and Epistemic Intuitions"
+    },
+    "6999561128": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "7023770685": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1073/pnas.1415086111"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1073/pnas.1415086111 = Alter; Hershfield 2014, People search for meaning when they approach a new decade "
+    },
+    "7027735822": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "7036734602": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1017/cbo9780511621024"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1017/cbo9780511621024 = Biber 1988, Variation across Speech and Writing"
+    },
+    "7037558074": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.2139/ssrn.977085"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.2139/ssrn.977085 = Pronin; Berger; Molouki 2006, Alone in a Crowd of Sheep: Asymmetric Perceptions of Confo"
+    },
+    "7045394190": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "7046866309": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1037/a0028770"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/a0028770 = Tentori; Crupi; Russo 2013, On the determinants of the conjunction fallacy: Probabilit"
+    },
+    "7061669344": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1080/09658211.2023.2208791"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1080/09658211.2023.2208791 = Wiechert; Loewy; Wessel; Fawcett;  2023, Suppression-induced forgetting: a pre-registered replicati"
+    },
+    "7067597096": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1017/s1930297500002771"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1017/s1930297500002771 = Huang; Zeelenberg 2012, Investor regret: The role of expectation in comparing what"
+    },
+    "7074145277": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1126/science.1189993"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1126/science.1189993 = Ackerman; Nocera; Bargh 2010, Incidental Haptic Sensations Influence Social Judgments an"
+    },
+    "7074634903": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.2753/joa0091-3367370303"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.2753/joa0091-3367370303 = Eisend 2008, Explaining The Impact Of Scarcity Appeals In Advertising: "
+    },
+    "7082000231": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1037/0096-3445.134.4.538"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/0096-3445.134.4.538 = Fox; Ratner; Lieb 2005, How Subjective Grouping of Options Influences Choice and A"
+    },
+    "7106011557": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "7106853407": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "7107952362": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1016/j.obhdp.2025.104431"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1016/j.obhdp.2025.104431 = Palmeira; Heath 2025, When less confident forecasts signal more expertise"
+    },
+    "7109831068": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "7110466826": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "7110500479": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "7111977017": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "7112267865": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "7112269575": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1080/09658211.2023.2208791"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1080/09658211.2023.2208791 = Wiechert; Loewy; Wessel; Fawcett;  2023, Suppression-induced forgetting: a pre-registered replicati"
+    },
+    "7128354628": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "7130489475": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1037/xge0000595"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/xge0000595 = Cameron; Hutcherson; Ferguson; Sch 2019, Empathy is hard work: People choose to avoid empathy becau"
+    },
+    "7131805583": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "7133118014": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "7133584001": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1037/a0015434"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/a0015434 = Bleidorn; Kandler; Riemann; Anglei 2009, Patterns and sources of adult personality development: Gro"
+    },
+    "7134207043": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "7148613127": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "7154019075": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1037//0022-3514.68.4.565"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037//0022-3514.68.4.565 = Kunda; Oleson 1995, Maintaining stereotypes in the face of disconfirmation: Co"
+    },
+    "7154662900": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1126/science.1162548"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1126/science.1162548 = Williams; Bargh 2008, Experiencing Physical Warmth Promotes Interpersonal Warmth"
+    },
+    "7155889430": {
+      "verdict": "resolved",
+      "doi_o": [
+        "10.4337/9780857933614.00021"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.4337/9780857933614.00021 = Lockett; Wiklund; Davidsson; Girma 2013, Organic and acquisitive growth: re-examining, testing and "
+    },
+    "7160470745": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "7160939438": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1121/1.390677"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1121/1.390677 = Shinn; Blumstein 1984, On the role of the amplitude envelope for the perception o"
+    },
+    "7161635719": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1111/j.1467-7687.2005.00441.x"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1111/j.1467-7687.2005.00441.x = Casenhiser; Goldberg 2005, Fast mapping between a phrasal form and meaning"
+    }
+  }
+}

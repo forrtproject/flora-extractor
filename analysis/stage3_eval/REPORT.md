@@ -47,7 +47,8 @@ the `cache/token_usage.json` delta, taken by `python -m analysis.stage3_eval.spe
 | 6 | a title hit must carry the author the citation named (`7b7f891`) | **2** | 54 | 40 | 4 | **54** | $0.00 |
 | 7 | the author-and-year query ANDs every surname the citation named (`ca43cdb`) | **2** | 66 | 29 | 3 | **66** | $0.02 |
 | 8 | the citation parenthesis may carry a venue; a dead browser tab ends its tier, not the row (`d8?`) | **2** | 69 | 26 | 3 | **69** | $0.01 |
-| 9 | the shortlist narrowing adds candidates instead of replacing them | **2** | 69 | 26 | 3 | **69** | $0.04 |
+| 9 | the shortlist narrowing adds candidates instead of replacing them (`4b53cb2`) | **2** | 69 | 26 | 3 | **69** | $0.04 |
+| 10–12 | one pooled candidate list per target, its two reviews, and PsycEXTRA | **1** | 74 | 22 | 3 | **74** | $0.13 |
 
 Per-work labels and the reason for each: `labels-dev-<n>.json`, one per iteration.
 
@@ -424,15 +425,69 @@ up empty or flagged: widening the net where the net came up empty is the point;
 widening it over a clean hit buys a sibling-paper distractor and a second query at 10x
 a filter query.
 
-**Iteration 10 is not measured yet.** Its dev run died on the quota above, and the
-budget resets at midnight UTC. Two runs are owed before this code should be trusted
-with the campaign:
+### What iterations 10–12 say
 
-1. the frozen dev-100, to check the pooling does not regress what iterations 1–9 won;
-2. **a second holdout** — `samples-holdout2.json`, 100 works drawn once with seed
-   20260808 from the 1,125 in neither existing sample. The first holdout cannot judge
-   this change: it has been read, and a sample that has been read is a second
-   development sample.
+**Dev: yield 69 → 74, wrong-settle 2 → 1.** Five works gained a correct link and the
+last-but-one wrong settle went. Every DOI Crossref-checked (`labels-dev-12.json`).
+
+Two of the five had defeated four earlier iterations, and both were fixed by the pool
+rather than by a rule:
+
+- **"Bem (2011)"** → `10.1037/a0021524`, "Feeling the future". The title search alone
+  matched Eysenck 1965, then an Oxford Handbook chapter; each guard moved the error
+  rather than removing it. Pooled with the author-and-year shortlist, the right paper
+  was in the list and the model took it.
+- **"Svensson (AEJ: Macroeconomics, 2015)"** → `10.1257/mac.20130176`, the paper
+  itself. Previously the journal's front matter, twice.
+
+That is the maintainer's argument holding up: a candidate the model can see is a
+candidate it can accept or reject; a candidate a rule removed is neither.
+
+**Iteration 12 — the last wrong-settle class, named.** Both wrong originals that
+survived to a holdout were an APA PsycEXTRA record: a conference abstract standing in
+for the paper. APA files those under `10.1037/e<digits>-<digits>` and Crossref types
+them `dataset`; the published article by the same authors carries an ordinary `10.1037`
+DOI. `non_article_doi()` — the project's existing word for a DOI that is not a study —
+now names them, and neither search offers one. The filter runs where the pool is built
+rather than where the shortlist is fetched, because the shortlist is cached and a
+fetch-time rule leaves every list already on disk carrying what the rule excludes.
+
+### Second holdout — run once, on 100 works in neither earlier sample
+
+| | wrong_settle | correct_settle | open | spend |
+| - | -----------: | -------------: | ---: | ----: |
+| dev, iteration 12 | 1 | 74 | 25 | — |
+| **holdout 2** | **1** | **67** | 32 | $0.50 |
+
+Drawn with seed 20260808 from the 1,125 works in neither the dev sample nor the first
+holdout (`samples-holdout2.json`), because the first holdout has been read and a sample
+that has been read is a second development sample.
+
+**Holdout wrong-settle is 1, dev's is 1 — the gains generalise**, against a rule that
+allows 5 points. All 68 settled works were adjudicated and every DOI checked against
+Crossref (`labels-holdout2.json`, `payloads-holdout2.md`). 67 are right, including
+Miguel/Satyanath/Sergenti (2004) for a Sub-Saharan climate-and-conflict replication,
+Biber (1988) for a multi-dimensional register model, and Weinberg/Nichols/Stich (2001)
+for a cross-cultural Gettier replication.
+
+The one fault is 6887739870: "the relationship between personality and the processing
+of task-irrelevant emotion" → Sander et al. 2005 on anger prosody and attention. The
+paradigm is plausible and personality is not in it. Counted wrong because it cannot be
+shown right.
+
+**The PsycEXTRA class is gone from both samples**, which is what the second holdout was
+for: iteration 12 was written against dev evidence, and an independent 100 works
+carries none of it.
+
+### Where the exercise finishes
+
+| | baseline | final | 
+| - | -------: | ----: |
+| dev correct settles | 24 | **74** |
+| dev wrong settles | 25 | **1** |
+| holdout wrong settles | — | **1** (first holdout 2) |
+
+Total spend **$2.05** of the $20 approved.
 
 ---
 
