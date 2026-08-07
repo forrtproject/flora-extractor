@@ -41,7 +41,7 @@ the `cache/token_usage.json` delta, taken by `python -m analysis.stage3_eval.spe
 | 0 | baseline (commit `b4f6f2f`) | **25** | 24 | 46 | 5 | **24** | $0.33 |
 | 1 | a named target that could not be identified writes `target_pending` (`0bfcb54`) | **1** | 24 | 70 | 5 | **24** | $0.00 |
 | 2 | a citation with no title is resolved by author and year (`1f8ceb4`) | **1** | 38 | 56 | 5 | **38** | $0.04 |
-| 3 | the abstract rung's gate reads the title's citations too (`39d4218`) | **1** | 45 | 50 | 4 | **45** | $0.10 |
+| 3 | the abstract rung's gate reads the title's citations too (`39d4218`) | **0** | 46 | 50 | 4 | **46** | $0.10 |
 
 Per-work labels and the reason for each: `labels-dev-<n>.json`, one per iteration.
 
@@ -158,6 +158,34 @@ iterations 0–2 on the grounds that its abstract is Scopus boilerplate. Its tit
 "reported by Engineer et al. (2013)", so it was `missed` throughout. The correction
 moves one work between `correct_open` and `missed` and changes neither metric; the
 earlier rows are left as they were recorded.
+
+**A stale label under the headline number, found and fixed.** Labels were carried
+between iterations wherever the VERDICT did not change, and that is not enough: a work
+can keep `provisional` and change the paper it points at, because a route changed
+underneath it. Work 3185325517 did exactly that. Its target, "Tversky and Kahneman
+(1973)", matches `citation_without_title`, so from iteration 2 it took the
+author-and-year route rather than the title search that produced the book chapter — and
+the iteration-0 `wrong_settle` label was copied forward over a payload that no longer
+said what it described.
+
+`labels-dev-3.json` now records each work's verdict AND its `doi_o` read off the
+payload, and `check_labels.py` re-reads both, so a label cannot outlive its row. Every
+one of the 100 was re-checked against the iteration-3 payloads: one had drifted.
+
+**Re-adjudicated, and it is the last wrong settle.** 3185325517 now points at
+`10.21236/ad0767426`, the 1973 technical report of "Judgment under Uncertainty:
+Heuristics and Biases", which carries the 8! demonstration the paper re-tests and is
+the year the paper cites. **This is a judgement call**: the published record is the
+1974 *Science* paper, and a reader who wants that would call this the wrong record. It
+is counted `correct_settle` because the work and the year are the ones the paper cites
+and the row is provisional — choosing between two records of one work is what the human
+confirmation step is for. Subtract it if you disagree; wrong-settle is then 1, not 0.
+
+**`doi_o_verification = "verified"` proves nothing on this route.** The verifier
+compares the DOI's metadata against `title_o` and `authors_o`, both of which were
+filled from the same OpenAlex record the DOI came from, so it cannot catch a wrong
+pick. The 21-of-21 precision reported here is manual subject-matter adjudication and
+nothing else.
 
 **Cost $0.10** — the first iteration to re-ask the target prompt for a large group of
 works rather than reuse a cached answer. Cumulative $0.47 of $20.
