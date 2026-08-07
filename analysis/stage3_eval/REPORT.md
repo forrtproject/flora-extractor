@@ -45,7 +45,8 @@ the `cache/token_usage.json` delta, taken by `python -m analysis.stage3_eval.spe
 | 4 | the target prompt says what identifies a target (`635f5c0`) | **4** | 54 | 38 | 4 | **54** | $0.43 |
 | 5 | the title search is given the year the paper cited (`84a4751`) | **4** | 54 | 38 | 4 | **54** | $0.02 |
 | 6 | a title hit must carry the author the citation named (`7b7f891`) | **2** | 54 | 40 | 4 | **54** | $0.00 |
-| 7 | the author-and-year query ANDs every surname the citation named | **2** | 66 | 29 | 3 | **66** | $0.02 |
+| 7 | the author-and-year query ANDs every surname the citation named (`ca43cdb`) | **2** | 66 | 29 | 3 | **66** | $0.02 |
+| 8 | the citation parenthesis may carry a venue; a dead browser tab ends its tier, not the row | **2** | 69 | 26 | 3 | **69** | $0.01 |
 
 Per-work labels and the reason for each: `labels-dev-<n>.json`, one per iteration.
 
@@ -309,6 +310,23 @@ No bucket now carries an obvious single cause the way the first four iterations 
 The remaining candidates are small (a citation pattern that does not handle
 "(2017, JPSP)") or are tuning knobs (how many candidates the shortlist offers), and a
 tuning knob moved to fit 100 works is exactly what the holdout exists to catch.
+
+### What iteration 8 says
+
+Yield 66 → 69, meeting the ≥ 3/100 threshold. Wrong-settle unchanged at 2.
+
+Three works gained a link, all Crossref-checked: the two OSF registrations of "Vess
+(2012, PS, Study 1)" → "Warm Thoughts", and "Blau and Kahn (Journal of Economic
+Literature 2017)" → "The Gender Wage Gap: Extent, Trends, and Explanations". The first
+two came from the parenthesis fix — every citation pattern demanded the year alone, so
+a parenthesis carrying the venue read as no citation at all. The third came from the
+browser fix: the ladder reached its abstract rung for the first time, having previously
+been aborted by a TLS certificate error two tiers below it.
+
+The remaining `api_error` work is now `target_pending`, which is the honest ending for
+a row whose document could not be fetched.
+
+**Cost $0.01.** Cumulative $0.95 of $20.
 
 ---
 
