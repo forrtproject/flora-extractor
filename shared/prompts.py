@@ -933,9 +933,13 @@ def _fill(template: str, values: dict[str, str]) -> str:
 
 _AUTHOR_YEAR_PICK_TEMPLATE = """You are identifying which published paper a replication study re-tested.
 
-The replication names its target only as a citation — an author and a year, with no
-title. A list of papers by an author of that surname, published that year, is given
+The replication named its target in a way that matched no record it was offered, so
+every search that could say something about it was run: a title search where there was
+a title to search, and a query for that author in that year. Their results are pooled
 below. Exactly one of them may be the target, or none of them may be.
+
+The list may be a sample of a larger set — the count says so when it is. A target
+missing from a sampled list is an ordinary outcome, and "none" is the answer for it.
 
 A surname and a year identify a person's output, not a topic. Lists like this
 routinely contain papers from unrelated fields by a different researcher of the same
@@ -959,8 +963,8 @@ Abstract: {abstract_r}
 HOW THE REPLICATION NAMED ITS TARGET: {target_as_named}
 WHAT IT SAID ABOUT IT: {evidence_quote}
 
-CANDIDATES (several searches, pooled; a flag is a reason to doubt a candidate, not a
-reason it was excluded — judge it yourself):
+CANDIDATES — {candidate_count}. A flag is a reason to doubt a candidate, not a reason
+it was excluded; judge it yourself.
 {candidate_block}
 
 Answer with JSON and nothing else:
@@ -977,7 +981,7 @@ match. A pick that is not confident is not used.
 
 def build_author_year_pick_prompt(title_r: str, abstract_snip: str,
                                   target_as_named: str, evidence_quote: str,
-                                  candidates: list) -> str:
+                                  candidates: list, total: int = 0) -> str:
     """Which of a pooled candidate list is the original this paper re-tested.
 
     The pool is everything every search found for one target — the CrossRef and
@@ -1005,7 +1009,10 @@ def build_author_year_pick_prompt(title_r: str, abstract_snip: str,
                      f"{c.get('journal') or 'venue unknown'}, {c.get('year') or '?'}"
                      + (f"\n    found by: {c.get('source')}" if c.get("source") else "")
                      + (f"\n    ! {flags}" if flags else ""))
+    shown, total = len(candidates), max(int(total or 0), len(candidates))
     return _fill(_AUTHOR_YEAR_PICK_TEMPLATE, {
+        "candidate_count": (f"all {shown} the searches found" if shown >= total
+                            else f"{shown} of the {total} the searches matched"),
         "title_r": title_r or "(not available)",
         "abstract_r": abstract_snip or "(not available)",
         "target_as_named": target_as_named or "(not stated)",

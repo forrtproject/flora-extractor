@@ -995,26 +995,40 @@ def _title_searched_entry(target: dict, doi_r: str, context: dict) -> "dict | No
     pool: list[dict] = []
     unavailable = False
     asked: list[str] = []
+    # How many works the searches matched, against how many the model was shown. The
+    # author-and-year query is the only one that reports a population; a title search
+    # returns its hits and nothing else, so on a title-only pool the two are equal.
     total = 0
 
     # The title search, whenever there is something that could be a title. A citation
     # with no title in it — "Ramscar et al. (2010)" — has nothing to search on, and
     # asking anyway costs two free-text queries at 10x a filter query each.
     if usable_title(cleaned) and not citation_without_title(named):
+        # The replication's own title, not "": `title_search_candidates` refuses a hit
+        # whose title is the replication's at Jaccard 0.9, and that check has never
+        # once run because this call has never supplied one. Holdout wrong-settle
+        # 2266446612 is exactly that class — a repository record titled all but
+        # identically to the replication itself.
         hits, hits_unavailable = title_search_candidates(
-            doi_r, named, "", cited_year, "|".join(cited_surnames))
+            doi_r, named, str(context.get("title_r") or ""), cited_year,
+            "|".join(cited_surnames))
         unavailable = unavailable or hits_unavailable
         asked.append(f"title:{strip_citation_prefix(named)[:50]!r}")
         pool.extend(hits)
 
-    # The author-and-year query, whenever the citation names an author and a year —
-    # including when the title search already answered. The two disagree in practice,
-    # and a pool of both is what the model is for.
-    if cited_surnames and cited_year:
-        found, total, oa_unavailable = author_year_candidates(
+    # The author-and-year query, whenever the citation names an author and a year AND
+    # the title search has not already returned a candidate nothing doubts. Widening
+    # the net where the net came up empty or flagged is the point; widening it over a
+    # clean title hit buys a sibling-paper distractor and a second free-text query at
+    # 10x a filter query. A 100-work sandbox run that asked both of everything
+    # exhausted the OpenAlex daily budget outright (2026-08-07).
+    clean_hit = any(not c.get("flags") for c in pool)
+    if cited_surnames and cited_year and not clean_hit:
+        found, oa_total, oa_unavailable = author_year_candidates(
             cited_surnames, int(cited_year),
             topic=f"{context.get('title_r') or ''} {context.get('abstract_r') or ''}")
         unavailable = unavailable or oa_unavailable
+        total = max(total, oa_total)
         asked.append(f"authoryear:{'+'.join(cited_surnames)} {cited_year}")
         seen = {c.get("doi") or c.get("openalex_id") for c in pool}
         for c in found:
@@ -1026,7 +1040,7 @@ def _title_searched_entry(target: dict, doi_r: str, context: dict) -> "dict | No
     # the paper it came from.
     attempt = {"named": named,
                "query": f"{named} -> {'; '.join(asked)}" if asked else named,
-               "candidates": pool, "candidates_total": total}
+               "candidates": pool, "candidates_total": max(total, len(pool))}
     target["_search_attempt"] = attempt
 
     if not asked:
@@ -1050,7 +1064,8 @@ def _title_searched_entry(target: dict, doi_r: str, context: dict) -> "dict | No
 
     verdict = pick_author_year_original(
         doi_r, str(context.get("title_r") or ""), str(context.get("abstract_r") or ""),
-        named, str(target.get("evidence_quote") or ""), pool)
+        named, str(target.get("evidence_quote") or ""), pool,
+        attempt["candidates_total"])
     if verdict["llm_error"]:
         attempt["outcome"] = "unavailable"
         return {"rank": 0, "doi": "", "title": "", "year": None, "first_author": "",

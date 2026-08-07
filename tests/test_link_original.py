@@ -1087,11 +1087,11 @@ class TestATitleHitThatMissesTheCitedAuthorIsFlagged:
         [hit] = self._run(self._CHAPTER, "bem")
         assert hit["flags"] == ["does not carry the cited author (bem)"]
 
-    def test_front_matter_with_no_author_at_all_is_flagged(self):
-        """The Svensson case: a journal's front matter has nobody on it, and a record
-        with nobody on it cannot be the paper a citation names."""
-        [hit] = self._run({**self._CHAPTER, "authors": []}, "svensson")
-        assert hit["flags"]
+    def test_front_matter_with_no_author_at_all_is_dropped(self):
+        """The Svensson case. This one is dropped rather than flagged: a record with
+        nobody on it cannot be the paper a citation names, and there is no judgment
+        for the model to make — nothing about the record to make one on."""
+        assert self._run({**self._CHAPTER, "authors": []}, "svensson") == []
 
     def test_the_named_author_carries_no_flag(self):
         [hit] = self._run({**self._CHAPTER, "authors": ["Bem, D. J."]}, "bem")

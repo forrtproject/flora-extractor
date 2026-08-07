@@ -3098,7 +3098,8 @@ class TestNamedButUnmatchedTargets:
 
     @staticmethod
     def _pick(index=0, confident=True):
-        def pick(doi_r, title_r, abstract_r, named, quote, candidates):
+        def pick(doi_r, title_r, abstract_r, named, quote, candidates,
+                 total=0):
             chosen = candidates[index] if candidates and index is not None else None
             return {"pick": chosen, "confident": confident and chosen is not None,
                     "reasoning": "same subject", "llm_model": "gpt-5.4-mini",
@@ -3164,16 +3165,31 @@ class TestNamedButUnmatchedTargets:
         assert entry is not None and entry["search_unavailable"] is True
         assert entry["doi"] == ""
 
-    def test_the_author_year_shortlist_joins_the_same_pool(self, monkeypatch):
+    def test_the_author_year_shortlist_joins_the_pool_when_the_title_hits_are_doubted(
+            self, monkeypatch):
         """The two searches used to be exclusive. A candidate only one of them can
-        find must still reach the model."""
+        find must still reach the model — but only where the net came up empty or
+        flagged: widening it over a clean title hit buys a sibling-paper distractor
+        and a second free-text query at 10x a filter query."""
+        doubted = [{**h, "flags": ["does not carry the cited author (hyman)"]}
+                   for h in self._HITS]
         extra = [{"doi": "10.3/three", "title": "Interviewing", "year": 1950,
                   "first_author": "Hyman", "openalex_id": "W3", "journal": "J",
                   "authors": ["Hyman, H."], "cited_by": 9}]
-        entry = self._run(monkeypatch, hits=self._HITS,
+        entry = self._run(monkeypatch, hits=doubted,
                           author_year=(extra, 4, False), pick=self._pick(index=2))
         assert entry["doi"] == "10.3/three"
         assert entry["provisional_method"] == "llm_author_year_search"
+
+    def test_a_clean_title_hit_spends_nothing_on_the_author_year_query(self, monkeypatch):
+        called: list = []
+        monkeypatch.setattr("shared.openalex_client.author_year_candidates",
+                            lambda *a, **k: called.append(a) or ([], 0, False))
+        monkeypatch.setattr("extract.link_original.title_search_candidates",
+                            lambda *a, **k: (list(self._HITS), False))
+        monkeypatch.setattr("shared.llm_client.pick_author_year_original", self._pick())
+        run_extract._target_entry(self._target(), "10.9/rep", self._CONTEXT)
+        assert not called
 
 
 class TestASearchThatFoundNothingIsRecorded:

@@ -1408,7 +1408,7 @@ _UNPICKED_TARGET = {
 
 def pick_author_year_original(doi_r: str, title_r: str, abstract_r: str,
                               target_as_named: str, evidence_quote: str,
-                              candidates: list[dict]) -> dict:
+                              candidates: list[dict], total: int = 0) -> dict:
     """Which of an author-and-year shortlist is the original — or none of them.
 
     Returns {"pick": <the candidate dict or None>, "confident": bool,
@@ -1432,7 +1432,7 @@ def pick_author_year_original(doi_r: str, title_r: str, abstract_r: str,
                 "llm_model": "", "llm_error": ""}
 
     prompt = build_author_year_pick_prompt(title_r, abstract_r, target_as_named,
-                                           evidence_quote, candidates)
+                                           evidence_quote, candidates, total)
     identities = "|".join(f"{c.get('doi') or c.get('openalex_id') or ''}"
                           for c in candidates)
     key = content_key("authoryearpick", doi_r or target_as_named,

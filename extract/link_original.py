@@ -674,6 +674,13 @@ def citation_without_title(text: str) -> bool:
     return not usable_title(stripped[max(ends):].strip())
 
 
+def _hit_author_list(hit: dict) -> str:
+    """*hit*'s authors as one string — "" when the record names nobody."""
+    authors = hit.get("authors")
+    return (" ".join(map(str, authors)) if isinstance(authors, list)
+            else str(authors or "")).strip()
+
+
 def _hit_carries_author(hit: dict, surname: str) -> bool:
     """Whether *surname* is one of *hit*'s authors — True when nothing was cited.
 
@@ -694,9 +701,7 @@ def _hit_carries_author(hit: dict, surname: str) -> bool:
              if len(n) > 2 and n != "and"]
     if not names:
         return True
-    authors = hit.get("authors")
-    text = (" ".join(map(str, authors)) if isinstance(authors, list)
-            else str(authors or "")).lower()
+    text = _hit_author_list(hit).lower()
     return any(re.search(rf"\b{re.escape(n)}\b", text) for n in names)
 
 
@@ -766,6 +771,14 @@ def title_search_candidates(doi_r: str, target_desc: str,
         if jaccard_similarity(hit.get("title", ""), study_r) > 0.9:
             continue
         flags = []
+        if cited_surname and not _hit_author_list(hit):
+            # A record with nobody on it — a journal's front matter, a table of
+            # contents — cannot be the paper a citation names. This one IS dropped
+            # rather than flagged: there is no judgment for the model to make, and
+            # nothing about the record for it to make one on.
+            log.info("[%s] %s title hit %s dropped: the record has no author at all",
+                     doi_r, label, ident)
+            continue
         if not _hit_carries_author(hit, cited_surname):
             flags.append(f"does not carry the cited author ({cited_surname})")
         seen.add(ident)
