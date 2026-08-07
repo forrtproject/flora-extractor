@@ -456,7 +456,9 @@ OUTCOME_DESCENT = True
 #      (2026-08-08)
 #  13  the author-and-year shortlist is asked of CrossRef first, in relevance order;
 #      OpenAlex is the fallback (2026-08-08)
-EXTRACT_LADDER_VERSION: int = 13
+#  14  CrossRef ends the search only when one of its hits carries EVERY surname the
+#      citation named; otherwise its hits lead a pool OpenAlex also fills (2026-08-08)
+EXTRACT_LADDER_VERSION: int = 14
 
 
 # Columns to pass through from the input row (no renaming). Only columns

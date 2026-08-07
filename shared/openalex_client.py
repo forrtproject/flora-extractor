@@ -1064,7 +1064,7 @@ AUTHOR_YEAR_TOPIC_WORDS = (3, 2)
 # CrossRef gets more of them, because it RANKS where OpenAlex ANDs — but not
 # unboundedly: six words returned nothing for a target that five found.
 CROSSREF_TOPIC_WORDS = (5, 3)
-_AUTHOR_YEAR_SHAPE = "v4-crossref-first"
+_AUTHOR_YEAR_SHAPE = "v5-crossref-then-pool"
 
 # Words that carry no topic: ordinary English, and the vocabulary every replication
 # title is built from. Dropping them is what leaves "status overconfidence" behind.
@@ -1112,6 +1112,21 @@ def _fold_accents(text: str) -> str:
     """
     return "".join(c for c in unicodedata.normalize("NFKD", str(text or ""))
                    if not unicodedata.combining(c))
+
+
+def _covers_every_name(candidates: list[dict], surnames: list[str]) -> bool:
+    """Whether any candidate's author list carries EVERY surname the citation named.
+
+    The sufficiency test for stopping at a free search: a work by all three of Turri,
+    Buckwalter and Blouw is identified; three works by Turri alone are a shortlist.
+    """
+    wanted = {_fold_accents(s).lower() for s in surnames}
+    for c in candidates:
+        folded = {_fold_accents(str(a)).lower() for a in (c.get("authors") or [])}
+        text = " ".join(folded)
+        if all(any(w in f for f in folded) or w in text for w in wanted):
+            return True
+    return False
 
 
 def _crossref_author_year(surnames: list[str], year: int,
@@ -1286,9 +1301,16 @@ def author_year_candidates(surnames: "str | list[str]", year: int,
     if cached is not None:
         return cached["candidates"], int(cached["total"]), False
 
-    # CrossRef first, because it is free. Only what it cannot answer costs anything.
-    from_crossref = _crossref_author_year(surnames, year, topic)
-    if from_crossref:
+    # CrossRef first, because it is free — but it STOPS the search only when it has
+    # clearly identified the paper, which is when one of its hits carries every surname
+    # the citation named. Asked for "Jones and Macken (1995)" it returns a Jones-and-
+    # Macken paper and there is nothing left to buy; asked for "Turri, Buckwalter &
+    # Blouw (2015)" it returns Turri-only papers, and the work OpenAlex finds
+    # ("Knowledge and luck", all three authors) is the right one. Treating a partial
+    # answer as a whole one lost nine links on the dev sample while gaining eight —
+    # the same replace-instead-of-add mistake the narrowing made in iteration 9.
+    from_crossref = _crossref_author_year(surnames, year, topic) or []
+    if from_crossref and _covers_every_name(from_crossref, surnames):
         write_cache(OA_CACHE_DIR, key,
                     {"candidates": from_crossref[:AUTHOR_YEAR_MAX_OFFERED],
                      "total": len(from_crossref)})
@@ -1296,6 +1318,9 @@ def author_year_candidates(surnames: "str | list[str]", year: int,
 
     data = _author_year_query(surnames, year, "")
     if data is None:
+        # CrossRef's partial answer is better than nothing when OpenAlex is silent.
+        if from_crossref:
+            return from_crossref[:AUTHOR_YEAR_MAX_OFFERED], len(from_crossref), False
         return [], 0, True
     total = int((data.get("meta") or {}).get("count") or 0)
     if not total and len(surnames) > 1:
@@ -1328,8 +1353,10 @@ def author_year_candidates(surnames: "str | list[str]", year: int,
                 narrowed_results = narrowed["results"]
                 break
 
-    candidates = []
-    seen_ids: set[str] = set()
+    # CrossRef's hits lead: they were ranked by relevance to this paper's own topic,
+    # where OpenAlex's are an author's output in a year sorted by citations.
+    candidates = [dict(c) for c in from_crossref[:AUTHOR_YEAR_MAX_OFFERED]]
+    seen_ids: set[str] = {c["doi"] for c in candidates if c.get("doi")}
     for work in (narrowed_results + (data.get("results") or [])):
         ident = str(work.get("id") or work.get("doi") or "")
         if ident in seen_ids:

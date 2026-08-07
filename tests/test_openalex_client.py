@@ -563,3 +563,51 @@ class TestTopicWordsAndAccents:
     def test_an_accent_is_folded_for_the_author_filter(self):
         assert oa._fold_accents("Zárate") == "Zarate"
         assert oa._fold_accents("Häubl") == "Haubl"
+
+
+class TestCrossRefLeadsAndOpenAlexFillsIn:
+    """CrossRef is free and OpenAlex bills at 10x a filter query, so CrossRef is asked
+    first — but it ENDS the search only when it has identified the paper, which is when
+    one of its hits carries every surname the citation named. Treating a partial answer
+    as a whole one lost nine links on the dev sample while gaining eight."""
+
+    @staticmethod
+    def _cr(*author_lists):
+        return [{"doi": f"10.1/c{i}", "openalex_id": "", "title": f"cr {i}",
+                 "year": 2015, "authors": list(a), "first_author": a[0].lower(),
+                 "journal": "J", "cited_by": 5}
+                for i, a in enumerate(author_lists)]
+
+    def test_a_hit_with_every_cited_name_ends_the_search(self, tmp_path):
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client._crossref_author_year",
+                   return_value=self._cr(["Jones", "Macken"])), \
+             patch("shared.openalex_client._author_year_query") as query:
+            candidates, _, _ = oa.author_year_candidates(
+                ["jones", "macken"], 1995, topic="irrelevant speech spatial location")
+        assert query.call_count == 0, "a free answer that identified the paper still " \
+                                      "paid OpenAlex"
+        assert [c["title"] for c in candidates] == ["cr 0"]
+
+    def test_a_partial_answer_leads_a_pool_openalex_also_fills(self, tmp_path):
+        broad = {"meta": {"count": 3},
+                 "results": [{"id": "https://openalex.org/W9",
+                              "doi": "https://doi.org/10.9/oa", "title": "the right one",
+                              "publication_year": 2015, "authorships": [],
+                              "cited_by_count": 99}]}
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client._crossref_author_year",
+                   return_value=self._cr(["Turri"])), \
+             patch("shared.openalex_client._author_year_query", return_value=broad):
+            candidates, _, _ = oa.author_year_candidates(
+                ["turri", "buckwalter", "blouw"], 2015, topic="knowledge attribution")
+        assert [c["title"] for c in candidates] == ["cr 0", "the right one"]
+
+    def test_a_silent_openalex_leaves_crossrefs_partial_answer_standing(self, tmp_path):
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client._crossref_author_year",
+                   return_value=self._cr(["Turri"])), \
+             patch("shared.openalex_client._author_year_query", return_value=None):
+            candidates, _, unavailable = oa.author_year_candidates(
+                ["turri", "buckwalter"], 2015, topic="knowledge attribution")
+        assert unavailable is False and [c["title"] for c in candidates] == ["cr 0"]
