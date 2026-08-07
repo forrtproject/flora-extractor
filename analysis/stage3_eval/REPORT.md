@@ -51,6 +51,7 @@ the `cache/token_usage.json` delta, taken by `python -m analysis.stage3_eval.spe
 | 10–12 | one pooled candidate list per target, its two reviews, and PsycEXTRA | **1** | 74 | 22 | 3 | **74** | $0.13 |
 | 13 | the shortlist asked of CrossRef first — REPLACING OpenAlex's | **1** | 73 | 23 | 3 | **73** | $0.06 |
 | 14 | CrossRef ends the search only when it identified the paper; otherwise it leads a pool | **1** | 79 | 17 | 3 | **79** | $0.02 |
+| 15 | a title hit is accepted on containment, not only Jaccard | **1** | 79 | 17 | 3 | **79** | $0.01 |
 
 Per-work labels and the reason for each: `labels-dev-<n>.json`, one per iteration.
 
@@ -525,13 +526,69 @@ One work moved the other way: "Yang et al. (2013), study of ambiguity aversion" 
 links to Yang, Vosgerau & Loewenstein 2013 in the right journal on framing and
 willingness-to-pay. Right authors, right venue, wrong subject; counted wrong.
 
+### Iteration 15, and why it needed a third holdout
+
+25 of the 101 open works across the three samples were title searches that found
+nothing, and several of them had found the paper and thrown it away. Jaccard at 0.7
+asks two titles to be nearly the same STRING, but the query is however the replication
+quoted its target — usually a fragment. "Imagine being a nice guy: A note on
+hypothetical vs. incentivized" scores 0.70 against the full title it is the opening of;
+"the superiority effect in crowding" scores 0.67 against "The word superiority effect
+overcomes crowding"; "Ambivalence of Neutral Ratings" scores 0.60 against "Do Neutral
+Ratings Imply Indifference or Ambivalence?". All three are the paper. A hit is now
+accepted when every content word of the query appears in its title, floored at three
+words so "the martyrdom effect" cannot match the literature.
+
+It is safe only because a model adjudicates the pool. While the first hit BECAME the
+link, a generous retrieval was a generous supply of wrong originals.
+
+**It moved nothing on dev** — its evidence came from holdout 1's misses, and holdout 1
+had been read. So iterations 13–15 needed a holdout neither earlier one could give.
+
+### Third holdout — run once, on 100 works used in none of the three samples
+
+| | wrong_settle | correct_settle | open |
+| - | -----------: | -------------: | ---: |
+| dev, iteration 15 | 1 | 79 | 20 |
+| **holdout 3** | **3** | **71** | 26 |
+
+Seed 20260809 over the 1,025 unspent works; zero overlap with dev, holdout 1 or
+holdout 2. All 74 settled works adjudicated, every DOI Crossref-checked
+(`labels-holdout3.json`, `payloads-holdout3.md`).
+
+**Holdout wrong-settle 3 against dev's 1 — within the rule's 5 points, so the gains
+generalise.** But two of the three are classes dev never showed, and both are worth
+fixing before the campaign:
+
+1. **96773735 — a `resolved` self-link the guards cannot see.** The full-text rung
+   "resolved" the paper to an OCR-mangled copy of its OWN title ("Report of an
+   jnternship c:gndyctp1 lithe MemQrial Unjvmj'Y"), with no DOI, while its own evidence
+   names Short's (1991) as the target. `doi_o == doi_r` cannot fire when both are empty,
+   and the Jaccard-0.9 "never accept the replication's own title" guard lives in
+   `title_search_candidates`, which the full-text rung does not go through. **This is a
+   `resolved` row, so unlike a provisional one it would be imported for validation.**
+   The fix is to apply that title guard where the row is built rather than where one
+   search is.
+2. **6925248538 — `no_original_found` on a work whose abstract names its original.**
+   "the study by Sela et al. investigating the effect of assortment size on option
+   choice". The target prompt named NO target, so iteration 1's rule — a named target
+   that could not be identified writes `target_pending` — never fires. A work that
+   names an original in its abstract and gets no target named is a failure of the
+   prompt, not evidence that no original exists.
+
+The third, 7028210935, is a Civile-2019 face-inversion paper standing in for another
+Civile 2019: right author, right topic area, probably the wrong paper.
+
 ### Where the exercise finishes
 
-| | baseline | final | 
+| | baseline | final |
 | - | -------: | ----: |
-| dev correct settles | 24 | **74** |
+| dev correct settles | 24 | **79** |
 | dev wrong settles | 25 | **1** |
-| holdout wrong settles | — | **1** (first holdout 2) |
+| holdout wrong settles | — | **3** (holdout 1: 2, holdout 2: 1) |
+
+Three independent holdouts, 300 works never used to design anything, adjudicated
+work by work against Crossref: 2, 1 and 3 wrong settles.
 
 Total spend, read off `cache/token_usage.json` against the snapshot taken before
 iteration 0 rather than added up from the table: **$2.05** of the $20 approved —
