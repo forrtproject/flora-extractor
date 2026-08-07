@@ -446,7 +446,10 @@ OUTCOME_DESCENT = True
 #   9  the author-and-year narrowing ADDS to the shortlist rather than replacing it,
 #      on a few topic words rather than a whole title, and the author filter is
 #      accent-folded (2026-08-07)
-EXTRACT_LADDER_VERSION: int = 9
+#  10  ONE pooled candidate list per unmatched target, from every search, and one
+#      model decision over it; the metadata rules flag candidates instead of dropping
+#      them (2026-08-07)
+EXTRACT_LADDER_VERSION: int = 10
 
 
 # Columns to pass through from the input row (no renaming). Only columns
@@ -724,8 +727,12 @@ def title_search_candidates(doi_r: str, target_desc: str,
     Same guards as the single-hit resolver: never link a paper to itself, and never
     accept a hit whose title is the replication's own.
 
-    *cited_surname* is the author the paper named, and a hit that does not carry it
-    is dropped — see `_hit_carries_author`.
+    *cited_surname* is the author the paper named. A hit that does not carry it is
+    FLAGGED rather than dropped, because dropping it is the expensive mistake: a
+    candidate the model never sees cannot be confirmed OR disconfirmed, and the work
+    goes back into a worklist that will pay for the whole ladder again. Rejecting a
+    bad candidate costs one field of one LLM answer. `_hit_carries_author` still
+    decides; what changed is what its answer does.
 
     *cited_year* is the year the PAPER gave for its target, and both searches reject a
     hit more than two years from it. The check has always been in both of them and
@@ -753,10 +760,9 @@ def title_search_candidates(doi_r: str, target_desc: str,
             continue
         if jaccard_similarity(hit.get("title", ""), study_r) > 0.9:
             continue
+        flags = []
         if not _hit_carries_author(hit, cited_surname):
-            log.info("[%s] %s title hit %s dropped: the citation names %s and the "
-                     "hit does not", doi_r, label, doi_o, cited_surname)
-            continue
+            flags.append(f"does not carry the cited author ({cited_surname})")
         seen.add(doi_o)
         candidates.append({
             "doi":          doi_o,
@@ -764,7 +770,10 @@ def title_search_candidates(doi_r: str, target_desc: str,
             "year":         hit.get("year"),
             "first_author": _first_author(hit.get("authors")),
             "openalex_id":  str(hit.get("openalex_id") or ""),
+            "authors":      hit.get("authors") or [],
+            "journal":      str(hit.get("journal") or ""),
             "source":       label,
+            "flags":        flags,
         })
     return candidates, unavailable
 

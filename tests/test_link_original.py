@@ -1065,10 +1065,12 @@ class TestTheTitleSearchIsGivenTheCitedYear:
         assert [y for _, y in seen] == ["", ""]
 
 
-class TestATitleHitMustCarryTheCitedAuthor:
-    """A citation names an author, and a paper that does not have that author is not
-    that paper however well its title scored. Both title-search failures left on the
-    frozen dev sample after the year filter were this."""
+class TestATitleHitThatMissesTheCitedAuthorIsFlagged:
+    """A citation names an author, and a paper that does not have that author is
+    probably not that paper however well its title scored. It is FLAGGED rather than
+    dropped: a candidate the model never sees can be neither confirmed nor
+    disconfirmed, and the work then goes back into a worklist that pays for the whole
+    ladder again. Rejecting a bad candidate costs one field of one LLM answer."""
 
     @staticmethod
     def _run(hit, surname):
@@ -1081,19 +1083,23 @@ class TestATitleHitMustCarryTheCitedAuthor:
                 "title": "Personality and Social Psychology",
                 "year": 2012, "authors": ["Snyder, M.", "Deaux, K."]}
 
-    def test_a_hit_by_other_authors_is_dropped(self):
-        assert self._run(self._CHAPTER, "bem") == []
+    def test_a_hit_by_other_authors_is_flagged(self):
+        [hit] = self._run(self._CHAPTER, "bem")
+        assert hit["flags"] == ["does not carry the cited author (bem)"]
 
-    def test_front_matter_with_no_author_at_all_is_dropped(self):
+    def test_front_matter_with_no_author_at_all_is_flagged(self):
         """The Svensson case: a journal's front matter has nobody on it, and a record
         with nobody on it cannot be the paper a citation names."""
-        assert self._run({**self._CHAPTER, "authors": []}, "svensson") == []
+        [hit] = self._run({**self._CHAPTER, "authors": []}, "svensson")
+        assert hit["flags"]
 
-    def test_the_named_author_passes(self):
-        assert self._run({**self._CHAPTER, "authors": ["Bem, D. J."]}, "bem")
+    def test_the_named_author_carries_no_flag(self):
+        [hit] = self._run({**self._CHAPTER, "authors": ["Bem, D. J."]}, "bem")
+        assert hit["flags"] == []
 
-    def test_a_citation_with_no_author_filters_nothing(self):
-        assert self._run(self._CHAPTER, "")
+    def test_a_citation_with_no_author_flags_nothing(self):
+        [hit] = self._run(self._CHAPTER, "")
+        assert hit["flags"] == []
 
     def test_a_multi_author_citation_matches_on_any_of_its_names(self):
         """extract_author_year_patterns returns "Kaufmann, Weber, and Haisley (2013)"

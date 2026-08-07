@@ -3078,10 +3078,16 @@ class TestNamedButUnmatchedTargets:
     Every OSF registration and every URL-only row gets 0 OpenAlex candidates, so the
     key namespace is empty and no named target can ever be matched. A 25-work pilot on
     2026-08-07 closed 15 works as `no_original_found` whose stored evidence named the
-    original outright ("Conceptual replication of Hyman & Sheatsley (1950) Study 2").
+    original outright ("Conceptual replication of Hyman & Sheatsley (1950)").
     `no_original_found` is not in UNSETTLING_VERDICTS, so those works were closed for
     good.
+
+    Every search that can say something about the target now contributes to ONE pool,
+    and the linking model picks from it — so each test says what the searches found
+    AND what the model made of it.
     """
+
+    _CONTEXT = {"title_r": "A replication", "abstract_r": "We replicate the study."}
 
     def _target(self, **over):
         base = {"target_as_named": "Hyman and Sheatsley (1950) Interviewing in "
@@ -3090,63 +3096,94 @@ class TestNamedButUnmatchedTargets:
         base.update(over)
         return base
 
-    def test_an_unmatched_named_target_is_searched_and_kept(self, monkeypatch):
-        monkeypatch.setattr(
-            "extract.link_original.title_search_candidates",
-            lambda doi_r, desc, study_r, cited_year="", cited_surname="": ([
-                {"doi": "10.1/one", "title": "Interviewing in social research",
-                 "year": 1950, "first_author": "Hyman", "openalex_id": "",
-                 "source": "crossref"},
-                {"doi": "10.2/two", "title": "Interviewing in social research",
-                 "year": 1954, "first_author": "Hyman", "openalex_id": "",
-                 "source": "openalex"}], False))
-        entry = run_extract._target_entry(self._target(), "10.9/rep", _CONTEXT)
+    @staticmethod
+    def _pick(index=0, confident=True):
+        def pick(doi_r, title_r, abstract_r, named, quote, candidates):
+            chosen = candidates[index] if candidates and index is not None else None
+            return {"pick": chosen, "confident": confident and chosen is not None,
+                    "reasoning": "same subject", "llm_model": "gpt-5.4-mini",
+                    "llm_error": ""}
+        return pick
+
+    def _run(self, monkeypatch, hits=(), unavailable=False, author_year=([], 0, False),
+             pick=None, target=None):
+        monkeypatch.setattr("extract.link_original.title_search_candidates",
+                            lambda *a, **k: (list(hits), unavailable))
+        monkeypatch.setattr("shared.openalex_client.author_year_candidates",
+                            lambda *a, **k: author_year)
+        monkeypatch.setattr("shared.llm_client.pick_author_year_original",
+                            pick or self._pick())
+        return run_extract._target_entry(target or self._target(), "10.9/rep",
+                                         self._CONTEXT)
+
+    _HITS = [{"doi": "10.1/one", "title": "Interviewing in social research",
+              "year": 1950, "first_author": "Hyman", "openalex_id": "",
+              "source": "crossref", "flags": []},
+             {"doi": "10.2/two", "title": "Interviewing in social research",
+              "year": 1954, "first_author": "Hyman", "openalex_id": "",
+              "source": "openalex", "flags": []}]
+
+    def test_an_unmatched_named_target_is_searched_and_the_model_picks(self, monkeypatch):
+        entry = self._run(monkeypatch, hits=self._HITS)
         assert entry is not None
         assert entry["doi"] == "10.1/one"
-        # Provisional, so _per_target_rows writes it llm_title_search at low
-        # confidence and never codes an outcome for it.
+        # Provisional, so _per_target_rows writes it at low confidence and never codes
+        # an outcome for it.
         assert entry["provisional"] is True
         assert entry["confidence"] == "low"
+        assert entry["provisional_method"] == "llm_title_search"
         # BOTH candidates survive onto the row — that is the test data issue #186 needs.
         assert "10.1/one" in entry["evidence"] and "10.2/two" in entry["evidence"]
         assert len(entry["title_search_candidates"]) == 2
+
+    def test_a_pool_the_model_declines_resolves_nothing(self, monkeypatch):
+        entry = self._run(monkeypatch, hits=self._HITS, pick=self._pick(index=None))
+        assert entry is None
 
     def test_a_target_the_model_declined_is_not_searched(self, monkeypatch):
         """A record WAS offered and the model said no. Searching anyway is how a paper
         gets linked to a landmark it merely cites."""
         called = []
         monkeypatch.setattr("extract.link_original.title_search_candidates",
-                            lambda *a: called.append(a) or ([], False))
+                            lambda *a, **k: called.append(a) or ([], False))
         entry = run_extract._target_entry(
             self._target(record={"title": "Some original", "doi": "10.3/x"},
-                         match_certain=False), "10.9/rep", _CONTEXT)
+                         match_certain=False), "10.9/rep", self._CONTEXT)
         assert entry is None
         assert not called
 
     def test_no_candidates_settles_as_no_row(self, monkeypatch):
-        """Both providers answered and neither knows the paper: settle it."""
-        monkeypatch.setattr("extract.link_original.title_search_candidates",
-                            lambda *a: ([], False))
-        assert run_extract._target_entry(self._target(), "10.9/rep", _CONTEXT) is None
+        """Every search answered and none knows the paper: there is nothing to pick."""
+        entry = self._run(monkeypatch)
+        assert entry is None
 
     def test_an_unreachable_provider_does_not_settle(self, monkeypatch):
         """Neither provider answered, so the row is api_error — which a re-run
         reopens — rather than no_original_found, which would close it for good."""
-        monkeypatch.setattr("extract.link_original.title_search_candidates",
-                            lambda *a: ([], True))
-        entry = run_extract._target_entry(self._target(), "10.9/rep", _CONTEXT)
+        entry = self._run(monkeypatch, unavailable=True)
         assert entry is not None and entry["search_unavailable"] is True
         assert entry["doi"] == ""
+
+    def test_the_author_year_shortlist_joins_the_same_pool(self, monkeypatch):
+        """The two searches used to be exclusive. A candidate only one of them can
+        find must still reach the model."""
+        extra = [{"doi": "10.3/three", "title": "Interviewing", "year": 1950,
+                  "first_author": "Hyman", "openalex_id": "W3", "journal": "J",
+                  "authors": ["Hyman, H."], "cited_by": 9}]
+        entry = self._run(monkeypatch, hits=self._HITS,
+                          author_year=(extra, 4, False), pick=self._pick(index=2))
+        assert entry["doi"] == "10.3/three"
+        assert entry["provisional_method"] == "llm_author_year_search"
 
 
 class TestASearchThatFoundNothingIsRecorded:
     """What was searched for has to survive onto a work that resolved nothing.
 
-    A work that settles `no_original_found` stored NOTHING about what had been tried:
-    not the string searched, not that both providers answered, not the candidates.
-    Evaluating a better resolver (issue #186) would then mean re-running every work
-    instead of reading rows already on disk — and `no_original_found` settles, so the
-    re-run would not even be offered the work.
+    A work that settled `no_original_found` stored NOTHING about what had been tried:
+    not the strings searched, not that every provider answered, not the candidates.
+    Evaluating a better resolver would then mean re-running every work instead of
+    reading rows already on disk — and `no_original_found` settles, so the re-run
+    would not even be offered the work.
     """
 
     _ROW = pd.Series({"doi_r": "10.1/rep", "title_r": "T", "abstract_r": "a",
@@ -3157,11 +3194,11 @@ class TestASearchThatFoundNothingIsRecorded:
         """A target the model named that no keyed record could match — every OSF
         registration and every URL-only row, whose key namespace is empty."""
         return {"key": "@x", "match_certain": True, "target_as_named": named,
-                "study_numbers": "", "replication_study_numbers": "",
-                "evidence_quote": "a direct replication of", "record": None}
+                "study_numbers": "", "replication_study_numbers": "", "record": None,
+                "evidence_quote": "a direct replication of"}
 
-    def _run(self, targets, candidates=(), unavailable=False, multi=False,
-             link_over=None, author_year=None):
+    def _run(self, targets, hits=(), unavailable=False, author_year=([], 0, False),
+             pick=None, multi=False, link_over=None):
         link = dict(_MOCK_LINK, resolved=False, resolution_method="llm_multi_target",
                     resolved_doi_o="", resolved_title_o="", multi_target=multi,
                     n_targets=len(targets), target_stage="llm_gemini",
@@ -3169,12 +3206,16 @@ class TestASearchThatFoundNothingIsRecorded:
                     llm_evidence="")
         link.update(link_over or {})
         observed: dict = {}
+        no_pick = {"pick": None, "confident": False, "reasoning": "",
+                   "llm_model": "gpt-5.4-mini", "llm_error": ""}
         with patch.object(run_extract, "run_for_doi", return_value=link), \
              patch.object(run_extract, "_has_document", return_value=False), \
              patch("extract.link_original.title_search_candidates",
-                   return_value=(list(candidates), unavailable)), \
+                   return_value=(list(hits), unavailable)), \
              patch("shared.openalex_client.author_year_candidates",
-                   return_value=author_year or ([], 0, False)), \
+                   return_value=author_year), \
+             patch("shared.llm_client.pick_author_year_original",
+                   return_value=pick or no_pick), \
              patch.object(run_extract, "extract_outcome", return_value=_MOCK_OUTCOME):
             rows = run_extract._resolve_and_code(
                 "10.1/rep", self._ROW, screen=None, no_llm=False, no_pdf=True,
@@ -3189,18 +3230,15 @@ class TestASearchThatFoundNothingIsRecorded:
             [self._unmatched("Smith et al. (2009) The original paper")])
 
         assert len(rows) == 1
-        assert rows[0]["link_method"] == "target_pending"
-        assert "searches: no_match(" in rows[0]["link_evidence"]
+        assert "searches: no_candidates(" in rows[0]["link_evidence"]
         assert "The original paper" in rows[0]["link_evidence"]
         # And onto the observation the tier stores beside the row, which is taken
         # BEFORE the per-target adapter runs its searches.
-        assert "title searches: no_match(" in observed["link_evidence"]
+        assert "no_candidates(" in observed["link_evidence"]
 
-    def test_a_target_with_no_searchable_title_is_recorded_as_unsearchable(self):
-        """"Study 2" is under usable_title's floor, so no search runs at all. That is a
-        different finding from a search that came back empty, and issue #186 needs to
-        tell them apart. (An author-year string like "Zhong et al. (2010)" IS above the
-        floor and does get searched — fruitlessly, at 10x a filter query.)"""
+    def test_a_target_nothing_can_be_searched_for_is_recorded_as_unsearchable(self):
+        """"Study 2" carries no title, no author and no year, so no search runs at
+        all. That is a different finding from a search that came back empty."""
         rows, _ = self._run([self._unmatched("Study 2")])
 
         assert "searches: unsearchable(" in rows[0]["link_evidence"]
@@ -3214,18 +3252,15 @@ class TestASearchThatFoundNothingIsRecorded:
 
         assert rows[0]["link_method"] == "target_pending"
         assert "none could be matched" in rows[0]["link_evidence"]
-        assert "searches: no_match(" in rows[0]["link_evidence"]
+        assert "searches: no_candidates(" in rows[0]["link_evidence"]
 
     def test_one_named_target_that_could_not_be_found_does_not_settle(self):
         """"We know which paper it replicates and could not look it up" is not "this
         paper replicates nothing". The first must reopen on a re-run; the second
         settles. Falling through to the single-row path wrote `no_original_found` for
-        both, because the ladder's resolution_method is still llm_no_target — 24 of
-        100 works on the frozen dev sample, every one naming an author and a year."""
-        rows, _ = self._run(
-            [self._unmatched("Ramscar et al. (2010)")],
-            link_over={"resolution_method": "llm_no_target"},
-            author_year=([], 0, False))
+        both — 24 of 100 works on the frozen dev sample."""
+        rows, _ = self._run([self._unmatched("Ramscar et al. (2010)")],
+                            link_over={"resolution_method": "llm_no_target"})
 
         assert rows[0]["link_method"] == "target_pending"
         assert rows[0]["outcome"] == "pending"
@@ -3242,127 +3277,17 @@ class TestASearchThatFoundNothingIsRecorded:
 
         assert rows[0]["link_method"] == "no_original_found"
 
-    def test_a_resolved_search_is_recorded_on_the_row_it_wrote(self):
+    def test_a_confident_pick_is_recorded_on_the_row_it_wrote(self):
+        hit = {"doi": "10.1/found", "title": "The original paper", "year": 2009,
+               "first_author": "Smith", "openalex_id": "", "source": "crossref",
+               "flags": []}
         rows, _ = self._run(
-            [self._unmatched("Smith et al. (2009) The original paper")],
-            candidates=[{"doi": "10.1/found", "title": "The original paper",
-                         "year": 2009, "first_author": "Smith", "openalex_id": "",
-                         "source": "crossref"}])
+            [self._unmatched("Smith et al. (2009) The original paper")], hits=[hit],
+            pick={"pick": hit, "confident": True, "reasoning": "same subject",
+                  "llm_model": "gpt-5.4-mini", "llm_error": ""})
 
         assert rows[0]["doi_o"] == "10.1/found"
         assert rows[0]["link_method"] == "llm_title_search"
-
-
-class TestACitationWithNoTitleIsResolvedByAuthorAndYear:
-    """"Ramscar et al. (2010)" names an original unambiguously to a reader and gives
-    a title index nothing to match. Both providers answered nothing, at 10x a filter
-    query each, and the work closed as though no original existed — 24 of 100 works
-    on the frozen dev sample. An author-and-year query can answer it; whether any of
-    what it returns IS the paper is a judgment about subject matter, so a model makes
-    it over a bounded shortlist."""
-
-    _ROW = pd.Series({"doi_r": "10.1/rep",
-                      "title_r": "A replication of the feature-label-order effect",
-                      "abstract_r": "We replicate the order of presentation effect.",
-                      "filter_status": "replication"})
-    _CANDS = [
-        {"doi": "10.1/right", "openalex_id": "W1", "title": "The Effects of "
-         "Feature-Label-Order", "year": 2010, "authors": ["Ramscar, M."],
-         "first_author": "ramscar", "journal": "Cognitive Science", "cited_by": 313},
-        {"doi": "10.2/wrong", "openalex_id": "W2", "title": "Computing Machinery",
-         "year": 2010, "authors": ["Ramscar, M."], "first_author": "ramscar",
-         "journal": "Elsewhere", "cited_by": 14},
-    ]
-
-    def _target(self):
-        return {"key": "@x", "match_certain": True,
-                "target_as_named": "Ramscar et al. (2010)", "study_numbers": "",
-                "replication_study_numbers": "", "record": None,
-                "evidence_quote": "we replicate Ramscar et al. (2010)"}
-
-    def _entry(self, monkeypatch, candidates, verdict, total=2):
-        monkeypatch.setattr("shared.openalex_client.author_year_candidates",
-                            lambda *a, **k: (candidates, total, False))
-        monkeypatch.setattr("shared.llm_client.pick_author_year_original",
-                            lambda *a, **k: verdict)
-        target = self._target()
-        entry = run_extract._target_entry(
-            target, "10.1/rep",
-            {"title_r": self._ROW["title_r"], "abstract_r": self._ROW["abstract_r"]})
-        return entry, target["_search_attempt"]
-
-    def test_a_confident_pick_becomes_a_provisional_link(self, monkeypatch):
-        entry, attempt = self._entry(
-            monkeypatch, self._CANDS,
-            {"pick": self._CANDS[0], "confident": True, "reasoning": "same effect",
-             "llm_model": "gpt-5.4-mini", "llm_error": ""})
-
-        assert entry["doi"] == "10.1/right"
-        # Provisional, like every resolver with no measured precision: low
-        # confidence, no outcome coded, set aside for human confirmation. Its own
-        # method value, so its precision can be measured apart from llm_title_search.
-        assert entry["provisional"] is True and entry["confidence"] == "low"
-        assert entry["provisional_method"] == "llm_author_year_search"
-        assert attempt["outcome"] == "author_year_resolved"
-
-    def test_an_unconfident_pick_resolves_nothing(self, monkeypatch):
-        entry, attempt = self._entry(
-            monkeypatch, self._CANDS,
-            {"pick": self._CANDS[1], "confident": False, "reasoning": "maybe",
-             "llm_model": "gpt-5.4-mini", "llm_error": ""})
-
-        assert entry is None
-        assert attempt["outcome"] == "author_year_unconfident"
-
-    def test_declining_is_an_ordinary_answer(self, monkeypatch):
-        """A surname and a year name a person's output, not a topic. Turri 2015
-        returns 154 works, most of them polymer chemistry."""
-        entry, attempt = self._entry(
-            monkeypatch, self._CANDS,
-            {"pick": None, "confident": False, "reasoning": "none is about this",
-             "llm_model": "gpt-5.4-mini", "llm_error": ""}, total=154)
-
-        assert entry is None
-        assert attempt["outcome"] == "author_year_declined"
-        # How many were offered and how many there were, so a "none of these" over a
-        # truncated list is not read as a "none of these" over all of them.
-        assert attempt["candidates_total"] == 154 and len(attempt["candidates"]) == 2
-
-    def test_a_silent_openalex_does_not_settle(self, monkeypatch):
-        monkeypatch.setattr("shared.openalex_client.author_year_candidates",
-                            lambda *a, **k: ([], 0, True))
-        target = self._target()
-        entry = run_extract._target_entry(target, "10.1/rep",
-                                          {"title_r": "", "abstract_r": ""})
-
-        assert entry["search_unavailable"] is True and entry["doi"] == ""
-        assert target["_search_attempt"]["outcome"] == "author_year_unavailable"
-
-    def test_a_provider_failure_on_the_pick_does_not_settle(self, monkeypatch):
-        entry, attempt = self._entry(
-            monkeypatch, self._CANDS,
-            {"pick": None, "confident": False, "reasoning": "",
-             "llm_model": "", "llm_error": "503"})
-
-        assert entry["search_unavailable"] is True
-        assert attempt["outcome"] == "author_year_unavailable"
-
-    def test_a_target_with_a_title_still_goes_to_the_title_search(self, monkeypatch):
-        """The route is chosen by whether removing the citation leaves a title, not by
-        whether there is a citation."""
-        called: list = []
-        monkeypatch.setattr("shared.openalex_client.author_year_candidates",
-                            lambda *a, **k: called.append(a) or ([], 0, False))
-        monkeypatch.setattr("extract.link_original.title_search_candidates",
-                            lambda *a: ([], False))
-        target = {**self._target(),
-                  "target_as_named": "Zhong, Bohns, & Gino (2010) Good lamps are the "
-                                     "best police"}
-        run_extract._target_entry(target, "10.1/rep",
-                                  {"title_r": "", "abstract_r": ""})
-
-        assert not called
-        assert target["_search_attempt"]["outcome"] == "no_match"
 
 
 class TestATransientSourceFailureIsNotAFourteenDayVerdict:

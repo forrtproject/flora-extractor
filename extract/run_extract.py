@@ -959,198 +959,142 @@ def _cited_surnames(pattern: dict) -> list[str]:
     return seen or [str(pattern.get("surname") or "")]
 
 
-def _author_year_entry(target: dict, doi_r: str, context: dict,
-                       named: str) -> "dict | None":
-    """An entry for a target named as a citation with no title in it.
+def _title_searched_entry(target: dict, doi_r: str, context: dict) -> "dict | None":
+    """An entry for a target the model NAMED but no keyed record could match.
 
-    One OpenAlex author-and-year query builds a bounded shortlist, and the LINKING
-    model says which of them — if any — is the paper the replication re-tested. The
-    shortlist is bounded on purpose: this is not a search of the whole literature but
-    a choice among an author's output in one year, which is the same shape as the
-    reference-list rung.
+    ONE pooled candidate list per target, from every search that can say anything
+    about it, and ONE decision over that pool by the linking model.
 
-    The result is PROVISIONAL whatever the model says (`llm_author_year_search`, low
-    confidence, no outcome coded, set aside for human confirmation). It is a new
-    resolver with no measured precision; `llm_title_search` is treated the same way
-    on the same grounds, and the two are kept apart so each can be measured.
+    The two searches used to be exclusive: a description with a title in it went to
+    the title search, one without went to the author-and-year query, and each
+    mechanically dropped what its own guards doubted. That is the expensive way round.
+    A candidate the model never sees can be neither confirmed nor disconfirmed, and a
+    target left unresolved sends the whole work back to a worklist that pays for the
+    ladder again — the abstract call, the reference list, the PDF. Asking the model to
+    reject one bad candidate costs one field of one answer. So the pool is wide and
+    the model, not a metadata rule, decides; the rules survive as FLAGS on the
+    candidates they doubt.
 
-    The shortlist's size is recorded next to what came back. Offering 8 of 154 and
-    being told "none of these" is a different finding from offering all 3 there were,
-    and a row that does not say which cannot be read afterwards.
+    Measured across the dev iterations: switching a work between the two routes gained
+    links and lost them in roughly equal numbers, because each route saw only its own
+    half of what was findable.
     """
-    from shared.openalex_client import author_year_candidates
-    from shared.openalex_client import extract_author_year_patterns
+    named = str(target.get("target_as_named") or "").strip()
+    cleaned = clean_citation_title(named)
+
+    from extract.link_original import (citation_without_title, strip_citation_prefix,
+                                       title_search_candidates)
+    from shared.openalex_client import (author_year_candidates,
+                                        extract_author_year_patterns)
     from shared.llm_client import pick_author_year_original
 
-    patterns = extract_author_year_patterns(named)
-    if not patterns:
-        target["_search_attempt"] = {"named": named, "query": "",
-                                     "outcome": "unsearchable"}
-        return None
-    year = patterns[0]["year"]
-    surnames = _cited_surnames(patterns[0])
-    # The title AND the abstract: a title like "Conceptual Replication (Young et al.,
-    # 2016, Study 1)" carries no topic word at all once the author's own name is
-    # excluded, and the abstract does.
-    candidates, total, unavailable = author_year_candidates(
-        surnames, year,
-        topic=f"{context.get('title_r') or ''} {context.get('abstract_r') or ''}")
-    surname = surnames[0]
-    # The named string, not just the surname and year it was parsed into: the
-    # evidence line is what an adjudication reads, and "ramscar 2010" does not say
-    # which citation in the paper it came from.
-    attempt = {"named": named, "query": f"{named} -> {surname} {year}",
-               "candidates": candidates, "candidates_total": total}
+    patterns      = extract_author_year_patterns(named)
+    cited_year    = str(patterns[0]["year"]) if patterns else ""
+    cited_surnames = _cited_surnames(patterns[0]) if patterns else []
+
+    pool: list[dict] = []
+    unavailable = False
+    asked: list[str] = []
+    total = 0
+
+    # The title search, whenever there is something that could be a title. A citation
+    # with no title in it — "Ramscar et al. (2010)" — has nothing to search on, and
+    # asking anyway costs two free-text queries at 10x a filter query each.
+    if usable_title(cleaned) and not citation_without_title(named):
+        hits, hits_unavailable = title_search_candidates(
+            doi_r, named, "", cited_year, "|".join(cited_surnames))
+        unavailable = unavailable or hits_unavailable
+        asked.append(f"title:{strip_citation_prefix(named)[:50]!r}")
+        pool.extend(hits)
+
+    # The author-and-year query, whenever the citation names an author and a year —
+    # including when the title search already answered. The two disagree in practice,
+    # and a pool of both is what the model is for.
+    if cited_surnames and cited_year:
+        found, total, oa_unavailable = author_year_candidates(
+            cited_surnames, int(cited_year),
+            topic=f"{context.get('title_r') or ''} {context.get('abstract_r') or ''}")
+        unavailable = unavailable or oa_unavailable
+        asked.append(f"authoryear:{'+'.join(cited_surnames)} {cited_year}")
+        seen = {c.get("doi") or c.get("openalex_id") for c in pool}
+        for c in found:
+            if (c.get("doi") or c.get("openalex_id")) not in seen:
+                pool.append({**c, "source": "openalex_authoryear", "flags": []})
+
+    # The named string leads, then what was asked of it: the evidence line is what an
+    # adjudication reads, and "authoryear:ramscar 2010" does not say which citation in
+    # the paper it came from.
+    attempt = {"named": named,
+               "query": f"{named} -> {'; '.join(asked)}" if asked else named,
+               "candidates": pool, "candidates_total": total}
     target["_search_attempt"] = attempt
 
+    if not asked:
+        attempt["outcome"] = "unsearchable"
+        return None
     if unavailable:
-        # OpenAlex never answered, so nothing about this original is established. The
-        # row goes out api_error, which a re-run reopens.
-        attempt["outcome"] = "author_year_unavailable"
+        # A provider was silent, so the answer is incomplete however good the part in
+        # hand. The row is written api_error, which a re-run reopens; settling on
+        # incomplete evidence is not reversible and a re-run is nearly free.
+        attempt["outcome"] = "unavailable"
+        found = "; ".join(f"{c['source']}: {c['doi']}" for c in pool)
         return {"rank": 0, "doi": "", "title": "", "year": None, "first_author": "",
                 "openalex_id": "", "study_number": "", "study_r": "",
-                "evidence": "author-and-year lookup did not reach OpenAlex",
+                "evidence": ("the searches for the named target did not reach every "
+                             "provider" + (f"; what did answer: {found}" if found else "")),
                 "confidence": "low", "provisional": False, "outcome_block": {},
-                "search_unavailable": True, "title_search_candidates": []}
-    if not candidates:
-        attempt["outcome"] = "author_year_no_candidates"
+                "search_unavailable": True, "title_search_candidates": pool}
+    if not pool:
+        attempt["outcome"] = "no_candidates"
         return None
 
     verdict = pick_author_year_original(
         doi_r, str(context.get("title_r") or ""), str(context.get("abstract_r") or ""),
-        named, str(target.get("evidence_quote") or ""), candidates)
+        named, str(target.get("evidence_quote") or ""), pool)
     if verdict["llm_error"]:
-        attempt["outcome"] = "author_year_unavailable"
+        attempt["outcome"] = "unavailable"
         return {"rank": 0, "doi": "", "title": "", "year": None, "first_author": "",
                 "openalex_id": "", "study_number": "", "study_r": "",
-                "evidence": f"author-and-year pick failed: {verdict['llm_error']}",
+                "evidence": f"the pick over {len(pool)} candidates failed: "
+                            f"{verdict['llm_error']}",
                 "confidence": "low", "provisional": False, "outcome_block": {},
-                "search_unavailable": True, "title_search_candidates": candidates}
+                "search_unavailable": True, "title_search_candidates": pool}
 
     pick = verdict["pick"]
-    if not pick or not verdict["confident"]:
-        # Declining is an ordinary answer here — a surname and a year name a person's
-        # output, not a topic — and it is not evidence that no original exists.
-        attempt["outcome"] = ("author_year_declined" if pick is None
-                              else "author_year_unconfident")
-        attempt["reasoning"] = verdict["reasoning"]
-        return None
-
-    attempt["outcome"] = "author_year_resolved"
     attempt["reasoning"] = verdict["reasoning"]
+    if not pick or not verdict["confident"]:
+        attempt["outcome"] = ("declined" if pick is None else "unconfident")
+        return None
+
+    attempt["outcome"] = "resolved"
+    # Which search found the chosen candidate is what the row is filed under, so the
+    # two resolvers' precision stays measurable apart even though one call decides.
+    method = ("llm_author_year_search" if pick.get("source") == "openalex_authoryear"
+              else "llm_title_search")
     evidence = str(target.get("evidence_quote") or "")
-    note = (f"target named as a citation with no title; picked from {len(candidates)} "
-            f"of {total} works by {surname} ({year}) by {verdict['llm_model']}: "
-            f"{verdict['reasoning']}")
+    note = (f"target named but unmatched to any record; picked by "
+            f"{verdict['llm_model']} from {len(pool)} candidate(s) "
+            f"({', '.join(sorted({str(c.get('source')) for c in pool}))}): "
+            f"{verdict['reasoning']}. All considered: "
+            + "; ".join(f"{c.get('source')}: {c.get('doi') or c.get('openalex_id')}"
+                        for c in pool))
     return {
         "rank":         0,
-        "doi":          pick["doi"],
-        "title":        pick["title"],
-        "year":         pick["year"],
-        "first_author": pick["first_author"],
-        "openalex_id":  pick["openalex_id"],
+        "doi":          pick.get("doi", ""),
+        "title":        pick.get("title", ""),
+        "year":         pick.get("year"),
+        "first_author": pick.get("first_author", ""),
+        "openalex_id":  pick.get("openalex_id", ""),
         "study_number": _clean_study_numbers(target.get("study_numbers", "")),
         "study_r":      _clean_study_numbers(target.get("replication_study_numbers", "")),
         "evidence":     f"{evidence} | {note}" if evidence else note,
         "confidence":   "low",
         "provisional":  True,
-        "provisional_method": "llm_author_year_search",
-        "outcome_block": target.get("outcome_block") or {},
-        "title_search_candidates": candidates,
-    }
-
-
-def _title_searched_entry(target: dict, doi_r: str, context: dict) -> "dict | None":
-    """An entry for a target the model NAMED but no keyed record could match.
-
-    The first candidate becomes the link and is marked provisional, so the row is
-    written `llm_title_search` at low confidence, is never outcome-coded, and is set
-    aside for human confirmation — the same treatment the pre-PDF title-search rung
-    gets, and for the same reason (~50% precision).
-
-    EVERY candidate is written into the evidence, not just the chosen one. Which of
-    them is right is exactly what a plausibility check would decide (issue #186), and
-    that check cannot be built or evaluated without a record of the cases where the
-    two sources disagreed.
-    """
-    named = str(target.get("target_as_named") or "").strip()
-    cleaned = clean_citation_title(named)
-    if not usable_title(cleaned):
-        target["_search_attempt"] = {"named": named, "query": "", "outcome": "unsearchable"}
-        return None
-
-    from extract.link_original import (citation_without_title, strip_citation_prefix,
-                                       title_search_candidates)
-    if citation_without_title(named):
-        # A title search cannot answer a citation with no title in it, and asking it
-        # anyway costs two free-text queries at 10x a filter query each. The author
-        # and the year can be asked instead.
-        return _author_year_entry(target, doi_r, context, named)
-
-    query = strip_citation_prefix(named)
-    # The year the paper gave for its target, when it gave one. Both title searches
-    # reject a hit more than two years from it, and this call never supplied one — so
-    # "Bem (2011)" was allowed to match a 1965 paper whose title happened to contain
-    # the journal name the target string carried.
-    from shared.openalex_client import extract_author_year_patterns
-    patterns = extract_author_year_patterns(named)
-    cited_year    = str(patterns[0]["year"]) if patterns else ""
-    cited_surname = str(patterns[0]["surname"]) if patterns else ""
-    candidates, unavailable = title_search_candidates(doi_r, named, "", cited_year,
-                                                      cited_surname)
-    # What was asked and what came back, recorded on the work whatever the answer.
-    # Without this, a target that failed to resolve leaves only the model's evidence
-    # quote behind: nothing says a search ran, what string it ran on, or that both
-    # providers disowned it. Evaluating a better resolver (issue #186) would then mean
-    # re-running every work rather than reading what is already stored.
-    target["_search_attempt"] = {
-        "named": named, "query": query,
-        "outcome": ("unavailable" if unavailable
-                    else "resolved" if candidates else "no_match"),
-        "candidates": candidates,
-    }
-    if unavailable:
-        # A provider was silent, so the answer is incomplete however good the part we
-        # got. The row is written api_error, which a re-run reopens; settling on
-        # incomplete evidence is not reversible and a re-run is nearly free.
-        # A genuine empty answer — every provider spoke, none knew the paper — falls
-        # through to `return None` below and settles as no_original_found, because
-        # re-asking a question they have all answered gets the same nothing.
-        found = "; ".join(f"{c['source']}: {c['doi']}" for c in candidates)
-        note = ("title search for the named target did not reach every provider"
-                + (f"; what did answer: {found}" if found else ""))
-        return {"rank": 0, "doi": "", "title": "", "year": None, "first_author": "",
-                "openalex_id": "", "study_number": "", "study_r": "",
-                "evidence": note,
-                "confidence": "low", "provisional": False, "outcome_block": {},
-                "search_unavailable": True,
-                "title_search_candidates": candidates}
-    if not candidates:
-        return None
-
-    best = candidates[0]
-    others = "; ".join(f"{c['source']}: {c['doi']} — {str(c['title'])[:80]}"
-                       for c in candidates[1:])
-    evidence = str(target.get("evidence_quote") or "")
-    note = (f"target named but unmatched to any record; resolved by title search "
-            f"({best['source']}). Candidates considered: "
-            + "; ".join(f"{c['source']}: {c['doi']}" for c in candidates))
-    return {
-        "rank":         0,
-        "doi":          best["doi"],
-        "title":        best["title"],
-        "year":         best["year"],
-        "first_author": best["first_author"],
-        "openalex_id":  best["openalex_id"],
-        "study_number": _clean_study_numbers(target.get("study_numbers", "")),
-        "study_r":      _clean_study_numbers(target.get("replication_study_numbers", "")),
-        "evidence":     f"{evidence} | {note}" if evidence else note,
-        "confidence":   "low",
-        "provisional":  True,
+        "provisional_method": method,
         "outcome_block": target.get("outcome_block") or {},
         # Kept whole so a later evaluation can read what the alternatives were, not
         # just that there were some.
-        "title_search_candidates": candidates,
+        "title_search_candidates": pool,
     }
 
 

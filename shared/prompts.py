@@ -959,7 +959,8 @@ Abstract: {abstract_r}
 HOW THE REPLICATION NAMED ITS TARGET: {target_as_named}
 WHAT IT SAID ABOUT IT: {evidence_quote}
 
-CANDIDATES:
+CANDIDATES (several searches, pooled; a flag is a reason to doubt a candidate, not a
+reason it was excluded — judge it yourself):
 {candidate_block}
 
 Answer with JSON and nothing else:
@@ -977,13 +978,19 @@ match. A pick that is not confident is not used.
 def build_author_year_pick_prompt(title_r: str, abstract_snip: str,
                                   target_as_named: str, evidence_quote: str,
                                   candidates: list) -> str:
-    """Which of an author-and-year shortlist is the original this paper re-tested.
+    """Which of a pooled candidate list is the original this paper re-tested.
 
-    The question a title search cannot answer, because the target description carries
-    no title. The shortlist comes from one OpenAlex author-and-year filter query
-    (`author_year_candidates`), so the model chooses from a BOUNDED set and can only
-    return a key that is in it — the same shape as the reference-list rung, and the
-    reason this is not a search of the whole literature.
+    The pool is everything every search found for one target — the CrossRef and
+    OpenAlex title hits and the OpenAlex author-and-year shortlist — so the model
+    chooses from a BOUNDED set and can only return a key that is in it. That is the
+    same shape as the reference-list rung, and the reason this is not a search of the
+    whole literature.
+
+    Candidates a mechanical check doubts are IN the list, carrying the doubt as a
+    flag. Dropping them is the expensive mistake: a candidate the model never sees can
+    be neither confirmed nor disconfirmed, and the work goes back into a worklist that
+    pays for the whole ladder again. Rejecting a bad candidate costs one field of one
+    answer.
 
     "None" is offered first-class and its cost is stated, because a small model asked
     to choose from a list picks the least-bad entry unless declining is made an
@@ -991,10 +998,13 @@ def build_author_year_pick_prompt(title_r: str, abstract_snip: str,
     """
     lines = []
     for i, c in enumerate(candidates, 1):
-        authors = ", ".join(list(c.get("authors") or [])[:4])
+        authors = ", ".join(str(a) for a in list(c.get("authors") or [])[:4])
+        flags = "; ".join(c.get("flags") or [])
         lines.append(f"[{i}] {c.get('title') or '(no title)'}\n"
                      f"    {authors or '(authors unknown)'} — "
-                     f"{c.get('journal') or 'venue unknown'}, {c.get('year') or '?'}")
+                     f"{c.get('journal') or 'venue unknown'}, {c.get('year') or '?'}"
+                     + (f"\n    found by: {c.get('source')}" if c.get("source") else "")
+                     + (f"\n    ! {flags}" if flags else ""))
     return _fill(_AUTHOR_YEAR_PICK_TEMPLATE, {
         "title_r": title_r or "(not available)",
         "abstract_r": abstract_snip or "(not available)",
