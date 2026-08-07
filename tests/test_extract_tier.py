@@ -160,6 +160,26 @@ def test_only_a_conclusive_ending_settles_a_work(verdict, settles):
     assert tier_mod._decide(_rows(verdict))["settles"] is settles
 
 
+def test_a_sandbox_redo_never_supersedes_a_live_result_row():
+    """`--mode validation --redo` re-extracts in the sandbox. Marking the work's LIVE
+    row superseded would delete it from the export, which reads live rows — the one
+    thing the sandbox exists not to touch."""
+    generation = tier_mod.extract_generation()
+    client = MagicMock()
+    client.claims.return_value = [
+        {"id": "c-live", "meta": {"mode": "live", "generation": generation}},
+        {"id": "c-sandbox", "meta": {"mode": "validation", "generation": generation}},
+    ]
+    client.verdicts.return_value = [
+        {"id": "v-live", "claim_id": "c-live", "work_id": 7, "verdict": RESOLVED,
+         "created_at": "2026-08-01T00:00:00Z"},
+        {"id": "v-sandbox", "claim_id": "c-sandbox", "work_id": 7,
+         "verdict": NO_ORIGINAL_FOUND, "created_at": "2026-08-02T00:00:00Z"},
+    ]
+    assert tier_mod._supersedable(client, [7], "validation") == {7: "v-sandbox"}
+    assert tier_mod._supersedable(client, [7], "live") == {7: "v-live"}
+
+
 def test_evidence_rows_alone_never_settle_a_work():
     """The screens' `decided_work_ids` would call this decided — it counts any row
     that adds up to a decision — and the work would never be extracted."""

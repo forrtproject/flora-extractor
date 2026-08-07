@@ -1615,14 +1615,26 @@ def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
         _observe_link(observed, link)
         if rows:
             return rows
-        if link.get("multi_target"):
-            pending = _empty_row(row, "multiple_original", "high",
-                                 link_method="target_pending", screen=screen)
-            searches = str(link.get("search_attempts") or "")
-            pending["link_evidence"] = (f"target prompt named {n_targets} originals; "
-                                        "none could be matched to a record"
-                                        + (f" | searches: {searches}" if searches else ""))
-            return [] if resolved_only else [pending]
+        # Named, and not identified. That is not "this paper replicates nothing" — it
+        # is "we know which paper it replicates and could not look it up", and the two
+        # must not share an ending: `no_original_found` SETTLES and closes the work for
+        # good. Falling through to the single-row path wrote exactly that, because the
+        # ladder's resolution_method is still `llm_no_target`. Measured on the frozen
+        # dev sample 2026-08-07: 24 of 100 works closed this way, every one of them
+        # naming an author and a year that identify a single published paper.
+        #
+        # It covers every reason the identification failed — no record in the key
+        # namespace, a title search both providers answered nothing to, a target
+        # description with no searchable title in it — because none of them is
+        # evidence about the original's existence.
+        match_type = "multiple_original" if link.get("multi_target") else "single_original"
+        pending = _empty_row(row, match_type, "high",
+                             link_method="target_pending", screen=screen)
+        searches = str(link.get("search_attempts") or "")
+        pending["link_evidence"] = (f"target prompt named {n_targets} original(s); "
+                                    "none could be matched to a record"
+                                    + (f" | searches: {searches}" if searches else ""))
+        return [] if resolved_only else [pending]
 
     # original_match_confidence is an observation about the answer, not a prediction
     # made before it, and it is settled AFTER the guard by the same `_match_confidence`

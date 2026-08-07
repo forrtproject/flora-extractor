@@ -423,9 +423,14 @@ OUTCOME_DESCENT = True
 # What the ladder was when a row was written. Bump it when the ANSWER a row would get
 # changes, not when the code moves: rung order or membership, the acceptance rule
 # (match_certain), may_stop_at_a_rule / _HELD_ONLY_METHODS, the PDF acquisition tier
-# order, best_parse_result's scoring, or assign_target_keys' namespace rule. Nothing
-# reads it yet; a later engine tier will, to decide which rows a re-run must revisit.
-EXTRACT_LADDER_VERSION: int = 1
+# order, best_parse_result's scoring, or assign_target_keys' namespace rule.
+# It is part of `extract_generation()`, so bumping it mints a new generation and
+# reopens every work at once — which is how a resolution change gets re-run without
+# --redo, and how the previous generation's verdict rows stay live and readable.
+#
+#   2  a named target that could not be identified writes target_pending rather than
+#      falling through to no_original_found (2026-08-07)
+EXTRACT_LADDER_VERSION: int = 2
 
 
 # Columns to pass through from the input row (no renaming). Only columns

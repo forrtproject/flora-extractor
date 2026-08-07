@@ -870,7 +870,7 @@ def run_extract_tier(con, client: Optional[ClaimsClient], release_id: str, *,
              "generation": extract_generation(), "release_id": release_id}
     done = 0
     attempted: set[int] = set()
-    superseded = _supersedable(client, redo) if redo else {}
+    superseded = _supersedable(client, redo, mode) if redo else {}
     reopened = {int(w) for w in (redo or ())}
     while works:
         batch = works[:batch_size]
@@ -935,19 +935,30 @@ def _run_batch(spec: TierSpec, client: ClaimsClient, release_id: str,
     return report
 
 
-def _supersedable(client: ClaimsClient, redo: Iterable[int]) -> dict[int, str]:
-    """The live result row id of each work `--redo` is about to re-extract.
+def _supersedable(client: ClaimsClient, redo: Iterable[int],
+                  mode: str = "live") -> dict[int, str]:
+    """The *mode* result row id of each work `--redo` is about to re-extract.
 
     Read BEFORE the re-run, because afterwards the "previous" row is whichever of
     two rows sorts earlier and the query cannot tell them apart by anything the
     caller asked for.
+
+    Restricted to the run's own mode, for the reason `settled_work_ids` is: a
+    sandbox re-run must not touch live state. Without the filter a
+    `--mode validation --redo` marked the work's LIVE result row superseded, and the
+    export — which reads live rows — silently lost it.
     """
-    from filter.engine.tiers import checkpoint_decisions
+    from filter.engine.tiers import _by_work
 
     wanted = {int(w) for w in redo}
+    claims = client.claims(tier=TIER_EXTRACT)
+    generations = {c["id"]: (c.get("meta") or {}).get("generation") for c in claims}
+    in_mode = {c["id"] for c in claims
+               if ((c.get("meta") or {}).get("mode") or "live") == mode}
+    rows = [r for r in client.verdicts(TIER_EXTRACT) if r.get("claim_id") in in_mode]
     out: dict[int, str] = {}
-    for work, decision in checkpoint_decisions(client, TIER_EXTRACT).items():
-        row = decision.get("row") or {}
+    for work, work_rows in _by_work(TIER_EXTRACT, rows, generations).items():
+        row = (_decide(work_rows) or {}).get("row") or {}
         if work in wanted and row.get("id"):
             out[work] = str(row["id"])
     return out

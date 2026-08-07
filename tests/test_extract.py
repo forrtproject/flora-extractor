@@ -2506,7 +2506,7 @@ class TestPerTargetAdapter:
 
         assert len(rows) == 1
         assert rows[0]["link_method"] == "target_pending"
-        assert "2 originals" in rows[0]["link_evidence"]
+        assert "2 original(s)" in rows[0]["link_evidence"]
 
     def test_an_unresolved_rerouted_row_keeps_what_the_screen_decided(self):
         """The screen ran and classified the paper; the ladder finding no original
@@ -3152,12 +3152,14 @@ class TestASearchThatFoundNothingIsRecorded:
                 "study_numbers": "", "replication_study_numbers": "",
                 "evidence_quote": "a direct replication of", "record": None}
 
-    def _run(self, targets, candidates=(), unavailable=False, multi=False):
+    def _run(self, targets, candidates=(), unavailable=False, multi=False,
+             link_over=None):
         link = dict(_MOCK_LINK, resolved=False, resolution_method="llm_multi_target",
                     resolved_doi_o="", resolved_title_o="", multi_target=multi,
                     n_targets=len(targets), target_stage="llm_gemini",
                     unidentified_count=0, targets=targets, llm_model="gemini-heavy",
                     llm_evidence="")
+        link.update(link_over or {})
         observed: dict = {}
         with patch.object(run_extract, "run_for_doi", return_value=link), \
              patch.object(run_extract, "_has_document", return_value=False), \
@@ -3177,7 +3179,8 @@ class TestASearchThatFoundNothingIsRecorded:
             [self._unmatched("Smith et al. (2009) The original paper")])
 
         assert len(rows) == 1
-        assert "title searches: no_match(" in rows[0]["link_evidence"]
+        assert rows[0]["link_method"] == "target_pending"
+        assert "searches: no_match(" in rows[0]["link_evidence"]
         assert "The original paper" in rows[0]["link_evidence"]
         # And onto the observation the tier stores beside the row, which is taken
         # BEFORE the per-target adapter runs its searches.
@@ -3190,7 +3193,7 @@ class TestASearchThatFoundNothingIsRecorded:
         floor and does get searched — fruitlessly, at 10x a filter query.)"""
         rows, _ = self._run([self._unmatched("Study 2")])
 
-        assert "title searches: unsearchable(" in rows[0]["link_evidence"]
+        assert "searches: unsearchable(" in rows[0]["link_evidence"]
 
     def test_the_multi_target_pending_row_keeps_the_searches(self):
         """Two named targets, neither matched: the row written is target_pending with
@@ -3202,6 +3205,26 @@ class TestASearchThatFoundNothingIsRecorded:
         assert rows[0]["link_method"] == "target_pending"
         assert "none could be matched" in rows[0]["link_evidence"]
         assert "searches: no_match(" in rows[0]["link_evidence"]
+
+    def test_one_named_target_that_could_not_be_found_does_not_settle(self):
+        """"We know which paper it replicates and could not look it up" is not "this
+        paper replicates nothing". The first must reopen on a re-run; the second
+        settles. Falling through to the single-row path wrote `no_original_found` for
+        both, because the ladder's resolution_method is still llm_no_target — 24 of
+        100 works on the frozen dev sample, every one naming an author and a year."""
+        rows, _ = self._run(
+            [self._unmatched("Ramscar et al. (2010)")],
+            link_over={"resolution_method": "llm_no_target"})
+
+        assert rows[0]["link_method"] == "target_pending"
+        assert rows[0]["outcome"] == "pending"
+
+    def test_a_target_the_model_named_nothing_for_still_settles(self):
+        """The model read the paper and named no target: that IS evidence about the
+        original, and the work closes."""
+        rows, _ = self._run([], link_over={"resolution_method": "llm_no_target"})
+
+        assert rows[0]["link_method"] == "no_original_found"
 
     def test_a_resolved_search_is_recorded_on_the_row_it_wrote(self):
         rows, _ = self._run(
