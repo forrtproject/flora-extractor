@@ -756,14 +756,19 @@ def title_search_candidates(doi_r: str, target_desc: str,
         if not hit:
             continue
         doi_o = clean_doi(hit.get("doi", "") or "")
-        if not doi_o or doi_o == clean_doi(doi_r) or doi_o in seen:
+        oa_id = str(hit.get("openalex_id") or "")
+        ident = doi_o or oa_id
+        # A hit with no DOI but an OpenAlex id is still a paper, and dropping it here
+        # is how a real original — an old work, a report, a chapter — never reached the
+        # model at all. Only a hit that cannot be identified AT ALL is dropped.
+        if not ident or doi_o and doi_o == clean_doi(doi_r) or ident in seen:
             continue
         if jaccard_similarity(hit.get("title", ""), study_r) > 0.9:
             continue
         flags = []
         if not _hit_carries_author(hit, cited_surname):
             flags.append(f"does not carry the cited author ({cited_surname})")
-        seen.add(doi_o)
+        seen.add(ident)
         candidates.append({
             "doi":          doi_o,
             "title":        hit.get("title", ""),

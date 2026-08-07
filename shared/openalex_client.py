@@ -1189,12 +1189,19 @@ def author_year_candidates(surnames: "str | list[str]", year: int,
     # are in the key because they change the answer without changing any argument:
     # one decides how many candidates come back, the other whether the topic is used
     # at all.
-    key = content_key("authoryear", "", "|".join(s.lower() for s in surnames),
-                      str(year),
-                      _openalex_filter_value(str(topic or "")).lower()[:120],
+    # Keyed on the values that actually reach the API: the folded surnames and the
+    # topic words each narrowing attempt would send, not the raw topic. Keying the raw
+    # topic truncated to 120 characters let two long inputs whose first three content
+    # words differ share one answer, and left the stopword list and the folding rule
+    # out of the key entirely — both change the query without changing an argument.
+    narrowings = "|".join(_topic_words(topic, n, surnames)
+                          for n in AUTHOR_YEAR_TOPIC_WORDS)
+    key = content_key("authoryear", "",
+                      "|".join(_openalex_filter_value(_fold_accents(s)).lower()
+                               for s in surnames),
+                      str(year), narrowings,
                       str(AUTHOR_YEAR_MAX_OFFERED), str(AUTHOR_YEAR_NARROW_ABOVE),
-                      str(AUTHOR_YEAR_MAX_NAMES), str(AUTHOR_YEAR_TOPIC_WORDS),
-                      _AUTHOR_YEAR_SHAPE)
+                      str(AUTHOR_YEAR_MAX_NAMES), _AUTHOR_YEAR_SHAPE)
     cached = read_cache(OA_CACHE_DIR, key)
     if cached is not None:
         return cached["candidates"], int(cached["total"]), False

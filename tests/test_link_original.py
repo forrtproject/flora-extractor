@@ -1101,6 +1101,17 @@ class TestATitleHitThatMissesTheCitedAuthorIsFlagged:
         [hit] = self._run(self._CHAPTER, "")
         assert hit["flags"] == []
 
+    def test_a_hit_with_no_doi_but_an_openalex_id_still_reaches_the_pool(self):
+        """An old work, a report, a chapter. Dropping it here is how a real original
+        never reached the model at all."""
+        [hit] = self._run({**self._CHAPTER, "doi": "", "openalex_id": "W7",
+                           "authors": ["Bem, D. J."]}, "bem")
+        assert hit["openalex_id"] == "W7" and hit["doi"] == ""
+
+    def test_a_hit_that_cannot_be_identified_at_all_is_dropped(self):
+        assert self._run({**self._CHAPTER, "doi": "", "openalex_id": ""}, "bem") == []
+
+
     def test_a_multi_author_citation_matches_on_any_of_its_names(self):
         """extract_author_year_patterns returns "Kaufmann, Weber, and Haisley (2013)"
         as one run-on token. Matching that as a word dropped the right paper."""

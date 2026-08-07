@@ -1473,6 +1473,15 @@ def pick_author_year_original(doi_r: str, title_r: str, abstract_r: str,
         m = re.fullmatch(r"\[?\s*(\d{1,3})\s*\]?", text)
         if m and 1 <= int(m.group(1)) <= len(candidates):
             index = int(m.group(1)) - 1
+        else:
+            # A title, a DOI, or a number outside the list. The model answered a
+            # different question, and that is not a decline: caching it as one would
+            # file "we could not read the reply" as "none of these is the paper", for
+            # ever. Not cached, so a re-run asks again.
+            return {"pick": None, "confident": False, "reasoning": "",
+                    "llm_model": "",
+                    "llm_error": f"pick {text[:60]!r} is not one of the "
+                                 f"{len(candidates)} candidates"}
     confident = bool(result.get("confident"))
     reasoning = str(result.get("reasoning", "") or "")[:500]
     write_cache(LLM_CACHE_DIR, key, {"pick_index": index, "confident": confident,

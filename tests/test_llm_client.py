@@ -1700,3 +1700,39 @@ def test_the_accepted_link_carries_the_outcome_it_was_coded_with(monkeypatch, tm
                                            rung="fulltext", discussion="D")
     assert out["resolved"] is True
     assert out["outcome_block"]["outcome"] == "mixed"
+
+
+class TestAPickThatIsNotOneOfTheCandidates:
+    """A title, a DOI, or a number outside the list is the model answering a different
+    question. That is not a decline, and caching it as one would file "we could not
+    read the reply" as "none of these is the paper", for ever."""
+
+    _CANDS = [{"doi": "10.1/a", "title": "A", "authors": [], "journal": "J",
+               "year": 2010, "openalex_id": "W1"}]
+
+    def _ask(self, tmp_path, reply):
+        with patch("shared.llm_client.LLM_CACHE_DIR", tmp_path), \
+             patch("shared.llm_client.call_model", return_value=(reply, "openai", "")):
+            return llm.pick_author_year_original(
+                "10.9/rep", "T", "A", "Smith (2010)", "q", self._CANDS)
+
+    def test_an_out_of_range_number_is_an_error_and_is_not_cached(self, tmp_path):
+        out = self._ask(tmp_path, {"pick": "7", "confident": True, "reasoning": ""})
+        assert out["pick"] is None and out["llm_error"]
+        assert list(tmp_path.glob("*.json")) == []
+
+    def test_a_doi_shaped_answer_is_an_error_not_candidate_one(self, tmp_path):
+        out = self._ask(tmp_path, {"pick": "10.1234/abc", "confident": True,
+                                   "reasoning": ""})
+        assert out["pick"] is None and out["llm_error"]
+
+    def test_an_explicit_null_is_a_decline_and_is_cached(self, tmp_path):
+        out = self._ask(tmp_path, {"pick": None, "confident": False,
+                                   "reasoning": "none match"})
+        assert out["pick"] is None and out["llm_error"] == ""
+        assert list(tmp_path.glob("*.json"))
+
+    def test_a_valid_pick_is_returned_and_cached(self, tmp_path):
+        out = self._ask(tmp_path, {"pick": "1", "confident": True, "reasoning": "yes"})
+        assert out["pick"]["doi"] == "10.1/a" and out["confident"] is True
+        assert list(tmp_path.glob("*.json"))
