@@ -928,6 +928,55 @@ def _aggregate_axes(members: list[dict]) -> dict:
     return merged
 
 
+def _title_searched_entry(target: dict, doi_r: str) -> "dict | None":
+    """An entry for a target the model NAMED but no keyed record could match.
+
+    The first candidate becomes the link and is marked provisional, so the row is
+    written `llm_title_search` at low confidence, is never outcome-coded, and is set
+    aside for human confirmation — the same treatment the pre-PDF title-search rung
+    gets, and for the same reason (~50% precision).
+
+    EVERY candidate is written into the evidence, not just the chosen one. Which of
+    them is right is exactly what a plausibility check would decide (issue #186), and
+    that check cannot be built or evaluated without a record of the cases where the
+    two sources disagreed.
+    """
+    named = str(target.get("target_as_named") or "").strip()
+    cleaned = clean_citation_title(named)
+    if not usable_title(cleaned):
+        return None
+
+    from extract.link_original import title_search_candidates
+    candidates = title_search_candidates(doi_r, named, "")
+    if not candidates:
+        return None
+
+    best = candidates[0]
+    others = "; ".join(f"{c['source']}: {c['doi']} — {str(c['title'])[:80]}"
+                       for c in candidates[1:])
+    evidence = str(target.get("evidence_quote") or "")
+    note = (f"target named but unmatched to any record; resolved by title search "
+            f"({best['source']}). Candidates considered: "
+            + "; ".join(f"{c['source']}: {c['doi']}" for c in candidates))
+    return {
+        "rank":         0,
+        "doi":          best["doi"],
+        "title":        best["title"],
+        "year":         best["year"],
+        "first_author": best["first_author"],
+        "openalex_id":  best["openalex_id"],
+        "study_number": _clean_study_numbers(target.get("study_numbers", "")),
+        "study_r":      _clean_study_numbers(target.get("replication_study_numbers", "")),
+        "evidence":     f"{evidence} | {note}" if evidence else note,
+        "confidence":   "low",
+        "provisional":  True,
+        "outcome_block": target.get("outcome_block") or {},
+        # Kept whole so a later evaluation can read what the alternatives were, not
+        # just that there were some.
+        "title_search_candidates": candidates,
+    }
+
+
 def _target_entry(target: dict, doi_r: str) -> "dict | None":
     """One confirmed target as the entry shape _collapse_same_paper_originals() and
     _merge_multi_row() read.
@@ -946,7 +995,20 @@ def _target_entry(target: dict, doi_r: str) -> "dict | None":
     confidence one: the row names an original nobody can look up.
     """
     record = target.get("record")
-    if not (target.get("match_certain") and record):
+    if not record:
+        # No record at ALL — the key namespace was empty, so the model could not have
+        # matched anything however plainly it named the target. That is every OSF
+        # registration and every URL-only row: OpenAlex returns no candidates and no
+        # reference list for them. Dropping the target here wrote the work
+        # `no_original_found`, which SETTLES, so a work whose original the model had
+        # named in plain text ("Conceptual replication of Hyman & Sheatsley (1950)")
+        # was closed permanently as though none existed. Search the name instead.
+        #
+        # Not reached when a record WAS offered and the model declined it: that is the
+        # model judging the evidence, and second-guessing it by search is how a paper
+        # gets linked to a landmark it merely cites.
+        return _title_searched_entry(target, doi_r)
+    if not target.get("match_certain"):
         return None
 
     raw_title = str(record.get("title") or "")
@@ -1356,10 +1418,12 @@ def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | Non
     no published record to write one about. The shortfall is reported in the
     link_evidence of every row that WAS written, so it cannot vanish silently.
     """
-    targets = link.get("targets") or []
-    entries = [e for e in (_target_entry(t, doi_r) for t in targets) if e]
-    missing = [str(t.get("target_as_named", "") or "") for t in targets
-               if not (t.get("match_certain") and t.get("record"))]
+    targets  = link.get("targets") or []
+    resolved = [(t, _target_entry(t, doi_r)) for t in targets]
+    entries  = [e for _, e in resolved if e]
+    # A target the title search recovered is no longer missing: it has a row, so
+    # reporting it as unidentified would contradict the row written next to it.
+    missing  = [str(t.get("target_as_named", "") or "") for t, e in resolved if not e]
     shortfall = len(missing) + int(link.get("unidentified_count") or 0)
     if not entries:
         return []

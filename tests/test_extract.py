@@ -3049,3 +3049,60 @@ class TestHtmlAndOsfAreDocuments:
         assert osf_registration_guid("https://osf.io/3ke27") == "3ke27"
         assert osf_registration_guid("http://api.osf.io/v2/nodes/s6m7y/") == "s6m7y"
         assert osf_registration_guid("https://doi.org/10.1037/xyz") == ""
+
+
+class TestNamedButUnmatchedTargets:
+    """A target the model named in plain text must not settle as no_original_found.
+
+    Every OSF registration and every URL-only row gets 0 OpenAlex candidates, so the
+    key namespace is empty and no named target can ever be matched. A 25-work pilot on
+    2026-08-07 closed 15 works as `no_original_found` whose stored evidence named the
+    original outright ("Conceptual replication of Hyman & Sheatsley (1950) Study 2").
+    `no_original_found` is not in UNSETTLING_VERDICTS, so those works were closed for
+    good.
+    """
+
+    def _target(self, **over):
+        base = {"target_as_named": "Hyman and Sheatsley (1950) Interviewing in "
+                                   "social research", "record": None,
+                "match_certain": False, "evidence_quote": "Conceptual replication"}
+        base.update(over)
+        return base
+
+    def test_an_unmatched_named_target_is_searched_and_kept(self, monkeypatch):
+        monkeypatch.setattr(
+            "extract.link_original.title_search_candidates",
+            lambda doi_r, desc, study_r: [
+                {"doi": "10.1/one", "title": "Interviewing in social research",
+                 "year": 1950, "first_author": "Hyman", "openalex_id": "",
+                 "source": "crossref"},
+                {"doi": "10.2/two", "title": "Interviewing in social research",
+                 "year": 1954, "first_author": "Hyman", "openalex_id": "",
+                 "source": "openalex"}])
+        entry = run_extract._target_entry(self._target(), "10.9/rep")
+        assert entry is not None
+        assert entry["doi"] == "10.1/one"
+        # Provisional, so _per_target_rows writes it llm_title_search at low
+        # confidence and never codes an outcome for it.
+        assert entry["provisional"] is True
+        assert entry["confidence"] == "low"
+        # BOTH candidates survive onto the row — that is the test data issue #186 needs.
+        assert "10.1/one" in entry["evidence"] and "10.2/two" in entry["evidence"]
+        assert len(entry["title_search_candidates"]) == 2
+
+    def test_a_target_the_model_declined_is_not_searched(self, monkeypatch):
+        """A record WAS offered and the model said no. Searching anyway is how a paper
+        gets linked to a landmark it merely cites."""
+        called = []
+        monkeypatch.setattr("extract.link_original.title_search_candidates",
+                            lambda *a: called.append(a) or [])
+        entry = run_extract._target_entry(
+            self._target(record={"title": "Some original", "doi": "10.3/x"},
+                         match_certain=False), "10.9/rep")
+        assert entry is None
+        assert not called
+
+    def test_no_candidates_still_yields_no_row(self, monkeypatch):
+        monkeypatch.setattr("extract.link_original.title_search_candidates",
+                            lambda *a: [])
+        assert run_extract._target_entry(self._target(), "10.9/rep") is None

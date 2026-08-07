@@ -583,6 +583,49 @@ def _search_title_for_original(doi_r: str, target_desc: str,
     return None
 
 
+def title_search_candidates(doi_r: str, target_desc: str,
+                            study_r: str) -> list[dict]:
+    """Every distinct original the two title searches propose for *target_desc*.
+
+    `_search_title_for_original` returns the first confident hit and discards the
+    other source's; this keeps both, because which of them is right is the open
+    question (issue #186) and nothing on disk currently records that the two
+    disagreed. The list is the test data that question needs, so it is written to the
+    row whether or not it is acted on.
+
+    Same guards as the single-hit resolver: never link a paper to itself, and never
+    accept a hit whose title is the replication's own.
+    """
+    seen: set[str] = set()
+    candidates: list[dict] = []
+    for label, search in (("crossref", _search_crossref_by_title),
+                          ("openalex", _search_openalex_by_title)):
+        try:
+            hit = search(target_desc)
+        except Exception as exc:
+            # A search that never answered is not "no such paper" — say so and move
+            # on rather than letting the outage read as an absence.
+            log.info("[%s] %s title search unavailable: %s", doi_r, label, exc)
+            continue
+        if not hit:
+            continue
+        doi_o = clean_doi(hit.get("doi", "") or "")
+        if not doi_o or doi_o == clean_doi(doi_r) or doi_o in seen:
+            continue
+        if jaccard_similarity(hit.get("title", ""), study_r) > 0.9:
+            continue
+        seen.add(doi_o)
+        candidates.append({
+            "doi":          doi_o,
+            "title":        hit.get("title", ""),
+            "year":         hit.get("year"),
+            "first_author": _first_author(hit.get("authors")),
+            "openalex_id":  str(hit.get("openalex_id") or ""),
+            "source":       label,
+        })
+    return candidates
+
+
 # What a target-identifying stage produced, as it has to survive to the row. Three
 # ladder stages can enumerate targets and then fail to resolve a single link; without
 # this the list died with the stage and the row was written target_pending with no
