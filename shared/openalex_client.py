@@ -1044,13 +1044,24 @@ def _search_openalex_by_title_live(title: str, year: str = "") -> Optional[dict]
 # are 3D-printing papers. Adding the replication's own topic words cut those to 5.
 AUTHOR_YEAR_MAX_OFFERED = 8
 AUTHOR_YEAR_NARROW_ABOVE = 12
-_AUTHOR_YEAR_SHAPE = "v1"
+# How many of the citation's authors are ANDed into the query. Three is enough to make
+# a shortlist unique and stops a long author list from over-narrowing when the citation
+# abbreviates it differently from the record.
+AUTHOR_YEAR_MAX_NAMES = 3
+_AUTHOR_YEAR_SHAPE = "v2-multi-name"
 
 
-def _author_year_query(surname: str, year: int, topic: str) -> Optional[dict]:
-    """One OpenAlex works query for an author surname, a year and optional topic."""
-    parts = [f"publication_year:{year}",
-             f"raw_author_name.search:{_openalex_filter_value(surname)[:80]}"]
+def _author_year_query(surnames: list[str], year: int, topic: str) -> Optional[dict]:
+    """One OpenAlex works query for a set of author surnames, a year and a topic.
+
+    Every surname is its own filter, so they AND: a work has to carry all of them.
+    That is what makes the shortlist usable at all. Measured 2026-08-07 against real
+    campaign targets: "jones 1995" matches 8,348 works and the right paper is nowhere
+    near the top; "jones AND macken 1995" matches 7 and it is third. "han 2017"
+    matches 54,802; "han AND kahn 2017" matches 12.
+    """
+    parts = [f"publication_year:{year}"] + [
+        f"raw_author_name.search:{_openalex_filter_value(s)[:80]}" for s in surnames]
     if topic:
         parts.append(f"title_and_abstract.search:{_openalex_filter_value(topic)[:120]}")
     return _oa_get("https://api.openalex.org/works", {
@@ -1066,7 +1077,7 @@ def _author_year_query(surname: str, year: int, topic: str) -> Optional[dict]:
     })
 
 
-def author_year_candidates(surname: str, year: int,
+def author_year_candidates(surnames: "str | list[str]", year: int,
                            topic: str = "") -> "tuple[list[dict], int, bool]":
     """(candidates, how many the query matched, unavailable) for an author and a year.
 
@@ -1098,8 +1109,11 @@ def author_year_candidates(surname: str, year: int,
 
     `unavailable=True` means OpenAlex never answered, which must settle nothing.
     """
-    surname = " ".join(str(surname or "").split())
-    if not surname or not year:
+    if isinstance(surnames, str):
+        surnames = [surnames]
+    surnames = [" ".join(str(s or "").split()) for s in surnames]
+    surnames = [s for s in surnames if s][:AUTHOR_YEAR_MAX_NAMES]
+    if not surnames or not year:
         return [], 0, False
 
     # Keyed on the values that actually go into the request, after the same cleaning
@@ -1108,27 +1122,40 @@ def author_year_candidates(surname: str, year: int,
     # are in the key because they change the answer without changing any argument:
     # one decides how many candidates come back, the other whether the topic is used
     # at all.
-    key = content_key("authoryear", "", surname.lower(), str(year),
+    key = content_key("authoryear", "", "|".join(s.lower() for s in surnames),
+                      str(year),
                       _openalex_filter_value(str(topic or "")).lower()[:120],
                       str(AUTHOR_YEAR_MAX_OFFERED), str(AUTHOR_YEAR_NARROW_ABOVE),
+                      str(AUTHOR_YEAR_MAX_NAMES),
                       _AUTHOR_YEAR_SHAPE)
     cached = read_cache(OA_CACHE_DIR, key)
     if cached is not None:
         return cached["candidates"], int(cached["total"]), False
 
-    data = _author_year_query(surname, year, "")
+    data = _author_year_query(surnames, year, "")
     if data is None:
         return [], 0, True
     total = int((data.get("meta") or {}).get("count") or 0)
+    if not total and len(surnames) > 1:
+        # Every co-author has to be indexed under the surname the citation used for
+        # the AND to hold, and one of them routinely is not — an initial in the
+        # record, a hyphen dropped, an author OpenAlex never attached. Falling back
+        # to the first name alone is a longer list, not no list.
+        log.info("[author-year] %s %s matched nothing together — retrying on %s",
+                 "+".join(surnames), year, surnames[0])
+        first = _author_year_query(surnames[:1], year, "")
+        if first is None:
+            return [], 0, True
+        data, total = first, int((first.get("meta") or {}).get("count") or 0)
     if total > AUTHOR_YEAR_NARROW_ABOVE and topic:
-        narrowed = _author_year_query(surname, year, topic)
+        narrowed = _author_year_query(surnames, year, topic)
         # A narrowing that failed is not an outage of the question: the broad answer
         # is in hand and is the answer, just a longer one. Reporting `unavailable`
         # here wrote api_error over four works in a 100-work run whose broad query had
         # answered perfectly well.
         if narrowed is None:
             log.info("[author-year] narrowing failed for %s %s — keeping the "
-                     "unnarrowed shortlist", surname, year)
+                     "unnarrowed shortlist", "+".join(surnames), year)
         elif narrowed.get("results"):
             data, total = narrowed, int((narrowed.get("meta") or {}).get("count") or 0)
 

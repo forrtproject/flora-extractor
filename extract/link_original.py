@@ -438,7 +438,9 @@ OUTCOME_DESCENT = True
 #      check both providers already implement actually runs (2026-08-07)
 #   6  a title-search hit that does not carry the author the citation named is
 #      dropped (2026-08-07)
-EXTRACT_LADDER_VERSION: int = 6
+#   7  the author-and-year query ANDs every surname the citation named, not just the
+#      first (2026-08-07)
+EXTRACT_LADDER_VERSION: int = 7
 
 
 # Columns to pass through from the input row (no renaming). Only columns

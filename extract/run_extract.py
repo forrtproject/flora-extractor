@@ -928,6 +928,34 @@ def _aggregate_axes(members: list[dict]) -> dict:
     return merged
 
 
+_CITED_NAME_RE = re.compile(r"[^\W\d_]{3,}", re.UNICODE)
+_CITED_NAME_STOPWORDS = {"and", "the", "et", "al", "study", "studies", "experiment",
+                         "experiments", "claim"}
+
+
+def _cited_surnames(pattern: dict) -> list[str]:
+    """Every author surname the citation named, most significant first.
+
+    `extract_author_year_patterns` reports ONE surname per match, and for a
+    multi-author citation that is a run-on of all of them ("kaufmann,weber,andhaisley")
+    or just the first ("jones" for "Jones and Macken (1995)"). Either way the other
+    names are thrown away, and they are what makes a shortlist usable: measured
+    2026-08-07, "jones 1995" matches 8,348 OpenAlex works and "jones AND macken 1995"
+    matches 7, with the right paper third.
+
+    Read off the matched span rather than the reported surname, because the span is
+    the citation as the paper wrote it.
+    """
+    raw = str(pattern.get("raw") or pattern.get("surname") or "")
+    names = [n.lower() for n in _CITED_NAME_RE.findall(raw)]
+    seen: list[str] = []
+    for name in names:
+        if name in _CITED_NAME_STOPWORDS or name in seen:
+            continue
+        seen.append(name)
+    return seen or [str(pattern.get("surname") or "")]
+
+
 def _author_year_entry(target: dict, doi_r: str, context: dict,
                        named: str) -> "dict | None":
     """An entry for a target named as a citation with no title in it.
@@ -956,9 +984,11 @@ def _author_year_entry(target: dict, doi_r: str, context: dict,
         target["_search_attempt"] = {"named": named, "query": "",
                                      "outcome": "unsearchable"}
         return None
-    surname, year = patterns[0]["surname"], patterns[0]["year"]
+    year = patterns[0]["year"]
+    surnames = _cited_surnames(patterns[0])
     candidates, total, unavailable = author_year_candidates(
-        surname, year, topic=str(context.get("title_r") or ""))
+        surnames, year, topic=str(context.get("title_r") or ""))
+    surname = surnames[0]
     # The named string, not just the surname and year it was parsed into: the
     # evidence line is what an adjudication reads, and "ramscar 2010" does not say
     # which citation in the paper it came from.

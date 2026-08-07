@@ -3399,3 +3399,29 @@ class TestATransientSourceFailureIsNotAFourteenDayVerdict:
             ps.get_html_document("https://example.org/x")
         monkeypatch.setattr(ps.requests, "get", lambda *a, **k: R(403))
         assert ps.get_html_document("https://example.org/y") is None
+
+
+class TestEveryAuthorTheCitationNamedIsUsed:
+    """extract_author_year_patterns reports ONE surname per match, and for a
+    multi-author citation that is a run-on of all of them or just the first. The names
+    it drops are what makes a shortlist usable: measured 2026-08-07, "jones 1995"
+    matches 8,348 OpenAlex works and "jones AND macken 1995" matches 7, with the right
+    paper third."""
+
+    @staticmethod
+    def _names(citation):
+        from shared.openalex_client import extract_author_year_patterns
+        return run_extract._cited_surnames(extract_author_year_patterns(citation)[0])
+
+    def test_two_named_authors_both_survive(self):
+        assert self._names("Jones and Macken (1995)") == ["jones", "macken"]
+
+    def test_a_run_on_surname_is_split_back_apart(self):
+        assert self._names("Kaufmann, Weber, and Haisley (2013)") == [
+            "kaufmann", "weber", "haisley"]
+
+    def test_et_al_leaves_one_name_and_no_stopword(self):
+        assert self._names("Anderson et al. (2012), Study 5") == ["anderson"]
+
+    def test_a_non_ascii_surname_survives(self):
+        assert self._names("Usta & Häubl (2011), Study 3") == ["usta", "häubl"]
