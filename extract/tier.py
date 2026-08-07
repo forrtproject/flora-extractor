@@ -533,7 +533,8 @@ def extract_works(con, client: Optional[ClaimsClient], pool_dir: Path,
                   aliases: Optional[dict[int, int]] = None,
                   record: Optional[dict] = None,
                   data_dir: Path = DATA_DIR,
-                  redo: Optional[Iterable[int]] = None) -> list[ExtractWork]:
+                  redo: Optional[Iterable[int]] = None,
+                  attempted: Optional[Iterable[int]] = None) -> list[ExtractWork]:
     """Works this tier should extract next, each carrying its whole handoff row.
 
     The subtraction, in the order the cost of asking rises:
@@ -554,6 +555,14 @@ def extract_works(con, client: Optional[ClaimsClient], pool_dir: Path,
     representation of the same thing, and a place for the two to drift.
 
     *redo* re-admits works the checkpoint would have subtracted (`--redo`).
+
+    *attempted* is what the CURRENT run has already judged, and it is subtracted
+    whatever the verdict was. The checkpoint at (2) subtracts only works that
+    SETTLED, and `target_pending` deliberately does not settle — so without this the
+    rebuild between batches hands every unsettled work straight back and the run
+    never ends. Observed 2026-08-07: a 100-work sandbox run judged the same 51
+    unsettled works eight times in twenty minutes before it was killed. A re-run is
+    how those works get another chance; the same run is not.
     """
     check_release_binding(spec_dir, release_id,
                           (record or {}).get("bundle_hash"),
@@ -562,6 +571,7 @@ def extract_works(con, client: Optional[ClaimsClient], pool_dir: Path,
 
     wanted = {int(w) for w in only} if only is not None else None
     reopen = {int(w) for w in (redo or ())}
+    done = {int(w) for w in (attempted or ())}
 
     drop: set[int] = set()
     screen: dict[int, dict] = {}
@@ -582,7 +592,7 @@ def extract_works(con, client: Optional[ClaimsClient], pool_dir: Path,
             specs=specs, aliases=aliases, spec_dir=spec_dir, overlay_dir=overlay_dir):
         if wanted is not None and work not in wanted:
             continue
-        if work in drop or work in held:
+        if work in drop or work in held or work in done:
             continue
         decision = screen.get(work)
         if client is not None and not decision:
@@ -859,6 +869,7 @@ def run_extract_tier(con, client: Optional[ClaimsClient], release_id: str, *,
              "decided": 0, "outcomes": {}, "verdicts": 0, "claims": [],
              "generation": extract_generation(), "release_id": release_id}
     done = 0
+    attempted: set[int] = set()
     superseded = _supersedable(client, redo) if redo else {}
     reopened = {int(w) for w in (redo or ())}
     while works:
@@ -872,6 +883,7 @@ def run_extract_tier(con, client: Optional[ClaimsClient], release_id: str, *,
         for outcome, count in report["outcomes"].items():
             total["outcomes"][outcome] = total["outcomes"].get(outcome, 0) + count
         done += len(batch)
+        attempted |= {w.work_id for w in batch}
         if report.get("lease_lost"):
             total["stopped"] = "claim lease lost"
             break
@@ -888,7 +900,7 @@ def run_extract_tier(con, client: Optional[ClaimsClient], release_id: str, *,
         works = extract_works(con, client, pool_dir, release_id, only=only,
                               limit=remaining, mode=mode, spec_dir=spec_dir,
                               overlay_dir=overlay_dir, aliases=aliases,
-                              record=record, redo=reopened)
+                              record=record, redo=reopened, attempted=attempted)
 
     if superseded:
         total["superseded"] = _supersede(client, superseded)

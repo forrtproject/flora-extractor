@@ -287,6 +287,26 @@ def test_redo_re_admits_a_settled_work(monkeypatch):
     assert [w.work_id for w in works] == [1]
 
 
+def test_a_work_this_run_already_judged_is_not_offered_again(monkeypatch):
+    """`target_pending` does not settle, so the checkpoint hands it straight back —
+    and the rebuild between batches would judge it again, and again. A re-run is how
+    an unsettled work gets another chance; the same run is not. Observed on
+    2026-08-07: 51 unsettled works judged eight times in twenty minutes."""
+    works = _run_worklist(monkeypatch, rows=_export_rows(1, 2),
+                          screen={1: _PROCEED, 2: _PROCEED},
+                          settled=set(), attempted={1})
+    assert [w.work_id for w in works] == [2]
+
+
+def test_a_redone_work_is_still_dropped_once_this_run_has_judged_it(monkeypatch):
+    """--redo re-admits past the checkpoint; it must not re-admit past the run's own
+    memory, or the redo set loops for exactly the same reason."""
+    works = _run_worklist(monkeypatch, rows=_export_rows(1),
+                          screen={1: _PROCEED}, settled={1}, redo=[1],
+                          attempted={1})
+    assert works == []
+
+
 # ---------------------------------------------------------------------------
 # The lease
 # ---------------------------------------------------------------------------
@@ -339,6 +359,29 @@ def test_the_batch_loop_stops_after_a_lost_lease(monkeypatch):
                                        batch_size=2)
     assert calls == [2], "a second batch was claimed after the lease was lost"
     assert report["stopped"] == "claim lease lost"
+
+
+def test_the_batch_loop_ends_although_no_work_settled(monkeypatch):
+    """Every work ends `target_pending`, which the checkpoint does not subtract. The
+    loop must terminate on its own memory of what it judged, not on the checkpoint."""
+    calls: list = []
+
+    def run_batch(spec, client, release_id, works, **kwargs):
+        calls.append([w.work_id for w in works])
+        return {"claim_id": f"c{len(calls)}", "decided": len(works),
+                "outcomes": {TARGET_PENDING: len(works)}, "verdicts": len(works)}
+
+    def works_for(*a, attempted=None, limit=None, **k):
+        # A checkpoint that subtracts nothing, which is what an all-unsettled run has.
+        remaining = [_work(i) for i in range(4) if i not in (attempted or set())]
+        return remaining if limit is None else remaining[:limit]
+
+    monkeypatch.setattr(tier_mod, "_run_batch", run_batch)
+    monkeypatch.setattr(tier_mod, "extract_works", works_for)
+    report = tier_mod.run_extract_tier(None, MagicMock(), "rel-1", run=True,
+                                       batch_size=2)
+    assert calls == [[0, 1], [2, 3]]
+    assert report["decided"] == 4
 
 
 # ---------------------------------------------------------------------------
