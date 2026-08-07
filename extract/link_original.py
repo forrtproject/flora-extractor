@@ -449,7 +449,10 @@ OUTCOME_DESCENT = True
 #  10  ONE pooled candidate list per unmatched target, from every search, and one
 #      model decision over it; the metadata rules flag candidates instead of dropping
 #      them (2026-08-07)
-EXTRACT_LADDER_VERSION: int = 10
+#  11  the reviews of 10: the self-link guard is given the replication's title, an
+#      authorless record is dropped, and the author-and-year query runs only where the
+#      title search came up empty or flagged (2026-08-08)
+EXTRACT_LADDER_VERSION: int = 11
 
 
 # Columns to pass through from the input row (no renaming). Only columns

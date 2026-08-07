@@ -218,7 +218,10 @@ def test_the_generation_is_pinned_by_its_inputs():
     assert set(inputs) == {"ladder", "prompts", "models"}
     assert set(inputs["prompts"]) == {
         "build_target_outcome_prompt", "build_repro_target_outcome_prompt",
-        "build_outcome_prompt", "build_repro_outcome_prompt"}
+        "build_outcome_prompt", "build_repro_outcome_prompt",
+        # The pooled-candidate pick decides a link, so an edit to it changes what a
+        # row concludes and must reopen the works it decided.
+        "build_author_year_pick_prompt"}
     assert set(inputs["models"]) == {"linking", "outcome", "pdf_parse"}
     assert isinstance(inputs["ladder"], int)
     # The efforts are IN the model ids, or two runs at different reasoning levels
@@ -468,3 +471,20 @@ def test_validation_verdicts_do_not_settle_the_live_worklist():
 
     assert tier_mod.settled_work_ids(client, "live") == {1}
     assert tier_mod.settled_work_ids(client, "validation") == {2}
+
+
+def test_one_errored_target_stops_a_multi_target_work_settling():
+    """A work with one original found and another whose search never completed has
+    not been answered. Settling it closes the second original for good, and `resolved`
+    used to outrank `api_error` — so a two-target work lost its second target to a
+    five-minute outage, permanently."""
+    verdict = tier_mod._verdict_for(
+        [{"link_method": "llm_references"}, {"link_method": "api_error"}], {})
+    assert verdict == API_ERROR
+    assert verdict in tier_mod.UNSETTLING_VERDICTS
+
+
+def test_a_work_whose_targets_all_answered_still_settles():
+    verdict = tier_mod._verdict_for(
+        [{"link_method": "llm_references"}, {"link_method": "target_pending"}], {})
+    assert verdict == RESOLVED

@@ -44,6 +44,17 @@ def batch_results(label: str, mode: str = "validation") -> list[dict]:
     return [latest[k] for k in sorted(latest)]
 
 
+# The `_search_attempt` outcomes a pooled resolver can record. Kept here because the
+# bucket analysis in REPORT.md greps for them, and a vocabulary the reader does not
+# know about is silently dropped from the counts.
+SEARCH_OUTCOMES = ("resolved", "declined", "unconfident", "no_candidates",
+                   "unsearchable", "unavailable",
+                   # written by the pre-pooling resolvers, still on rows from those runs
+                   "no_match", "author_year_resolved", "author_year_declined",
+                   "author_year_unconfident", "author_year_no_candidates",
+                   "author_year_unavailable")
+
+
 def render(row: dict) -> str:
     payload = row.get("payload") or {}
     src, link = payload.get("input") or {}, payload.get("link") or {}

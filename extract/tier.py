@@ -160,7 +160,12 @@ def _ttl_seconds() -> int:
 _GENERATION_PROMPTS = ("build_target_outcome_prompt",
                        "build_repro_target_outcome_prompt",
                        "build_outcome_prompt",
-                       "build_repro_outcome_prompt")
+                       "build_repro_outcome_prompt",
+                       # The pooled-candidate pick DECIDES a link now, so an edit to it
+                       # changes what a row concludes and must reopen the works it
+                       # decided. It was outside the fingerprint while it was a
+                       # tie-breaker of last resort; it is not one any more.
+                       "build_author_year_pick_prompt")
 
 
 def generation_inputs() -> dict:
@@ -306,6 +311,13 @@ def _verdict_for(rows: list[dict], observed: dict) -> str:
         # means the pipeline wrote nothing at all, which only a flag can cause.
         return API_ERROR if observed.get("error") else TARGET_PENDING
     methods = [str(r.get("link_method", "") or "") for r in rows]
+    # An errored target first, ahead of everything: a work with one original found and
+    # another whose search never completed has not been answered, and settling it
+    # closes the second original for good. Flagged twice in review and deferred twice;
+    # the trade the primary metric asks for is that an incomplete answer settles
+    # nothing, and `api_error` is the ending a re-run is meant to redo.
+    if API_ERROR in methods:
+        return API_ERROR
     if any(m in RESOLVED_LINK_METHODS for m in methods):
         return RESOLVED
     if any(m in PROVISIONAL_LINK_METHODS for m in methods):
