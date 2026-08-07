@@ -1062,8 +1062,18 @@ def author_year_candidates(surname: str, year: int,
     The resolver for a target the paper named as a bare citation — "Ramscar et al.
     (2010)", "Turri, Buckwalter, & Blouw (2015)". A title search cannot answer that:
     the string contains no title, so both providers return nothing and the work used
-    to be closed as though no original existed. An author-and-year filter can, and it
-    is a FILTER query rather than a free-text one for most of its shape.
+    to be closed as though no original existed.
+
+    It is not cheaper per request than the title search it replaces: `raw_author_name`
+    and `title_and_abstract` are `.search` filters, which OpenAlex bills as free-text
+    queries and `_oa_get` counts as such. What it saves is the two requests the title
+    search spent on a question it could not answer — one or two here against CrossRef
+    plus OpenAlex there, and unlike those, these can succeed.
+
+    `raw_author_name.search` matches the surname ANYWHERE in the author list, so the
+    shortlist includes works the cited author co-wrote rather than led. That is
+    deliberate: "Ramscar et al." is a first-author citation but "Van der Werff et al."
+    may not be, and the prompt shows the whole author list so the model can judge it.
 
     Two steps, and the second only when it is needed. A surname that is rare in its
     year returns a handful of works and they all go forward. A surname that collides
@@ -1081,8 +1091,15 @@ def author_year_candidates(surname: str, year: int,
     if not surname or not year:
         return [], 0, False
 
+    # Keyed on the values that actually go into the request, after the same cleaning
+    # the request applies — a key that normalised the topic differently from the
+    # query would file two different questions under one answer. The two constants
+    # are in the key because they change the answer without changing any argument:
+    # one decides how many candidates come back, the other whether the topic is used
+    # at all.
     key = content_key("authoryear", "", surname.lower(), str(year),
-                      " ".join(sorted(str(topic or "").lower().split()))[:200],
+                      _openalex_filter_value(str(topic or "")).lower()[:120],
+                      str(AUTHOR_YEAR_MAX_OFFERED), str(AUTHOR_YEAR_NARROW_ABOVE),
                       _AUTHOR_YEAR_SHAPE)
     cached = read_cache(OA_CACHE_DIR, key)
     if cached is not None:

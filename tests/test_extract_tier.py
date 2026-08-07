@@ -21,7 +21,8 @@ from extract.tier import (API_ERROR, NOT_A_REPLICATION, NO_ORIGINAL_FOUND,
                           PROVISIONAL, RESOLVED, TARGET_PENDING, ExtractWork,
                           extract_generation, generation_inputs)
 from filter.engine.claims import ClaimLeaseLost
-from shared.schema import EXTRACTED_COLS, FILTERED_COLS, SCREEN_COLS
+from shared.schema import (EXTRACTED_COLS, FILTERED_COLS,
+                           PROVISIONAL_LINK_METHODS, SCREEN_COLS)
 
 _INPUT = {
     "doi_r": "10.1000/repl", "title_r": "A replication of something",
@@ -158,6 +159,16 @@ def test_only_a_conclusive_ending_settles_a_work(verdict, settles):
     redo. Counting either as settled turns a five-minute outage into a permanent
     hole in the corpus."""
     assert tier_mod._decide(_rows(verdict))["settles"] is settles
+
+
+@pytest.mark.parametrize("method", sorted(PROVISIONAL_LINK_METHODS))
+def test_every_provisional_link_method_settles_the_work(method):
+    """A provisional link is the answer a re-run would get, so it ends the work. The
+    ending used to name llm_title_search alone, so a second provisional method was
+    filed target_pending and the work reopened for ever."""
+    verdict = tier_mod._verdict_for([{"link_method": method}], {})
+    assert verdict == PROVISIONAL
+    assert verdict not in tier_mod.UNSETTLING_VERDICTS
 
 
 def test_a_sandbox_redo_never_supersedes_a_live_result_row():

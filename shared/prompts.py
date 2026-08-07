@@ -940,6 +940,11 @@ about the right thing, and it costs nothing — the pipeline asks again by other
 Do NOT pick a paper because it is the most cited, because it is the only one left, or
 because its author list matches. The subject has to match.
 
+The list was built by matching the surname anywhere in the author list, so a candidate
+may be one the cited author co-wrote rather than led. Check the author list against how
+the replication cited them: "Ramscar et al." means Ramscar led it, "Weisel and Shalvi"
+means those two in that order.
+
 THE REPLICATION:
 Title: {title_r}
 Abstract: {abstract_r}

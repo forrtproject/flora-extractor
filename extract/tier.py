@@ -104,7 +104,8 @@ from shared.flora_skip import (VALIDATED_SKIP_NAME,
                                load_validated_skip as _load_validated_skip,
                                validated_work_id as _validated_work_id)
 from shared.llm_client import cache_model_id
-from shared.schema import (EXTRACTED_COLS, FILTERED_COLS, RESOLVED_LINK_METHODS,
+from shared.schema import (EXTRACTED_COLS, FILTERED_COLS,
+                           PROVISIONAL_LINK_METHODS, RESOLVED_LINK_METHODS,
                            SCREEN_COLS)
 from shared.utils import clean_doi
 
@@ -307,7 +308,7 @@ def _verdict_for(rows: list[dict], observed: dict) -> str:
     methods = [str(r.get("link_method", "") or "") for r in rows]
     if any(m in RESOLVED_LINK_METHODS for m in methods):
         return RESOLVED
-    if "llm_title_search" in methods:
+    if any(m in PROVISIONAL_LINK_METHODS for m in methods):
         return PROVISIONAL
     for ending in (NOT_A_REPLICATION, NO_ORIGINAL_FOUND, TARGET_PENDING, API_ERROR):
         if ending in methods:

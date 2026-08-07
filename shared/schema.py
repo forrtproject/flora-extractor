@@ -248,6 +248,15 @@ RESOLVED_LINK_METHODS = {
     "llm_references",
 }
 
+# PROVISIONAL: a link the pipeline made without a bounded, semantically checked
+# candidate set behind it. Not in RESOLVED_LINK_METHODS — these rows are quarantined
+# and never imported for validation — but they SETTLE the work, because the answer
+# they carry is the answer a re-run would get. `_verdict_for()` in extract/tier.py
+# reads this to decide the work's ending; it used to name llm_title_search alone, and
+# a second provisional method was therefore filed as target_pending and reopened for
+# ever.
+PROVISIONAL_LINK_METHODS = {"llm_title_search", "llm_author_year_search"}
+
 LINK_METHOD_VALUES = RESOLVED_LINK_METHODS | {
     # PROVISIONAL, not resolved. The DOI came from a CrossRef/OpenAlex title search
     # because the LLM named an original that was NOT in the candidate/reference list —

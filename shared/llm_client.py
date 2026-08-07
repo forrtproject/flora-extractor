@@ -1455,18 +1455,24 @@ def pick_author_year_original(doi_r: str, title_r: str, abstract_r: str,
         return {"pick": None, "confident": False, "reasoning": "",
                 "llm_model": "", "llm_error": llm_error}
 
+    if "pick" not in result:
+        # Valid JSON that does not answer the question asked. Caching it would file a
+        # non-answer as a decline, permanently, so it is treated as no answer at all.
+        return {"pick": None, "confident": False, "reasoning": "",
+                "llm_model": "", "llm_error": "reply carried no 'pick' field"}
+
     raw = result.get("pick")
     index = None
     if raw is not None:
         # The prompt numbers the candidates from 1 and asks for that key back. A
-        # model that answers with a title, a DOI or "[3]" is answering a different
-        # question, and guessing which candidate it meant is how the wrong original
-        # gets linked — so anything but a number in range is no pick.
-        digits = re.findall(r"\d+", str(raw))
-        if digits:
-            n = int(digits[0])
-            if 1 <= n <= len(candidates):
-                index = n - 1
+        # model that answers with a title or a DOI is answering a different question,
+        # and guessing which candidate it meant is how the wrong original gets linked:
+        # a DOI "10.1234/abc" read as digits picks candidate 1, and "Study 3" picks
+        # candidate 3. So the whole answer must BE the number, bare or bracketed.
+        text = str(raw).strip()
+        m = re.fullmatch(r"\[?\s*(\d{1,3})\s*\]?", text)
+        if m and 1 <= int(m.group(1)) <= len(candidates):
+            index = int(m.group(1)) - 1
     confident = bool(result.get("confident"))
     reasoning = str(result.get("reasoning", "") or "")[:500]
     write_cache(LLM_CACHE_DIR, key, {"pick_index": index, "confident": confident,
