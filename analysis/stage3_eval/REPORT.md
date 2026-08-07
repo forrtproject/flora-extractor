@@ -44,7 +44,8 @@ the `cache/token_usage.json` delta, taken by `python -m analysis.stage3_eval.spe
 | 3 | the abstract rung's gate reads the title's citations too (`39d4218`) | **0** | 46 | 50 | 4 | **46** | $0.10 |
 | 4 | the target prompt says what identifies a target (`635f5c0`) | **4** | 54 | 38 | 4 | **54** | $0.43 |
 | 5 | the title search is given the year the paper cited (`84a4751`) | **4** | 54 | 38 | 4 | **54** | $0.02 |
-| 6 | a title hit must carry the author the citation named | **2** | 54 | 40 | 4 | **54** | $0.00 |
+| 6 | a title hit must carry the author the citation named (`7b7f891`) | **2** | 54 | 40 | 4 | **54** | $0.00 |
+| 7 | the author-and-year query ANDs every surname the citation named | **2** | 66 | 29 | 3 | **66** | $0.02 |
 
 Per-work labels and the reason for each: `labels-dev-<n>.json`, one per iteration.
 
@@ -271,6 +272,26 @@ judgments the model made and got wrong.
 
 **Cost: nothing** — no new question was asked, only answers filtered.
 Cumulative $0.92 of $20.
+
+### What iteration 7 says
+
+Yield 54 → 66, the largest single gain of the exercise. Wrong-settle unchanged at 2.
+
+**12 works gained a link and all 12 are right**, every DOI checked against Crossref:
+Jones & Macken (1995) → "Organizational factors in the effect of irrelevant speech",
+Khan & Dhar (2006) → "Licensing Effect in Consumer Choice", Fine, Jaeger, Farmer & Qian
+(2013) → "Rapid Expectation Adaptation during Syntactic Comprehension". One of them
+carries two originals, both right. Labels: `labels-dev-7.json`; payloads:
+`payloads-dev-7.md`.
+
+The gain is entirely selectivity. `extract_author_year_patterns` reports one surname
+per citation, so "Jones and Macken (1995)" was searched as "jones 1995" — 8,348
+OpenAlex works, with the right paper nowhere near the eight the model was shown. ANDed
+with "macken" it is 7 works and the right paper is third. The names were always in the
+citation; nothing was asked that had not been asked before.
+
+**Running total: 66 of 100 works settled correctly, 2 wrongly, from 24 and 25 at
+baseline.** Cumulative spend $0.94 of $20.
 
 ---
 
