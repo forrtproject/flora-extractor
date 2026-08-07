@@ -489,6 +489,41 @@ carries none of it.
 
 Total spend **$2.05** of the $20 approved.
 
+### What the campaign needs, beyond the LLM bill
+
+**OpenAlex, not tokens, is the binding constraint.** The evaluation's LLM spend is
+$2.05 over roughly 1,000 work-runs; the campaign's will be a few dollars. OpenAlex is
+another matter: it bills a free-text `.search` query at 10x a filter query against a
+DAILY budget that resets at midnight UTC, and the pooled resolver's queries are all of
+that shape.
+
+Measured, not estimated:
+
+- **Before the `clean_hit` gate**, a single 100-work sandbox run exhausted all five
+  keys' daily budget and died at roughly work 56 (`OpenAlexQuotaExhausted`, 2026-08-07).
+- **After it**, a 100-work run of entirely fresh works — holdout 2, no cached
+  shortlists — completed inside one day's budget.
+
+So one fresh 100 fits in a day and 1,314 do not. The campaign is a **multi-day run, or
+a funded one**: either about a fortnight at one batch a day, or prepaid credit at
+<https://openalex.org/pricing>. This is a decision for the maintainer before the
+campaign starts, not something to discover at work 56 of 1,314. The tier already stops
+cleanly on exhaustion and every settled work stays settled, so a run split across days
+resumes without losing anything.
+
+### The goal this file was written for
+
+`docs/stage3-quality-handover.md` set the exercise and said to delete it once its goal
+was met. It is met and it is deleted; this file is what replaces it. The two things it
+asked for that are NOT done, and are not part of its goal:
+
+- the 29 works carrying live settling verdicts from the pre-fix runs
+  (`scratch_redo_ids.txt`) are still to be `--redo`'d. The maintainer's decision on
+  2026-08-07 was to do it after the holdout, as part of the campaign.
+- issue #186 — measuring the provisional resolvers' precision on human-confirmed rows —
+  is still open, and the 21 provisional links this exercise checked by hand are not a
+  substitute for it.
+
 ---
 
 ## Candidate changes, and why each is justified mechanically
