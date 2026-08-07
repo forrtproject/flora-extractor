@@ -39,6 +39,7 @@ the `cache/token_usage.json` delta, taken by `python -m analysis.stage3_eval.spe
 | # | Change | wrong_settle | correct_settle | missed | correct_open | yield | spend |
 | - | ------ | -----------: | -------------: | -----: | -----------: | ----: | ----: |
 | 0 | baseline (commit `b4f6f2f`) | **25** | 24 | 46 | 5 | **24** | $0.33 |
+| 1 | a named target that could not be identified writes `target_pending` (`0bfcb54`) | **1** | 24 | 70 | 5 | **24** | $0.00 |
 
 Per-work labels and the reason for each: `labels-dev-0.json`.
 
@@ -79,6 +80,34 @@ handed the 51 unsettled works straight back; the run judged them eight times in 
 minutes before it was killed. The verdicts above are the latest row per work and are
 unaffected; the repeated passes were served from the LLM cache, which is why the
 iteration cost $0.33 rather than the $1.50–2.00 estimated.
+
+### What iteration 1 says
+
+Wrong-settle 25 → 1, which clears the stopping rule's ≥ 2/100 threshold by a wide
+margin. Yield unchanged at 24, as expected: the change stops works being closed
+wrongly, it does not identify anything new.
+
+**Exactly the intended works moved, and only those.** Of the 100, 24 changed verdict,
+all of them `no_original_found` → `target_pending`, and all 24 were labelled
+`wrong_settle` in iteration 0. No `resolved` or `provisional` row moved. Labels:
+`labels-dev-1.json`.
+
+The one remaining wrong settle is work 3185325517, where a title search for "Tversky
+and Kahneman (1973)" returned a book chapter titled "Kahneman and Tversky"
+(`10.1017/cbo9781139600224.006`) and the row was written `provisional`. That is the
+candidate-choice problem of issue #186, not the no-title problem.
+
+**Cost: nothing.** Every LLM call was already cached, because the change is in what the
+ladder does with an answer, not in what it asks. Cumulative spend $0.33 of the $20
+approved.
+
+**The accepted cost of the change** (raised by the codex review): a paper whose original
+genuinely cannot be identified now stays open forever rather than closing as
+`no_original_found`. That is the trade the primary metric asks for — an open work costs
+a re-run, a wrongly closed one costs a wrong record in FLoRA that nothing reopens. The
+works this affects are the ones iteration 2 is meant to identify; if a residue remains
+after it, closing them is a decision to take then, on evidence, rather than by
+defaulting to it now.
 
 ---
 
