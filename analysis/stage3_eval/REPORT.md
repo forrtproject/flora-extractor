@@ -43,6 +43,7 @@ the `cache/token_usage.json` delta, taken by `python -m analysis.stage3_eval.spe
 | 2 | a citation with no title is resolved by author and year (`1f8ceb4`) | **1** | 38 | 56 | 5 | **38** | $0.04 |
 | 3 | the abstract rung's gate reads the title's citations too (`39d4218`) | **0** | 46 | 50 | 4 | **46** | $0.10 |
 | 4 | the target prompt says what identifies a target (`635f5c0`) | **4** | 54 | 38 | 4 | **54** | $0.43 |
+| 5 | the title search is given the year the paper cited | **4** | 54 | 38 | 4 | **54** | $0.02 | ✗ |
 
 Per-work labels and the reason for each: `labels-dev-<n>.json`, one per iteration.
 
@@ -226,6 +227,26 @@ than having its label carried forward.
 
 **Cost $0.43**, the largest so far — a new prompt version invalidates every target call.
 Cumulative $0.90 of $20.
+
+### What iteration 5 says — the first change that fails the stopping rule
+
+Wrong-settle 4 → 4, yield 54 → 54. Neither threshold met. **Failed change 1 of 3.**
+
+The year filter did what it was built to do and it was not enough. Both hits it
+rejected were replaced by other wrong hits inside the two-year window:
+
+| Work | Was | Now | What Crossref says it is |
+| ---- | --- | --- | ------------------------ |
+| 4297998882 "Bem (2011)" | Eysenck 1965 | `10.1093/oxfordhb/9780195398991.013.0001` | Snyder & Deaux 2012, "Personality and Social Psychology" |
+| 6905495176 "Svensson (AEJ: Macroeconomics, 2015)" | 2010 front matter | `10.1257/mac.5.2.i` | the journal's 2013 front matter, no author at all |
+
+The change is kept: filtering a search by the year the citation gives is right whether
+or not it moves this sample, and it now rejects the class of hit that is decades out.
+What it exposes is that the title search's remaining failures are not about the year.
+Both surviving hits carry the wrong AUTHOR — one names Snyder and Deaux, the other
+names nobody — while the citation names Bem and Svensson. That is iteration 6.
+
+**Cost $0.02.** Cumulative $0.92 of $20.
 
 ---
 
