@@ -432,7 +432,9 @@ OUTCOME_DESCENT = True
 #      falling through to no_original_found (2026-08-07)
 #   3  a target named as a citation with no title in it goes to an author-and-year
 #      shortlist judged by the linking model, not to a title search (2026-08-07)
-EXTRACT_LADDER_VERSION: int = 3
+#   4  the abstract rung's gate reads the TITLE's author-year citations too, not the
+#      abstract's alone (2026-08-07)
+EXTRACT_LADDER_VERSION: int = 4
 
 
 # Columns to pass through from the input row (no renaming). Only columns
@@ -1056,11 +1058,21 @@ def run_for_doi(doi_r:              str,
 
     # ── Stage 4: Abstract-level LLM ──────────────────────────────────────────
     if not no_llm:
-        abstract_patterns = extract_author_year_patterns(abstract_r, max_year=year_r)
-        distinct_pairs    = {(p["surname"], p["year"]) for p in abstract_patterns}
+        # The TITLE is read for the citation as well as the abstract. The gate exists
+        # so the call is not made with nothing to reason from, and "A multilab
+        # investigation into the N2pc: Direct replication of Eimer (1996)" is not
+        # nothing — the title is already in the prompt, as its TITLE block. Reading
+        # the abstract alone left 18 of 100 works on the frozen dev sample with no
+        # rung ever naming a target: they are OSF registrations whose abstract is
+        # boilerplate ("Stage 1 IPA at PCI RR"), so this gate closed, the reference
+        # rung had no references to pick from, and no document was acquired.
+        named_in    = "\n".join(filter(None, [study_r, abstract_r]))
+        patterns      = extract_author_year_patterns(named_in, max_year=year_r)
+        distinct_pairs = {(p["surname"], p["year"]) for p in patterns}
 
-        if abstract_r and distinct_pairs:
-            log.info("[%s] Abstract has %d author-year patterns — early abstract LLM", doi_r, len(distinct_pairs))
+        if named_in and distinct_pairs:
+            log.info("[%s] Title/abstract has %d author-year pattern(s) — early "
+                     "abstract LLM", doi_r, len(distinct_pairs))
             token_counter.set_stage("extract_abstract")
             # The real doi_r goes in: resolve_targets_and_outcomes uses it as the
             # exclude_doi for its title search, and a suffixed one never matches the

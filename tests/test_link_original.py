@@ -983,3 +983,48 @@ class TestOutcomeDescent:
         assert "did not replicate" in seen["discussion"]
         assert seen["discussion_provenance"] in ("discussion", "tail")
         assert row["grobid_discussion"] == seen["discussion"]
+
+
+class TestTheAbstractRungReadsTheTitleToo:
+    """An OSF registration's abstract is boilerplate — "Stage 1 IPA at PCI RR" — and
+    its original is in the paper's own title. Reading the abstract alone left 18 of
+    100 works on the frozen dev sample with no rung ever naming a target: this gate
+    closed, the reference rung had no references to pick from, and no document was
+    acquired."""
+
+    @staticmethod
+    def _run(title_r: str, abstract_r: str):
+        cands_df = pd.DataFrame([{
+            "doi_r": "10.1/rep", "study_r": title_r, "abstract_r": abstract_r,
+            "year_r": "2020", "openalex_id_r": "", "url_r": "",
+            "author_year_pattern_r": "",
+        }])
+        with patch.object(link_original, "find_all_candidates", return_value=[]), \
+             patch.object(link_original, "_resolve_by_title_pattern", return_value=None), \
+             patch.object(link_original, "_resolve_rule_based",
+                          return_value={"resolved": False,
+                                        "resolution_method": "needs_fulltext"}), \
+             patch.object(link_original, "resolve_targets_and_outcomes",
+                          return_value={"resolved": False,
+                                        "resolution_method": "llm_no_target",
+                                        "llm_source": "openai"}) as llm, \
+             patch.object(link_original, "fetch_referenced_works_metadata", return_value=[]), \
+             patch.object(link_original, "fetch_opencitations_references", return_value=[]), \
+             patch.object(link_original, "screen_references_with_llm",
+                          return_value=_screen_result()), \
+             patch.object(link_original, "acquire_pdf",
+                          return_value={"pdf_path": None, "openalex_xml": None,
+                                        "pdf_source": "none", "pdf_url": "",
+                                        "pdf_ok": False, "pdf_url_tried": []}):
+            run_for_doi("10.1/rep", cands_df=cands_df)
+        return [c for c in llm.call_args_list if c.kwargs.get("rung") == "abstract"]
+
+    def test_a_citation_in_the_title_alone_opens_the_rung(self):
+        calls = self._run("A multilab investigation into the N2pc: Direct replication "
+                          "of Eimer (1996)", "Stage 1 IPA at PCI RR")
+        assert calls, "the abstract rung never ran for a title that names its original"
+
+    def test_a_paper_that_names_nobody_still_does_not_open_it(self):
+        """The gate is there so the call is not made with nothing to reason from."""
+        assert not self._run("A replication study in Senegal",
+                             "This study aims to replicate a previous intervention.")
