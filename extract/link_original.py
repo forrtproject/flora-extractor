@@ -1072,7 +1072,8 @@ def run_for_doi(doi_r:              str,
         log.info("[%s] no_pdf mode — abstract/rules insufficient, writing target_pending", doi_r)
         return _exit(_unresolved("needs_fulltext"))
 
-    pdf = acquire_pdf(doi_r, study_r, openalex_id=oa_id_r)
+    pdf = acquire_pdf(doi_r, study_r, openalex_id=oa_id_r,
+                      url_r=str(cands_row.get("url_r", "") or ""))
     log.info("[%s] PDF: %s (%s)", doi_r, pdf["pdf_source"], pdf["pdf_url"])
 
     pdf_path       = Path(pdf["pdf_path"]) if pdf.get("pdf_path") else None

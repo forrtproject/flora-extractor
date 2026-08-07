@@ -2998,3 +2998,54 @@ class TestTargetCheckOnTheRow:
             {"outcome": "success", "target_check": "this_original"})
         assert row["link_confidence"] == "high"
         assert row["link_evidence"] == "citation context"
+
+
+class TestHtmlAndOsfAreDocuments:
+    """The two structured sources added 2026-08-07, and the checks that keep a record
+    page from being coded as if it were the paper.
+
+    Thresholds measured over three full texts (PLOS/PMC/eLife) and five repository
+    landing pages: text beyond the abstract was 0–1,706 chars for the landing pages
+    and 49,193–71,641 for the full texts.
+    """
+
+    def _doc(self, **sections):
+        base = {"abstract": "", "raw_text": "", "references_raw": ""}
+        base.update(sections)
+        return {"sections": base}
+
+    def test_a_page_restating_its_abstract_is_refused(self):
+        from shared.pdf_sources import html_document_has_content
+        abstract = "A" * 1_500
+        # 1,980 chars of page for a 1,500-char abstract: the handle.net case.
+        assert not html_document_has_content(
+            self._doc(abstract=abstract, raw_text=abstract + "B" * 480))
+
+    def test_a_page_carrying_the_paper_is_accepted(self):
+        from shared.pdf_sources import html_document_has_content
+        assert html_document_has_content(
+            self._doc(abstract="A" * 2_000, raw_text="A" * 2_000 + "B" * 50_000))
+
+    def test_a_real_reference_block_is_enough_on_its_own(self):
+        """eLife's full text splits into almost no sections but a 71k reference block."""
+        from shared.pdf_sources import html_document_has_content
+        assert html_document_has_content(
+            self._doc(abstract="A" * 23, raw_text="A" * 500, references_raw="R" * 9_771))
+
+    def test_a_thin_osf_registration_is_no_document(self):
+        """The 326-char campaign case: a title, an author line, nothing to read."""
+        from shared.pdf_sources import osf_registration_has_content
+        assert not osf_registration_has_content(
+            {"sections": {"abstract": "", "raw_text": "TITLE: x\n\nq1: y"}})
+
+    def test_a_filled_osf_registration_is_a_document(self):
+        from shared.pdf_sources import osf_registration_has_content
+        assert osf_registration_has_content(
+            {"sections": {"abstract": "D" * 1_948, "raw_text": "Q" * 4_036}})
+
+    def test_the_guid_comes_out_of_both_a_doi_and_a_url(self):
+        from shared.pdf_sources import osf_registration_guid
+        assert osf_registration_guid("10.17605/osf.io/2tsc6") == "2tsc6"
+        assert osf_registration_guid("https://osf.io/3ke27") == "3ke27"
+        assert osf_registration_guid("http://api.osf.io/v2/nodes/s6m7y/") == "s6m7y"
+        assert osf_registration_guid("https://doi.org/10.1037/xyz") == ""

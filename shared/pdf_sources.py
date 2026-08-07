@@ -11,8 +11,12 @@ Acquisition order:
   7. SerpAPI / Google Scholar      (consumes quota, last resort)
   8. Playwright headless Chromium  (bypasses JS-rendered paywalls)
 
-Tier 0 (OpenAlex GROBID XML) sits above all of these: when it returns a result with
-content, that IS the document and the download tiers are skipped. A tier that comes
+Three sources hand back a sections dict instead of a file, and each carries the
+content check that says whether what came back is a document rather than a record of
+one (_STRUCTURED_SOURCES): Tier 0 OpenAlex GROBID XML and Tier 0b the OSF
+registration form, both above the download tiers because a hit there IS the document;
+and Tier 11, the row's own page as HTML, at the very bottom because it is the weakest
+evidence and the one result that has to be argued for rather than downloaded. A tier that comes
 back empty is timestamped and not re-probed for PDF_RETRY_AFTER_DAYS; so is a single
 URL the server answered 404/410 for, which holds that URL back without holding back
 the other URLs its tier offers.
@@ -60,6 +64,8 @@ _SEMANTICSCHOLAR_RATE_SEC = 1.0     # documented limit: 100 requests / 5 minutes
 _CORE_RATE_SEC            = 0.6
 _EUROPEPMC_RATE_SEC       = 0.3
 _OPENALEX_RATE_SEC        = 0.1
+_OSF_RATE_SEC             = 0.5
+_HTML_RATE_SEC           = 0.5
 
 # The key is optional: without it you get the polite pool (mailto= parameter);
 # with it you get higher rate limits and access to content.openalex.org bulk
@@ -90,6 +96,11 @@ _PLAYWRIGHT_SKIP_REASONS = {"playwright_not_installed", "no_doi"}
 # Smallest byte count that can be a real article PDF; the default of every tier that
 # writes one, and of the up-front "is it already on disk" check.
 _MIN_PDF_BYTES = 5_000
+
+# Sources that hand back a sections dict instead of a file. They are documents in
+# every sense the pipeline cares about, so the retry log is cleared for them exactly
+# as it is for a downloaded PDF.
+_STRUCTURED_SOURCES = {"openalex_xml", "osf_registration", "html_landing"}
 
 
 def _now_iso() -> str:
@@ -393,6 +404,256 @@ def get_osf_pdf_url(doi: str) -> Optional[str]:
     if m:
         return f"https://osf.io/download/{m.group(1)}/"
     return None
+
+
+# ── OSF registration content ──────────────────────────────────────────────────
+# A registration is a container, not a file: `osf.io/download/<guid>/` answers HTTP
+# 500 for every one of the ten campaign DOIs probed on 2026-08-07. Its content lives
+# in the API instead, as the filled-in registration form — which is the document, not
+# a substitute for one. 33% of the 2026-08-06 worklist is on the 10.17605 registrant.
+#
+# Stage 2 has ALREADY separated the useful registrations from the useless ones, and
+# this tier must not second-guess it: `osf-registration-protocol` (live, discard)
+# drops the preregistration templates, and `osf-registration-completed` (live,
+# screen_expensive) admits the post-completion forms and the Open-Ended Registrations
+# carrying the replication stem. What reaches Stage 3 either sometimes states results
+# (open-ended) or always does (a post-replication recipe).
+
+_OSF_REGISTRATION_API = "https://api.osf.io/v2/registrations/{guid}/"
+
+# Below this, the form carries a title, an author line and little else — no design,
+# no hypotheses, nothing to read. Measured 2026-08-07 over four campaign
+# registrations: 5,748 / 7,750 / 3,961 chars of real content against one 326-char
+# shell. Anything in between is rare, so the threshold is not a fine judgement.
+_MIN_OSF_REGISTRATION_CHARS = 1_000
+
+
+def osf_registration_guid(doi_or_url: str) -> str:
+    """The OSF guid in a registration DOI or an osf.io URL, or "".
+
+    Both forms reach Stage 3: `10.17605/osf.io/<guid>` as a DOI, and bare
+    `osf.io/<guid>` (and `api.osf.io/v2/nodes/<guid>/`) as the url_r of a row that
+    never resolved to a DOI at all.
+    """
+    text = str(doi_or_url or "").strip()
+    if not text:
+        return ""
+    m = re.search(r"osf\.io/(?:v2/(?:nodes|registrations)/)?([a-z0-9]{5,})", text,
+                  re.IGNORECASE)
+    return m.group(1).lower() if m else ""
+
+
+def osf_registration_has_content(registration: "dict | None") -> bool:
+    """True when a registration carries enough text to read.
+
+    The same rule as `openalex_xml_has_content()`, and for the same reason: a
+    content-free result is truthy, so without this test the ladder codes a row from
+    a title and an author list.
+    """
+    sections = (registration or {}).get("sections") or {}
+    body = f"{sections.get('abstract') or ''}{sections.get('raw_text') or ''}"
+    return len(body.strip()) >= _MIN_OSF_REGISTRATION_CHARS
+
+
+def get_osf_registration(guid: str) -> "dict | None":
+    """The OSF registration form for *guid* as a sections dict, or None.
+
+    The shape is the one `get_openalex_fulltext()` returns, so everything downstream
+    — parse_all, best_parse_result, the full-text rung — reads it unchanged. The form
+    fields are joined WITH their question labels: "q6.question" alone is unreadable,
+    and the label is what tells the model whether it is looking at a hypothesis, a
+    design or a result.
+
+    A 404 is a definitive absence and is cached. A 5xx or a timeout is not an answer
+    and is never cached. A result that fails the content check is not cached as a
+    document either.
+    """
+    if not guid:
+        return None
+    cf = OA_CACHE_DIR / f"osfreg_{cache_key(guid)}.json"
+    if cf.exists():
+        try:
+            cached = json.loads(cf.read_text(encoding="utf-8"))
+        except Exception:
+            cached = None
+        if cached is not None:
+            if cached.get("__none__"):
+                return None
+            return cached if osf_registration_has_content(cached) else None
+
+    try:
+        throttle("osf", _OSF_RATE_SEC)
+        resp = requests.get(_OSF_REGISTRATION_API.format(guid=guid),
+                            headers={"User-Agent": f"flora-extractor ({RESEARCHER_EMAIL})"},
+                            timeout=30)
+    except Exception as e:
+        log.debug("OSF registration fetch failed (%s): %s", guid, e)
+        return None
+    if resp.status_code == 404:
+        write_json(cf, {"__none__": True})
+        return None
+    if resp.status_code != 200:
+        log.debug("OSF registration %s → HTTP %s (not cached)", guid, resp.status_code)
+        return None
+
+    try:
+        attrs = resp.json()["data"]["attributes"]
+    except Exception as e:
+        log.debug("OSF registration %s unreadable: %s", guid, e)
+        return None
+
+    description = str(attrs.get("description") or "").strip()
+    responses = attrs.get("registration_responses") or {}
+    parts: list[str] = []
+    title = str(attrs.get("title") or "").strip()
+    if title:
+        parts.append(f"TITLE: {title}")
+    for label, value in responses.items():
+        if isinstance(value, str) and value.strip():
+            parts.append(f"{label}: {value.strip()}")
+        elif isinstance(value, list):
+            joined = "; ".join(str(v).strip() for v in value if str(v).strip())
+            if joined:
+                parts.append(f"{label}: {joined}")
+
+    registration = {"sections": {
+        "abstract":   description,
+        "intro":      "",
+        "methods":    "",
+        "raw_text":   "\n\n".join(parts),
+        "references": [],
+    }}
+    if not osf_registration_has_content(registration):
+        log.info("  OSF registration %s carries %d chars — no document", guid,
+                 len(f"{description}{registration['sections']['raw_text']}".strip()))
+        return None
+    write_json(cf, registration)
+    return registration
+
+
+# ── HTML as a document ────────────────────────────────────────────────────────
+# 30% of the 2026-08-06 worklist carries no DOI, only a repository URL, and
+# `acquire_pdf` was never told that URL — of 22 probed on 2026-08-07, 17 answered
+# HTTP 200 with HTML and exactly 1 was a PDF. Those pages are the only thing that
+# exists for those rows.
+#
+# The danger is the page that restates the abstract and nothing else: coding a row
+# from it looks like full text and is not. The acceptance rule is therefore about
+# STRUCTURE, not length — the parsed page must yield body text beyond the abstract,
+# or a reference list. An abstract-only landing page yields neither and is refused,
+# whatever its byte count, because repository chrome (menus, licence boilerplate,
+# "cite this item") inflates length without adding a word of the paper.
+
+_HTML_STRIP_TAGS = ("script", "style", "noscript", "nav", "header", "footer",
+                    "form", "aside", "svg", "button")
+
+# The two thresholds that separate a paper from a record page. Measured 2026-08-07
+# over eight pages — three full texts (PLOS, PMC, eLife) and five repository landing
+# pages (econpapers, ideas.repec, eScholarship-style, PubMed, handle.net):
+#
+#   text beyond the abstract   landing 0 – 1,706 chars   full text 49,193 – 71,641
+#   reference block            landing 0 chars          full text 0 / 9,771 / 71,185
+#
+# There is nothing in between, so neither number is a fine judgement. Section headings
+# are NOT the test: the splitter found no intro in any of the three full texts, because
+# HTML articles head their sections in ways a PDF-oriented splitter does not recognise.
+# What survives that is the crude measure — how much text there is that is not the
+# abstract — which is exactly the thing a page restating the abstract does not have.
+_MIN_HTML_BEYOND_ABSTRACT_CHARS = 10_000
+_MIN_HTML_REFERENCES_CHARS      = 2_000
+
+
+def html_document_has_content(document: "dict | None") -> bool:
+    """True when parsed HTML carries a paper rather than a record of one.
+
+    This IS the landing-page test: the page must give substantive text BEYOND its
+    abstract, or a real reference block. A repository page that restates the abstract
+    and adds "cite this item" satisfies neither, whatever its byte count — its chrome
+    inflates the total without adding a word of the paper, which is why the abstract is
+    subtracted rather than the total being thresholded.
+    """
+    sections = (document or {}).get("sections") or {}
+    raw = str(sections.get("raw_text") or "")
+    abstract = str(sections.get("abstract") or "")
+    if len(str(sections.get("references_raw") or "")) >= _MIN_HTML_REFERENCES_CHARS:
+        return True
+    return (len(raw) - len(abstract)) >= _MIN_HTML_BEYOND_ABSTRACT_CHARS
+
+
+def get_html_document(url: str) -> "dict | None":
+    """*url*'s page as a sections dict, or None when it is not a document.
+
+    Returns the shape `get_openalex_fulltext()` returns, so the rest of the pipeline
+    reads it unchanged. Parsing reuses the same splitter pair as `parse_pdfminer`, so
+    "what counts as an intro / a reference list" has one definition across PDF and
+    HTML rather than two that drift.
+
+    A non-200 is never cached: it is a server's mood, not a statement about the page.
+    A page that fails the content check is cached as a definitive absence, because the
+    page's SHAPE is what failed and re-fetching it tomorrow gives the same shape.
+    """
+    if not url:
+        return None
+    cf = OA_CACHE_DIR / f"htmldoc_{cache_key(url)}.json"
+    if cf.exists():
+        try:
+            cached = json.loads(cf.read_text(encoding="utf-8"))
+        except Exception:
+            cached = None
+        if cached is not None:
+            if cached.get("__none__"):
+                return None
+            return cached if html_document_has_content(cached) else None
+
+    try:
+        throttle("html_landing", _HTML_RATE_SEC)
+        resp = requests.get(
+            url, timeout=30, allow_redirects=True,
+            headers={"User-Agent": f"flora-extractor ({RESEARCHER_EMAIL})"})
+    except Exception as e:
+        log.debug("HTML fetch failed (%s): %s", url, e)
+        return None
+    if resp.status_code != 200:
+        log.debug("HTML %s → HTTP %s (not cached)", url, resp.status_code)
+        return None
+    if "html" not in resp.headers.get("content-type", "").lower():
+        return None
+
+    try:
+        from lxml import html as lxml_html
+        tree = lxml_html.fromstring(resp.content)
+        for tag in _HTML_STRIP_TAGS:
+            for node in tree.iter(tag):
+                node.getparent().remove(node) if node.getparent() is not None else None
+        text = tree.text_content()
+    except Exception as e:
+        log.debug("HTML parse failed (%s): %s", url, e)
+        return None
+
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text).strip()
+
+    from .grobid import _parse_references_block, _split_sections
+    sections = _split_sections(text)
+    document = {"sections": {
+        "abstract":       sections.get("abstract", ""),
+        "intro":          sections.get("intro", ""),
+        "methods":        sections.get("methods", ""),
+        "raw_text":       text,
+        "references":     _parse_references_block(sections.get("references_raw", "")),
+        # Kept because the acceptance test reads its SIZE: the entry parser is built
+        # for PDF reference blocks and finds one or two entries in an HTML
+        # bibliography, so its count says nothing about whether a bibliography exists.
+        "references_raw": sections.get("references_raw", ""),
+    }}
+    if not html_document_has_content(document):
+        log.info("  [%s] HTML is a landing page, not a document — %d chars beyond "
+                 "its abstract, no reference block", url[:70],
+                 max(0, len(text) - len(sections.get("abstract", ""))))
+        write_json(cf, {"__none__": True})
+        return None
+    write_json(cf, document)
+    return document
 
 
 # ── arXiv ─────────────────────────────────────────────────────────────────────
@@ -1064,9 +1325,14 @@ def download_pdf(url: str, doi: str = "", min_bytes: int = _MIN_PDF_BYTES) -> di
 
 # ── Orchestrator ──────────────────────────────────────────────────────────────
 
-def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "") -> dict:
+def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
+                url_r: str = "") -> dict:
     """
-    Try every PDF source in priority order for *doi_r*.
+    Try every document source in priority order for *doi_r*.
+
+    *url_r* is the row's own URL, and for 30% of the 2026-08-06 worklist it is the
+    only identifier there is. Two tiers use it: the OSF registration lookup, and the
+    HTML tier at the bottom.
 
     Returns:
         pdf_url        str
@@ -1074,9 +1340,13 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "") -> dict:
         pdf_path       str | None
         pdf_ok         bool
         pdf_url_tried  list[str]
-        openalex_xml   dict | None  — structured content from OpenAlex GROBID XML (Tier 0)
+        openalex_xml   dict | None  — structured content, from OpenAlex GROBID XML,
+                                      an OSF registration form, or a parsed HTML page.
+                                      The key's name predates the other two; what it
+                                      carries is a sections dict, whatever produced it.
     """
     doi_r     = clean_doi(doi_r)
+    url_r     = str(url_r or "").strip()
     dl        = {"success": False, "path": None, "reason": ""}
     pdf_url   = ""
     pdf_src   = ""
@@ -1084,7 +1354,10 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "") -> dict:
     oa_xml    = None
 
     # Per-DOI record of which tiers came back empty, and when (PDF_RETRY_AFTER_DAYS).
-    retry_path = _retry_log_path(PDF_CACHE_DIR, doi_r) if doi_r else None
+    # A DOI-less row keys its log on url_r, so it gets a retry log too rather than
+    # re-probing every tier on every run.
+    retry_key  = doi_r or url_r
+    retry_path = _retry_log_path(PDF_CACHE_DIR, retry_key) if retry_key else None
     retries    = _read_retry_log(retry_path) if retry_path is not None else {}
     failures: dict[str, str] = {}
 
@@ -1111,7 +1384,7 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "") -> dict:
         if retry_path is not None:
             # An XML with content is a document too: if its cache is later lost,
             # the download tiers must be probeable again, not held for two weeks.
-            if dl["success"] or pdf_src == "openalex_xml":
+            if dl["success"] or pdf_src in _STRUCTURED_SOURCES:
                 try:
                     retry_path.unlink(missing_ok=True)
                 except Exception as e:
@@ -1141,6 +1414,20 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "") -> dict:
             pdf_src = "openalex_xml"
             return _result()
         oa_xml = None
+
+    # Tier 0b — the OSF registration form. Same deal as Tier 0: it IS the document,
+    # so nothing below it can add anything. Stage 2 has already dropped the
+    # preregistration templates, so what reaches here states results or may state them.
+    osf_guid = osf_registration_guid(doi_r) or osf_registration_guid(url_r)
+    if osf_guid and not _held("osf_registration"):
+        registration = get_osf_registration(osf_guid)
+        if registration is not None:
+            log.info("  [%s] OSF registration acquired (source=osf_registration)",
+                     doi_r or url_r)
+            oa_xml  = registration
+            pdf_src = "osf_registration"
+            return _result()
+        _failed("osf_registration")
 
     # The PDF is already on disk — no tier can add anything to a file we have.
     # This used to happen by accident, inside the download_pdf() cache hit of whichever
@@ -1246,5 +1533,21 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "") -> dict:
             _write_provenance(doi_r, "playwright", pdf_url)
         elif pw_result.get("reason") not in _PLAYWRIGHT_SKIP_REASONS:
             _failed("playwright")
+
+    # Tier 11 — the row's own page, as HTML. Last, because it is the weakest evidence
+    # and the only tier whose result has to be argued for rather than downloaded: an
+    # abstract-restating record page is refused by html_document_has_content(), so a
+    # row that reaches here still ends at no_fulltext_available unless the page really
+    # carries the paper.
+    if not dl["success"] and url_r and not _held("html_landing"):
+        document = get_html_document(url_r)
+        if document is not None:
+            log.info("  [%s] HTML document acquired (source=html_landing)", url_r[:70])
+            oa_xml  = document
+            pdf_url = url_r
+            pdf_src = "html_landing"
+            all_tried.append(url_r)
+            return _result()
+        _failed("html_landing")
 
     return _result()
