@@ -293,6 +293,23 @@ citation; nothing was asked that had not been asked before.
 **Running total: 66 of 100 works settled correctly, 2 wrongly, from 24 and 25 at
 baseline.** Cumulative spend $0.94 of $20.
 
+### Where the 29 remaining misses are, after iteration 7
+
+Read off each work's recorded `_search_attempt`:
+
+| Works | Recorded outcome | What they are |
+| ----: | ---------------- | ------------- |
+| 12 | `no_match` on a title search | 8 are still a description of the finding rather than a citation ("study of ambiguity aversion", "the information protocol condition"); 4 are citation-shaped strings the search did not match ("Wilson et al. (2017, JPSP", `"Bats, Balls, and Substitution Sensitivity"`) |
+| 10 | `author_year_declined` | the model was shown a shortlist and said none of them. Includes "Turri, Buckwalter, Blouw (2015)", whose original a DIFFERENT work in this sample resolved — so the shortlist, not the target, is what failed |
+| 4 | no target named at all | two are the same OSF registration of Vess (2012), one names its original only in a phrase the prompt reads as prose |
+| 2 | `api_error` | a TLS certificate failure on `doi.org` for the `10.18718` registrant; these reopen |
+| 1 | `unsearchable` | a target description with no author, year or title in it |
+
+No bucket now carries an obvious single cause the way the first four iterations did.
+The remaining candidates are small (a citation pattern that does not handle
+"(2017, JPSP)") or are tuning knobs (how many candidates the shortlist offers), and a
+tuning knob moved to fit 100 works is exactly what the holdout exists to catch.
+
 ---
 
 ## Candidate changes, and why each is justified mechanically
