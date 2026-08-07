@@ -248,6 +248,18 @@ def print_search_summary() -> None:
           f"(billed ~10x a filter query — see CLAUDE.md cost table)\n")
 
 
+def _params_summary(params: "dict | None") -> str:
+    """The identifying part of an OpenAlex query, for a log line.
+
+    Only `filter` and `search` — the rest is `select`/`mailto`/`per-page` boilerplate
+    that would bury the one thing a reader needs to know: which question failed.
+    """
+    if not params:
+        return ""
+    parts = [f"{k}={str(params[k])[:120]}" for k in ("filter", "search") if params.get(k)]
+    return f"({' '.join(parts)})" if parts else ""
+
+
 def _oa_get(url: str, params: dict | None = None) -> Optional[dict]:
     """GET from OpenAlex with rate limiting, 429 retry, and error handling.
 
@@ -292,17 +304,45 @@ def _oa_get(url: str, params: dict | None = None) -> Optional[dict]:
                 time.sleep(delay)
                 attempt += 1
                 continue
+            # A 5xx is OpenAlex having a moment, not an answer about the query, and
+            # under EXTRACT_WORKERS concurrent callers they arrive in clusters: a
+            # 27-work run on 2026-08-07 logged 15 failures whose requests all
+            # succeeded when replayed one at a time. Breaking out on the first one
+            # spent the row's whole question on a blip, and — now that a title search
+            # that finds nothing settles a work as `no_original_found` — would have
+            # closed works on it. Retried on the same schedule as a 429.
+            if r.status_code >= 500:
+                if attempt >= len(_RETRY_DELAYS):
+                    log.warning("OpenAlex %s after %d retries: %s %s", r.status_code,
+                                attempt, url, _params_summary(params))
+                    return None
+                delay = _RETRY_DELAYS[attempt]
+                log.warning("OpenAlex %s — waiting %ds before retry %d/%d: %s",
+                            r.status_code, delay, attempt + 1, len(_RETRY_DELAYS),
+                            _params_summary(params))
+                time.sleep(delay)
+                attempt += 1
+                continue
             r.raise_for_status()
             return r.json()
         except OpenAlexQuotaExhausted:
             raise
-        except requests.exceptions.HTTPError:
-            break
+        except requests.exceptions.HTTPError as e:
+            # 4xx other than 429: the query itself is the problem, so a retry asks the
+            # same bad question again. The status and the query go in the log — the
+            # bare "failed after retries" this used to print was reached by BOTH this
+            # path and the 429 path, so a run's failures could not be told apart.
+            log.warning("OpenAlex %s (not retried): %s %s",
+                        getattr(e.response, "status_code", "?"), url,
+                        _params_summary(params))
+            return None
         except Exception as e:
-            log.warning("OpenAlex request failed: %s — %s", url, e)
+            log.warning("OpenAlex request failed: %s — %s %s", url, e,
+                        _params_summary(params))
             return None
 
-    log.warning("OpenAlex request failed after retries: %s", url)
+    log.warning("OpenAlex 429 after %d retries: %s %s", attempt, url,
+                _params_summary(params))
     return None
 
 
@@ -777,14 +817,26 @@ def _jaccard(a: str, b: str) -> float:
     return len(ta & tb) / len(ta | tb)
 
 
-class _TitleSearchUnavailable(Exception):
-    """The provider never answered — distinct from a genuine no-match."""
+class TitleSearchUnavailable(Exception):
+    """The provider never answered — distinct from a genuine no-match.
+
+    Public because the difference now decides a work's ENDING. A title search that
+    finds nothing settles the work `no_original_found`, and there is no point
+    re-running a query that will return nothing again; a title search that never
+    reached its provider must settle nothing, or an outage closes the work for good.
+    Callers that need to tell them apart pass `raise_on_unavailable=True`.
+    """
+
+
+# The private alias the module's own raisers still use.
+_TitleSearchUnavailable = TitleSearchUnavailable
 
 
 _TITLE_SEARCH_SHAPE = "v2-openalex-id"
 
 
-def _cached_title_search(source: str, title: str, year: str, search) -> Optional[dict]:
+def _cached_title_search(source: str, title: str, year: str, search,
+                         raise_on_unavailable: bool = False) -> Optional[dict]:
     """Disk-cache a title search, misses included.
 
     The title searches fire three to five times for a single row — the pre-PDF
@@ -805,13 +857,20 @@ def _cached_title_search(source: str, title: str, year: str, search) -> Optional
         return cached.get("hit")
     try:
         hit = search(title, year)
-    except _TitleSearchUnavailable:
+    except TitleSearchUnavailable:
+        # Never cached — caching it would pin the outage forever. Whether it is
+        # RAISED is the caller's choice: most callers treat a failed search as a
+        # miss and move on, but one that would settle a work on the answer must be
+        # able to tell the two apart.
+        if raise_on_unavailable:
+            raise
         return None
     write_cache(OA_CACHE_DIR, key, {"hit": hit})
     return hit
 
 
-def _search_crossref_by_title(title: str, year: str = "") -> Optional[dict]:
+def _search_crossref_by_title(title: str, year: str = "",
+                            raise_on_unavailable: bool = False) -> Optional[dict]:
     """Search CrossRef by title and return full metadata if a confident hit is found.
 
     Uses a Jaccard threshold of 0.7 to confirm the top hit matches *title*,
@@ -819,7 +878,8 @@ def _search_crossref_by_title(title: str, year: str = "") -> Optional[dict]:
     Returns the fetch_openalex_full_metadata shape plus openalex_id (always "" here
     — CrossRef has no OpenAlex ids), or None. Cached per (title, year) in OA_CACHE_DIR.
     """
-    return _cached_title_search("crossref", title, year, _search_crossref_by_title_live)
+    return _cached_title_search("crossref", title, year, _search_crossref_by_title_live,
+                                raise_on_unavailable)
 
 
 def _search_crossref_by_title_live(title: str, year: str = "") -> Optional[dict]:
@@ -889,7 +949,8 @@ def _search_crossref_by_title_live(title: str, year: str = "") -> Optional[dict]
     return None
 
 
-def _search_openalex_by_title(title: str, year: str = "") -> Optional[dict]:
+def _search_openalex_by_title(title: str, year: str = "",
+                            raise_on_unavailable: bool = False) -> Optional[dict]:
     """Search OpenAlex by title and return full metadata if a confident hit is found.
 
     Jaccard threshold 0.7 against *title*; year ±2 when *year* is provided.
@@ -897,7 +958,8 @@ def _search_openalex_by_title(title: str, year: str = "") -> Optional[dict]:
     which is the only identity a DOI-less original has), or None. Cached per
     (title, year) in OA_CACHE_DIR.
     """
-    return _cached_title_search("openalex", title, year, _search_openalex_by_title_live)
+    return _cached_title_search("openalex", title, year, _search_openalex_by_title_live,
+                                raise_on_unavailable)
 
 
 def _search_openalex_by_title_live(title: str, year: str = "") -> Optional[dict]:

@@ -42,7 +42,7 @@ from shared.pdf_parsing import (
     parse_result_is_empty,
     read_parse_cache,
 )
-from shared.openalex_client import author_matches, extract_author_year_patterns, find_all_candidates, fetch_opencitations_references, fetch_referenced_works_metadata, _search_crossref_by_title, _search_openalex_by_title
+from shared.openalex_client import TitleSearchUnavailable, author_matches, extract_author_year_patterns, find_all_candidates, fetch_opencitations_references, fetch_referenced_works_metadata, _search_crossref_by_title, _search_openalex_by_title
 from shared.prompts import (
     TARGET_DISCUSSION_CHARS, TARGET_INTRO_CHARS, TARGET_METHODS_CHARS,
     _abstract_tail, rendered_reference_entries,
@@ -584,29 +584,37 @@ def _search_title_for_original(doi_r: str, target_desc: str,
 
 
 def title_search_candidates(doi_r: str, target_desc: str,
-                            study_r: str) -> list[dict]:
-    """Every distinct original the two title searches propose for *target_desc*.
+                            study_r: str) -> "tuple[list[dict], bool]":
+    """(candidates, unavailable) for *target_desc*.
 
     `_search_title_for_original` returns the first confident hit and discards the
     other source's; this keeps both, because which of them is right is the open
-    question (issue #186) and nothing on disk currently records that the two
-    disagreed. The list is the test data that question needs, so it is written to the
-    row whether or not it is acted on.
+    question (issue #186) and nothing on disk recorded that the two disagreed. The
+    list is the test data that question needs, so it is written to the row whether or
+    not it is acted on.
+
+    The second value is what makes the two endings distinguishable. An empty list
+    with `unavailable=False` means both providers answered and neither knows the
+    paper — a settled `no_original_found`, and re-running it would ask the same
+    question and get the same nothing. An empty list with `unavailable=True` means a
+    provider never answered, which says nothing about the paper and must not settle
+    anything. Unavailable only when NEITHER source answered: one good answer is an
+    answer.
 
     Same guards as the single-hit resolver: never link a paper to itself, and never
     accept a hit whose title is the replication's own.
     """
     seen: set[str] = set()
     candidates: list[dict] = []
+    answered = False
     for label, search in (("crossref", _search_crossref_by_title),
                           ("openalex", _search_openalex_by_title)):
         try:
-            hit = search(target_desc)
-        except Exception as exc:
-            # A search that never answered is not "no such paper" — say so and move
-            # on rather than letting the outage read as an absence.
+            hit = search(target_desc, "", True)
+        except TitleSearchUnavailable as exc:
             log.info("[%s] %s title search unavailable: %s", doi_r, label, exc)
             continue
+        answered = True
         if not hit:
             continue
         doi_o = clean_doi(hit.get("doi", "") or "")
@@ -623,7 +631,7 @@ def title_search_candidates(doi_r: str, target_desc: str,
             "openalex_id":  str(hit.get("openalex_id") or ""),
             "source":       label,
         })
-    return candidates
+    return candidates, not answered
 
 
 # What a target-identifying stage produced, as it has to survive to the row. Three

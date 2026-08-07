@@ -2478,10 +2478,13 @@ class TestPerTargetAdapter:
         assert [r["original_rank"] for r in rows] == [1, 2]
         assert all(r["n_originals"] == 2 for r in rows)
 
-    def test_an_unmatched_target_is_reported_not_written(self):
-        """A target with no keyed record names a study we cannot identify: there is no
-        published record to write a row about, and the shortfall belongs on the rows
-        that were written."""
+    def test_an_unmatched_target_both_providers_disown_is_reported_not_written(
+            self, monkeypatch):
+        """A target with no keyed record is searched by name first. When both
+        providers answer and neither knows it, there is no published record to write
+        a row about and the shortfall belongs on the rows that were written."""
+        monkeypatch.setattr("extract.link_original.title_search_candidates",
+                            lambda *a: ([], False))
         targets = self._TWO + [{"key": None, "match_certain": False,
                                 "target_as_named": "Ramirez (2014)",
                                 "study_numbers": "", "replication_study_numbers": "",
@@ -3072,13 +3075,13 @@ class TestNamedButUnmatchedTargets:
     def test_an_unmatched_named_target_is_searched_and_kept(self, monkeypatch):
         monkeypatch.setattr(
             "extract.link_original.title_search_candidates",
-            lambda doi_r, desc, study_r: [
+            lambda doi_r, desc, study_r: ([
                 {"doi": "10.1/one", "title": "Interviewing in social research",
                  "year": 1950, "first_author": "Hyman", "openalex_id": "",
                  "source": "crossref"},
                 {"doi": "10.2/two", "title": "Interviewing in social research",
                  "year": 1954, "first_author": "Hyman", "openalex_id": "",
-                 "source": "openalex"}])
+                 "source": "openalex"}], False))
         entry = run_extract._target_entry(self._target(), "10.9/rep")
         assert entry is not None
         assert entry["doi"] == "10.1/one"
@@ -3095,14 +3098,24 @@ class TestNamedButUnmatchedTargets:
         gets linked to a landmark it merely cites."""
         called = []
         monkeypatch.setattr("extract.link_original.title_search_candidates",
-                            lambda *a: called.append(a) or [])
+                            lambda *a: called.append(a) or ([], False))
         entry = run_extract._target_entry(
             self._target(record={"title": "Some original", "doi": "10.3/x"},
                          match_certain=False), "10.9/rep")
         assert entry is None
         assert not called
 
-    def test_no_candidates_still_yields_no_row(self, monkeypatch):
+    def test_no_candidates_settles_as_no_row(self, monkeypatch):
+        """Both providers answered and neither knows the paper: settle it."""
         monkeypatch.setattr("extract.link_original.title_search_candidates",
-                            lambda *a: [])
+                            lambda *a: ([], False))
         assert run_extract._target_entry(self._target(), "10.9/rep") is None
+
+    def test_an_unreachable_provider_does_not_settle(self, monkeypatch):
+        """Neither provider answered, so the row is api_error — which a re-run
+        reopens — rather than no_original_found, which would close it for good."""
+        monkeypatch.setattr("extract.link_original.title_search_candidates",
+                            lambda *a: ([], True))
+        entry = run_extract._target_entry(self._target(), "10.9/rep")
+        assert entry is not None and entry["search_unavailable"] is True
+        assert entry["doi"] == ""

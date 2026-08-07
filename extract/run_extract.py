@@ -947,7 +947,19 @@ def _title_searched_entry(target: dict, doi_r: str) -> "dict | None":
         return None
 
     from extract.link_original import title_search_candidates
-    candidates = title_search_candidates(doi_r, named, "")
+    candidates, unavailable = title_search_candidates(doi_r, named, "")
+    if unavailable:
+        # Neither provider answered. That says nothing about whether the original
+        # exists, so the row must NOT settle: it is written api_error, which a
+        # re-run reopens. A genuine empty answer falls through to `return None`
+        # below and settles as no_original_found — re-asking a question both
+        # providers have answered gets the same nothing.
+        return {"rank": 0, "doi": "", "title": "", "year": None, "first_author": "",
+                "openalex_id": "", "study_number": "", "study_r": "",
+                "evidence": "title search for the named target reached neither "
+                            "CrossRef nor OpenAlex",
+                "confidence": "low", "provisional": False, "outcome_block": {},
+                "search_unavailable": True}
     if not candidates:
         return None
 
@@ -1451,7 +1463,8 @@ def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | Non
         # A DOI the pipeline had to search for is provisional at ~50% precision — the
         # same rule _link_confidence applies on the single path, applied here rather
         # than writing a constant "high" onto a link nobody confirmed.
-        link_method = ("llm_title_search" if entry["provisional"]
+        link_method = ("api_error" if entry.get("search_unavailable")
+                       else "llm_title_search" if entry["provisional"]
                        else _map_method(str(link.get("target_stage") or "llm_fulltext")))
         entry = {**entry, "confidence": ("low" if entry["provisional"]
                                          else entry["confidence"])}
