@@ -3093,7 +3093,7 @@ class TestNamedButUnmatchedTargets:
     def test_an_unmatched_named_target_is_searched_and_kept(self, monkeypatch):
         monkeypatch.setattr(
             "extract.link_original.title_search_candidates",
-            lambda doi_r, desc, study_r: ([
+            lambda doi_r, desc, study_r, cited_year="": ([
                 {"doi": "10.1/one", "title": "Interviewing in social research",
                  "year": 1950, "first_author": "Hyman", "openalex_id": "",
                  "source": "crossref"},

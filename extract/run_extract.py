@@ -1051,7 +1051,14 @@ def _title_searched_entry(target: dict, doi_r: str, context: dict) -> "dict | No
         return _author_year_entry(target, doi_r, context, named)
 
     query = strip_citation_prefix(named)
-    candidates, unavailable = title_search_candidates(doi_r, named, "")
+    # The year the paper gave for its target, when it gave one. Both title searches
+    # reject a hit more than two years from it, and this call never supplied one — so
+    # "Bem (2011)" was allowed to match a 1965 paper whose title happened to contain
+    # the journal name the target string carried.
+    from shared.openalex_client import extract_author_year_patterns
+    patterns = extract_author_year_patterns(named)
+    cited_year = str(patterns[0]["year"]) if patterns else ""
+    candidates, unavailable = title_search_candidates(doi_r, named, "", cited_year)
     # What was asked and what came back, recorded on the work whatever the answer.
     # Without this, a target that failed to resolve leaves only the model's evidence
     # quote behind: nothing says a search ran, what string it ran on, or that both

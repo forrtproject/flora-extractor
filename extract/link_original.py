@@ -434,7 +434,9 @@ OUTCOME_DESCENT = True
 #      shortlist judged by the linking model, not to a title search (2026-08-07)
 #   4  the abstract rung's gate reads the TITLE's author-year citations too, not the
 #      abstract's alone (2026-08-07)
-EXTRACT_LADDER_VERSION: int = 4
+#   5  the per-target title search is given the year the paper cited, so the +/-2-year
+#      check both providers already implement actually runs (2026-08-07)
+EXTRACT_LADDER_VERSION: int = 5
 
 
 # Columns to pass through from the input row (no renaming). Only columns
@@ -657,7 +659,8 @@ def citation_without_title(text: str) -> bool:
 
 
 def title_search_candidates(doi_r: str, target_desc: str,
-                            study_r: str) -> "tuple[list[dict], bool]":
+                            study_r: str,
+                            cited_year: str = "") -> "tuple[list[dict], bool]":
     """(candidates, unavailable) for *target_desc*.
 
     `_search_title_for_original` returns the first confident hit and discards the
@@ -680,6 +683,13 @@ def title_search_candidates(doi_r: str, target_desc: str,
 
     Same guards as the single-hit resolver: never link a paper to itself, and never
     accept a hit whose title is the replication's own.
+
+    *cited_year* is the year the PAPER gave for its target, and both searches reject a
+    hit more than two years from it. The check has always been in both of them and
+    this call never supplied a year, so it never ran: "Bem (2011)" matched a 1965
+    paper called "Personality and social psychology" — the target string carried the
+    journal name and the title index matched that. Two of the four wrong links on the
+    frozen dev sample were this, and both were off by decades.
     """
     query = strip_citation_prefix(target_desc)
     seen: set[str] = set()
@@ -688,7 +698,7 @@ def title_search_candidates(doi_r: str, target_desc: str,
     for label, search in (("crossref", _search_crossref_by_title),
                           ("openalex", _search_openalex_by_title)):
         try:
-            hit = search(query, "", True)
+            hit = search(query, cited_year, True)
         except TitleSearchUnavailable as exc:
             log.info("[%s] %s title search unavailable: %s", doi_r, label, exc)
             unavailable = True

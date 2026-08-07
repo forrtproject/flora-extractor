@@ -1028,3 +1028,38 @@ class TestTheAbstractRungReadsTheTitleToo:
         """The gate is there so the call is not made with nothing to reason from."""
         assert not self._run("A replication study in Senegal",
                              "This study aims to replicate a previous intervention.")
+
+
+class TestTheTitleSearchIsGivenTheCitedYear:
+    """Both searches reject a hit more than two years from the year they are given,
+    and `title_search_candidates` was called with none, so the check never ran.
+    "Bem (2011)" matched a 1965 paper called "Personality and social psychology" —
+    the target string carried the journal name and the title index matched that."""
+
+    @staticmethod
+    def _search(seen):
+        def search(title, year, raise_on_unavailable=False):
+            seen.append((title, year))
+            return None
+        return search
+
+    def test_the_year_reaches_both_providers(self):
+        seen: list = []
+        with patch.object(link_original, "_search_crossref_by_title",
+                          side_effect=self._search(seen)), \
+             patch.object(link_original, "_search_openalex_by_title",
+                          side_effect=self._search(seen)):
+            link_original.title_search_candidates("10.1/rep", "Bem (2011) precognition",
+                                                  "", "2011")
+        assert [y for _, y in seen] == ["2011", "2011"]
+
+    def test_no_year_in_the_citation_still_searches(self):
+        """A target with no year is not a reason to skip the search — it is a reason
+        not to filter on one."""
+        seen: list = []
+        with patch.object(link_original, "_search_crossref_by_title",
+                          side_effect=self._search(seen)), \
+             patch.object(link_original, "_search_openalex_by_title",
+                          side_effect=self._search(seen)):
+            link_original.title_search_candidates("10.1/rep", "A named study", "")
+        assert [y for _, y in seen] == ["", ""]
