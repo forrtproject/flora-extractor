@@ -583,6 +583,38 @@ def _search_title_for_original(doi_r: str, target_desc: str,
     return None
 
 
+# A target description is however the PAPER referred to the study it replicates, so it
+# usually leads with a citation: "Zhong, Bohns, & Gino (2010) Good lamps are the best
+# police". Both searches confirm a hit by title Jaccard against the whole string, and
+# the author tokens drag that below the 0.7 threshold — so the citation that makes the
+# target identifiable to a human is what stops the search identifying it. Measured over
+# four real campaign targets on 2026-08-07: the raw string resolved 2 of 4 (both
+# CrossRef-only), the stripped title resolved 4 of 4 from both sources.
+_CITATION_PREFIXES = (
+    r"^.*?\((?:19|20)\d{2}[a-z]?\)[\s,:.\-–]*",        # Authors (2010) Title
+    r"^.*?,\s*(?:19|20)\d{2}[a-z]?\s*[,:.\-–]\s*",     # Authors, 2007, Title
+    r"^.{0,60}?\b(?:19|20)\d{2}[a-z]?\b[\s,:.\-–]+",   # Authors 2007 Title
+)
+
+# What must survive the strip for it to be worth doing. Below this the "title" is a
+# fragment and searching it would match anything.
+_MIN_STRIPPED_TITLE = 20
+
+
+def strip_citation_prefix(text: str) -> str:
+    """*text* with a leading author-year citation removed, when one is there.
+
+    Conservative: the first pattern that leaves enough behind wins, and a strip that
+    would leave a fragment is not made at all.
+    """
+    stripped = str(text or "").strip()
+    for pattern in _CITATION_PREFIXES:
+        m = re.match(pattern, stripped)
+        if m and len(stripped) - m.end() >= _MIN_STRIPPED_TITLE:
+            return stripped[m.end():].strip()
+    return stripped
+
+
 def title_search_candidates(doi_r: str, target_desc: str,
                             study_r: str) -> "tuple[list[dict], bool]":
     """(candidates, unavailable) for *target_desc*.
@@ -593,28 +625,33 @@ def title_search_candidates(doi_r: str, target_desc: str,
     list is the test data that question needs, so it is written to the row whether or
     not it is acted on.
 
-    The second value is what makes the two endings distinguishable. An empty list
-    with `unavailable=False` means both providers answered and neither knows the
-    paper — a settled `no_original_found`, and re-running it would ask the same
-    question and get the same nothing. An empty list with `unavailable=True` means a
-    provider never answered, which says nothing about the paper and must not settle
-    anything. Unavailable only when NEITHER source answered: one good answer is an
-    answer.
+    The second value is what makes the two endings distinguishable. `unavailable=False`
+    means EVERY provider answered, so an empty list is a settled `no_original_found`:
+    re-running would ask the same question and get the same nothing. `unavailable=True`
+    means at least one provider never answered, which must not settle anything.
+
+    Any silent provider makes the answer incomplete — not just both of them. The
+    result is an aggregate over both sources and they disagree in practice: of four
+    real campaign targets, CrossRef and OpenAlex returned DIFFERENT originals for two
+    (for "D. Wood et al. (1978)" CrossRef gave a book-chapter reprint and OpenAlex the
+    1976 paper). So "OpenAlex said nothing while CrossRef was down" is not evidence
+    that nothing exists, and settling on it would close a work on an outage.
 
     Same guards as the single-hit resolver: never link a paper to itself, and never
     accept a hit whose title is the replication's own.
     """
+    query = strip_citation_prefix(target_desc)
     seen: set[str] = set()
     candidates: list[dict] = []
-    answered = False
+    unavailable = False
     for label, search in (("crossref", _search_crossref_by_title),
                           ("openalex", _search_openalex_by_title)):
         try:
-            hit = search(target_desc, "", True)
+            hit = search(query, "", True)
         except TitleSearchUnavailable as exc:
             log.info("[%s] %s title search unavailable: %s", doi_r, label, exc)
+            unavailable = True
             continue
-        answered = True
         if not hit:
             continue
         doi_o = clean_doi(hit.get("doi", "") or "")
@@ -631,7 +668,7 @@ def title_search_candidates(doi_r: str, target_desc: str,
             "openalex_id":  str(hit.get("openalex_id") or ""),
             "source":       label,
         })
-    return candidates, not answered
+    return candidates, unavailable
 
 
 # What a target-identifying stage produced, as it has to survive to the row. Three

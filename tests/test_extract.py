@@ -3026,14 +3026,24 @@ class TestHtmlAndOsfAreDocuments:
 
     def test_a_page_carrying_the_paper_is_accepted(self):
         from shared.pdf_sources import html_document_has_content
+        # Length AND year density: a body this long that never cites a year is page
+        # furniture, which is the case the length-only rule let through.
+        body = ("we replicate the original finding (Smith 1999; Jones 2004) " * 900)
         assert html_document_has_content(
-            self._doc(abstract="A" * 2_000, raw_text="A" * 2_000 + "B" * 50_000))
+            self._doc(abstract="A" * 2_000, raw_text="A" * 2_000 + body))
+
+    def test_a_long_page_with_no_scholarship_is_still_refused(self):
+        """A repository page of related items, comments and metadata can be long."""
+        from shared.pdf_sources import html_document_has_content
+        assert not html_document_has_content(
+            self._doc(abstract="", raw_text="download cite share export " * 3_000))
 
     def test_a_real_reference_block_is_enough_on_its_own(self):
         """eLife's full text splits into almost no sections but a 71k reference block."""
         from shared.pdf_sources import html_document_has_content
+        refs = "Smith J (1999) A paper. Journal 1(1). Jones K (2004) Another. " * 200
         assert html_document_has_content(
-            self._doc(abstract="A" * 23, raw_text="A" * 500, references_raw="R" * 9_771))
+            self._doc(abstract="A" * 23, raw_text="A" * 500, references_raw=refs))
 
     def test_a_thin_osf_registration_is_no_document(self):
         """The 326-char campaign case: a title, an author line, nothing to read."""
@@ -3119,3 +3129,39 @@ class TestNamedButUnmatchedTargets:
         entry = run_extract._target_entry(self._target(), "10.9/rep")
         assert entry is not None and entry["search_unavailable"] is True
         assert entry["doi"] == ""
+
+
+class TestATransientSourceFailureIsNotAFourteenDayVerdict:
+    """The retry log suppresses a source for PDF_RETRY_AFTER_DAYS. Recording a timeout
+    in it turns a minute of provider trouble into two weeks of "this source has
+    nothing", and an ordinary re-run cannot undo it."""
+
+    def test_osf_transport_failure_raises_rather_than_reading_as_absent(self, monkeypatch):
+        from shared import pdf_sources as ps
+        monkeypatch.setattr(ps.requests, "get",
+                            lambda *a, **k: (_ for _ in ()).throw(OSError("boom")))
+        with pytest.raises(ps.DocumentSourceUnavailable):
+            ps.get_osf_registration("abcde")
+
+    def test_osf_404_is_a_definitive_absence(self, monkeypatch, tmp_path):
+        from shared import pdf_sources as ps
+        monkeypatch.setattr(ps, "OA_CACHE_DIR", tmp_path)
+
+        class R:
+            status_code = 404
+        monkeypatch.setattr(ps.requests, "get", lambda *a, **k: R())
+        assert ps.get_osf_registration("abcde") is None
+        assert (tmp_path / f"osfreg_{ps.cache_key('abcde')}.json").exists()
+
+    def test_html_5xx_raises_and_4xx_does_not(self, monkeypatch, tmp_path):
+        from shared import pdf_sources as ps
+        monkeypatch.setattr(ps, "OA_CACHE_DIR", tmp_path)
+
+        class R:
+            def __init__(self, code):
+                self.status_code, self.headers, self.content = code, {}, b""
+        monkeypatch.setattr(ps.requests, "get", lambda *a, **k: R(503))
+        with pytest.raises(ps.DocumentSourceUnavailable):
+            ps.get_html_document("https://example.org/x")
+        monkeypatch.setattr(ps.requests, "get", lambda *a, **k: R(403))
+        assert ps.get_html_document("https://example.org/y") is None

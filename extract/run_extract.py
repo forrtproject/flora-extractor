@@ -949,17 +949,21 @@ def _title_searched_entry(target: dict, doi_r: str) -> "dict | None":
     from extract.link_original import title_search_candidates
     candidates, unavailable = title_search_candidates(doi_r, named, "")
     if unavailable:
-        # Neither provider answered. That says nothing about whether the original
-        # exists, so the row must NOT settle: it is written api_error, which a
-        # re-run reopens. A genuine empty answer falls through to `return None`
-        # below and settles as no_original_found — re-asking a question both
-        # providers have answered gets the same nothing.
+        # A provider was silent, so the answer is incomplete however good the part we
+        # got. The row is written api_error, which a re-run reopens; settling on
+        # incomplete evidence is not reversible and a re-run is nearly free.
+        # A genuine empty answer — every provider spoke, none knew the paper — falls
+        # through to `return None` below and settles as no_original_found, because
+        # re-asking a question they have all answered gets the same nothing.
+        found = "; ".join(f"{c['source']}: {c['doi']}" for c in candidates)
+        note = ("title search for the named target did not reach every provider"
+                + (f"; what did answer: {found}" if found else ""))
         return {"rank": 0, "doi": "", "title": "", "year": None, "first_author": "",
                 "openalex_id": "", "study_number": "", "study_r": "",
-                "evidence": "title search for the named target reached neither "
-                            "CrossRef nor OpenAlex",
+                "evidence": note,
                 "confidence": "low", "provisional": False, "outcome_block": {},
-                "search_unavailable": True}
+                "search_unavailable": True,
+                "title_search_candidates": candidates}
     if not candidates:
         return None
 

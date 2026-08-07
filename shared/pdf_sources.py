@@ -103,6 +103,15 @@ _MIN_PDF_BYTES = 5_000
 _STRUCTURED_SOURCES = {"openalex_xml", "osf_registration", "html_landing"}
 
 
+class DocumentSourceUnavailable(Exception):
+    """A source never answered — as opposed to answering that it has nothing.
+
+    The retry log is a fourteen-day suppression, so recording a timeout in it turns a
+    minute of provider trouble into two weeks of "this source has nothing", and an
+    ordinary re-run cannot undo it. Only a real absence may be recorded.
+    """
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -487,20 +496,20 @@ def get_osf_registration(guid: str) -> "dict | None":
                             headers={"User-Agent": f"flora-extractor ({RESEARCHER_EMAIL})"},
                             timeout=30)
     except Exception as e:
-        log.debug("OSF registration fetch failed (%s): %s", guid, e)
-        return None
+        raise DocumentSourceUnavailable(f"OSF fetch failed for {guid}: {e}") from e
     if resp.status_code == 404:
+        # A definitive absence, and the only OSF answer worth remembering.
         write_json(cf, {"__none__": True})
         return None
     if resp.status_code != 200:
-        log.debug("OSF registration %s → HTTP %s (not cached)", guid, resp.status_code)
-        return None
+        raise DocumentSourceUnavailable(
+            f"OSF registration {guid} → HTTP {resp.status_code}")
 
     try:
         attrs = resp.json()["data"]["attributes"]
     except Exception as e:
-        log.debug("OSF registration %s unreadable: %s", guid, e)
-        return None
+        raise DocumentSourceUnavailable(
+            f"OSF registration {guid} unreadable: {e}") from e
 
     description = str(attrs.get("description") or "").strip()
     responses = attrs.get("registration_responses") or {}
@@ -562,22 +571,51 @@ _HTML_STRIP_TAGS = ("script", "style", "noscript", "nav", "header", "footer",
 _MIN_HTML_BEYOND_ABSTRACT_CHARS = 10_000
 _MIN_HTML_REFERENCES_CHARS      = 2_000
 
+# A block passing on length alone is not enough — it must also read like scholarship.
+# Measured 2026-08-07: the five landing pages mention 0-3 years in their whole text,
+# the three full texts 60+ in their reference blocks alone.
+_MIN_SCHOLARLY_YEARS = 8
+_YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
+
+
+def _cited_year_count(text: str) -> int:
+    """How many four-digit years *text* mentions — the cheapest "is this scholarly
+    prose or page furniture" signal there is.
+
+    A bibliography is mostly years; so is a paper's body. A repository record page has
+    one or two (the deposit date, the publication year), however much chrome sits
+    around them.
+    """
+    return len(_YEAR_RE.findall(text))
+
 
 def html_document_has_content(document: "dict | None") -> bool:
     """True when parsed HTML carries a paper rather than a record of one.
 
-    This IS the landing-page test: the page must give substantive text BEYOND its
-    abstract, or a real reference block. A repository page that restates the abstract
-    and adds "cite this item" satisfies neither, whatever its byte count — its chrome
-    inflates the total without adding a word of the paper, which is why the abstract is
-    subtracted rather than the total being thresholded.
+    This IS the landing-page test. Two ways to pass, and each needs the length signal
+    AND the year-density signal, because neither is sufficient alone:
+
+      * a real bibliography — a big block after a references heading that is dense
+        with years;
+      * a real body — text far beyond the abstract, dense with years.
+
+    Length alone was the first version of this test and it was too weak. The subtracted
+    abstract is whatever the PDF-oriented splitter happened to label, and on an HTML
+    page it often labels nothing at all: with `abstract == ""` the test collapsed to
+    "is this page 10,000 characters", which a repository page full of related items,
+    comments and metadata can be. Likewise any 2,000 characters following something
+    that looked like a references heading passed, whether or not it was a bibliography.
     """
     sections = (document or {}).get("sections") or {}
     raw = str(sections.get("raw_text") or "")
     abstract = str(sections.get("abstract") or "")
-    if len(str(sections.get("references_raw") or "")) >= _MIN_HTML_REFERENCES_CHARS:
+    references = str(sections.get("references_raw") or "")
+
+    if (len(references) >= _MIN_HTML_REFERENCES_CHARS
+            and _cited_year_count(references) >= _MIN_SCHOLARLY_YEARS):
         return True
-    return (len(raw) - len(abstract)) >= _MIN_HTML_BEYOND_ABSTRACT_CHARS
+    return ((len(raw) - len(abstract)) >= _MIN_HTML_BEYOND_ABSTRACT_CHARS
+            and _cited_year_count(raw) >= _MIN_SCHOLARLY_YEARS)
 
 
 def get_html_document(url: str) -> "dict | None":
@@ -611,10 +649,13 @@ def get_html_document(url: str) -> "dict | None":
             url, timeout=30, allow_redirects=True,
             headers={"User-Agent": f"flora-extractor ({RESEARCHER_EMAIL})"})
     except Exception as e:
-        log.debug("HTML fetch failed (%s): %s", url, e)
-        return None
+        raise DocumentSourceUnavailable(f"HTML fetch failed for {url}: {e}") from e
+    if resp.status_code >= 500:
+        raise DocumentSourceUnavailable(f"HTML {url} → HTTP {resp.status_code}")
     if resp.status_code != 200:
-        log.debug("HTML %s → HTTP %s (not cached)", url, resp.status_code)
+        # A 4xx is the server saying this page is not there for us — an answer, but
+        # not one worth caching as a document verdict, since access can change.
+        log.debug("HTML %s → HTTP %s", url, resp.status_code)
         return None
     if "html" not in resp.headers.get("content-type", "").lower():
         return None
@@ -1420,14 +1461,21 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
     # preregistration templates, so what reaches here states results or may state them.
     osf_guid = osf_registration_guid(doi_r) or osf_registration_guid(url_r)
     if osf_guid and not _held("osf_registration"):
-        registration = get_osf_registration(osf_guid)
-        if registration is not None:
-            log.info("  [%s] OSF registration acquired (source=osf_registration)",
-                     doi_r or url_r)
-            oa_xml  = registration
-            pdf_src = "osf_registration"
-            return _result()
-        _failed("osf_registration")
+        try:
+            registration = get_osf_registration(osf_guid)
+        except DocumentSourceUnavailable as exc:
+            # NOT recorded as a failure: the retry log suppresses for fourteen days,
+            # and a source that never answered has said nothing to remember.
+            log.info("  [%s] OSF registration unavailable: %s", doi_r or url_r, exc)
+            registration = None
+        else:
+            if registration is not None:
+                log.info("  [%s] OSF registration acquired (source=osf_registration)",
+                         doi_r or url_r)
+                oa_xml  = registration
+                pdf_src = "osf_registration"
+                return _result()
+            _failed("osf_registration")
 
     # The PDF is already on disk — no tier can add anything to a file we have.
     # This used to happen by accident, inside the download_pdf() cache hit of whichever
@@ -1540,14 +1588,20 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
     # row that reaches here still ends at no_fulltext_available unless the page really
     # carries the paper.
     if not dl["success"] and url_r and not _held("html_landing"):
-        document = get_html_document(url_r)
-        if document is not None:
-            log.info("  [%s] HTML document acquired (source=html_landing)", url_r[:70])
-            oa_xml  = document
-            pdf_url = url_r
-            pdf_src = "html_landing"
-            all_tried.append(url_r)
-            return _result()
-        _failed("html_landing")
+        try:
+            document = get_html_document(url_r)
+        except DocumentSourceUnavailable as exc:
+            log.info("  [%s] HTML source unavailable: %s", url_r[:70], exc)
+            document = None
+        else:
+            if document is not None:
+                log.info("  [%s] HTML document acquired (source=html_landing)",
+                         url_r[:70])
+                oa_xml  = document
+                pdf_url = url_r
+                pdf_src = "html_landing"
+                all_tried.append(url_r)
+                return _result()
+            _failed("html_landing")
 
     return _result()

@@ -962,9 +962,27 @@ def _search_openalex_by_title(title: str, year: str = "",
                                 raise_on_unavailable)
 
 
+def _openalex_filter_value(text: str) -> str:
+    """*text* as a value an OpenAlex `filter=` can carry.
+
+    A comma SEPARATES FILTERS in OpenAlex's filter syntax, so a value containing one
+    is rejected at the API edge with HTTP 400 ("A filter value contains an unescaped
+    comma"). There is no escape for it — the character has to go.
+
+    This is not an edge case for the title search: what it is given is however the
+    paper referred to the study it replicates, which is routinely "Toya and Skidmore,
+    2007, Economic development and..." or "Zhong, Bohns, & Gino (2010) Good lamps...".
+    Every one of those was a 400 that `_oa_get` reported as "request failed after
+    retries", which reads as an outage and, before this, as no such paper.
+
+    A pipe is stripped for the same reason (it is OpenAlex's OR separator).
+    """
+    return " ".join(text.replace(",", " ").replace("|", " ").split())
+
+
 def _search_openalex_by_title_live(title: str, year: str = "") -> Optional[dict]:
     params: dict = {
-        "filter" : f"title.search:{title[:200]}",
+        "filter" : f"title.search:{_openalex_filter_value(title)[:200]}",
         "select" : "id,doi,title,publication_year,authorships,primary_location,biblio",
         "per-page": "5",
         "mailto" : RESEARCHER_EMAIL,
