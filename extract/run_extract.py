@@ -69,7 +69,8 @@ from shared.schema import (
     year_str,
 )
 from shared.utils import (bare_work_id, cache_key, citation_fragment,
-                          clean_citation_title, clean_doi, usable_title)
+                          clean_citation_title, clean_doi, non_article_doi,
+                          usable_title)
 from extract.link_original import run_for_doi
 from extract.code_outcome import extract_outcome
 
@@ -1032,6 +1033,12 @@ def _title_searched_entry(target: dict, doi_r: str, context: dict) -> "dict | No
         asked.append(f"authoryear:{'+'.join(cited_surnames)} {cited_year}")
         seen = {c.get("doi") or c.get("openalex_id") for c in pool}
         for c in found:
+            # Filtered HERE rather than where the shortlist is fetched, because the
+            # shortlist is cached: a rule applied at fetch time leaves every list
+            # already on disk carrying what the rule now excludes, and only a cache
+            # shape bump — which re-pays every query — would clear them.
+            if non_article_doi(str(c.get("doi") or "")):
+                continue
             if (c.get("doi") or c.get("openalex_id")) not in seen:
                 pool.append({**c, "source": "openalex_authoryear", "flags": []})
 
