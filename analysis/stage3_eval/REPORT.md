@@ -41,6 +41,7 @@ the `cache/token_usage.json` delta, taken by `python -m analysis.stage3_eval.spe
 | 0 | baseline (commit `b4f6f2f`) | **25** | 24 | 46 | 5 | **24** | $0.33 |
 | 1 | a named target that could not be identified writes `target_pending` (`0bfcb54`) | **1** | 24 | 70 | 5 | **24** | $0.00 |
 | 2 | a citation with no title is resolved by author and year (`1f8ceb4`) | **1** | 38 | 56 | 5 | **38** | $0.04 |
+| 3 | the abstract rung's gate reads the title's citations too (`39d4218`) | **1** | 45 | 50 | 4 | **45** | $0.10 |
 
 Per-work labels and the reason for each: `labels-dev-<n>.json`, one per iteration.
 
@@ -141,6 +142,25 @@ name targets the author-and-year route declined, or a description with no
 parseable author and year in it.
 
 **Cost: $0.04**, of which $0.02 was the 14 new pick calls. Cumulative $0.37 of $20.
+
+### What iteration 3 says
+
+Yield 38 → 45, clearing the ≥ 3/100 threshold. Wrong-settle unchanged at 1.
+
+**7 works gained a link and all 7 are right.** Five through the author-and-year route
+and two through the title search, which now runs because a target is named for it to
+search on: Eimer (1996) → the N2pc paper, McCullough et al. (1997) → "Interpersonal
+forgiving in close relationships", Ackerman, Nocera & Bargh (2010) → "Incidental Haptic
+Sensations Influence Social Judgments and Decisions". Labels: `labels-dev-3.json`.
+
+**An adjudication error, corrected.** Work 7058069136 was labelled `correct_open` in
+iterations 0–2 on the grounds that its abstract is Scopus boilerplate. Its title names
+"reported by Engineer et al. (2013)", so it was `missed` throughout. The correction
+moves one work between `correct_open` and `missed` and changes neither metric; the
+earlier rows are left as they were recorded.
+
+**Cost $0.10** — the first iteration to re-ask the target prompt for a large group of
+works rather than reuse a cached answer. Cumulative $0.47 of $20.
 
 ---
 
