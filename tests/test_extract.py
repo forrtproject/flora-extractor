@@ -3131,6 +3131,89 @@ class TestNamedButUnmatchedTargets:
         assert entry["doi"] == ""
 
 
+class TestASearchThatFoundNothingIsRecorded:
+    """What was searched for has to survive onto a work that resolved nothing.
+
+    A work that settles `no_original_found` stored NOTHING about what had been tried:
+    not the string searched, not that both providers answered, not the candidates.
+    Evaluating a better resolver (issue #186) would then mean re-running every work
+    instead of reading rows already on disk — and `no_original_found` settles, so the
+    re-run would not even be offered the work.
+    """
+
+    _ROW = pd.Series({"doi_r": "10.1/rep", "title_r": "T", "abstract_r": "a",
+                      "filter_status": "replication"})
+
+    @staticmethod
+    def _unmatched(named: str) -> dict:
+        """A target the model named that no keyed record could match — every OSF
+        registration and every URL-only row, whose key namespace is empty."""
+        return {"key": "@x", "match_certain": True, "target_as_named": named,
+                "study_numbers": "", "replication_study_numbers": "",
+                "evidence_quote": "a direct replication of", "record": None}
+
+    def _run(self, targets, candidates=(), unavailable=False, multi=False):
+        link = dict(_MOCK_LINK, resolved=False, resolution_method="llm_multi_target",
+                    resolved_doi_o="", resolved_title_o="", multi_target=multi,
+                    n_targets=len(targets), target_stage="llm_gemini",
+                    unidentified_count=0, targets=targets, llm_model="gemini-heavy",
+                    llm_evidence="")
+        observed: dict = {}
+        with patch.object(run_extract, "run_for_doi", return_value=link), \
+             patch.object(run_extract, "_has_document", return_value=False), \
+             patch("extract.link_original.title_search_candidates",
+                   return_value=(list(candidates), unavailable)), \
+             patch.object(run_extract, "extract_outcome", return_value=_MOCK_OUTCOME):
+            rows = run_extract._resolve_and_code(
+                "10.1/rep", self._ROW, screen=None, no_llm=False, no_pdf=True,
+                resolved_only=False, observed=observed)
+        return rows, observed
+
+    def test_a_work_that_resolves_nothing_still_says_what_it_searched(self):
+        """The single-row path: no target resolved, so _per_target_rows returns [] and
+        never sees the row that gets written. The search has to reach it through the
+        link."""
+        rows, observed = self._run(
+            [self._unmatched("Smith et al. (2009) The original paper")])
+
+        assert len(rows) == 1
+        assert "title searches: no_match(" in rows[0]["link_evidence"]
+        assert "The original paper" in rows[0]["link_evidence"]
+        # And onto the observation the tier stores beside the row, which is taken
+        # BEFORE the per-target adapter runs its searches.
+        assert "title searches: no_match(" in observed["link_evidence"]
+
+    def test_a_target_with_no_searchable_title_is_recorded_as_unsearchable(self):
+        """"Study 2" is under usable_title's floor, so no search runs at all. That is a
+        different finding from a search that came back empty, and issue #186 needs to
+        tell them apart. (An author-year string like "Zhong et al. (2010)" IS above the
+        floor and does get searched — fruitlessly, at 10x a filter query.)"""
+        rows, _ = self._run([self._unmatched("Study 2")])
+
+        assert "title searches: unsearchable(" in rows[0]["link_evidence"]
+
+    def test_the_multi_target_pending_row_keeps_the_searches(self):
+        """Two named targets, neither matched: the row written is target_pending with
+        its own evidence, which used to overwrite the searches rather than carry them."""
+        rows, _ = self._run([self._unmatched("Smith et al. (2009) One original"),
+                             self._unmatched("Jones et al. (2011) Another original")],
+                            multi=True)
+
+        assert rows[0]["link_method"] == "target_pending"
+        assert "none could be matched" in rows[0]["link_evidence"]
+        assert "searches: no_match(" in rows[0]["link_evidence"]
+
+    def test_a_resolved_search_is_recorded_on_the_row_it_wrote(self):
+        rows, _ = self._run(
+            [self._unmatched("Smith et al. (2009) The original paper")],
+            candidates=[{"doi": "10.1/found", "title": "The original paper",
+                         "year": 2009, "first_author": "Smith", "openalex_id": "",
+                         "source": "crossref"}])
+
+        assert rows[0]["doi_o"] == "10.1/found"
+        assert rows[0]["link_method"] == "llm_title_search"
+
+
 class TestATransientSourceFailureIsNotAFourteenDayVerdict:
     """The retry log suppresses a source for PDF_RETRY_AFTER_DAYS. Recording a timeout
     in it turns a minute of provider trouble into two weeks of "this source has

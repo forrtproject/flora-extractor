@@ -944,10 +944,23 @@ def _title_searched_entry(target: dict, doi_r: str) -> "dict | None":
     named = str(target.get("target_as_named") or "").strip()
     cleaned = clean_citation_title(named)
     if not usable_title(cleaned):
+        target["_search_attempt"] = {"named": named, "query": "", "outcome": "unsearchable"}
         return None
 
-    from extract.link_original import title_search_candidates
+    from extract.link_original import strip_citation_prefix, title_search_candidates
+    query = strip_citation_prefix(named)
     candidates, unavailable = title_search_candidates(doi_r, named, "")
+    # What was asked and what came back, recorded on the work whatever the answer.
+    # Without this, a target that failed to resolve leaves only the model's evidence
+    # quote behind: nothing says a search ran, what string it ran on, or that both
+    # providers disowned it. Evaluating a better resolver (issue #186) would then mean
+    # re-running every work rather than reading what is already stored.
+    target["_search_attempt"] = {
+        "named": named, "query": query,
+        "outcome": ("unavailable" if unavailable
+                    else "resolved" if candidates else "no_match"),
+        "candidates": candidates,
+    }
     if unavailable:
         # A provider was silent, so the answer is incomplete however good the part we
         # got. The row is written api_error, which a re-run reopens; settling on
@@ -1441,6 +1454,22 @@ def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | Non
     # reporting it as unidentified would contradict the row written next to it.
     missing  = [str(t.get("target_as_named", "") or "") for t, e in resolved if not e]
     shortfall = len(missing) + int(link.get("unidentified_count") or 0)
+    # Every title search this work ran, and what it got — kept whether or not any
+    # target resolved, so a later resolver can be evaluated off stored rows.
+    attempts = "; ".join(
+        f"{a['outcome']}({a['query'][:60]!r})"
+        for a in (t.get("_search_attempt") for t, _ in resolved) if a)
+    link["search_attempts"] = attempts
+    if attempts:
+        # Onto the LINK, not just the rows written below: when NO target resolves,
+        # this function returns [] and the work is written by the single-row path
+        # further up, which never sees `resolved`. That is precisely the case worth
+        # recording — the work settles `no_original_found` and the only way to tell
+        # later whether a better resolver would have found it is to know what was
+        # searched and that both providers disowned it.
+        prior = str(link.get("llm_evidence", "") or "")
+        note = f"title searches: {attempts}"
+        link["llm_evidence"] = f"{prior} | {note}" if prior else note
     if not entries:
         return []
 
@@ -1482,6 +1511,8 @@ def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | Non
         if shortfall:
             note = (f"identified {len(entries)} of {len(entries) + shortfall} targets; "
                     f"unidentified: {'; '.join(filter(None, missing)) or 'not named'}")
+            if attempts:
+                note += f" | searches: {attempts}"
             prior = str(result_row.get("link_evidence", "") or "")
             result_row["link_evidence"] = f"{prior} | {note}" if prior else note
 
@@ -1578,13 +1609,19 @@ def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
         log.info("[%s] target prompt named %d original(s) without a single accepted "
                  "link — writing one row per target", doi_r, n_targets)
         rows = _per_target_rows(row, doi_r, link, screen, no_llm, no_pdf, resolved_only)
+        # Re-observed: the title searches happen INSIDE _per_target_rows, so the
+        # observation taken above predates them and would report the run without the
+        # one thing that says what was tried for a work that resolved nothing.
+        _observe_link(observed, link)
         if rows:
             return rows
         if link.get("multi_target"):
             pending = _empty_row(row, "multiple_original", "high",
                                  link_method="target_pending", screen=screen)
+            searches = str(link.get("search_attempts") or "")
             pending["link_evidence"] = (f"target prompt named {n_targets} originals; "
-                                        "none could be matched to a record")
+                                        "none could be matched to a record"
+                                        + (f" | searches: {searches}" if searches else ""))
             return [] if resolved_only else [pending]
 
     # original_match_confidence is an observation about the answer, not a prediction
