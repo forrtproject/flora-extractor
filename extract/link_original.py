@@ -671,13 +671,19 @@ def _hit_carries_author(hit: dict, surname: str) -> bool:
     an EMPTY author list is rejected rather than waved through: a record with nobody
     on it cannot be the paper a citation names.
     """
-    surname = str(surname or "").strip().lower()
-    if not surname:
+    # `extract_author_year_patterns` returns a multi-author citation as ONE run-on
+    # token — "Kaufmann, Weber, and Haisley (2013)" comes back as
+    # "kaufmann,weber,andhaisley" — so the value is split before it is matched, and
+    # ANY of its names carrying is enough. Matching the run-on string as a word cost
+    # a correct link on the first run of this guard.
+    names = [n for n in re.split(r"[^a-z]+", str(surname or "").lower())
+             if len(n) > 2 and n != "and"]
+    if not names:
         return True
     authors = hit.get("authors")
     text = (" ".join(map(str, authors)) if isinstance(authors, list)
             else str(authors or "")).lower()
-    return bool(re.search(rf"\b{re.escape(surname)}\b", text))
+    return any(re.search(rf"\b{re.escape(n)}\b", text) for n in names)
 
 
 def title_search_candidates(doi_r: str, target_desc: str,

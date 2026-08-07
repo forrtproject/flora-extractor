@@ -1094,3 +1094,10 @@ class TestATitleHitMustCarryTheCitedAuthor:
 
     def test_a_citation_with_no_author_filters_nothing(self):
         assert self._run(self._CHAPTER, "")
+
+    def test_a_multi_author_citation_matches_on_any_of_its_names(self):
+        """extract_author_year_patterns returns "Kaufmann, Weber, and Haisley (2013)"
+        as one run-on token. Matching that as a word dropped the right paper."""
+        assert self._run({**self._CHAPTER,
+                          "authors": ["Kaufmann, C.", "Weber, M.", "Haisley, E."]},
+                         "kaufmann,weber,andhaisley")
