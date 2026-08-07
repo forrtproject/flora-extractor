@@ -454,7 +454,9 @@ OUTCOME_DESCENT = True
 #      title search came up empty or flagged (2026-08-08)
 #  12  a DOI non_article_doi() calls not-a-study is not offered as an original
 #      (2026-08-08)
-EXTRACT_LADDER_VERSION: int = 12
+#  13  the author-and-year shortlist is asked of CrossRef first, in relevance order;
+#      OpenAlex is the fallback (2026-08-08)
+EXTRACT_LADDER_VERSION: int = 13
 
 
 # Columns to pass through from the input row (no renaming). Only columns

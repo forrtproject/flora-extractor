@@ -1061,7 +1061,10 @@ AUTHOR_YEAR_MAX_NAMES = 3
 # narrowing was silently discarded in favour of 15,015 unnarrowed works. The same query
 # on three words returned exactly the right paper.
 AUTHOR_YEAR_TOPIC_WORDS = (3, 2)
-_AUTHOR_YEAR_SHAPE = "v3-topic-words"
+# CrossRef gets more of them, because it RANKS where OpenAlex ANDs — but not
+# unboundedly: six words returned nothing for a target that five found.
+CROSSREF_TOPIC_WORDS = (5, 3)
+_AUTHOR_YEAR_SHAPE = "v4-crossref-first"
 
 # Words that carry no topic: ordinary English, and the vocabulary every replication
 # title is built from. Dropping them is what leaves "status overconfidence" behind.
@@ -1109,6 +1112,80 @@ def _fold_accents(text: str) -> str:
     """
     return "".join(c for c in unicodedata.normalize("NFKD", str(text or ""))
                    if not unicodedata.combining(c))
+
+
+def _crossref_author_year(surnames: list[str], year: int,
+                          topic: str) -> "list[dict] | None":
+    """An author-and-year shortlist from CrossRef — free — or None if it never answered.
+
+    Asked FIRST, because CrossRef costs nothing and OpenAlex bills every one of these
+    at 10x a filter query against a daily budget that a single 100-work run can empty.
+
+    Three things about CrossRef decide the shape of this query, all measured against
+    real campaign targets on 2026-08-08:
+
+    * `query.author` is a RELEVANCE search, not an AND of the names, so on a common
+      surname alone it is useless — "Jones Macken 1995" matches 6,182 works and "Han
+      Kahn 2017" 41,372. The replication's own topic words go beside it.
+    * **Its results must not be re-sorted.** Asked with `sort=is-referenced-by-count`
+      the right paper for "Jones Macken 1995" is nowhere in the first three and the
+      leader is a prefrontal-cortex PET study; asked in relevance order it is FIRST.
+      Re-sorting a relevance search by citations throws away the only thing it knew.
+      This is the opposite of the OpenAlex query, which FILTERS rather than ranks and
+      therefore does need a sort to choose among equals.
+    * More topic words than OpenAlex, because CrossRef ranks where OpenAlex ANDs — but
+      not unboundedly: six words returned nothing for one target where five returned
+      the paper, so the count relaxes.
+
+    A hit carrying none of the cited surnames is dropped; relevance will happily return
+    a soccer-fan paper for "Turri Buckwalter".
+    """
+    items: list = []
+    for limit in CROSSREF_TOPIC_WORDS:
+        words = _topic_words(topic, limit, surnames)
+        if not words:
+            break
+        try:
+            throttle("crossref", CROSSREF_RATE_SEC)
+            r = requests.get(
+                "https://api.crossref.org/works",
+                params={"query.author": " ".join(surnames),
+                        "query.bibliographic": words,
+                        "filter": f"from-pub-date:{year}-01-01,"
+                                  f"until-pub-date:{year}-12-31",
+                        "rows": str(AUTHOR_YEAR_MAX_OFFERED),
+                        "select": "DOI,title,author,issued,container-title,"
+                                  "is-referenced-by-count"},
+                headers={"User-Agent": f"FLoRAExtractor/1.0 (mailto:{RESEARCHER_EMAIL})"},
+                timeout=20)
+            r.raise_for_status()
+            items = r.json().get("message", {}).get("items") or []
+        except Exception as exc:
+            log.debug("CrossRef author-year search failed (%s): %s", words, exc)
+            return None
+        if items:
+            break
+
+    wanted = {_fold_accents(s).lower() for s in surnames}
+    out: list[dict] = []
+    for item in items:
+        authors = [str(a.get("family") or "") for a in (item.get("author") or [])]
+        folded = {_fold_accents(a).lower() for a in authors if a}
+        if wanted and not (wanted & folded):
+            continue
+        titles = item.get("title") or []
+        out.append({
+            "doi":          clean_doi(item.get("DOI", "") or ""),
+            "openalex_id":  "",
+            "title":        titles[0] if titles else "",
+            "year":         (item.get("issued", {}).get("date-parts")
+                             or [[None]])[0][0],
+            "authors":      [format_author_apa(a) for a in authors],
+            "first_author": (authors[0] if authors else "").lower(),
+            "journal":      (item.get("container-title") or [""])[0],
+            "cited_by":     int(item.get("is-referenced-by-count") or 0),
+        })
+    return out
 
 
 def _author_year_query(surnames: list[str], year: int, topic: str) -> Optional[dict]:
@@ -1201,10 +1278,21 @@ def author_year_candidates(surnames: "str | list[str]", year: int,
                                for s in surnames),
                       str(year), narrowings,
                       str(AUTHOR_YEAR_MAX_OFFERED), str(AUTHOR_YEAR_NARROW_ABOVE),
-                      str(AUTHOR_YEAR_MAX_NAMES), _AUTHOR_YEAR_SHAPE)
+                      str(AUTHOR_YEAR_MAX_NAMES), str(CROSSREF_TOPIC_WORDS),
+                      "|".join(_topic_words(topic, n, surnames)
+                               for n in CROSSREF_TOPIC_WORDS),
+                      _AUTHOR_YEAR_SHAPE)
     cached = read_cache(OA_CACHE_DIR, key)
     if cached is not None:
         return cached["candidates"], int(cached["total"]), False
+
+    # CrossRef first, because it is free. Only what it cannot answer costs anything.
+    from_crossref = _crossref_author_year(surnames, year, topic)
+    if from_crossref:
+        write_cache(OA_CACHE_DIR, key,
+                    {"candidates": from_crossref[:AUTHOR_YEAR_MAX_OFFERED],
+                     "total": len(from_crossref)})
+        return from_crossref[:AUTHOR_YEAR_MAX_OFFERED], len(from_crossref), False
 
     data = _author_year_query(surnames, year, "")
     if data is None:
