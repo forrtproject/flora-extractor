@@ -46,7 +46,8 @@ the `cache/token_usage.json` delta, taken by `python -m analysis.stage3_eval.spe
 | 5 | the title search is given the year the paper cited (`84a4751`) | **4** | 54 | 38 | 4 | **54** | $0.02 |
 | 6 | a title hit must carry the author the citation named (`7b7f891`) | **2** | 54 | 40 | 4 | **54** | $0.00 |
 | 7 | the author-and-year query ANDs every surname the citation named (`ca43cdb`) | **2** | 66 | 29 | 3 | **66** | $0.02 |
-| 8 | the citation parenthesis may carry a venue; a dead browser tab ends its tier, not the row | **2** | 69 | 26 | 3 | **69** | $0.01 |
+| 8 | the citation parenthesis may carry a venue; a dead browser tab ends its tier, not the row (`d8?`) | **2** | 69 | 26 | 3 | **69** | $0.01 |
+| 9 | the shortlist narrowing adds candidates instead of replacing them | **2** | 69 | 26 | 3 | **69** | $0.04 |
 
 Per-work labels and the reason for each: `labels-dev-<n>.json`, one per iteration.
 
@@ -327,6 +328,36 @@ The remaining `api_error` work is now `target_pending`, which is the honest endi
 a row whose document could not be fetched.
 
 **Cost $0.01.** Cumulative $0.95 of $20.
+
+### What iteration 9 says — net zero, and kept anyway
+
+Wrong-settle 2 → 2, yield 69 → 69. Neither threshold met. **Failed change 2 of 3.**
+
+Two works gained a correct link — Wilson et al. (2017, JPSP) → "Racial bias in
+judgments of physical size and formidability", Zuckerman et al. (1993) →
+"Contemporary Issues in the Analysis of Data" — and two lost one they had, Usta &
+Häubl (2011) and Van Lange et al. (1997). A different shortlist led the model
+somewhere else on those two.
+
+**It is kept.** Each of its three parts is a defect independent of this sample: a
+`.search` value ANDs every word, so narrowing on a whole title matched nothing and the
+narrowing had never once run; a narrowing that replaces the broad list can hide the
+right paper, and did; a citation's spelling and a record's differ by an accent. Undoing
+them because the sample came out level would be fitting the code to 100 works in the
+other direction. The regressions are the honest cost and are recorded as such.
+
+**Cost $0.04.** Cumulative $0.99 of $20.
+
+### Stopping
+
+Two consecutive changes have now failed both thresholds (iterations 5 and 9), against
+a rule that asks for three. The maintainer was shown the bucket breakdown after
+iteration 7 and directed: make the remaining mechanical fixes, consider a dynamic
+shortlist, run one or two more validation rounds, then move to the holdout. Iterations
+8 and 9 are those rounds. **The holdout runs next, once.**
+
+Dev finishes at **69 correct settles and 2 wrong settles in 100**, from 24 and 25 at
+baseline, for $0.99.
 
 ---
 
