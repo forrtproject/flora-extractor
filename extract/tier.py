@@ -860,6 +860,7 @@ def run_extract_tier(con, client: Optional[ClaimsClient], release_id: str, *,
              "generation": extract_generation(), "release_id": release_id}
     done = 0
     superseded = _supersedable(client, redo) if redo else {}
+    reopened = {int(w) for w in (redo or ())}
     while works:
         batch = works[:batch_size]
         report = _run_batch(EXTRACT, client, release_id, batch, mode=mode,
@@ -877,10 +878,17 @@ def run_extract_tier(con, client: Optional[ClaimsClient], release_id: str, *,
         if limit is not None and done >= limit:
             break
         remaining = None if limit is None else limit - done
+        # A redone work must stop being re-admitted once it HAS been redone, or the
+        # rebuild hands it back every batch and the run never ends: `redo` is exactly
+        # the set the settled-work subtraction is told to ignore. Observed 2026-08-07,
+        # `--redo` over 29 works re-extracted them nine times in ten minutes before the
+        # run was killed. Works named in --redo that this batch has not reached yet
+        # stay admitted, so a redo set larger than one batch still completes.
+        reopened -= {w.work_id for w in batch}
         works = extract_works(con, client, pool_dir, release_id, only=only,
                               limit=remaining, mode=mode, spec_dir=spec_dir,
                               overlay_dir=overlay_dir, aliases=aliases,
-                              record=record, redo=redo)
+                              record=record, redo=reopened)
 
     if superseded:
         total["superseded"] = _supersede(client, superseded)

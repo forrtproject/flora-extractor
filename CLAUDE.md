@@ -328,6 +328,35 @@ unsettled verdict is the ladder's job — see `OUTCOME_DESCENT` below.
 `RESOLVED_LINK_METHODS`); unresolved rows are written `pending`, except
 `not_a_replication` where the screen's verdict is the outcome.
 
+## Before a Run That Spends
+
+Three rules, each written after it was broken on 2026-08-07. They cost minutes; the
+runs they guard cost money and can close works permanently with a wrong verdict.
+
+1. **The first run of changed Stage 3 code goes through the sandbox.**
+   `python -m extract.tier --run --mode validation` records real verdicts the live
+   export ignores, and re-running the same works live is the promotion — near-free,
+   because the LLM calls are cached. There is no reason for the first exercise of
+   new code to write live verdicts. A live pilot of a new resolution path closed 15
+   works as `no_original_found` whose own stored evidence named the original in plain
+   text; in the sandbox those would have been shadow rows to read and discard.
+
+2. **Read the implementation of any worklist-changing flag before spending through
+   it.** `--redo`, `--only` and `--limit` decide what gets bought. `--redo` was passed
+   to a live run without reading the batch loop it feeds; the loop re-applies the redo
+   set on every worklist rebuild, so the same 29 works were re-extracted nine times in
+   ten minutes before the run was killed.
+
+3. **Run `/code-review` on the diff before any run that spends more than trivially.**
+   A review pass is a rounding error against a $20 campaign.
+
+The general form, which is what actually separated the useful work from the wasted
+work that day: **verify against the artifact before spending, and read the output
+before concluding.** Probing the OSF API showed the obvious regex fix would not have
+helped; reading the stored payloads showed a clean-looking verdict distribution was
+wrong; measuring eight pages set a threshold that reasoning about HTML would not have.
+Every mistake came from acting before one of those checks.
+
 ## API Budgets and Usage
 
 Every LLM call records input/output tokens per day/provider/model in
