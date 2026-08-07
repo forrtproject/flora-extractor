@@ -815,6 +815,37 @@ def _fetch_doi_org_full_meta(doi: str) -> Optional[dict]:
     }
 
 
+_TITLE_CONTAINMENT_MIN_WORDS = 3
+
+
+def title_matches(hit_title: str, query: str) -> bool:
+    """Whether *hit_title* is the paper *query* names.
+
+    Jaccard alone, at 0.7, asks the two titles to be nearly the same STRING. That is
+    the wrong question for a query which is however the replication quoted its target
+    — usually a fragment. "Imagine being a nice guy: A note on hypothetical vs.
+    incentivized" scores 0.70 against the full title it is the opening of, "the
+    superiority effect in crowding" scores 0.67 against "The word superiority effect
+    overcomes crowding", and "Ambivalence of Neutral Ratings" scores 0.60 against "Do
+    Neutral Ratings Imply Indifference or Ambivalence?". All three are the paper; all
+    three were rejected, and the works were written `no_match` — 25 of the 101 open
+    works across the three samples are title searches that found nothing.
+
+    So containment counts too: every content word of the query appearing in the title.
+    A floor of three words keeps a short query from matching the literature — "the
+    martyrdom effect" is two and stays out.
+
+    This is only safe because the hits now go into a pool a model adjudicates. While
+    the first hit BECAME the link, a generous retrieval was a generous supply of wrong
+    originals; now it is a supply of candidates to reject.
+    """
+    if _jaccard(hit_title, query) >= 0.7:
+        return True
+    q = set(re.findall(r"\b\w{3,}\b", str(query or "").lower()))
+    h = set(re.findall(r"\b\w{3,}\b", str(hit_title or "").lower()))
+    return len(q) >= _TITLE_CONTAINMENT_MIN_WORDS and q <= h
+
+
 def _jaccard(a: str, b: str) -> float:
     ta = set(re.findall(r"\b\w{3,}\b", a.lower()))
     tb = set(re.findall(r"\b\w{3,}\b", b.lower()))
@@ -907,7 +938,7 @@ def _search_crossref_by_title_live(title: str, year: str = "") -> Optional[dict]
     for item in items:
         hit_titles = item.get("title") or []
         hit_title  = hit_titles[0] if hit_titles else ""
-        if _jaccard(hit_title, title) < 0.7:
+        if not title_matches(hit_title, title):
             continue
 
         # Year check
@@ -1012,7 +1043,7 @@ def _search_openalex_by_title_live(title: str, year: str = "") -> Optional[dict]
 
     for work in data["results"]:
         hit_title = work.get("title", "") or ""
-        if _jaccard(hit_title, title) < 0.7:
+        if not title_matches(hit_title, title):
             continue
 
         if year:

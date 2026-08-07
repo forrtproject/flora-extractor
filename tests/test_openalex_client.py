@@ -611,3 +611,31 @@ class TestCrossRefLeadsAndOpenAlexFillsIn:
             candidates, _, unavailable = oa.author_year_candidates(
                 ["turri", "buckwalter"], 2015, topic="knowledge attribution")
         assert unavailable is False and [c["title"] for c in candidates] == ["cr 0"]
+
+
+class TestATitleQueryIsUsuallyAFragment:
+    """Jaccard at 0.7 asks two titles to be nearly the same STRING. The query is
+    however the replication quoted its target — usually a fragment — so containment
+    counts too. 25 of the 101 open works across the three samples were title searches
+    that found nothing, several of them this."""
+
+    def test_a_query_that_is_the_start_of_the_title_matches(self):
+        assert oa.title_matches(
+            "Imagine being a nice guy: A note on hypothetical vs. incentivized social "
+            "preference elicitation",
+            "Imagine being a nice guy: A note on hypothetical vs. incentivized")
+
+    def test_a_query_whose_words_are_scattered_through_the_title_matches(self):
+        assert oa.title_matches("The word superiority effect overcomes crowding",
+                                "the superiority effect in crowding")
+        assert oa.title_matches("Do Neutral Ratings Imply Indifference or Ambivalence?",
+                                "Ambivalence of Neutral Ratings")
+
+    def test_two_words_are_too_few_to_match_on(self):
+        """A short query would otherwise match the literature."""
+        assert not oa.title_matches("Some paper about martyrs and their effects",
+                                    "the martyrdom effect")
+
+    def test_a_title_missing_a_query_word_still_fails(self):
+        assert not oa.title_matches("A paper on quantum gravity",
+                                    "Ambivalence of Neutral Ratings")

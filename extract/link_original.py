@@ -458,7 +458,9 @@ OUTCOME_DESCENT = True
 #      OpenAlex is the fallback (2026-08-08)
 #  14  CrossRef ends the search only when one of its hits carries EVERY surname the
 #      citation named; otherwise its hits lead a pool OpenAlex also fills (2026-08-08)
-EXTRACT_LADDER_VERSION: int = 14
+#  15  a title hit is accepted on containment as well as Jaccard, because the query is
+#      usually a fragment and a model now adjudicates the pool (2026-08-08)
+EXTRACT_LADDER_VERSION: int = 15
 
 
 # Columns to pass through from the input row (no renaming). Only columns
