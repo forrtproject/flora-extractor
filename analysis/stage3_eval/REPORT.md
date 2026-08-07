@@ -38,7 +38,47 @@ the `cache/token_usage.json` delta, taken by `python -m analysis.stage3_eval.spe
 
 | # | Change | wrong_settle | correct_settle | missed | correct_open | yield | spend |
 | - | ------ | -----------: | -------------: | -----: | -----------: | ----: | ----: |
-| 0 | baseline (commit `b4f6f2f`) | | | | | | |
+| 0 | baseline (commit `b4f6f2f`) | **25** | 24 | 46 | 5 | **24** | $0.33 |
+
+Per-work labels and the reason for each: `labels-dev-0.json`.
+
+### What iteration 0 says
+
+**One cause produces almost every error.** The target prompt names the original as a
+citation — "Ramscar et al. (2010)", "Turri, Buckwalter & Blouw (2015)", "Barak-Corren,
+N., & Bazerman, M. (2017). Is Saving Lives Your Task or God's? … Judgment and Decision
+Making, 12(3), 280–296" — and the only resolver that can act on a name is a TITLE
+search. Asked a citation with no title in it, both providers answer nothing, and the
+row is written `no_original_found`, which closes the work for good. All 24
+`no_original_found` works in the sample are of this shape, and every one of them names
+an author and a year that identify a single published paper.
+
+**Verdict distribution.** 20 resolved, 24 no_original_found, 5 provisional, 48
+target_pending, 3 api_error.
+
+- Of the 20 `resolved`, 20 are right. The reference-list and cited-candidate rungs do
+  not make wrong links in this sample.
+- Of the 5 `provisional`, 4 are right. The fifth is the only wrong settle that is not a
+  `no_original_found`: "Tversky and Kahneman (1973)" resolved to
+  `10.1017/cbo9781139600224.006`, a book chapter titled "Kahneman and Tversky".
+- 46 of the 51 open works name a findable original and are `missed`, not `correct_open`.
+  Two of the three `api_error`s are a TLS certificate failure on `doi.org` for the
+  `10.18718` registrant; the third is a one-sided title search whose CrossRef half
+  answered and is recorded on the row.
+
+**The 0-target group.** 18 of the 48 `target_pending` works named NO target at all, and
+in every one of them the original is in the paper's own title ("A multilab
+investigation into the N2pc …: Direct replication of Eimer (1996)"). These are OSF
+registrations whose abstract is boilerplate — "Stage 1 IPA at PCI RR", "Please see
+pre-registration folder" — so the abstract rung has nothing to read, and no rung reads
+the title.
+
+**A run does not terminate** — found and fixed during this iteration, in commit
+`d367c5e`. `target_pending` does not settle, so the worklist rebuild between batches
+handed the 51 unsettled works straight back; the run judged them eight times in twenty
+minutes before it was killed. The verdicts above are the latest row per work and are
+unaffected; the repeated passes were served from the LLM cache, which is why the
+iteration cost $0.33 rather than the $1.50–2.00 estimated.
 
 ---
 
