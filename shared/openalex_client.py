@@ -12,6 +12,7 @@ import json
 import re
 import threading
 import time
+import unicodedata
 from pathlib import Path
 from typing import Optional
 
@@ -1047,13 +1048,67 @@ def _search_openalex_by_title_live(title: str, year: str = "") -> Optional[dict]
 # alone returns 12 works for "Ramscar 2010" and 154 for "Turri 2015" — a surname that
 # collides across fields drowns the right paper, and the top-cited hits for that one
 # are 3D-printing papers. Adding the replication's own topic words cut those to 5.
-AUTHOR_YEAR_MAX_OFFERED = 8
+AUTHOR_YEAR_MAX_OFFERED = 10
 AUTHOR_YEAR_NARROW_ABOVE = 12
 # How many of the citation's authors are ANDed into the query. Three is enough to make
 # a shortlist unique and stops a long author list from over-narrowing when the citation
 # abbreviates it differently from the record.
 AUTHOR_YEAR_MAX_NAMES = 3
-_AUTHOR_YEAR_SHAPE = "v2-multi-name"
+# How many topic words the narrowing query carries, tried longest first. OpenAlex ANDs
+# every word of a `.search` value, so a whole replication title matches nothing at all:
+# "anderson 2012" + the full title "Does Desire for Status Increase Overconfidence? A
+# Replication and Extension of Study 5 in Anderson et al. (2012)" returned 0, and the
+# narrowing was silently discarded in favour of 15,015 unnarrowed works. The same query
+# on three words returned exactly the right paper.
+AUTHOR_YEAR_TOPIC_WORDS = (3, 2)
+_AUTHOR_YEAR_SHAPE = "v3-topic-words"
+
+# Words that carry no topic: ordinary English, and the vocabulary every replication
+# title is built from. Dropping them is what leaves "status overconfidence" behind.
+_TOPIC_STOPWORDS = frozenset("""
+about above after again against  all also among  and  another  any  are  because
+been  before  being  between  both  but  can  conceptual  could  direct  does
+during  each  effect  effects  evidence  experiment  experiments  extension
+extensions  first  from  further  have  high  higher  how  into  investigation  its
+large  low  lower  many  materials  more  most  new  not  novel  one  only  other
+over  paper  papers  pre  preregistered  registered  replicate  replicates
+replicating  replication  replications  report  reports  research  results  revisited
+same  second  several  study  studies  such  test  testing  tests  than  that  the
+their  them  then  there  these  they  this  those  three  through  two  under  using
+very  was  were  what  when  where  which  while  who  why  will  with  within
+without  would  your
+""".split())
+
+
+def _topic_words(text: str, limit: int, exclude: "list[str] | None" = None) -> str:
+    """The first *limit* topic-bearing words of *text*, in the order they appear.
+
+    *exclude* is the cited authors' own surnames. They are in the replication's title
+    more often than not — "Conceptual Replication (Young et al., 2016, Study 1)" has no
+    other word of four letters — and searching an author's name in a title-and-abstract
+    field alongside an author filter narrows to the papers that discuss them, which is
+    not the same set as the papers they wrote.
+    """
+    skip = {_fold_accents(str(e or "")).lower() for e in (exclude or [])}
+    words: list[str] = []
+    for word in re.findall(r"[^\W\d_]{4,}", str(text or "").lower(), re.UNICODE):
+        if (word in _TOPIC_STOPWORDS or word in words
+                or _fold_accents(word) in skip):
+            continue
+        words.append(word)
+        if len(words) >= limit:
+            break
+    return " ".join(words)
+
+
+def _fold_accents(text: str) -> str:
+    """*text* without diacritics — "Zárate" as "Zarate".
+
+    An author filter is matched against however OpenAlex spelled the name, and a
+    citation's spelling and a record's routinely differ by an accent alone.
+    """
+    return "".join(c for c in unicodedata.normalize("NFKD", str(text or ""))
+                   if not unicodedata.combining(c))
 
 
 def _author_year_query(surnames: list[str], year: int, topic: str) -> Optional[dict]:
@@ -1066,7 +1121,8 @@ def _author_year_query(surnames: list[str], year: int, topic: str) -> Optional[d
     matches 54,802; "han AND kahn 2017" matches 12.
     """
     parts = [f"publication_year:{year}"] + [
-        f"raw_author_name.search:{_openalex_filter_value(s)[:80]}" for s in surnames]
+        f"raw_author_name.search:{_openalex_filter_value(_fold_accents(s))[:80]}"
+        for s in surnames]
     if topic:
         parts.append(f"title_and_abstract.search:{_openalex_filter_value(topic)[:120]}")
     return _oa_get("https://api.openalex.org/works", {
@@ -1104,9 +1160,15 @@ def author_year_candidates(surnames: "str | list[str]", year: int,
 
     Two steps, and the second only when it is needed. A surname that is rare in its
     year returns a handful of works and they all go forward. A surname that collides
-    across fields returns hundreds, so the replication's own topic words are added;
-    if that returns nothing — the words were too specific, which happens — the
-    unnarrowed shortlist stands rather than the caller being told there is nothing.
+    across fields returns hundreds, so a second query adds the replication's own topic
+    words.
+
+    The narrowed hits are ADDED to the head of the broad list, never substituted for
+    it. Which words of a title carry its topic is a guess, and a wrong guess returns a
+    short list that does not contain the paper: measured 2026-08-07, narrowing
+    "anderson 2012" on the first three content words of its replication's title
+    returned 3 works, none of them the right one, where the unnarrowed list at least
+    had it somewhere. Adding cannot hide an answer; replacing can.
 
     The count is returned so the caller can record it: offering 8 of 154 and getting
     "none of these" is not the same finding as offering all 3 there were, and a row
@@ -1131,7 +1193,7 @@ def author_year_candidates(surnames: "str | list[str]", year: int,
                       str(year),
                       _openalex_filter_value(str(topic or "")).lower()[:120],
                       str(AUTHOR_YEAR_MAX_OFFERED), str(AUTHOR_YEAR_NARROW_ABOVE),
-                      str(AUTHOR_YEAR_MAX_NAMES),
+                      str(AUTHOR_YEAR_MAX_NAMES), str(AUTHOR_YEAR_TOPIC_WORDS),
                       _AUTHOR_YEAR_SHAPE)
     cached = read_cache(OA_CACHE_DIR, key)
     if cached is not None:
@@ -1152,20 +1214,34 @@ def author_year_candidates(surnames: "str | list[str]", year: int,
         if first is None:
             return [], 0, True
         data, total = first, int((first.get("meta") or {}).get("count") or 0)
+    narrowed_results: list[dict] = []
     if total > AUTHOR_YEAR_NARROW_ABOVE and topic:
-        narrowed = _author_year_query(surnames, year, topic)
-        # A narrowing that failed is not an outage of the question: the broad answer
-        # is in hand and is the answer, just a longer one. Reporting `unavailable`
-        # here wrote api_error over four works in a 100-work run whose broad query had
-        # answered perfectly well.
-        if narrowed is None:
-            log.info("[author-year] narrowing failed for %s %s — keeping the "
-                     "unnarrowed shortlist", "+".join(surnames), year)
-        elif narrowed.get("results"):
-            data, total = narrowed, int((narrowed.get("meta") or {}).get("count") or 0)
+        for limit in AUTHOR_YEAR_TOPIC_WORDS:
+            words = _topic_words(topic, limit, surnames)
+            if not words:
+                break
+            narrowed = _author_year_query(surnames, year, words)
+            # A narrowing that failed is not an outage of the question: the broad
+            # answer is in hand and is the answer, just a longer one. Reporting
+            # `unavailable` here wrote api_error over four works in a 100-work run
+            # whose broad query had answered perfectly well.
+            if narrowed is None:
+                log.info("[author-year] narrowing failed for %s %s — keeping the "
+                         "unnarrowed shortlist", "+".join(surnames), year)
+                break
+            if narrowed.get("results"):
+                narrowed_results = narrowed["results"]
+                break
 
     candidates = []
-    for work in (data.get("results") or [])[:AUTHOR_YEAR_MAX_OFFERED]:
+    seen_ids: set[str] = set()
+    for work in (narrowed_results + (data.get("results") or [])):
+        ident = str(work.get("id") or work.get("doi") or "")
+        if ident in seen_ids:
+            continue
+        seen_ids.add(ident)
+        if len(candidates) >= AUTHOR_YEAR_MAX_OFFERED:
+            break
         loc = work.get("primary_location") or {}
         src = loc.get("source") or {}
         candidates.append({

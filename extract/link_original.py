@@ -443,7 +443,10 @@ OUTCOME_DESCENT = True
 #   8  a citation parenthesis may carry the venue or the study number after the year,
 #      and a playwright navigation failure ends its tier rather than the row
 #      (2026-08-07)
-EXTRACT_LADDER_VERSION: int = 8
+#   9  the author-and-year narrowing ADDS to the shortlist rather than replacing it,
+#      on a few topic words rather than a whole title, and the author filter is
+#      accent-folded (2026-08-07)
+EXTRACT_LADDER_VERSION: int = 9
 
 
 # Columns to pass through from the input row (no renaming). Only columns

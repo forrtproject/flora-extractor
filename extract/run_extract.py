@@ -989,8 +989,12 @@ def _author_year_entry(target: dict, doi_r: str, context: dict,
         return None
     year = patterns[0]["year"]
     surnames = _cited_surnames(patterns[0])
+    # The title AND the abstract: a title like "Conceptual Replication (Young et al.,
+    # 2016, Study 1)" carries no topic word at all once the author's own name is
+    # excluded, and the abstract does.
     candidates, total, unavailable = author_year_candidates(
-        surnames, year, topic=str(context.get("title_r") or ""))
+        surnames, year,
+        topic=f"{context.get('title_r') or ''} {context.get('abstract_r') or ''}")
     surname = surnames[0]
     # The named string, not just the surname and year it was parsed into: the
     # evidence line is what an adjudication reads, and "ramscar 2010" does not say

@@ -505,3 +505,61 @@ class TestTheAuthorAndYearShortlist:
             first = oa.author_year_candidates("smith", 2010)
             second = oa.author_year_candidates("smith", 2010)
         assert first == second and query.call_count == 1
+
+
+class TestNarrowingAddsRatherThanReplaces:
+    """Which words of a title carry its topic is a guess, and a wrong guess returns a
+    short list that does not contain the paper. Adding cannot hide an answer;
+    replacing can."""
+
+    @staticmethod
+    def _work(i, title):
+        return {"id": f"https://openalex.org/W{i}", "doi": f"https://doi.org/10.1/{i}",
+                "title": title, "publication_year": 2012, "authorships": [],
+                "cited_by_count": 100 - i}
+
+    def test_the_narrowed_hits_lead_and_the_broad_ones_survive(self, tmp_path):
+        broad = {"meta": {"count": 400},
+                 "results": [self._work(i, f"broad {i}") for i in range(3)]}
+        narrow = {"meta": {"count": 2},
+                  "results": [self._work(9, "the topical one")]}
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client._author_year_query",
+                   side_effect=[broad, narrow]):
+            candidates, total, _ = oa.author_year_candidates(
+                ["anderson"], 2012, topic="status overconfidence in groups")
+        assert [c["title"] for c in candidates] == [
+            "the topical one", "broad 0", "broad 1", "broad 2"]
+        # The count reported is the BROAD one: it is what "none of these" was said
+        # against, and the narrowing does not shrink the population.
+        assert total == 400
+
+    def test_a_narrowing_that_finds_nothing_leaves_the_broad_list_alone(self, tmp_path):
+        broad = {"meta": {"count": 400},
+                 "results": [self._work(i, f"broad {i}") for i in range(3)]}
+        empty = {"meta": {"count": 0}, "results": []}
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client._author_year_query",
+                   side_effect=[broad, empty, empty]):
+            candidates, _, _ = oa.author_year_candidates(
+                ["anderson"], 2012, topic="status overconfidence in groups")
+        assert [c["title"] for c in candidates] == ["broad 0", "broad 1", "broad 2"]
+
+
+class TestTopicWordsAndAccents:
+    def test_the_cited_authors_own_name_is_not_a_topic_word(self):
+        """"Conceptual Replication (Young et al., 2016, Study 1)" has no other word of
+        four letters, and an author's name in a title field finds the papers that
+        discuss them, not the papers they wrote."""
+        assert "young" not in oa._topic_words(
+            "Conceptual Replication (Young et al., 2016, Study 1) of moral judgment",
+            3, ["young"])
+
+    def test_replication_vocabulary_carries_no_topic(self):
+        assert oa._topic_words(
+            "A Preregistered Replication and Extension of the anchoring effect", 2,
+            []) == "anchoring"
+
+    def test_an_accent_is_folded_for_the_author_filter(self):
+        assert oa._fold_accents("Zárate") == "Zarate"
+        assert oa._fold_accents("Häubl") == "Haubl"
