@@ -391,6 +391,51 @@ baseline, for $0.99.
 
 ---
 
+## Iteration 10 — one pooled candidate list, and what two reviews found
+
+Raised by the maintainer after the first holdout: across the iterations, works kept
+gaining links and losing them, because the two searches were EXCLUSIVE routes that each
+dropped mechanically what its own guards doubted. Removing a false match is cheap — one
+field of one LLM answer — and discarding a true one is expensive: the target goes
+unresolved, the work returns to a worklist, and the whole ladder is paid for again.
+
+So: every search that can say something about a target contributes to ONE pool, one
+linking-model call decides over it, and the metadata rules survive as FLAGS beside the
+candidate they doubt rather than as silent drops (`4c94932`).
+
+Reviewed by codex and by Fable, both over the whole of the new code. What they found,
+all now fixed:
+
+| Finding | Fixed in |
+| ------- | -------- |
+| A pick that is not one of the candidates — a title, a DOI, an out-of-range number — was cached as a permanent decline | `ee3e0c9` |
+| `author_year_candidates` keyed the raw topic truncated to 120 chars, while the query is built from `_topic_words` over the whole of it; the stopword list and the accent rule were not in the key at all | `ee3e0c9` |
+| A title hit with no DOI but an OpenAlex id never entered the pool | `ee3e0c9` |
+| **The self-link guard has never once run.** `title_search_candidates` refuses a hit whose title is the REPLICATION's at Jaccard 0.9, and every caller passed `""` as the replication's title. Holdout wrong-settle 2266446612 is exactly that class | `52721ab` |
+| A record with no author at all was flagged rather than dropped. There is no judgment for the model to make and nothing to make it on | `52721ab` |
+| The pick prompt still described the old author-and-year-only list, and never disclosed that it was showing 10 of 154 | `52721ab` |
+| `candidates_total` described only the author-year half | `52721ab` |
+
+**And the cost warning both reviews gave, which the first run proved.** Asking both
+searches of every target roughly doubles the OpenAlex free-text bill on the titled
+path, and a single 100-work sandbox run **exhausted the OpenAlex daily budget outright**
+before it finished. The author-and-year query now runs only where the title search came
+up empty or flagged: widening the net where the net came up empty is the point;
+widening it over a clean hit buys a sibling-paper distractor and a second query at 10x
+a filter query.
+
+**Iteration 10 is not measured yet.** Its dev run died on the quota above, and the
+budget resets at midnight UTC. Two runs are owed before this code should be trusted
+with the campaign:
+
+1. the frozen dev-100, to check the pooling does not regress what iterations 1–9 won;
+2. **a second holdout** — `samples-holdout2.json`, 100 works drawn once with seed
+   20260808 from the 1,125 in neither existing sample. The first holdout cannot judge
+   this change: it has been read, and a sample that has been read is a second
+   development sample.
+
+---
+
 ## Candidate changes, and why each is justified mechanically
 
 Only changes justifiable without reference to their effect on the dev sample are
