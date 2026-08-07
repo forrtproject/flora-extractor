@@ -49,6 +49,8 @@ the `cache/token_usage.json` delta, taken by `python -m analysis.stage3_eval.spe
 | 8 | the citation parenthesis may carry a venue; a dead browser tab ends its tier, not the row (`d8?`) | **2** | 69 | 26 | 3 | **69** | $0.01 |
 | 9 | the shortlist narrowing adds candidates instead of replacing them (`4b53cb2`) | **2** | 69 | 26 | 3 | **69** | $0.04 |
 | 10–12 | one pooled candidate list per target, its two reviews, and PsycEXTRA | **1** | 74 | 22 | 3 | **74** | $0.13 |
+| 13 | the shortlist asked of CrossRef first — REPLACING OpenAlex's | **1** | 73 | 23 | 3 | **73** | $0.06 |
+| 14 | CrossRef ends the search only when it identified the paper; otherwise it leads a pool | **1** | 79 | 17 | 3 | **79** | $0.02 |
 
 Per-work labels and the reason for each: `labels-dev-<n>.json`, one per iteration.
 
@@ -478,6 +480,50 @@ shown right.
 **The PsycEXTRA class is gone from both samples**, which is what the second holdout was
 for: iteration 12 was written against dev evidence, and an independent 100 works
 carries none of it.
+
+## Iterations 13–14 — CrossRef first, because it is free
+
+Raised by the maintainer: OpenAlex is the metered path and CrossRef is not, so try
+CrossRef and fall back. Three facts about CrossRef, measured on 2026-08-08, decide the
+query and none of them was obvious:
+
+- `query.author` is a RELEVANCE search, not an AND of the names. On a surname alone it
+  is useless — "Jones Macken 1995" matches 6,182 works, "Han Kahn 2017" 41,372. The
+  replication's own topic words have to go beside it.
+- **Its results must not be re-sorted.** With `sort=is-referenced-by-count` the right
+  paper for "Jones Macken 1995" is nowhere in the first three and the leader is a
+  prefrontal-cortex PET study; in relevance order it is FIRST. Re-sorting a relevance
+  search by citations throws away the only thing it knew. This is the opposite of the
+  OpenAlex query, which FILTERS rather than ranks and does need a sort to choose among
+  equals.
+- It takes more topic words than OpenAlex, because it ranks where OpenAlex ANDs — but
+  six returned nothing where five returned the paper, so the count relaxes.
+
+**Iteration 13 let CrossRef replace the OpenAlex shortlist, and that lost nine links
+while gaining eight** — the same replace-instead-of-add mistake iteration 9 made.
+Iteration 14 gives it a sufficiency test instead: CrossRef ENDS the search only when
+one of its hits carries **every** surname the citation named. "Jones and Macken (1995)"
+comes back as a Jones-and-Macken paper and there is nothing left to buy; "Turri,
+Buckwalter & Blouw (2015)" comes back as Turri-only papers, and the work OpenAlex finds
+— "Knowledge and luck", all three authors — is the right one. A partial answer leads
+the pool rather than replacing it.
+
+**Result: 74 → 79 correct settles, wrong settles unchanged at 1.** Seven works gained a
+correct link, every DOI Crossref-checked, including three that every earlier shortlist
+had declined: Anderson et al. (2012) → "A status-enhancement account of overconfidence",
+Zárate et al. (2004) → "Cultural threat and perceived realistic group conflict" (every
+OpenAlex shortlist for "zarate 2004" was bipolar-disorder pharmacology), and Newman et
+al. (2011) → "Celebrity Contagion and the Value of Objects".
+
+**It also corrected a wrong original that had stood since iteration 4.** "Hamlin & Wynn
+(2011)" now resolves to "Young infants prefer prosocial to antisocial others" — the
+helper/hinderer habituation study the replication describes — where OpenAlex's
+author-and-year shortlist had given the authors' OTHER 2011 paper. That is the class
+that also cost a wrong settle in the first holdout.
+
+One work moved the other way: "Yang et al. (2013), study of ambiguity aversion" now
+links to Yang, Vosgerau & Loewenstein 2013 in the right journal on framing and
+willingness-to-pay. Right authors, right venue, wrong subject; counted wrong.
 
 ### Where the exercise finishes
 
