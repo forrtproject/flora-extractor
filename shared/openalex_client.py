@@ -28,7 +28,7 @@ from .openalex_keys import (
     rotate_key,
 )
 from .rate_limit import throttle
-from .utils import bare_work_id, clean_doi, cache_key
+from .utils import bare_work_id, clean_doi, cache_key, non_article_doi
 
 # ── Unicode ranges (chr() avoids \u in compiled regexes for Python < 3.12) ────
 _UNI_RANGE  = chr(0x00C0) + "-" + chr(0x024F) + chr(0x1E00) + "-" + chr(0x1EFF)
@@ -1245,6 +1245,12 @@ def author_year_candidates(surnames: "str | list[str]", year: int,
     for work in (narrowed_results + (data.get("results") or [])):
         ident = str(work.get("id") or work.get("doi") or "")
         if ident in seen_ids:
+            continue
+        # A DOI the project already calls not-a-study is not an original either. APA
+        # files conference abstracts under 10.1037/e…, and one of those standing in
+        # for the paper is the wrong-original class this evaluation could not
+        # otherwise reach.
+        if non_article_doi(clean_doi(work.get("doi", "") or "")):
             continue
         seen_ids.add(ident)
         if len(candidates) >= AUTHOR_YEAR_MAX_OFFERED:

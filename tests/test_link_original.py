@@ -1111,6 +1111,14 @@ class TestATitleHitThatMissesTheCitedAuthorIsFlagged:
     def test_a_hit_that_cannot_be_identified_at_all_is_dropped(self):
         assert self._run({**self._CHAPTER, "doi": "", "openalex_id": ""}, "bem") == []
 
+    def test_a_psycextra_record_is_not_offered_as_an_original(self):
+        """APA files conference abstracts under 10.1037/e…. A record of a talk is not
+        the study a replication re-tested, and one standing in for the paper is the
+        wrong-original class this evaluation could not otherwise reach."""
+        assert self._run({**self._CHAPTER, "doi": "10.1037/e513702014-051",
+                          "authors": ["Olivola, C."]}, "olivola") == []
+
+
 
     def test_a_multi_author_citation_matches_on_any_of_its_names(self):
         """extract_author_year_patterns returns "Kaufmann, Weber, and Haisley (2013)"

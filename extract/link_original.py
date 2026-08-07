@@ -50,7 +50,7 @@ from shared.prompts import (
 from shared.schema import outcome_is_settled
 from shared.target_keys import assign_target_keys
 from shared.pdf_sources import acquire_pdf
-from shared.utils import cache_key, clean_doi, usable_title
+from shared.utils import cache_key, clean_doi, non_article_doi, usable_title
 
 # ── Unified rule-based resolver (runs before any LLM call) ───────────────────
 # Combines citation-context scoring with a same-author/year title-Jaccard fallback
@@ -452,7 +452,9 @@ OUTCOME_DESCENT = True
 #  11  the reviews of 10: the self-link guard is given the replication's title, an
 #      authorless record is dropped, and the author-and-year query runs only where the
 #      title search came up empty or flagged (2026-08-08)
-EXTRACT_LADDER_VERSION: int = 11
+#  12  a DOI non_article_doi() calls not-a-study is not offered as an original
+#      (2026-08-08)
+EXTRACT_LADDER_VERSION: int = 12
 
 
 # Columns to pass through from the input row (no renaming). Only columns
@@ -774,6 +776,14 @@ def title_search_candidates(doi_r: str, target_desc: str,
         if jaccard_similarity(hit.get("title", ""), study_r) > 0.9:
             continue
         flags = []
+        reason = non_article_doi(doi_o)
+        if reason:
+            # The project already has a word for a DOI that is not a study; a record
+            # it names cannot be the original a replication re-tested, so it is not
+            # offered as one. Both wrong originals the evaluation could not otherwise
+            # reach were an APA PsycEXTRA conference abstract.
+            log.info("[%s] %s title hit %s dropped: %s", doi_r, label, doi_o, reason)
+            continue
         if cited_surname and not _hit_author_list(hit):
             # A record with nobody on it — a journal's front matter, a table of
             # contents — cannot be the paper a citation names. This one IS dropped
