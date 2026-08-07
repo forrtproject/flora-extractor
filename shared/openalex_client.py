@@ -976,8 +976,19 @@ def _openalex_filter_value(text: str) -> str:
     retries", which reads as an outage and, before this, as no such paper.
 
     A pipe is stripped for the same reason (it is OpenAlex's OR separator).
+
+    So are `?` and `*`, which are WILDCARDS: a stemmed field rejects them outright —
+    "Wildcards (* or ?) require the exact (no-stem) field". Titles ending in a
+    question are ordinary ("Are STEM Faculty Biased Against Female Applicants?",
+    "Is Eco-Friendly Unmanly?"), and every one of them was an HTTP 400 that read
+    downstream as an outage. Measured 2026-08-07: of five 400s in a 100-work run, four
+    were a question mark and the fifth was this same title. Parentheses, colons,
+    apostrophes, percent signs and ampersands were probed at the same time and are all
+    accepted.
     """
-    return " ".join(text.replace(",", " ").replace("|", " ").split())
+    for char in (",", "|", "?", "*"):
+        text = text.replace(char, " ")
+    return " ".join(text.split())
 
 
 def _search_openalex_by_title_live(title: str, year: str = "") -> Optional[dict]:
@@ -1111,9 +1122,14 @@ def author_year_candidates(surname: str, year: int,
     total = int((data.get("meta") or {}).get("count") or 0)
     if total > AUTHOR_YEAR_NARROW_ABOVE and topic:
         narrowed = _author_year_query(surname, year, topic)
+        # A narrowing that failed is not an outage of the question: the broad answer
+        # is in hand and is the answer, just a longer one. Reporting `unavailable`
+        # here wrote api_error over four works in a 100-work run whose broad query had
+        # answered perfectly well.
         if narrowed is None:
-            return [], 0, True
-        if narrowed.get("results"):
+            log.info("[author-year] narrowing failed for %s %s — keeping the "
+                     "unnarrowed shortlist", surname, year)
+        elif narrowed.get("results"):
             data, total = narrowed, int((narrowed.get("meta") or {}).get("count") or 0)
 
     candidates = []

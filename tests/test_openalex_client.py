@@ -447,3 +447,61 @@ class TestReferenceFetchNoAnswerIsNotAnEmptyList:
             assert find_all_candidates("10.9/rep", "W999", "",
                                        "We replicated Smith (2010).", 2020, "") is None
         assert list(tmp_path.glob("*.json")) == []
+
+
+class TestAFilterValueOpenAlexWillAccept:
+    """Every character in this class produced an HTTP 400 that `_oa_get` reported as
+    "request failed after retries" — which reads downstream as an outage, and before
+    the retry rule as "no such paper"."""
+
+    def test_a_question_mark_is_stripped_because_it_is_a_wildcard(self):
+        """A stemmed field rejects `?` outright, and titles that end in a question are
+        ordinary. Four of five 400s in a 100-work run on 2026-08-07 were this."""
+        assert oa._openalex_filter_value(
+            "Are STEM Faculty Biased Against Female Applicants?"
+        ) == "Are STEM Faculty Biased Against Female Applicants"
+        assert "*" not in oa._openalex_filter_value("Smith* et al")
+
+    def test_a_comma_is_stripped_because_it_separates_filters(self):
+        assert oa._openalex_filter_value("Toya and Skidmore, 2007, Economic") == \
+            "Toya and Skidmore 2007 Economic"
+
+    def test_punctuation_openalex_accepts_is_left_alone(self):
+        """Probed against the live API on 2026-08-07: parentheses, colons,
+        apostrophes, percent signs and ampersands all answer 200."""
+        assert oa._openalex_filter_value("(when) do 50% of Smith's & Jones: tests") == \
+            "(when) do 50% of Smith's & Jones: tests"
+
+
+class TestTheAuthorAndYearShortlist:
+    _HIT = {"meta": {"count": 3},
+            "results": [{"id": "https://openalex.org/W1", "doi": "https://doi.org/10.1/a",
+                         "title": "The right paper", "publication_year": 2010,
+                         "authorships": [], "cited_by_count": 300}]}
+
+    def test_a_failed_narrowing_keeps_the_broad_answer(self, tmp_path):
+        """The broad query answered; only the attempt to shorten its list failed.
+        Reporting that as unavailable wrote api_error over four works whose shortlist
+        was in hand."""
+        broad = {"meta": {"count": 50}, "results": self._HIT["results"]}
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client._author_year_query",
+                   side_effect=[broad, None]):
+            candidates, total, unavailable = oa.author_year_candidates(
+                "smith", 2010, topic="a topic")
+        assert unavailable is False
+        assert total == 50 and [c["doi"] for c in candidates] == ["10.1/a"]
+
+    def test_a_silent_openalex_is_not_an_empty_shortlist(self, tmp_path):
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client._author_year_query", return_value=None):
+            assert oa.author_year_candidates("smith", 2010) == ([], 0, True)
+        assert list(tmp_path.glob("authoryear_*.json")) == []
+
+    def test_the_shortlist_is_cached_and_the_query_runs_once(self, tmp_path):
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client._author_year_query",
+                   return_value=self._HIT) as query:
+            first = oa.author_year_candidates("smith", 2010)
+            second = oa.author_year_candidates("smith", 2010)
+        assert first == second and query.call_count == 1
