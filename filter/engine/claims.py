@@ -138,6 +138,27 @@ class ClaimConflict(ClaimsError):
         self.message = message
 
 
+def _without_nuls(value: Any) -> Any:
+    """*value* with every NUL stripped out of every string it contains.
+
+    Postgres `text` and `jsonb` cannot hold U+0000 at all: PostgREST answers a row
+    carrying one with `22P05 unsupported Unicode escape sequence`, and because a
+    verdict write is fatal to the run, one such byte aborts a whole campaign. NULs
+    reach us from parsed PDF text, which lands in `quote` and in the extract tier's
+    stored payload. Stripping them here rather than at each parser covers every
+    table and every future caller, and the payload is what the export renders, so
+    the CSV stays clean too. The byte carries no meaning in any field we store —
+    it is parser debris, not content.
+    """
+    if isinstance(value, str):
+        return value.replace("\x00", "")
+    if isinstance(value, dict):
+        return {k: _without_nuls(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_without_nuls(v) for v in value]
+    return value
+
+
 class ClaimsClient:
     """Reads and writes the `engine_*` tables through PostgREST."""
 
@@ -166,12 +187,13 @@ class ClaimsClient:
               tier: str = "") -> Any:
         extra = {"Prefer": prefer} if prefer else None
         resp = requests.post(f"{self.url}/rest/v1/{path}", headers=self._headers(extra),
-                             json=payload, timeout=self.timeout)
+                             json=_without_nuls(payload), timeout=self.timeout)
         return self._parse(resp, path, tier)
 
     def _patch(self, path: str, params: dict, payload: dict) -> Any:
         resp = requests.patch(f"{self.url}/rest/v1/{path}", headers=self._headers(),
-                              params=params, json=payload, timeout=self.timeout)
+                              params=params, json=_without_nuls(payload),
+                              timeout=self.timeout)
         return self._parse(resp, path)
 
     def _parse(self, resp, path: str, tier: str = "") -> Any:

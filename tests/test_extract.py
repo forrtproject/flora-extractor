@@ -2059,10 +2059,18 @@ class TestParseCacheOnlyAfterTheDocument:
         assert run_extract._has_document("10.1/x", self._link())
 
     def _oa_xml(self, tmp_path, monkeypatch, sections: dict) -> None:
+        """Write the XML cache entry under the name its real writer uses.
+
+        `get_openalex_fulltext()` files the entry under the OpenAlex WORK ID, not the
+        DOI. This helper used to name it after the DOI and the reader looked it up the
+        same way, so the pair agreed with each other and with nothing on disk: across
+        the 285 rows of the 2026-08-06 extracted.csv the DOI-derived name matched 0
+        real entries.
+        """
         monkeypatch.setattr(run_extract, "PDF_CACHE_DIR", tmp_path)
         monkeypatch.setattr(run_extract, "OA_XML_CACHE_DIR", tmp_path)
         from shared.utils import cache_key
-        (tmp_path / f"oa_xml_{cache_key('10.1/x')}.json").write_text(
+        (tmp_path / f"oa_xml_{cache_key('W123')}.json").write_text(
             json.dumps({"sections": sections}), encoding="utf-8")
 
     def test_a_content_free_openalex_xml_shell_is_no_document(self, tmp_path, monkeypatch):
@@ -2071,12 +2079,41 @@ class TestParseCacheOnlyAfterTheDocument:
         full text and codes an outcome from nothing."""
         self._oa_xml(tmp_path, monkeypatch,
                      {"abstract": "", "body": "  ", "references": []})
-        assert not run_extract._has_document("10.1/x", self._link())
+        assert not run_extract._has_document("10.1/x", self._link(), "W123")
 
     def test_openalex_xml_with_text_is_a_document(self, tmp_path, monkeypatch):
         self._oa_xml(tmp_path, monkeypatch,
                      {"body": "We replicated the original.", "references": []})
-        assert run_extract._has_document("10.1/x", self._link())
+        assert run_extract._has_document("10.1/x", self._link(), "W123")
+        # ...and the DOI alone does not find it, which is what used to be asserted.
+        assert not run_extract._has_document("10.1/x", self._link())
+
+
+class TestParseCacheIdentity:
+    """Two rows without a DOI must not share one parse cache entry.
+
+    30% of the 2026-08-06 handoff carries no DOI (repository handles, working-paper
+    URLs). Keying the parse cache on `doi_r` filed every one of them under
+    `cache_key("")`, so the first blank-DOI row's full text was served back as every
+    later one's — four works in the 2026-08-07 run logged byte-identical parses.
+    """
+
+    def test_blank_doi_rows_get_distinct_identities(self):
+        import pandas as pd
+        a = pd.Series({"doi_r": "", "openalex_id_r": "W1", "url_r": "http://a/x"})
+        b = pd.Series({"doi_r": "", "openalex_id_r": "W2", "url_r": "http://b/y"})
+        assert run_extract._cache_id(a) != run_extract._cache_id(b)
+        assert run_extract._cache_id(a) and run_extract._cache_id(b)
+
+    def test_a_doi_row_keeps_the_key_it_already_had_on_disk(self):
+        import pandas as pd
+        row = pd.Series({"doi_r": "10.1/x", "openalex_id_r": "W1", "url_r": "http://a"})
+        assert run_extract._cache_id(row, "10.1/x") == "10.1/x"
+
+    def test_an_empty_identity_raises_instead_of_sharing_a_bucket(self):
+        from shared.pdf_parsing import parse_cache_path
+        with pytest.raises(ValueError):
+            parse_cache_path("")
 
 
 class TestOutcomeReadsTheDiscussion:

@@ -38,6 +38,7 @@ from shared.pdf_parsing import (
     parse_all as _parse_all,
     best_parse_result as _best_parse_shared,
     outcome_text,
+    parse_cache_path,
     parse_result_is_empty,
     read_parse_cache,
 )
@@ -474,13 +475,13 @@ def clear_pipeline_caches(doi_r: str) -> list[str]:
     return deleted
 
 
-def _write_parse_cache(doi_r: str, parse_results: dict) -> None:
+def _write_parse_cache(cache_id: str, parse_results: dict) -> None:
     """Persist parse_all results to PARSE_CACHE_DIR so run_extract._save_parse_cache() skips re-parsing.
 
     An all-empty parse is never written, and an all-empty cache left by an earlier
     PDF-less run is overwritten rather than preserved (audit B4).
     """
-    out_file = PARSE_CACHE_DIR / f"parse_{cache_key(doi_r)}.json"
+    out_file = parse_cache_path(cache_id, PARSE_CACHE_DIR)
     if parse_result_is_empty(parse_results):
         return
     if out_file.exists():
@@ -494,7 +495,7 @@ def _write_parse_cache(doi_r: str, parse_results: dict) -> None:
         out_file.parent.mkdir(parents=True, exist_ok=True)
         write_json(out_file, parse_results, indent=2)
     except Exception as exc:
-        log.debug("[%s] _write_parse_cache failed: %s", doi_r, exc)
+        log.debug("[%s] _write_parse_cache failed: %s", cache_id, exc)
 
 
 def _cands_row(doi_r: str, cands_df: pd.DataFrame) -> dict:
@@ -698,9 +699,15 @@ def run_for_doi(doi_r:              str,
                 no_llm:             bool = False,
                 no_pdf:             bool = False,
                 classification:     Optional[dict] = None,
-                record_type:        str = "replication") -> dict:
+                record_type:        str = "replication",
+                cache_id:           str = "") -> dict:
     """
     Run the full disambiguation pipeline for *doi_r*.
+
+    *cache_id* is the row's identity for the on-disk parse cache, and defaults to
+    *doi_r*. A caller with rows that may carry no DOI must pass one — 30% of the
+    2026-08-06 handoff has none, and they all keyed on `cache_key("")`, so the
+    first such row's full text was read back as every later one's.
 
     force=True clears all intermediate caches (LLM, GROBID, OpenAlex candidates)
     before running, but keeps the cached PDF so the download step is skipped.
@@ -749,6 +756,7 @@ def run_for_doi(doi_r:              str,
     abstract_r = cands_row.get("abstract_r", "")
     pattern_r  = cands_row.get("author_year_pattern_r", "")
     oa_id_r    = cands_row.get("openalex_id_r", "")
+    cache_id   = cache_id or doi_r or (f"oa:{oa_id_r}" if oa_id_r else "")
 
     try:
         year_r = int(cands_row.get("year_r") or 2099)
@@ -1090,10 +1098,10 @@ def run_for_doi(doi_r:              str,
     # document whose parse was already on disk, and the only reader was run_extract.
     # A hit is the same dict this call would have produced (an empty or transient-
     # failure cache reads as a miss — read_parse_cache's job).
-    parse_results = read_parse_cache(doi_r, PARSE_CACHE_DIR)
+    parse_results = read_parse_cache(cache_id, PARSE_CACHE_DIR)
     if parse_results is None:
         parse_results = _parse_all(doi_r, pdf_path, oa_xml=oa_xml_content, no_llm=no_llm)
-        _write_parse_cache(doi_r, parse_results)
+        _write_parse_cache(cache_id, parse_results)
     else:
         log.debug("[%s] parse cache hit — six parsers skipped", doi_r)
 

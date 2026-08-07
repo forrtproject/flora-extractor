@@ -51,11 +51,13 @@ from shared.pdf_parsing import (
     parse_all as _parse_all,
     parse_result_has_transient_failure,
     parse_result_is_empty,
+    parse_cache_path as _parse_cache_path,
     read_parse_cache as _read_parse_cache_shared,
     score_parse_result,
 )
 from shared.prompts import OUTCOME_TEXT_CHARS
 from shared.doi_verify import keeps_no_doi, verify_and_correct
+from shared.row_key import primary_key
 from shared.schema import (
     EXTRACTED_COLS,
     LINK_METHOD_VALUES,
@@ -572,15 +574,29 @@ def _empty_row(filter_row: pd.Series, match_type: str, match_conf: str,
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _cached_oa_xml(key: str) -> "dict | None":
-    """The cached OpenAlex GROBID-XML result for *key*, or None when it is no document.
+def _cached_oa_xml(openalex_id: str) -> "dict | None":
+    """The cached OpenAlex GROBID-XML result for *openalex_id*, or None when it is
+    no document.
+
+    The argument is the OpenAlex WORK ID, because that is what
+    `get_openalex_fulltext()` files the entry under. This reader used to be handed
+    `cache_key(doi_r)` instead, which named a file the writer never creates: across
+    the 285 rows of the 2026-08-06 `extracted.csv`, the DOI-derived name matched 0
+    entries on disk and the id-derived name matched every one that had been fetched.
+    So `_has_document()` reported "nothing to read" for a row whose only document was
+    OpenAlex XML, and `_save_parse_cache()` re-parsed with `oa_xml=None`.
 
     A content-free shell (`openalex_xml_has_content()`) is not a document — the ladder
     applies that test before it will read one, and so must every reader of the same
     cache file, or the shell counts as full text here while ending the row at
     `no_fulltext_available` there.
     """
-    cache_file = OA_XML_CACHE_DIR / f"oa_xml_{key}.json"
+    if not openalex_id:
+        return None
+    oa_id = openalex_id.strip()
+    if not oa_id.startswith("W"):
+        oa_id = f"W{oa_id}"
+    cache_file = OA_XML_CACHE_DIR / f"oa_xml_{cache_key(oa_id)}.json"
     if not cache_file.exists():
         return None
     try:
@@ -591,7 +607,7 @@ def _cached_oa_xml(key: str) -> "dict | None":
     return cached if openalex_xml_has_content(cached) else None
 
 
-def _has_document(doi_r: str, link: dict) -> bool:
+def _has_document(doi_r: str, link: dict, openalex_id: str = "") -> bool:
     """True when there is something for the parsers to read.
 
     Every stage before Stage 5 returns with pdf={}, so pdf_source is "none" and no
@@ -599,39 +615,57 @@ def _has_document(doi_r: str, link: dict) -> bool:
     because the writers early-return on an existing file that empty cache then stood
     in for the real one on any later run that DID get the PDF (audit B4). A document
     cached by an earlier run still counts — that is what --recalibrate-outcomes reads.
+
+    The PDF is looked up by DOI because that is what `download_pdf()` keys it on; the
+    XML by OpenAlex id, for the same reason (`_cached_oa_xml`). A DOI-less row simply
+    has no PDF to find here, which is what it had before too.
     """
     if bool(link.get("pdf_ok")):
         return True
     if str(link.get("pdf_source", "none") or "none") not in {"", "none"}:
         return True
-    key = cache_key(doi_r)
-    return ((PDF_CACHE_DIR / f"{key}.pdf").exists()
-            or _cached_oa_xml(key) is not None)
+    if doi_r and (PDF_CACHE_DIR / f"{cache_key(doi_r)}.pdf").exists():
+        return True
+    return _cached_oa_xml(openalex_id) is not None
 
 
-def _read_parse_cache(doi_r: str) -> "dict | None":
-    """The cached parse_all results for doi_r, or None on a miss.
+def _cache_id(row: pd.Series, doi_r: str = "") -> str:
+    """This row's identity for the on-disk parse cache.
+
+    The DOI when there is one, so every entry written before this existed still
+    matches; otherwise `primary_key()`'s next-strongest identifier (`oa:` → `url:` →
+    `title:`). Verified against the 2026-08-06 `extracted.csv`: all 278 rows with a
+    DOI keep the key they already had on disk, and the 7 without stop sharing one.
+    """
+    return doi_r or primary_key(row)
+
+
+def _read_parse_cache(cache_id: str) -> "dict | None":
+    """The cached parse_all results for *cache_id*, or None on a miss.
 
     The reader itself lives in shared/pdf_parsing.py: the ladder reads the same files
     before it parses (link_original Stage 6), and it cannot import this module.
     """
-    return _read_parse_cache_shared(doi_r, PARSE_CACHE_DIR)
+    return _read_parse_cache_shared(cache_id, PARSE_CACHE_DIR)
 
 
-def _save_parse_cache(doi_r: str) -> None:
-    """Run all PDF parsers for doi_r and cache results to PARSE_CACHE_DIR."""
-    key      = cache_key(doi_r)
-    out_file = PARSE_CACHE_DIR / f"parse_{key}.json"
-    if _read_parse_cache(doi_r) is not None:
+def _save_parse_cache(cache_id: str, doi_r: str = "", openalex_id: str = "") -> None:
+    """Run all PDF parsers for *cache_id*'s document and cache the results.
+
+    *cache_id* names the cache entry (see `parse_cache_path`); *doi_r* and
+    *openalex_id* say where the document itself is, which are different keys.
+    """
+    out_file = _parse_cache_path(cache_id, PARSE_CACHE_DIR)
+    if _read_parse_cache(cache_id) is not None:
         return
 
-    pdf_path = PDF_CACHE_DIR / f"{key}.pdf"
-    if not pdf_path.exists():
+    pdf_path = PDF_CACHE_DIR / f"{cache_key(doi_r)}.pdf" if doi_r else None
+    if pdf_path is not None and not pdf_path.exists():
         pdf_path = None  # type: ignore[assignment]
 
-    results = _parse_all(doi_r, pdf_path, oa_xml=_cached_oa_xml(key))
+    results = _parse_all(doi_r, pdf_path, oa_xml=_cached_oa_xml(openalex_id))
     if parse_result_is_empty(results):
-        log.debug("[%s] parse produced no text — not caching", doi_r)
+        log.debug("[%s] parse produced no text — not caching", cache_id)
         return
     if parse_result_has_transient_failure(results):
         # One method never got an answer (the reference extractor while its provider
@@ -639,12 +673,12 @@ def _save_parse_cache(doi_r: str) -> None:
         # goes to disk and what comes back, so caching now would make an outage this
         # paper's permanent answer about its references. Nothing is cached until every
         # method has answered; the text costs a re-parse, which is local.
-        log.info("[%s] parse carries a transient failure — not caching", doi_r)
+        log.info("[%s] parse carries a transient failure — not caching", cache_id)
         return
     try:
         write_json(out_file, results, indent=2)
     except Exception as exc:
-        log.debug("[%s] _save_parse_cache write failed: %s", doi_r, exc)
+        log.debug("[%s] _save_parse_cache write failed: %s", cache_id, exc)
 
 
 # --resolved-only drops these, and they are never outcome-coded: there is no link.
@@ -759,7 +793,7 @@ def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False,
     # receives whichever parser extracted the richest text, not always GROBID —
     # narrowed to the discussion/conclusion, which is where FLoRA's rule says the
     # outcome is stated when the abstract does not state it.
-    fulltext, provenance, intro = _best_fulltext_from_cache(doi_r)
+    fulltext, provenance, intro = _best_fulltext_from_cache(_cache_id(row, doi_r))
     if not fulltext:
         # Fallback: sections that run_for_doi already extracted. The intro is in here
         # for want of anything better; it is the section that most often discusses
@@ -786,8 +820,8 @@ def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False,
     )
 
 
-def _best_fulltext_from_cache(doi_r: str) -> tuple[str, str, str]:
-    """The outcome-bearing text for doi_r, as (closing text, provenance, intro).
+def _best_fulltext_from_cache(cache_id: str) -> tuple[str, str, str]:
+    """The outcome-bearing text for *cache_id*, as (closing text, provenance, intro).
 
     Reads the parse cache, and takes the raw text of the highest-scoring method
     that actually has raw text — the top-scoring method overall can be GROBID,
@@ -799,7 +833,7 @@ def _best_fulltext_from_cache(doi_r: str) -> tuple[str, str, str]:
     the prompt names them separately, so a quote can be attributed to the right one.
     Returns ("", "none", "") on a cache miss or an all-empty cache.
     """
-    results = _read_parse_cache(doi_r)
+    results = _read_parse_cache(cache_id)
     if not results:
         return "", "none", ""
     ranked = sorted((r for r in results.values() if isinstance(r, dict)),
@@ -1340,8 +1374,9 @@ def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | Non
     # Once for the paper, not once per target: the outcome escalation reads the parse
     # cache, and the retired multi path never populated it — which is why its rows
     # were coded from the abstract alone however much full text had been acquired.
-    if not no_pdf and _has_document(doi_r, link):
-        _save_parse_cache(doi_r)
+    oa_id_r = str(row.get("openalex_id_r", "") or "")
+    if not no_pdf and _has_document(doi_r, link, oa_id_r):
+        _save_parse_cache(_cache_id(row, doi_r), doi_r, oa_id_r)
 
     # An observation, not a prediction: the row count IS the match type.
     match_type = "multiple_original" if len(entries) > 1 else "single_original"
@@ -1453,7 +1488,8 @@ def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
     """
     link = run_for_doi(doi_r, cands_df=_build_cands_df(row),
                        no_llm=no_llm, no_pdf=no_pdf, classification=screen,
-                       record_type=_record_type(row, screen))
+                       record_type=_record_type(row, screen),
+                       cache_id=_cache_id(row, doi_r))
     _observe_link(observed, link)
 
     if link.get("targets") and not link.get("resolved"):
@@ -1489,8 +1525,9 @@ def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
         # Only a link no LLM chose — a deterministic rule's — is coded on its own.
         outcome = link.get("outcome_block") or {}
         if not outcome:
-            if not no_pdf and _has_document(doi_r, link):
-                _save_parse_cache(doi_r)
+            oa_id_r = str(row.get("openalex_id_r", "") or "")
+            if not no_pdf and _has_document(doi_r, link, oa_id_r):
+                _save_parse_cache(_cache_id(row, doi_r), doi_r, oa_id_r)
             outcome = _get_outcome(doi_r, row, link,
                                    no_llm=no_llm,
                                    screen=screen)
