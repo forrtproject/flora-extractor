@@ -40,8 +40,9 @@ the `cache/token_usage.json` delta, taken by `python -m analysis.stage3_eval.spe
 | - | ------ | -----------: | -------------: | -----: | -----------: | ----: | ----: |
 | 0 | baseline (commit `b4f6f2f`) | **25** | 24 | 46 | 5 | **24** | $0.33 |
 | 1 | a named target that could not be identified writes `target_pending` (`0bfcb54`) | **1** | 24 | 70 | 5 | **24** | $0.00 |
+| 2 | a citation with no title is resolved by author and year (`1f8ceb4`) | **1** | 38 | 56 | 5 | **38** | $0.04 |
 
-Per-work labels and the reason for each: `labels-dev-0.json`.
+Per-work labels and the reason for each: `labels-dev-<n>.json`, one per iteration.
 
 ### What iteration 0 says
 
@@ -108,6 +109,38 @@ a re-run, a wrongly closed one costs a wrong record in FLoRA that nothing reopen
 works this affects are the ones iteration 2 is meant to identify; if a residue remains
 after it, closing them is a decision to take then, on evidence, rather than by
 defaulting to it now.
+
+### What iteration 2 says
+
+Yield 24 → 38, which clears the stopping rule's ≥ 3/100 threshold. Wrong-settle
+unchanged at 1.
+
+**Every one of the 14 new links is right.** 13 came from the author-and-year route and
+one from the title search. Each was checked against the original the paper named:
+Ramscar et al. (2010) → the feature-label-order paper, Weisel & Shalvi (2015) → "The
+collaborative roots of corruption", Moss-Racusin et al. (2012) → "Science faculty's
+subtle gender biases favor male students". Labels and DOIs: `labels-dev-2.json`;
+stored payloads: `payloads-dev-2.md`.
+
+They are written `provisional`, so they settle the work but are quarantined to
+`provisional_author_year.csv` and not imported for validation. 14 of 14 is a precision
+estimate from one sample of one adjudicator and is not a substitute for the human
+confirmation issue #186 asks for.
+
+**A second cause of the OpenAlex 400s, found by running it.** Four of the five 400s in
+the first iteration-2 run were a title ending in a question mark, which OpenAlex reads
+as a wildcard and a stemmed field rejects outright. The comma strip written on
+2026-08-07 did not cover it. Fixing it also resolved a work through the OLD title
+search — "The (Im)perfect Automation Schema: Who Is Trusted More, Automated or Human
+Decision Support?" — which had 400'd on every run since the campaign began.
+
+**Where the remaining 56 `missed` works are.** 18 name the original only in the paper's
+own title, and the abstract is registration boilerplate ("Stage 1 IPA at PCI RR"), so
+the target prompt reads nothing and names no target. That is iteration 3. The rest
+name targets the author-and-year route declined, or a description with no
+parseable author and year in it.
+
+**Cost: $0.04**, of which $0.02 was the 14 new pick calls. Cumulative $0.37 of $20.
 
 ---
 
