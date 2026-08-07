@@ -139,6 +139,13 @@ Two separate judgments per target — do not let one stand in for the other:
   the evidence identifies that record and no other listed record fits as well.
   Otherwise set `key` to null and match_certain to false, and put the identifying
   details as the paper gives them in target_as_named — it is looked up separately.
+  What that lookup can use is an author surname with a year, or the original's title.
+  Write the citation the paper uses, e.g. "Okonkwo and Barr (2013)" or "Okonkwo et al.
+  (2013), Study 2", and add the title when the paper gives one. A description of the
+  finding or the design — "the reward-anticipation effect", "the two vignette
+  experiments", "Experiment 1" — identifies nothing that can be looked up. If the
+  paper names the authors and the year ANYWHERE, including in its own title, that is
+  what goes in this field; use a description only when it truly never names them.
   A wrong original is worse than an unresolved one, so returning null is the right
   answer whenever two records fit equally well or the target is absent from the lists.
 - Omit an entry only when you cannot tell that a target exists at all. Knowing one
