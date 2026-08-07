@@ -42,6 +42,7 @@ the `cache/token_usage.json` delta, taken by `python -m analysis.stage3_eval.spe
 | 1 | a named target that could not be identified writes `target_pending` (`0bfcb54`) | **1** | 24 | 70 | 5 | **24** | $0.00 |
 | 2 | a citation with no title is resolved by author and year (`1f8ceb4`) | **1** | 38 | 56 | 5 | **38** | $0.04 |
 | 3 | the abstract rung's gate reads the title's citations too (`39d4218`) | **0** | 46 | 50 | 4 | **46** | $0.10 |
+| 4 | the target prompt says what identifies a target (`635f5c0`) | **4** | 54 | 38 | 4 | **54** | $0.43 |
 
 Per-work labels and the reason for each: `labels-dev-<n>.json`, one per iteration.
 
@@ -189,6 +190,42 @@ nothing else.
 
 **Cost $0.10** — the first iteration to re-ask the target prompt for a large group of
 works rather than reuse a cached answer. Cumulative $0.47 of $20.
+
+### What iteration 4 says — a gain on the secondary metric bought with four
+irreversible errors
+
+Yield 46 → 54. Wrong-settle 0 → **4**. By the letter of the stopping rule this counts
+as an improvement, because the rule accepts a change that raises yield by ≥ 3. By the
+goal the rule serves it does not: wrong-settle is the primary metric precisely because
+it is the error nothing reverses, and this change created four of them where there had
+been none.
+
+**The 16 works that gained a link: 12 right, 4 wrong.** Every DOI was checked against
+Crossref metadata rather than from memory. The four wrong ones:
+
+| Work | Named target | Linked to | What Crossref says it is |
+| ---- | ------------ | --------- | ------------------------ |
+| 4297998882 | Bem (2011) | `10.1016/0005-7967(65)90022-7` | Eysenck 1965, "Personality and social psychology" |
+| 6905495176 | Svensson (AEJ: Macroeconomics, 2015) | `10.1257/mac.2.1.i` | the journal's 2010 front matter, no author |
+| 6906572393 | Olivola & Shafir (2013) | `10.1037/e513702014-051` | a PsycEXTRA conference abstract by Olivola alone |
+| 7099891304 | Hamlin & Wynn (2011) | `10.1073/pnas.1110306108` | Hamlin, Wynn & Bloom 2011 — the right authors and year, a different paper |
+
+Three of the four are a TITLE search matching something that is not the paper, and in
+two of them the hit's year is decades from the year the target string carries: 1965
+against a cited 2011, 2010 against a cited 2015. The prompt change produced more
+title-shaped target strings, and the title search had no year to check them against —
+`title_search_candidates` is called with `year=""`, so the ±2-year test it already
+implements never runs. That is iteration 5.
+
+**Three works lost a link they had.** 6906510766 (Weisel & Shalvi 2015), 6924979033
+(McCullough et al. 1997) and 7160689708 (De Neys et al. 2013) were resolved in
+iterations 2 and 3 and are `target_pending` again: the re-asked target prompt named
+something the route could not resolve. A prompt change moves works both ways, which is
+the reason every settled work is re-checked against its payload each iteration rather
+than having its label carried forward.
+
+**Cost $0.43**, the largest so far — a new prompt version invalidates every target call.
+Cumulative $0.90 of $20.
 
 ---
 
