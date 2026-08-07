@@ -3218,6 +3218,11 @@ class TestASearchThatFoundNothingIsRecorded:
 
         assert rows[0]["link_method"] == "target_pending"
         assert rows[0]["outcome"] == "pending"
+        # The facts about the run survive the ending: a pending row a reviewer cannot
+        # trace back to a model is not evidence of anything.
+        assert rows[0]["link_llm_model"] == "gemini-heavy"
+        assert rows[0]["original_match_confidence"] == "low"
+        assert "Ramscar" in rows[0]["link_evidence"]
 
     def test_a_target_the_model_named_nothing_for_still_settles(self):
         """The model read the paper and named no target: that IS evidence about the

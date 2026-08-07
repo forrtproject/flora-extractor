@@ -1628,12 +1628,23 @@ def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
         # description with no searchable title in it — because none of them is
         # evidence about the original's existence.
         match_type = "multiple_original" if link.get("multi_target") else "single_original"
-        pending = _empty_row(row, match_type, "high",
+        pending = _empty_row(row, match_type, "low",
                              link_method="target_pending", screen=screen)
+        # The facts about the RUN survive the ending, exactly as they did when this
+        # row came out of the single-row path: which model named the targets, and
+        # which tier and parser supplied the document it read them from. A reviewer
+        # cannot judge a pending row whose provenance columns are blank, and a blank
+        # pdf_source next to a full-text rung reads as a contradiction.
         searches = str(link.get("search_attempts") or "")
-        pending["link_evidence"] = (f"target prompt named {n_targets} original(s); "
-                                    "none could be matched to a record"
-                                    + (f" | searches: {searches}" if searches else ""))
+        note = (f"target prompt named {n_targets} original(s); "
+                "none could be matched to a record"
+                + (f" | searches: {searches}" if searches else ""))
+        prior = str(link.get("llm_evidence", "") or "")
+        pending.update({
+            **_provenance(link),
+            "link_llm_model": str(link.get("llm_model", "") or ""),
+            "link_evidence": f"{prior} | {note}" if prior else note,
+        })
         return [] if resolved_only else [pending]
 
     # original_match_confidence is an observation about the answer, not a prediction
