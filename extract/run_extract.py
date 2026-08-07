@@ -947,7 +947,10 @@ def _cited_surnames(pattern: dict) -> list[str]:
     the citation as the paper wrote it.
     """
     raw = str(pattern.get("raw") or pattern.get("surname") or "")
-    names = [n.lower() for n in _CITED_NAME_RE.findall(raw)]
+    # Only the part before the parenthesis: what follows the year inside it is the
+    # venue or the study number — "Wilson et al. (2017, JPSP)" — and reading "jpsp" as
+    # an author name would AND a word no author list carries into the query.
+    names = [n.lower() for n in _CITED_NAME_RE.findall(raw.split("(")[0] or raw)]
     seen: list[str] = []
     for name in names:
         if name in _CITED_NAME_STOPWORDS or name in seen:

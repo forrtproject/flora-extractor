@@ -1101,3 +1101,24 @@ class TestATitleHitMustCarryTheCitedAuthor:
         assert self._run({**self._CHAPTER,
                           "authors": ["Kaufmann, C.", "Weber, M.", "Haisley, E."]},
                          "kaufmann,weber,andhaisley")
+
+
+class TestACitationParenthesisMayCarryMoreThanTheYear:
+    """Papers put the venue or the study number inside the citation's parentheses —
+    "Wilson et al. (2017, JPSP)", "Vess (2012, PS, Study 1)". Demanding the year alone
+    read those as no citation, so the ladder searched their titles instead of their
+    authors."""
+
+    def test_a_venue_after_the_year_is_still_a_titleless_citation(self):
+        assert link_original.citation_without_title("Wilson et al. (2017, JPSP)")
+        assert link_original.citation_without_title("Vess (2012, PS, Study 1)")
+
+    def test_the_longest_recognised_citation_decides(self):
+        """A shorter pattern stops at the year and hands back the rest of the
+        parenthesis; "PS, Study 1)" passes usable_title and is a title of nothing."""
+        assert link_original.citation_without_title(
+            "Bem (2011, Journal of Personality and Social Psychology)")
+
+    def test_a_real_title_after_the_citation_still_wins(self):
+        assert not link_original.citation_without_title(
+            "Zhong, Bohns, & Gino (2010) Good lamps are the best police")

@@ -440,7 +440,10 @@ OUTCOME_DESCENT = True
 #      dropped (2026-08-07)
 #   7  the author-and-year query ANDs every surname the citation named, not just the
 #      first (2026-08-07)
-EXTRACT_LADDER_VERSION: int = 7
+#   8  a citation parenthesis may carry the venue or the study number after the year,
+#      and a playwright navigation failure ends its tier rather than the row
+#      (2026-08-07)
+EXTRACT_LADDER_VERSION: int = 8
 
 
 # Columns to pass through from the input row (no renaming). Only columns
@@ -606,7 +609,11 @@ def _search_title_for_original(doi_r: str, target_desc: str,
 # four real campaign targets on 2026-08-07: the raw string resolved 2 of 4 (both
 # CrossRef-only), the stripped title resolved 4 of 4 from both sources.
 _CITATION_PREFIXES = (
-    r"^.*?\((?:19|20)\d{2}[a-z]?\)[\s,:.\-–]*",        # Authors (2010) Title
+    # The parenthesis may carry the venue or the study number after the year —
+    # "Wilson et al. (2017, JPSP)", "Vess (2012, PS, Study 1)" — and demanding the year
+    # alone read those as no citation, so the ladder searched their titles instead of
+    # their authors.
+    r"^.*?\((?:19|20)\d{2}[a-z]?(?:\s*[,;][^)]{0,60})?\)[\s,:.\-–]*",  # Authors (2010) Title
     r"^.*?,\s*(?:19|20)\d{2}[a-z]?\s*[,:.\-–]\s*",     # Authors, 2007, Title
     r"^.{0,60}?\b(?:19|20)\d{2}[a-z]?\b[\s,:.\-–]+",   # Authors 2007 Title
 )
@@ -651,15 +658,14 @@ def citation_without_title(text: str) -> bool:
     title-searched as before.
     """
     stripped = str(text or "").strip()
-    matched = False
-    for pattern in _CITATION_PREFIXES:
-        m = re.match(pattern, stripped)
-        if not m:
-            continue
-        matched = True
-        if usable_title(stripped[m.end():].strip()):
-            return False
-    return matched
+    ends = [m.end() for m in (re.match(p, stripped) for p in _CITATION_PREFIXES) if m]
+    if not ends:
+        return False
+    # The LONGEST match, which is as much citation as any pattern can recognise. Taking
+    # any match instead let a shorter one stop at the year and hand back the rest of
+    # the parenthesis — "Vess (2012, PS, Study 1)" left "PS, Study 1)", which passes
+    # `usable_title` and is not a title of anything.
+    return not usable_title(stripped[max(ends):].strip())
 
 
 def _hit_carries_author(hit: dict, surname: str) -> bool:

@@ -37,23 +37,28 @@ _PREFIX     = (r"(?:van\s+der\s+|van\s+|von\s+|de\s+la\s+|de\s+|da\s+|"
                r"del\s+|den\s+|der\s+|du\s+|le\s+|la\s+|el\s+|al\s+)?")
 _NAME       = rf"(?:{_PREFIX}[A-Z{_UPPER_UNI}]{_LETTER}{{2,}})"
 _YEAR       = r"(?:19|20)\d{2}"
+# What may sit inside the citation's parentheses after the year. Papers routinely put
+# the venue or the study number there — "Wilson et al. (2017, JPSP)", "Vess (2012, PS,
+# Study 1)" — and a pattern that demanded the year alone read those as no citation at
+# all, so the ladder searched their titles instead of their authors.
+_PAREN_TAIL = r"(?:\s*[,;][^)]{0,60})?"
 
 # Patterns ordered most-specific → least-specific (avoids partial overlaps)
 _PATTERNS: list[tuple[str, str]] = [
     ("multi_and_paren",
-     rf"({_NAME}(?:,\s*{_NAME}){{1,}},?\s+(?:and|&)\s+{_NAME})\s*'?s?\s*\(({_YEAR})\)"),
+     rf"({_NAME}(?:,\s*{_NAME}){{1,}},?\s+(?:and|&)\s+{_NAME})\s*'?s?\s*\(({_YEAR}){_PAREN_TAIL}\)"),
     ("multi_and_bare",
      rf"({_NAME}(?:,\s*{_NAME}){{1,}},?\s+(?:and|&)\s+{_NAME}),?\s+({_YEAR})(?!\d)"),
     ("etal_paren",
-     rf"({_NAME})\s+et\s+al\.?\s*'?s?\s*\(({_YEAR})\)"),
+     rf"({_NAME})\s+et\s+al\.?\s*'?s?\s*\(({_YEAR}){_PAREN_TAIL}\)"),
     ("etal_bare",
      rf"({_NAME})\s+et\s+al\.?\s*,?\s+({_YEAR})(?!\d)"),
     ("two_and_paren",
-     rf"({_NAME})\s+(?:and|&)\s+({_NAME})\s*'?s?\s*\(({_YEAR})\)"),
+     rf"({_NAME})\s+(?:and|&)\s+({_NAME})\s*'?s?\s*\(({_YEAR}){_PAREN_TAIL}\)"),
     ("two_and_bare",
      rf"({_NAME})\s+(?:and|&)\s+({_NAME}),?\s+({_YEAR})(?!\d)"),
     ("single_paren",
-     rf"({_NAME})\s*'?s?\s*\(({_YEAR})\)"),
+     rf"({_NAME})\s*'?s?\s*\(({_YEAR}){_PAREN_TAIL}\)"),
     ("single_bare",
      rf"({_NAME}),?\s+({_YEAR})(?!\d)"),
 ]

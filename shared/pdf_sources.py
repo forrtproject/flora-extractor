@@ -1148,7 +1148,8 @@ def get_pdf_via_playwright(doi: str, min_bytes: int = 5_000) -> dict:
             pass
 
     try:
-        from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+        from playwright.sync_api import (Error as PWError, sync_playwright,
+                                          TimeoutError as PWTimeout)
     except ImportError:
         log.info("Playwright not installed — skipping headless tier "
                  "(run: pip install playwright && playwright install chromium)")
@@ -1198,6 +1199,14 @@ def get_pdf_via_playwright(doi: str, min_bytes: int = 5_000) -> dict:
             page.wait_for_timeout(3_000)   # let JS render
         except PWTimeout:
             log.debug("Playwright: page load timeout for %s", doi)
+        except PWError as exc:
+            # Any other navigation failure — a bad certificate, a refused
+            # connection, a DNS miss. Only PWTimeout was caught, so these escaped the
+            # tier and aborted the whole ROW: two works on the frozen dev sample were
+            # written api_error by ERR_CERT_COMMON_NAME_INVALID on doi.org, having
+            # never reached the abstract rung that would have named their original.
+            # One acquisition tier failing is that tier failing.
+            log.debug("Playwright: navigation failed for %s: %s", doi, exc)
 
         # ── If inline PDF was served directly, we already have bytes ──────────
         if captured["bytes"] and captured["bytes"][:4] == b"%PDF":
