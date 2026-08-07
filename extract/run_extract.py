@@ -1057,8 +1057,10 @@ def _title_searched_entry(target: dict, doi_r: str, context: dict) -> "dict | No
     # the journal name the target string carried.
     from shared.openalex_client import extract_author_year_patterns
     patterns = extract_author_year_patterns(named)
-    cited_year = str(patterns[0]["year"]) if patterns else ""
-    candidates, unavailable = title_search_candidates(doi_r, named, "", cited_year)
+    cited_year    = str(patterns[0]["year"]) if patterns else ""
+    cited_surname = str(patterns[0]["surname"]) if patterns else ""
+    candidates, unavailable = title_search_candidates(doi_r, named, "", cited_year,
+                                                      cited_surname)
     # What was asked and what came back, recorded on the work whatever the answer.
     # Without this, a target that failed to resolve leaves only the model's evidence
     # quote behind: nothing says a search ran, what string it ran on, or that both

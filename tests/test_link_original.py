@@ -1063,3 +1063,34 @@ class TestTheTitleSearchIsGivenTheCitedYear:
                           side_effect=self._search(seen)):
             link_original.title_search_candidates("10.1/rep", "A named study", "")
         assert [y for _, y in seen] == ["", ""]
+
+
+class TestATitleHitMustCarryTheCitedAuthor:
+    """A citation names an author, and a paper that does not have that author is not
+    that paper however well its title scored. Both title-search failures left on the
+    frozen dev sample after the year filter were this."""
+
+    @staticmethod
+    def _run(hit, surname):
+        with patch.object(link_original, "_search_crossref_by_title", return_value=hit), \
+             patch.object(link_original, "_search_openalex_by_title", return_value=None):
+            return link_original.title_search_candidates(
+                "10.1/rep", "Bem (2011) precognition", "", "2011", surname)[0]
+
+    _CHAPTER = {"doi": "10.1093/oxfordhb/9780195398991.013.0001",
+                "title": "Personality and Social Psychology",
+                "year": 2012, "authors": ["Snyder, M.", "Deaux, K."]}
+
+    def test_a_hit_by_other_authors_is_dropped(self):
+        assert self._run(self._CHAPTER, "bem") == []
+
+    def test_front_matter_with_no_author_at_all_is_dropped(self):
+        """The Svensson case: a journal's front matter has nobody on it, and a record
+        with nobody on it cannot be the paper a citation names."""
+        assert self._run({**self._CHAPTER, "authors": []}, "svensson") == []
+
+    def test_the_named_author_passes(self):
+        assert self._run({**self._CHAPTER, "authors": ["Bem, D. J."]}, "bem")
+
+    def test_a_citation_with_no_author_filters_nothing(self):
+        assert self._run(self._CHAPTER, "")

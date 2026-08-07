@@ -436,7 +436,9 @@ OUTCOME_DESCENT = True
 #      abstract's alone (2026-08-07)
 #   5  the per-target title search is given the year the paper cited, so the +/-2-year
 #      check both providers already implement actually runs (2026-08-07)
-EXTRACT_LADDER_VERSION: int = 5
+#   6  a title-search hit that does not carry the author the citation named is
+#      dropped (2026-08-07)
+EXTRACT_LADDER_VERSION: int = 6
 
 
 # Columns to pass through from the input row (no renaming). Only columns
@@ -658,9 +660,30 @@ def citation_without_title(text: str) -> bool:
     return matched
 
 
+def _hit_carries_author(hit: dict, surname: str) -> bool:
+    """Whether *surname* is one of *hit*'s authors — True when nothing was cited.
+
+    A citation names an author, and a paper that does not have that author is not
+    that paper however well its title scored. The two title-search failures left on
+    the frozen dev sample after the year filter were both this: "Bem (2011)" matched
+    an Oxford Handbook chapter by Snyder and Deaux, and "Svensson (…2015)" matched a
+    journal's front matter, which has no author at all. Front matter is the reason
+    an EMPTY author list is rejected rather than waved through: a record with nobody
+    on it cannot be the paper a citation names.
+    """
+    surname = str(surname or "").strip().lower()
+    if not surname:
+        return True
+    authors = hit.get("authors")
+    text = (" ".join(map(str, authors)) if isinstance(authors, list)
+            else str(authors or "")).lower()
+    return bool(re.search(rf"\b{re.escape(surname)}\b", text))
+
+
 def title_search_candidates(doi_r: str, target_desc: str,
                             study_r: str,
-                            cited_year: str = "") -> "tuple[list[dict], bool]":
+                            cited_year: str = "",
+                            cited_surname: str = "") -> "tuple[list[dict], bool]":
     """(candidates, unavailable) for *target_desc*.
 
     `_search_title_for_original` returns the first confident hit and discards the
@@ -683,6 +706,9 @@ def title_search_candidates(doi_r: str, target_desc: str,
 
     Same guards as the single-hit resolver: never link a paper to itself, and never
     accept a hit whose title is the replication's own.
+
+    *cited_surname* is the author the paper named, and a hit that does not carry it
+    is dropped — see `_hit_carries_author`.
 
     *cited_year* is the year the PAPER gave for its target, and both searches reject a
     hit more than two years from it. The check has always been in both of them and
@@ -709,6 +735,10 @@ def title_search_candidates(doi_r: str, target_desc: str,
         if not doi_o or doi_o == clean_doi(doi_r) or doi_o in seen:
             continue
         if jaccard_similarity(hit.get("title", ""), study_r) > 0.9:
+            continue
+        if not _hit_carries_author(hit, cited_surname):
+            log.info("[%s] %s title hit %s dropped: the citation names %s and the "
+                     "hit does not", doi_r, label, doi_o, cited_surname)
             continue
         seen.add(doi_o)
         candidates.append({
