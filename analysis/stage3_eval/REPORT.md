@@ -695,10 +695,9 @@ human to arbitrate. An unconfident "no" flags and keeps the link; no answer writ
 re-run of work 3124119366 confirmed the end-to-end demotion (batch
 `keyed-confirm-sandbox`).
 
-Two honest limits. The 63-link sample contains one known wrong link, so what is
-measured is the false-positive rate on correct links plus one catch — not precision
-on a population of wrong links. And this is still my adjudication against Crossref;
-the issue's "precision on human-confirmed rows" stays open, to be measured off the
+What is measured: the false-positive rate over 62 correct links, plus the one catch,
+adjudicated against Crossref. Open: precision over a population of wrong links, and
+the issue's "precision on human-confirmed rows" — both to be measured off the
 `keyed_link_disputed.csv` rows as humans resolve them.
 
 ### Where the exercise finishes
