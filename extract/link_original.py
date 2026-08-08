@@ -50,7 +50,8 @@ from shared.prompts import (
 from shared.schema import outcome_is_settled
 from shared.target_keys import assign_target_keys
 from shared.pdf_sources import acquire_pdf
-from shared.utils import cache_key, clean_doi, non_article_doi, usable_title
+from shared.utils import (cache_key, clean_doi, non_article_doi, psyctests_doi,
+                          usable_title)
 
 # ── Unified rule-based resolver (runs before any LLM call) ───────────────────
 # Combines citation-context scoring with a same-author/year title-Jaccard fallback
@@ -467,7 +468,11 @@ OUTCOME_DESCENT = True
 #  17  every LLM-accepted keyed link is adjudicated cold before it is written (issue
 #      #186 Shape 1): a confident "not the named target" demotes the row to
 #      keyed_link_disputed for human arbitration (2026-08-08)
-EXTRACT_LADDER_VERSION: int = 17
+#  18  the pooled-search picks are RESOLVED, not provisional: two cross-vendor
+#      measurements put them at 98-99%, so their rows are outcome-coded and imported
+#      (link_confidence low) instead of quarantined; a PsycTESTS measure record in
+#      the pool carries a flag (2026-08-08)
+EXTRACT_LADDER_VERSION: int = 18
 
 
 # Columns to pass through from the input row (no renaming). Only columns
@@ -807,6 +812,12 @@ def title_search_candidates(doi_r: str, target_desc: str,
             continue
         if not _hit_carries_author(hit, cited_surname):
             flags.append(f"does not carry the cited author ({cited_surname})")
+        if psyctests_doi(doi_o):
+            # A flag, not a drop: FLoRA's curated data links a few originals to
+            # PsycTESTS records (see shared/utils.psyctests_doi), but a measure
+            # record by the right authors is usually NOT the article a replication
+            # re-tests — the one such pick in the 2026-08-08 triage was wrong.
+            flags.append("a PsycTESTS measure record, not the article itself")
         seen.add(ident)
         candidates.append({
             "doi":          doi_o,

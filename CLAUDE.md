@@ -239,9 +239,13 @@ from them, so everything below the front door is unchanged.
 title-pattern match → rule-based citation/candidate match → abstract LLM over
 candidates → reference-list target pick (`llm_references`) → pre-PDF title search
 (`llm_title_search`, only when both voters were qualifying AND confident) → PDF
-acquisition + full-text LLM. `llm_title_search` is provisional (~50% precision): not
-in `RESOLVED_LINK_METHODS`, never outcome-coded, never imported, set aside for human
-confirmation.
+acquisition + full-text LLM. The search-based links (`llm_title_search`,
+`llm_author_year_search`) resolve through a pooled candidate list — CrossRef and
+OpenAlex title hits plus the author-and-year shortlist — adjudicated by the linking
+model with decline first-class. Since 2026-08-08 they are RESOLVED: outcome-coded and
+imported at `link_confidence` low (measured 98–99% across two cross-vendor triages,
+`analysis/stage3_eval/model_triage_2026-08-08.md`; the historical ~50% belonged to
+the pre-pooling first-hit resolver).
 
 **A rung ends the row only when it resolved AND settled the outcome**
 (`OUTCOME_DESCENT` in `link_original.py`, not settable — it changes what a row is CODED
@@ -383,8 +387,8 @@ Current prices: <https://help.openalex.org/hc/en-us/articles/24397762024087-Pric
 The design consequence is the resolution ladder's shape. Resolving a known DOI costs
 nothing, so verification and candidate enrichment are effectively free; a *title
 search* is a free-text query and therefore dominates the OpenAlex bill of any row
-that reaches it. That is a second reason — alongside its ~50% precision — to keep
-`llm_title_search` at the bottom of the ladder and provisional.
+that reaches it. That cost is the reason the search rungs stay at the bottom of the
+ladder, below every rung a cached candidate list can answer.
 
 ## Caching
 

@@ -246,35 +246,28 @@ RESOLVED_LINK_METHODS = {
     # accepted only when the model marked the target `match_certain`
     # (see link_original.run_for_doi).
     "llm_references",
+    # The two pooled-search picks, promoted from quarantine on 2026-08-08's decision
+    # (maintainer) after two measurements agreed: the paper named a target outside its
+    # candidate/reference namespace, every search that could speak was pooled (CrossRef
+    # and OpenAlex title hits, the author-and-year shortlist), and the linking model
+    # chose from that BOUNDED pool with decline offered first-class. Cross-vendor
+    # checks put the classes at 98-99% (Claude Sonnet over 225 rows and again over 200
+    # fresh production rows: 3 wrong of 425; analysis/stage3_eval/model_triage files).
+    # The historical "~50% precision" belonged to the pre-pooling resolver, which took
+    # the first title hit unadjudicated. Rows import with link_confidence low, kept as
+    # two distinct values so validation keeps measuring each class separately.
+    "llm_title_search",
+    "llm_author_year_search",
 }
 
-# PROVISIONAL: a link the pipeline made without a bounded, semantically checked
-# candidate set behind it. Not in RESOLVED_LINK_METHODS — these rows are quarantined
-# and never imported for validation — but they SETTLE the work, because the answer
-# they carry is the answer a re-run would get. `_verdict_for()` in extract/tier.py
-# reads this to decide the work's ending; it used to name llm_title_search alone, and
-# a second provisional method was therefore filed as target_pending and reopened for
-# ever.
-PROVISIONAL_LINK_METHODS = {"llm_title_search", "llm_author_year_search",
-                            "unidentified_original", "keyed_link_disputed"}
+# PROVISIONAL: a link the pipeline could not stand behind — no identity to check, or
+# two of its own readings disagree. Not in RESOLVED_LINK_METHODS — these rows are
+# quarantined and never imported for validation — but they SETTLE the work, because
+# the answer they carry is the answer a re-run would get. `_verdict_for()` in
+# extract/tier.py reads this to decide the work's ending.
+PROVISIONAL_LINK_METHODS = {"unidentified_original", "keyed_link_disputed"}
 
 LINK_METHOD_VALUES = RESOLVED_LINK_METHODS | {
-    # PROVISIONAL, not resolved. The DOI came from a CrossRef/OpenAlex title search
-    # because the LLM named an original that was NOT in the candidate/reference list —
-    # the only link method whose answer is not picked from a bounded candidate set, so
-    # a plausible-sounding title can be matched against the whole literature. A
-    # hand-check of the 2026-07-28 batch put precision near 50%, and the errors are
-    # invisible to DOI verification: the DOI really does resolve to the named title,
-    # it is simply not the paper's target. These rows are quarantined by sanity_check
-    # for human confirmation and are NOT imported for validation.
-    "llm_title_search",
-    # PROVISIONAL, and for the case a title search cannot answer at all: the paper
-    # named its target as a bare citation ("Ramscar et al. (2010)"), so one OpenAlex
-    # author-and-year query built a shortlist and the linking model said which of them
-    # it was. Bounded, unlike llm_title_search — the choice is among one author's
-    # output in one year — but it has no measured precision yet, so it gets the same
-    # quarantine and is kept apart from llm_title_search so each can be measured.
-    "llm_author_year_search",
     # RETAINED, and flagged for review. The ladder named an original from the paper's
     # own text and nothing could identify it: no DOI on the record, none recoverable,
     # and no OpenAlex id. In practice this is a reference GROBID parsed out of a PDF
@@ -325,8 +318,6 @@ SET_ASIDE_DESTINATIONS = {
     "screen_disagreement": "screen_disagreement.csv",
     "non_article": "not_a_replication.csv",
     "non_article_type": "not_a_replication.csv",
-    "title_search_provisional": "provisional_title_search.csv",
-    "author_year_provisional": "provisional_author_year.csv",
     "unidentified_original": "unidentified_original.csv",
     "keyed_link_disputed": "keyed_link_disputed.csv",
     "target_pending": "target_pending.csv",

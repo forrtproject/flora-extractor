@@ -71,7 +71,7 @@ from shared.schema import (
 )
 from shared.utils import (bare_work_id, cache_key, citation_fragment,
                           clean_citation_title, clean_doi, non_article_doi,
-                          usable_title)
+                          psyctests_doi, usable_title)
 from extract.link_original import run_for_doi
 from extract.code_outcome import extract_outcome
 
@@ -325,9 +325,11 @@ def _link_confidence(link: dict) -> str:
     with NO semantic check — "exactly one candidate came back" is not evidence it is
     the replication TARGET. Cap it at medium so validation prioritises these rows.
 
-    A title-search link is always low: it is measured at roughly 50% precision and the
-    score it carries is the search's title match, which says the DOI is the named paper
-    — not that the named paper is the target (see LINK_METHOD_VALUES).
+    A title-search link is always low: the score it carries is the search's title
+    match, which says the DOI is the named paper — not that the named paper is the
+    target. The class imports at 98-99% measured, but low is what routes validator
+    attention to the rows whose link no reference list corroborates
+    (see LINK_METHOD_VALUES).
     """
     conf = (link["llm_confidence"]
             if link.get("llm_confidence") in {"high", "medium", "low"}
@@ -704,7 +706,7 @@ def _outcome_without_coding(link_method: str, link: dict) -> "dict | None":
     the same rows that failed to resolve. A row whose link_method is not in
     RESOLVED_LINK_METHODS has no confirmed original to code an outcome against: it is
     either quarantined by sanity_check (not_a_replication, screen_disagreement,
-    llm_title_search) or carries no link at all (target_pending, api_error,
+    keyed_link_disputed) or carries no link at all (target_pending, api_error,
     no_original_found). Coding it states a result for a comparison that may never
     have been made, and makes the row read as settled.
     """
@@ -736,10 +738,6 @@ def _outcome_without_coding(link_method: str, link: dict) -> "dict | None":
         return _skip("not_a_replication", "low", "abstract",
                      str(link.get("llm_reasoning", "") or ""),
                      str(link.get("llm_model", "") or ""))
-    if link_method == "llm_title_search":
-        return _skip("cannot_be_determined", "low", "",
-                     "provisional link from a title search — outcome not coded "
-                     "until the target is confirmed")
     if link_method == "screen_disagreement":
         return _skip("pending", "low", "",
                      "outcome not coded: the two classifiers disagreed on whether "
@@ -1049,7 +1047,13 @@ def _title_searched_entry(target: dict, doi_r: str, context: dict) -> "dict | No
             if non_article_doi(str(c.get("doi") or "")):
                 continue
             if (c.get("doi") or c.get("openalex_id")) not in seen:
-                pool.append({**c, "source": "openalex_authoryear", "flags": []})
+                # Same flag the title-hit builder carries (link_original): a
+                # measure record by the right authors is usually not the article a
+                # replication re-tests, but FLoRA's curated data does link a few, so
+                # the model judges it rather than a rule dropping it.
+                doubt = (["a PsycTESTS measure record, not the article itself"]
+                         if psyctests_doi(str(c.get("doi") or "")) else [])
+                pool.append({**c, "source": "openalex_authoryear", "flags": doubt})
 
     # The named string leads, then what was asked of it: the evidence line is what an
     # adjudication reads, and "authoryear:ramscar 2010" does not say which citation in
@@ -1549,8 +1553,11 @@ def _sanitise_row(result_row: dict) -> dict:
 
 
 # The link methods the keyed-record check covers: an LLM accepted a keyed record.
-# Rule resolutions get the standalone coder's target_check, and the provisional
-# search picks were already adjudicated cold by pick_author_year_original.
+# Rule resolutions get the standalone coder's target_check, and the pooled search
+# picks were already adjudicated cold by pick_author_year_original — a second
+# same-model pass over them was measured at zero value (0 flags on 200 fresh rows,
+# both real wrongs passed; analysis/stage3_eval/model_triage_2026-08-08.md), so they
+# are deliberately not re-checked here.
 _KEYED_CONFIRM_METHODS = {"llm_fulltext", "llm_references", "llm_cited_candidates"}
 
 # What llm_evidence appends after the quote itself, on "; " — see

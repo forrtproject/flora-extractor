@@ -35,14 +35,6 @@ data/extracted-test-set-aside/. Buckets:
                                                    issue #186 confirm call judged it
                                                    not to be the named target; both
                                                    readings kept for a human
-    author_year_provisional  → provisional_author_year.csv   link_method ==
-                                                   llm_author_year_search: the target
-                                                   was named as a bare citation and
-                                                   picked from an author-and-year
-                                                   shortlist; unmeasured precision
-    title_search_provisional → provisional_title_search.csv  link_method ==
-                                                   llm_title_search: a provisional
-                                                   link awaiting human confirmation
     target_pending     → target_pending.csv        link_method == target_pending,
                                                    plus rows demoted to it below
     not_a_replication  → not_a_replication.csv     outcome == not_a_replication
@@ -153,10 +145,6 @@ def classify_row(row: Mapping) -> Optional[str]:
         return "screen_disagreement"
     if non_article_doi(doi_r):
         return "non_article"
-    if method == "llm_title_search":
-        return "title_search_provisional"
-    if method == "llm_author_year_search":
-        return "author_year_provisional"
     if method == "unidentified_original":
         return "unidentified_original"
     if method == "keyed_link_disputed":
@@ -182,8 +170,8 @@ def classify_row(row: Mapping) -> Optional[str]:
 # Reported in this order too, so the printed report reads like the rule list.
 _BUCKET_FILES = tuple(
     (name, SET_ASIDE_DESTINATIONS[name]) for name in (
-        "screen_disagreement", "non_article", "title_search_provisional",
-        "author_year_provisional", "unidentified_original", "keyed_link_disputed",
+        "screen_disagreement", "non_article",
+        "unidentified_original", "keyed_link_disputed",
         "target_pending", "prescreen_discard", "not_a_replication", "api_error",
         "no_original_found", "self_link", "doi_mismatch"))
 

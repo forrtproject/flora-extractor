@@ -86,6 +86,17 @@ _NON_ARTICLE_DOI_RE = re.compile(r"/reviews/|/decisions/", re.IGNORECASE)
 # (2001). A record of a talk is not the study a replication re-tested.
 _PSYCEXTRA_DOI_RE = re.compile(r"^10\.1037/e\d+-\d+$")
 
+# PsycTESTS measure records ("Denial of Mind to Animals … Measure"). NOT a
+# non_article_doi drop: FLoRA's curated data records t-DOIs as doi_o on 3 rows
+# (flora.csv, checked 2026-08-08), so a hard "never a study" rule would contradict
+# curated practice. The pooled resolver carries it as a candidate FLAG instead.
+_PSYCTESTS_DOI_RE = re.compile(r"^10\.1037/t\d+-\d+$")
+
+
+def psyctests_doi(doi: str) -> bool:
+    """Whether *doi* is a PsycTESTS measure record rather than an article."""
+    return bool(_PSYCTESTS_DOI_RE.match(clean_doi(doi)))
+
 _DATA_REPOSITORY_PREFIXES = frozenset({
     "10.7910",   # Harvard Dataverse
     "10.3886",   # ICPSR / openICPSR

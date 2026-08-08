@@ -39,6 +39,33 @@ counts above are after that reversal.
   alibi-witness paper — no Fisher on it — not the Nahari, Vrij & Fisher (2014)
   information-protocol study.
 
+## The 200-row experiment: does a second same-model pass add anything?
+
+Before promoting the search classes into the validation import, the maintainer asked
+whether an extra LLM check would help — and doubted it, since the pooled pick already
+offers "none" first-class. Measured on 200 fresh production rows (158 author-year, 42
+title-search, sampled seed 20260808 from rows no earlier triage had seen), two checks
+ran side by side:
+
+- **The same-model confirm pass** (`confirm_keyed_original`, the measured issue #186
+  prompt, `gpt-5.4-mini`): **0 flags in 200** — it passed both rows Sonnet proved
+  wrong. When the same model has already accepted a pick from the same evidence, a
+  second cold read of that evidence agrees with it. It is therefore NOT wired for
+  the search classes; do not re-propose it. (It stays wired for the keyed-record
+  path, where it was measured catching a cross-namespace mis-pick.)
+- **Sonnet with Crossref lookups: 198/200 correct.** Both wrongs needed external
+  metadata: work `10.17605/osf.io/fra9x` linked an adjacent Peterson
+  selective-exposure paper instead of Peterson & Iyengar (2021), and
+  `10.17605/osf.io/azb3g` linked the PsycTESTS measure record `10.1037/t36758-000`
+  instead of Bastian et al. (2012).
+
+Consequences shipped: the two classes are promoted to RESOLVED (outcome-coded,
+imported at low confidence, ladder 18); a PsycTESTS-shaped DOI in the candidate pool
+now carries a flag (a flag and not a drop — `flora.csv` itself records t-DOIs as
+`doi_o` on 3 curated rows); and the two wrong rows were corrected by supersede with
+Crossref-verified DOIs (Bastian → `10.1177/0146167211424291`, Peterson →
+`10.1111/ajps.12535`).
+
 ## Reading
 
 - Every wrong link sits in a quarantine file that is never imported for validation,

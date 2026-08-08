@@ -171,24 +171,24 @@ def test_an_unresolved_row_routes_on_its_link_not_its_outcome(tmp_path, monkeypa
     assert s["flagged"]["not_a_replication"] == 1
 
 
-def test_provisional_title_search_rows_do_not_belong_in_the_file(tmp_path, monkeypatch):
-    """A title-search link is ~50% precise and its failure mode is invisible to
-    doi_o_verification, so a verified-looking row still awaits human confirmation
-    rather than sitting in extracted.csv looking resolved (audit D2)."""
+def test_pooled_search_rows_belong_in_the_file(tmp_path, monkeypatch):
+    """A pooled-search link imports since the 2026-08-08 promotion (98-99% across
+    two cross-vendor triages); what stays out is a link the pipeline itself cannot
+    stand behind, like a disputed keyed record."""
     monkeypatch.setattr(sc, "DATA_DIR", tmp_path)
     ex = tmp_path / "extracted.csv"
     _write(ex, [
-        {"doi_r": "10.1/keep", "doi_o": "10.2/o", "outcome": "failure",
-         "doi_o_verification": "verified", "openalex_id_r": "W0",
-         "link_method": "llm_cited_candidates"},
-        {"doi_r": "10.1/prov", "doi_o": "10.2/landmark",
-         "outcome": "cannot_be_determined", "doi_o_verification": "verified",
-         "openalex_id_r": "W1", "link_method": "llm_title_search"},
+        {"doi_r": "10.1/keep", "doi_o": "10.2/landmark", "outcome": "failure",
+         "doi_o_verification": "verified", "openalex_id_r": "W1",
+         "link_method": "llm_title_search"},
+        {"doi_r": "10.1/disp", "doi_o": "10.2/other", "outcome": "pending",
+         "doi_o_verification": "verified", "openalex_id_r": "W2",
+         "link_method": "keyed_link_disputed"},
     ])
 
     s = sc.run_sanity_check(ex, deep=False)
 
-    assert s["flagged"]["title_search_provisional"] == 1
+    assert s["flagged"]["keyed_link_disputed"] == 1
     assert s["rows_clean"] == 1
 
 

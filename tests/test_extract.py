@@ -1680,9 +1680,10 @@ class TestMatchConfidenceIsOneRule:
 # ── Title-search links are provisional, not settled (audit D2) ───────────────
 
 class TestTitleSearchIsProvisional:
-    """A title search picks from the whole literature, not a candidate list, and a
-    hand-check put its precision near 50%. The row must therefore never present as
-    a settled pairing: low confidence, no outcome, and no DB import."""
+    """A pooled-search link imports (measured 98-99% across two cross-vendor
+    triages), but it stays low-confidence — the score it carries says the DOI is
+    the named paper, not that the named paper is the target — and its outcome IS
+    coded, like every resolved method's."""
 
     def test_link_confidence_is_forced_low(self):
         for method in ("llm_title_search_prepdf", "llm_title_search_gemini",
@@ -1696,14 +1697,10 @@ class TestTitleSearchIsProvisional:
                 "resolution_score": 1.0}
         assert run_extract._link_confidence(link) == "high"
 
-    def test_no_outcome_is_coded_against_a_title_search_link(self):
+    def test_a_title_search_link_is_outcome_coded(self):
         link = {"resolution_method": "llm_title_search_prepdf",
                 "resolved_title_o": "Some landmark", "llm_model": "m"}
-        out = run_extract._outcome_without_coding("llm_title_search", link)
-        assert out is not None, "a provisional link must not be outcome-coded"
-        assert out["outcome"] == "cannot_be_determined"
-        assert out["outcome_confidence"] == "low"
-        assert "provisional" in out["outcome_reasoning"]
+        assert run_extract._outcome_without_coding("llm_title_search", link) is None
 
 
 # ── The classification screen is Stage 3's front door (audit E1) ─────────────
@@ -1932,7 +1929,7 @@ class TestOutcomeGate:
         row has no verdict, so stamping the link stage's model on it would read as a
         coding that never happened."""
         for method in ("screen_disagreement", "target_pending", "no_original_found",
-                       "llm_title_search", "api_error"):
+                       "keyed_link_disputed", "api_error"):
             out = run_extract._outcome_without_coding(method, {"llm_model": "gemini-link"})
             assert out["llm_model"] == "", method
         settled = run_extract._outcome_without_coding(
@@ -2925,12 +2922,12 @@ class TestCarriedOutcomeReachesTheRow:
         assert rows[0]["outcome"] == _MOCK_OUTCOME["outcome"]
 
     def test_a_method_that_codes_no_outcome_outranks_the_carried_block(self):
-        """llm_title_search is ~50% precision and is set aside for human confirmation;
-        a carried verdict must not make such a row read as settled. The precedence is
-        _outcome_without_coding first, the carried block only where it returns None."""
+        """A quarantined method's placeholder must not be overwritten by a carried
+        verdict. The precedence is _outcome_without_coding first, the carried block
+        only where it returns None."""
         link = dict(_MOCK_LINK, llm_model="m")
-        skip = run_extract._outcome_without_coding("llm_title_search", link)
-        assert skip is not None and skip["outcome"] == "cannot_be_determined"
+        skip = run_extract._outcome_without_coding("keyed_link_disputed", link)
+        assert skip is not None and skip["outcome"] == "pending"
         assert run_extract._outcome_without_coding("llm_fulltext", link) is None
 
     def test_a_guard_demotion_clears_the_carried_outcome(self):
