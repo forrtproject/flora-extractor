@@ -663,6 +663,44 @@ the model adjudicates records it has not seen; on the keyed-record path it would
 second-guessing an assertion it made itself, in the same call, moments earlier. That is
 a weaker check on its face, and the search path's precision does not transfer to it.
 
+**Built and measured 2026-08-08, later the same day.** The check is a SEPARATE call
+(`confirm_keyed_original` in `shared/llm_client.py`, prompt
+`build_keyed_confirm_prompt`), so the model is not grading its own answer in the same
+breath: it sees only the study's title and abstract, the quoted evidence, and the
+linked record's title/author/year/DOI — deliberately nothing a stored result row
+cannot reconstruct, so the offline measurement
+(`analysis/stage3_eval/keyed_confirm_eval.py`) exercises exactly the prompt the
+ladder ships.
+
+Measured over **all 63 LLM-accepted keyed link rows** in the latest result payloads
+of the four evaluation batches plus the live re-extraction (18 + 11 + 9 + 18 + 7) —
+per row, the same scope the shipped check runs at:
+
+- The one known-wrong link — work 3124119366, the gasoline paper — is flagged,
+  confidently, for the right reason ("unrelated in subject and authorship to
+  Abel-Koch's firm-level trade/intermediaries paper").
+- **Zero false positives** over the 62 correct links, including the
+  preprint-vs-published year gaps (Abel-Koch, Békés, Peri & Yasenov) that made the
+  mechanical author/year check flag 4-for-4 wrong.
+- Cost: ~$0.02 of `gpt-5.4-mini`; no OpenAlex calls at all.
+
+Wired into `_finalise_row` (ladder version 17, `_confirm_keyed_row` in
+`extract/run_extract.py`), downstream of the `targetoutcome` cache and after
+`_verify_row`, so it judges the record as corrected. Only a **confident** "not the
+same paper" acts, and it demotes rather than drops: the row keeps its link, its
+outcome and both readings, and moves to `link_method = keyed_link_disputed` —
+provisional, settled, quarantined to `keyed_link_disputed.csv`, not imported — for a
+human to arbitrate. An unconfident "no" flags and keeps the link; no answer writes
+`api_error` so an unchecked link cannot settle on a transient failure. Sandbox
+re-run of work 3124119366 confirmed the end-to-end demotion (batch
+`keyed-confirm-sandbox`).
+
+Two honest limits. The 63-link sample contains one known wrong link, so what is
+measured is the false-positive rate on correct links plus one catch — not precision
+on a population of wrong links. And this is still my adjudication against Crossref;
+the issue's "precision on human-confirmed rows" stays open, to be measured off the
+`keyed_link_disputed.csv` rows as humans resolve them.
+
 ### Where the exercise finishes
 
 | | baseline | final |

@@ -221,7 +221,10 @@ def test_the_generation_is_pinned_by_its_inputs():
         "build_outcome_prompt", "build_repro_outcome_prompt",
         # The pooled-candidate pick decides a link, so an edit to it changes what a
         # row concludes and must reopen the works it decided.
-        "build_author_year_pick_prompt"}
+        "build_author_year_pick_prompt",
+        # The keyed-record confirm (issue #186 Shape 1) can demote a resolved row,
+        # so it reopens works on the same grounds.
+        "build_keyed_confirm_prompt"}
     assert set(inputs["models"]) == {"linking", "outcome", "pdf_parse"}
     assert isinstance(inputs["ladder"], int)
     # The efforts are IN the model ids, or two runs at different reasoning levels

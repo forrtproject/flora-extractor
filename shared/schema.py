@@ -256,7 +256,7 @@ RESOLVED_LINK_METHODS = {
 # a second provisional method was therefore filed as target_pending and reopened for
 # ever.
 PROVISIONAL_LINK_METHODS = {"llm_title_search", "llm_author_year_search",
-                            "unidentified_original"}
+                            "unidentified_original", "keyed_link_disputed"}
 
 LINK_METHOD_VALUES = RESOLVED_LINK_METHODS | {
     # PROVISIONAL, not resolved. The DOI came from a CrossRef/OpenAlex title search
@@ -284,6 +284,16 @@ LINK_METHOD_VALUES = RESOLVED_LINK_METHODS | {
     # such row that reached a holdout was the paper matched to a garbled copy of its
     # OWN title. Quarantined to unidentified_original.csv.
     "unidentified_original",
+    # PROVISIONAL, demoted from a resolved LLM method. The ladder accepted a keyed
+    # record and the issue #186 Shape 1 check — a separate call shown only the study's
+    # abstract, the quoted evidence and the record — confidently judged the record NOT
+    # to be the named target. Everything the row had is kept for a human to arbitrate
+    # (the linked record, the evidence naming the other paper, the check's reasoning),
+    # because the disagreement is between two LLM readings and dropping either answer
+    # would hide it. Quarantined to keyed_link_disputed.csv; not imported. Measured
+    # before wiring (analysis/stage3_eval/keyed_confirm_eval.py, 2026-08-08): 63
+    # keyed link rows, the one known-wrong link flagged, zero false positives.
+    "keyed_link_disputed",
     # Legacy rows written before the granular split, remapped by
     # tools/migrate_link_methods.py — they cannot be disaggregated retroactively.
     "author_year_match_legacy",
@@ -318,6 +328,7 @@ SET_ASIDE_DESTINATIONS = {
     "title_search_provisional": "provisional_title_search.csv",
     "author_year_provisional": "provisional_author_year.csv",
     "unidentified_original": "unidentified_original.csv",
+    "keyed_link_disputed": "keyed_link_disputed.csv",
     "target_pending": "target_pending.csv",
     "prescreen_discard": "prescreen_discard.csv",
     "not_a_replication": "not_a_replication.csv",

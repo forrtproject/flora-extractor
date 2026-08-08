@@ -1021,6 +1021,74 @@ def build_author_year_pick_prompt(title_r: str, abstract_snip: str,
     })
 
 
+_KEYED_CONFIRM_TEMPLATE = """You are checking a link between a study and the paper an earlier stage identified as the original work it re-tests or re-analyses.
+
+The identification was made by picking one entry from the study's own reference and
+candidate list. That pick is usually right; this check exists for when it is not. The
+failure it looks for is the wrong entry picked from the right list — the linked record
+is then a real, correctly described paper that has nothing to do with what the study
+re-tested.
+
+THE STUDY:
+Title: {title_r}
+Abstract: {abstract_r}
+
+WHAT THE STUDY SAID ABOUT ITS TARGET: {evidence_quote}
+
+THE RECORD IT WAS LINKED TO:
+{record_block}
+
+Is the linked record plausibly the paper the study names as its target?
+
+Judge subject matter and authorship together, against the abstract and the quoted
+evidence. Say no only when the record is about something else, or by somebody else,
+than the work the study describes re-testing. These are NOT reasons to say no:
+- A year a few off: a preprint or working paper and its published version are the
+  same work.
+- A title that differs in wording, subtitle or language, when subject and authors
+  agree.
+- Thin evidence: judge on what you have, and put the doubt in "confident".
+
+Answer with JSON and nothing else:
+{
+  "plausible": <true|false>,
+  "confident": <true|false>,
+  "reasoning": "<one sentence: what decided it>"
+}
+
+"confident" is false when what you were given cannot settle the question either way.
+Nothing is removed on your answer alone — a "false" flags the link for a human, so a
+confident "false" on a mismatched subject is the useful answer, not a risky one.
+"""
+
+
+def build_keyed_confirm_prompt(title_r: str, abstract_snip: str,
+                               evidence_quote: str, record: dict) -> str:
+    """Is the record an accepted @key resolved to plausibly the paper the study
+    names as its target — issue #186's Shape 1, on the keyed-record path.
+
+    The inputs are deliberately limited to what a stored result row can reconstruct
+    (title_r, abstract_r, the link evidence, and the record's title/author/year/DOI),
+    so the offline measurement over the evaluation samples exercises exactly the
+    prompt the ladder sends — a measurement of a richer prompt than the one shipped
+    would be the title-search rung's mistake over again.
+
+    One prompt for both vocabularies: the question is the record's identity, not the
+    outcome, and a reproduction mis-linked to the wrong paper fails the same way.
+    """
+    lines = [f"Title: {record.get('title') or '(no title)'}",
+             f"First author: {record.get('first_author') or '(unknown)'}",
+             f"Year: {record.get('year') or '?'}"]
+    if record.get("doi"):
+        lines.append(f"DOI: {record['doi']}")
+    return _fill(_KEYED_CONFIRM_TEMPLATE, {
+        "title_r": title_r or "(not available)",
+        "abstract_r": (abstract_snip or "(not available)")[:TARGET_ABSTRACT_CHARS],
+        "evidence_quote": evidence_quote or "(none recorded)",
+        "record_block": "\n".join(lines),
+    })
+
+
 def build_outcome_prompt(title_r: str, abstract_snip: str,
                          original_authors: str = "", original_year: str = "",
                          original_title: str = "", text_snip: str = "",

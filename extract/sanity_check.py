@@ -29,6 +29,12 @@ data/extracted-test-set-aside/. Buckets:
                                                    names an original nothing could
                                                    identify — usually a GROBID
                                                    reference line the OCR mangled
+    keyed_link_disputed → keyed_link_disputed.csv   link_method ==
+                                                   keyed_link_disputed: an LLM
+                                                   accepted a keyed record and the
+                                                   issue #186 confirm call judged it
+                                                   not to be the named target; both
+                                                   readings kept for a human
     author_year_provisional  → provisional_author_year.csv   link_method ==
                                                    llm_author_year_search: the target
                                                    was named as a bare citation and
@@ -153,6 +159,8 @@ def classify_row(row: Mapping) -> Optional[str]:
         return "author_year_provisional"
     if method == "unidentified_original":
         return "unidentified_original"
+    if method == "keyed_link_disputed":
+        return "keyed_link_disputed"
     if method == "target_pending":
         return "target_pending"
     if method == "prescreen_discard":
@@ -175,7 +183,7 @@ def classify_row(row: Mapping) -> Optional[str]:
 _BUCKET_FILES = tuple(
     (name, SET_ASIDE_DESTINATIONS[name]) for name in (
         "screen_disagreement", "non_article", "title_search_provisional",
-        "author_year_provisional", "unidentified_original",
+        "author_year_provisional", "unidentified_original", "keyed_link_disputed",
         "target_pending", "prescreen_discard", "not_a_replication", "api_error",
         "no_original_found", "self_link", "doi_mismatch"))
 

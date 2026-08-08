@@ -464,7 +464,10 @@ OUTCOME_DESCENT = True
 #      author and year rather than by title similarity; an original nothing can
 #      identify is kept and flagged rather than written resolved; and what the paper
 #      cites is looked up before no_original_found closes it (2026-08-08)
-EXTRACT_LADDER_VERSION: int = 16
+#  17  every LLM-accepted keyed link is adjudicated cold before it is written (issue
+#      #186 Shape 1): a confident "not the named target" demotes the row to
+#      keyed_link_disputed for human arbitration (2026-08-08)
+EXTRACT_LADDER_VERSION: int = 17
 
 
 # Columns to pass through from the input row (no renaming). Only columns

@@ -165,7 +165,11 @@ _GENERATION_PROMPTS = ("build_target_outcome_prompt",
                        # changes what a row concludes and must reopen the works it
                        # decided. It was outside the fingerprint while it was a
                        # tie-breaker of last resort; it is not one any more.
-                       "build_author_year_pick_prompt")
+                       "build_author_year_pick_prompt",
+                       # The keyed-record confirm (issue #186 Shape 1) can demote a
+                       # resolved row to keyed_link_disputed, so an edit to it changes
+                       # what a row concludes and must reopen the works it decided.
+                       "build_keyed_confirm_prompt")
 
 
 def generation_inputs() -> dict:

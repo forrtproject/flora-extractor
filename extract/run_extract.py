@@ -1548,14 +1548,115 @@ def _sanitise_row(result_row: dict) -> dict:
     return result_row
 
 
-def _finalise_row(result_row: dict) -> dict:
-    """Verify doi_o, fill the work ids, and make the row's text safe to write.
+# The link methods the keyed-record check covers: an LLM accepted a keyed record.
+# Rule resolutions get the standalone coder's target_check, and the provisional
+# search picks were already adjudicated cold by pick_author_year_original.
+_KEYED_CONFIRM_METHODS = {"llm_fulltext", "llm_references", "llm_cited_candidates"}
 
-    Split out of the write because it is the part that calls APIs: two lookups per
-    row, which the workers must make on their own time rather than while holding the
-    write lock the whole pool queues on.
+# What llm_evidence appends after the quote itself, on "; " — see
+# resolve_targets_and_outcomes' evidence_notes. Later run notes join on " | ".
+_EVIDENCE_NOTE_RE = re.compile(r";\s*(unidentified=\d+|stated_count=.*)$")
+
+
+def evidence_quote(link_evidence: str) -> str:
+    """The quoted evidence out of a row's link_evidence, run notes stripped.
+
+    Public because analysis/stage3_eval/keyed_confirm_eval.py rebuilds the check's
+    inputs from stored rows with it — the measurement and the ladder must send the
+    same prompt or the measurement is of something else.
     """
-    return _sanitise_row(_fill_work_ids(_verify_row(result_row)))
+    quote = str(link_evidence or "").split(" | ")[0]
+    return _EVIDENCE_NOTE_RE.sub("", quote).strip()
+
+
+def _confirm_keyed_row(row: dict) -> dict:
+    """Issue #186's Shape 1 on the keyed-record path: before an LLM-accepted keyed
+    link is written, a separate call adjudicates the record cold against the study's
+    abstract and the quoted evidence.
+
+    The wrong entry picked from the right list is invisible to every other guard —
+    `_verify_row` checks DOI-against-title, never title-against-target (work
+    3124119366, linked to a margin-squeeze paper while its own evidence named
+    Abel-Koch). The verdict decides:
+
+    - plausible                → the row passes unchanged; nothing is written on it.
+    - not plausible, confident → demoted to `keyed_link_disputed`: the link, the
+      outcome and the check's reasoning are all KEPT, quarantined for a human —
+      the disagreement is between two LLM readings, so neither answer is dropped.
+    - not plausible, unsure    → flagged: confidence low, note on the evidence,
+      link kept. An unconfident "no" removes nothing.
+    - no answer                → `api_error`: an unchecked link must not settle
+      permanently on a transient failure, and a re-run is near-free off the caches.
+
+    Runs after `_verify_row` so it judges the record as corrected, and it is
+    downstream of the targetoutcome cache — editing the confirm prompt re-decides
+    rows without disturbing the pick's cached answer. It also runs after
+    `--resolved-only`'s drops, which is fine where it matters: the tier — the one
+    live caller — never sets that flag (`extract/tier.py` passes False), and a
+    demotion here still carries a link, while `api_error` un-settling the work is
+    correct whatever was filtered.
+
+    Measured before wiring (analysis/stage3_eval/keyed_confirm_eval.py,
+    2026-08-08): over all 63 keyed link rows in the four evaluation batches and
+    the live re-extraction, the one known-wrong link was flagged, confidently, and
+    none of the 62 correct ones — including the preprint-vs-published year gaps that
+    sank the mechanical author/year check. That is adjudication against Crossref,
+    not the issue's human-confirmed precision, and it is a first exercise, not a
+    guarantee.
+    """
+    if str(row.get("link_method") or "") not in _KEYED_CONFIRM_METHODS:
+        return row
+    doi_o = clean_doi(str(row.get("doi_o") or ""))
+    if not doi_o and not row.get("oa_work_id_o"):
+        # Nothing identifiable to dispute; the unidentified_original path owns these.
+        return row
+
+    from shared.llm_client import confirm_keyed_original
+    verdict = confirm_keyed_original(
+        clean_doi(str(row.get("doi_r") or "")),
+        str(row.get("title_r") or ""), str(row.get("abstract_r") or ""),
+        evidence_quote(str(row.get("link_evidence") or "")),
+        {"doi": doi_o, "title": str(row.get("title_o") or ""),
+         "first_author": str(row.get("authors_o") or ""),
+         "year": str(row.get("year_o") or ""),
+         "openalex_id": str(row.get("oa_work_id_o") or "")})
+
+    def _note(text: str) -> None:
+        prior = str(row.get("link_evidence", "") or "")
+        row["link_evidence"] = f"{prior} | {text}" if prior else text
+
+    if verdict["plausible"] is None:
+        log.warning("[%s] keyed-record check got no answer: %s",
+                    row.get("doi_r"), verdict["llm_error"])
+        row["link_method"] = "api_error"
+        _note(f"keyed-record check got no answer ({verdict['llm_error']}); "
+              "re-run decides")
+        return row
+    if verdict["plausible"]:
+        return row
+    if verdict["confident"]:
+        log.info("[%s] keyed link disputed by %s: %s", row.get("doi_r"),
+                 verdict["llm_model"], verdict["reasoning"])
+        row["link_method"] = "keyed_link_disputed"
+        row["link_confidence"] = "low"
+        _note(f"keyed-record check ({verdict['llm_model']}): the linked record was "
+              f"judged not to be the named target — {verdict['reasoning']}")
+    else:
+        row["link_confidence"] = "low"
+        _note(f"keyed-record check ({verdict['llm_model']}), unconfident: "
+              f"{verdict['reasoning']} — link kept, flagged")
+    return row
+
+
+def _finalise_row(result_row: dict) -> dict:
+    """Verify doi_o, check an LLM-accepted keyed link, fill the work ids, and make
+    the row's text safe to write.
+
+    Split out of the write because it is the part that calls APIs: two lookups plus
+    one short confirm call per row, which the workers must make on their own time
+    rather than while holding the write lock the whole pool queues on.
+    """
+    return _sanitise_row(_fill_work_ids(_confirm_keyed_row(_verify_row(result_row))))
 
 
 

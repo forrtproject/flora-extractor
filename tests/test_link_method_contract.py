@@ -24,7 +24,7 @@ from shared.schema import (EXTRACTED_COLS, LINK_METHOD_VALUES, RESOLVED_LINK_MET
 # is validation-ready rows and nothing else, so no unresolved method survives the pass.
 _QUARANTINED = {"screen_disagreement", "llm_title_search",
                 "llm_author_year_search", "unidentified_original",
-                "target_pending",
+                "keyed_link_disputed", "target_pending",
                 "not_a_replication", "prescreen_discard", "no_original_found",
                 "api_error"}
 

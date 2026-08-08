@@ -3503,3 +3503,65 @@ class TestARecoveredDoiSupersedesTheRecordsWorkId:
     def test_a_row_that_needed_no_recovery_keeps_its_id(self):
         out = run_extract._guard_original_link({**self._ROW, "doi_o": "10.9/already"})
         assert out["oa_work_id_o"] == "W_FROM_RECORD"
+
+
+class TestConfirmKeyedRow:
+    """Issue #186's Shape 1 on the keyed-record path: a finished LLM-keyed row is
+    adjudicated cold before it is written, and only a confident "not the same
+    paper" demotes it — to keyed_link_disputed, with everything kept."""
+
+    _ROW = {"doi_r": "10.1/rep", "title_r": "A replication of Smith",
+            "abstract_r": "We replicate Smith (2010).",
+            "doi_o": "10.9/orig", "title_o": "The original", "year_o": "2010",
+            "authors_o": "Smith, J.", "oa_work_id_o": "",
+            "link_method": "llm_fulltext", "link_confidence": "high",
+            "link_evidence": "we replicate Smith (2010); unidentified=1"}
+
+    @staticmethod
+    def _verdict(plausible, confident, reasoning="different subject"):
+        return {"plausible": plausible, "confident": confident,
+                "reasoning": reasoning, "llm_model": "m", "llm_error": ""}
+
+    def test_confident_disconfirm_demotes_and_keeps_the_link(self):
+        with patch("shared.llm_client.confirm_keyed_original",
+                   return_value=self._verdict(False, True)) as check:
+            out = run_extract._confirm_keyed_row(dict(self._ROW))
+        assert out["link_method"] == "keyed_link_disputed"
+        assert out["link_confidence"] == "low"
+        assert out["doi_o"] == "10.9/orig", "the disputed link must be kept"
+        assert "different subject" in out["link_evidence"]
+        # The quote reaches the check with the run notes stripped.
+        assert check.call_args.args[3] == "we replicate Smith (2010)"
+
+    def test_unconfident_disconfirm_only_flags(self):
+        with patch("shared.llm_client.confirm_keyed_original",
+                   return_value=self._verdict(False, False)):
+            out = run_extract._confirm_keyed_row(dict(self._ROW))
+        assert out["link_method"] == "llm_fulltext"
+        assert out["link_confidence"] == "low"
+        assert "link kept, flagged" in out["link_evidence"]
+
+    def test_plausible_passes_untouched(self):
+        with patch("shared.llm_client.confirm_keyed_original",
+                   return_value=self._verdict(True, True)):
+            out = run_extract._confirm_keyed_row(dict(self._ROW))
+        assert out == self._ROW
+
+    def test_no_answer_does_not_settle(self):
+        with patch("shared.llm_client.confirm_keyed_original",
+                   return_value={"plausible": None, "confident": False,
+                                 "reasoning": "", "llm_model": "",
+                                 "llm_error": "503"}):
+            out = run_extract._confirm_keyed_row(dict(self._ROW))
+        assert out["link_method"] == "api_error"
+
+    @pytest.mark.parametrize("row_change", [
+        {"link_method": "title_pattern_match"},   # a rule's link — target_check's job
+        {"link_method": "llm_title_search"},      # already adjudicated by the pick
+        {"doi_o": "", "oa_work_id_o": ""},        # nothing identifiable to dispute
+    ])
+    def test_out_of_scope_rows_never_call(self, row_change):
+        with patch("shared.llm_client.confirm_keyed_original") as check:
+            out = run_extract._confirm_keyed_row({**self._ROW, **row_change})
+        check.assert_not_called()
+        assert out == {**self._ROW, **row_change}

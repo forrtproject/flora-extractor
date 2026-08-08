@@ -38,7 +38,7 @@ from . import token_counter, token_usage
 from .cache import content_key, read_cache, read_cache_migrating, write_cache
 from .rate_limit import throttle
 from .prompts import (
-    build_author_year_pick_prompt, build_classify_prompt,
+    build_author_year_pick_prompt, build_classify_prompt, build_keyed_confirm_prompt,
     build_repro_target_outcome_prompt, build_target_outcome_prompt, prompt_version,
 )
 from .schema import normalise_outcome_block
@@ -1488,6 +1488,61 @@ def pick_author_year_original(doi_r: str, title_r: str, abstract_r: str,
                                      "reasoning": reasoning})
     return {"pick": candidates[index] if index is not None else None,
             "confident": confident, "reasoning": reasoning,
+            "llm_model": LINKING_MODEL, "llm_error": ""}
+
+
+def confirm_keyed_original(doi_r: str, title_r: str, abstract_r: str,
+                           evidence_quote: str, record: dict) -> dict:
+    """Is the record an accepted @key resolved to plausibly the paper the study
+    names as its target — issue #186's Shape 1, on the keyed-record path.
+
+    A SEPARATE call from the one that made the pick, deliberately: the target call
+    marking a key `match_certain` and then being asked "are you sure?" in the same
+    breath is the model grading its own answer. Here it adjudicates the record cold,
+    with only the study's abstract and the quoted evidence in front of it — the same
+    footing the search-path check (`pick_author_year_original`) works on.
+
+    Returns {"plausible": bool | None, "confident": bool, "reasoning": str,
+             "llm_model": str, "llm_error": str} — `plausible` is None when there is
+    no answer (provider failure, or a reply without the field), and None decides
+    nothing. A parsed answer is cached, a "false" included; a failure is not.
+    """
+    prompt = build_keyed_confirm_prompt(title_r, abstract_r, evidence_quote, record)
+    # The record's identity on its own account, like the target call's `identities`:
+    # the prompt shows title/author/year, but the row is written from the record's
+    # DOI, and a re-fetch can move the DOI under an identical-looking record block.
+    identity = str(record.get("doi") or record.get("openalex_id") or "")
+    key = content_key("keyedconfirm", doi_r or title_r,
+                      prompt_version("build_keyed_confirm_prompt"),
+                      cache_model_id(LINKING_MODEL, LINKING_EFFORT),
+                      identity, prompt)
+    cached = read_cache(LLM_CACHE_DIR, key)
+    if cached is not None:
+        return {"plausible": cached.get("plausible"),
+                "confident": bool(cached.get("confident")),
+                "reasoning": str(cached.get("reasoning", "") or ""),
+                "llm_model": LINKING_MODEL, "llm_error": ""}
+
+    result, _provider, llm_error = call_model(prompt, LINKING_MODEL,
+                                              reasoning_effort=LINKING_EFFORT)
+    no_answer = {"plausible": None, "confident": False, "reasoning": "",
+                 "llm_model": "", "llm_error": llm_error}
+    if not result:
+        return no_answer
+    if "plausible" not in result:
+        # Valid JSON that does not answer the question. Caching it would file a
+        # non-answer as a verdict, permanently.
+        no_answer["llm_error"] = "reply carried no 'plausible' field"
+        return no_answer
+
+    raw = result.get("plausible")
+    plausible = raw is True or str(raw).strip().lower() == "true"
+    confident = bool(result.get("confident")
+                     is True or str(result.get("confident")).strip().lower() == "true")
+    reasoning = str(result.get("reasoning", "") or "")[:500]
+    write_cache(LLM_CACHE_DIR, key, {"plausible": plausible, "confident": confident,
+                                     "reasoning": reasoning})
+    return {"plausible": plausible, "confident": confident, "reasoning": reasoning,
             "llm_model": LINKING_MODEL, "llm_error": ""}
 
 

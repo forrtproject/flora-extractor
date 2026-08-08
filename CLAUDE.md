@@ -595,6 +595,20 @@ the correction. `extract/backfill_authors.py` takes the same route for
 key-rotated, counted (`search_query_count()`, printed at the end of a run) and a quota
 refusal raises `OpenAlexQuotaExhausted` instead of reading as "no match".
 
+**Verification checks the DOI against the row's own metadata, never the record
+against the target the paper NAMED** — the wrong entry picked from the right list
+passes it as `verified`. That class is caught by the keyed-record check (issue #186
+Shape 1): `_confirm_keyed_row()` in `extract/run_extract.py`, inside `_finalise_row`,
+adjudicates every LLM-accepted keyed link cold — a separate cached call
+(`confirm_keyed_original` in `shared/llm_client.py`) shown only the study's
+title/abstract, the quoted evidence and the record. A confident "not the named
+target" demotes the row to `link_method = keyed_link_disputed` (provisional: settles,
+quarantined to `keyed_link_disputed.csv`, not imported), keeping the link, the
+outcome and both readings for a human; an unconfident "no" only flags; no answer
+writes `api_error` so the row is not settled on a transient failure. Measured before
+wiring over all 63 settled keyed links in the evaluation samples: the one known-wrong
+link flagged, zero false positives (`analysis/stage3_eval/keyed_confirm_eval.py`).
+
 ## Further Reference
 
 - **[`docs/README.md`](docs/README.md) — the documentation index.** Every guide and
