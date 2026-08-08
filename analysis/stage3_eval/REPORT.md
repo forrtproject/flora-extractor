@@ -622,6 +622,41 @@ but not the rule deciding which hit is returned — so every miss cached under J
 
 **Dev finishes at 80 correct settles and 1 wrong.**
 
+## The pre-fix works, re-extracted live
+
+`redo-pre-fix-29.txt` holds **27** ids, not the 29 the earlier note said — counted off
+the file. **`--redo` turned out to be unnecessary**: none of them still carried a live
+CURRENT-generation decision, because sixteen `EXTRACT_LADDER_VERSION` bumps had already
+minted new generations and `_by_work` counts only current ones. A plain `--only` live
+run reached all 27.
+
+Result: 7 resolved, 13 provisional, 7 back to `target_pending`. $0.14. Nineteen of the
+twenty new links were checked against Crossref and are right — Toya & Skidmore (2007),
+Miguel/Satyanath/Sergenti (2004), Nunn & Wantchekon (2011), Bem (2011),
+Moss-Racusin et al. (2012), Peri & Yasenov, Coutanche & Thompson-Schill.
+
+**One is wrong, and it is a `resolved` row — the kind the validation import takes.**
+Work **3124119366**, "Firm size and the use of export intermediaries", is linked to
+`10.48548/pubdata-2261`, "Relevance and Detection Problems of Margin Squeeze – The Case
+of German Gasoline Prices". Its own `link_evidence` names the right paper: "Jennifer
+Abel-Koch, Who Uses Intermediaries in International Trade? … The World Economy (2013)",
+which two other works in these samples resolved correctly. `doi_o_verification` says
+`verified`, and is right to: the DOI does describe that gasoline paper. The verifier
+checks DOI-against-title, never title-against-target, so it cannot see this.
+
+This is a target-selection error at the full-text rung — the model marked a keyed record
+`match_certain` and the record was the wrong one. **No mechanical check for it survived
+testing.** The obvious one — "the evidence names an author and a year, so the linked
+record should carry one of them" — was measured over all 304 settled links in the four
+samples plus this run: it flags 4 and **all four are false positives** (preprint-vs-
+published year gaps: Abel-Koch SSRN 2011 vs World Economy 2013, Békés 2015 vs 2016,
+Peri & Yasenov 2018 vs 2019, and a dataset year "NHANES 2017") and it does **not** flag
+the real one. It is not shipped.
+
+What would address the class is the same move that fixed the search rungs: ask the model
+to CONFIRM the keyed record it picked against its own evidence quote, rather than taking
+`match_certain` as final. That is a design change with a cost, and it is unmeasured.
+
 ### Where the exercise finishes
 
 | | baseline | final |
@@ -671,10 +706,9 @@ resumes without losing anything.
 was met. It is met and it is deleted; this file is what replaces it. The two things it
 asked for that are NOT done, and are not part of its goal:
 
-- the 29 works carrying live settling verdicts from the pre-fix runs are still to be
-  `--redo`'d. Their ids are in `redo-pre-fix-29.txt`, beside this file rather than in a
-  scratch file the next cleanup would delete. The maintainer's decision on 2026-08-07
-  was to do it after the holdout, as part of the campaign.
+- ~~the 29 works carrying live settling verdicts from the pre-fix runs~~ — **done
+  2026-08-08**, see below. There were 27, not 29: counted off the file rather than from
+  the earlier note.
 - issue #186 — measuring the provisional resolvers' precision on human-confirmed rows —
   is still open, and the 21 provisional links this exercise checked by hand are not a
   substitute for it.
