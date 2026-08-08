@@ -653,9 +653,15 @@ published year gaps: Abel-Koch SSRN 2011 vs World Economy 2013, Békés 2015 vs 
 Peri & Yasenov 2018 vs 2019, and a dataset year "NHANES 2017") and it does **not** flag
 the real one. It is not shipped.
 
-What would address the class is the same move that fixed the search rungs: ask the model
-to CONFIRM the keyed record it picked against its own evidence quote, rather than taking
-`match_certain` as final. That is a design change with a cost, and it is unmeasured.
+What would address the class is **issue #186's Shape 1**, word for word: "here is the
+target as the paper named it, and here is the record we found; is this plausibly the
+same paper?" The issue scopes that to targets matching NO keyed record, and this one
+matched one — so the scope is what needs widening, not the design. Commented there.
+
+One difference is worth designing around rather than assuming away. On the search path
+the model adjudicates records it has not seen; on the keyed-record path it would be
+second-guessing an assertion it made itself, in the same call, moments earlier. That is
+a weaker check on its face, and the search path's precision does not transfer to it.
 
 ### Where the exercise finishes
 
