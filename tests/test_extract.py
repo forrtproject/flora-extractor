@@ -3480,3 +3480,26 @@ class TestWhatThePaperCitesIsLookedUpBeforeTheWorkIsClosed:
                              "This study replicates a previous nutrition intervention.")
         assert rows[0]["link_method"] == "no_original_found"
         assert not called
+
+
+class TestARecoveredDoiSupersedesTheRecordsWorkId:
+    """The work id a row arrives with came from the REFERENCE RECORD; a DOI recovered
+    afterwards came from a title search of that record's title. They need not describe
+    the same work, and a row exposing a DOI for one and an OpenAlex id for another
+    sends a validator to two different papers."""
+
+    _ROW = {"doi_r": "10.1/rep", "title_r": "A replication", "study_r": "",
+            "doi_o": "", "title_o": "The original study of something",
+            "year_o": "2001", "authors_o": "Smith", "pair_id": "p",
+            "link_method": "llm_fulltext", "oa_work_id_o": "W_FROM_RECORD"}
+
+    def test_the_stale_work_id_is_cleared(self):
+        with patch("extract.run_extract._search_crossref_by_title",
+                   return_value={"doi": "10.9/found", "openalex_id": "W_OTHER"}):
+            out = run_extract._guard_original_link(dict(self._ROW))
+        assert out["doi_o"] == "10.9/found"
+        assert out["oa_work_id_o"] == "", "the row kept a work id from another record"
+
+    def test_a_row_that_needed_no_recovery_keeps_its_id(self):
+        out = run_extract._guard_original_link({**self._ROW, "doi_o": "10.9/already"})
+        assert out["oa_work_id_o"] == "W_FROM_RECORD"

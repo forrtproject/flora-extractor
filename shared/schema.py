@@ -255,7 +255,8 @@ RESOLVED_LINK_METHODS = {
 # reads this to decide the work's ending; it used to name llm_title_search alone, and
 # a second provisional method was therefore filed as target_pending and reopened for
 # ever.
-PROVISIONAL_LINK_METHODS = {"llm_title_search", "llm_author_year_search"}
+PROVISIONAL_LINK_METHODS = {"llm_title_search", "llm_author_year_search",
+                            "unidentified_original"}
 
 LINK_METHOD_VALUES = RESOLVED_LINK_METHODS | {
     # PROVISIONAL, not resolved. The DOI came from a CrossRef/OpenAlex title search

@@ -869,7 +869,11 @@ class TitleSearchUnavailable(Exception):
 _TitleSearchUnavailable = TitleSearchUnavailable
 
 
-_TITLE_SEARCH_SHAPE = "v2-openalex-id"
+# Bumped whenever the returned dict gains or loses a field — AND whenever the rule
+# that decides which hit is returned changes, because a miss cached under a stricter
+# rule is replayed as a miss under the looser one. The containment rule in
+# `title_matches` would have been a no-op on every previously-searched title.
+_TITLE_SEARCH_SHAPE = "v3-containment"
 
 
 def _cached_title_search(source: str, title: str, year: str, search,
@@ -1340,7 +1344,8 @@ def author_year_candidates(surnames: "str | list[str]", year: int,
     # ("Knowledge and luck", all three authors) is the right one. Treating a partial
     # answer as a whole one lost nine links on the dev sample while gaining eight —
     # the same replace-instead-of-add mistake the narrowing made in iteration 9.
-    from_crossref = _crossref_author_year(surnames, year, topic) or []
+    crossref_answered = _crossref_author_year(surnames, year, topic)
+    from_crossref = crossref_answered or []
     if from_crossref and _covers_every_name(from_crossref, surnames):
         write_cache(OA_CACHE_DIR, key,
                     {"candidates": from_crossref[:AUTHOR_YEAR_MAX_OFFERED],
@@ -1407,6 +1412,14 @@ def author_year_candidates(surnames: "str | list[str]", year: int,
             "journal":      (src.get("display_name") or "").strip(),
             "cited_by":     int(work.get("cited_by_count") or 0),
         })
+    if crossref_answered is None:
+        # CrossRef never answered, so this pool is missing whatever it would have
+        # contributed. Returned — the OpenAlex half is real — but not CACHED, or the
+        # outage is replayed for ever and CrossRef is never asked about this target
+        # again.
+        log.info("[author-year] CrossRef was silent for %s %s — pool returned, not "
+                 "cached", "+".join(surnames), year)
+        return candidates, total, False
     write_cache(OA_CACHE_DIR, key, {"candidates": candidates, "total": total})
     return candidates, total, False
 

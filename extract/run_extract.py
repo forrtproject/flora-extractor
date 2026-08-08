@@ -1400,6 +1400,12 @@ def _guard_original_link(row: dict) -> dict:
             log.info("[%s] recovered doi_o=%s from title search", doi_r, found)
             row["doi_o"] = found
             row["pair_id"] = make_pair_id(doi_r, found)
+            # The work id the row arrived with came from the REFERENCE RECORD, and the
+            # DOI just recovered came from a title search of that record's title. They
+            # need not describe the same work, and a row exposing a DOI for one and an
+            # OpenAlex id for another sends a validator to two different papers.
+            # `_fill_work_ids` refills the column from the DOI, but only when blank.
+            row["oa_work_id_o"] = ""
             return row
 
     # 3/4. no DOI: keep only if the title is a usable, distinct original
