@@ -472,7 +472,12 @@ OUTCOME_DESCENT = True
 #      measurements put them at 98-99%, so their rows are outcome-coded and imported
 #      (link_confidence low) instead of quarantined; a PsycTESTS measure record in
 #      the pool carries a flag (2026-08-08)
-EXTRACT_LADDER_VERSION: int = 18
+#  19  the acquisition waterfall tries the row's own URL before any DOI-keyed tier,
+#      stops disguising itself as a browser when a server answers the disguise with
+#      a wall, accepts a Word document as a document, asks OSF for versioned and
+#      10.31219 preprints, walks every OpenAlex location, asks DataCite at all, and
+#      refuses a document whose title does not match the row (2026-08-08)
+EXTRACT_LADDER_VERSION: int = 19
 
 
 # Columns to pass through from the input row (no renaming). Only columns
