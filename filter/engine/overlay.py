@@ -32,6 +32,7 @@ from typing import Optional
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from filter.engine.backends import row_url
 from filter.engine.workids import resolve, work_id
 from search.fetch_abstracts import osf_identifier
 
@@ -67,27 +68,6 @@ class OverlayError(RuntimeError):
 # ---------------------------------------------------------------------------
 # Worklist
 # ---------------------------------------------------------------------------
-
-
-def _row_url(record: dict) -> str:
-    """A pool record's own URL — the same field Stage 3 knows as `url_r`.
-
-    The pool ships `open_access` and `primary_location` as JSON strings, so the
-    URL is derivable but not a column; this is `snapshot_scan._row_from_snapshot`'s
-    `oa_url or landing_page_url`, over the pool's storage form.
-    """
-    for column, field in (("open_access", "oa_url"),
-                          ("primary_location", "landing_page_url")):
-        raw = record.get(column)
-        if not raw:
-            continue
-        try:
-            value = (json.loads(raw) or {}).get(field)
-        except (TypeError, ValueError):
-            continue
-        if value:
-            return str(value)
-    return ""
 
 
 def worklist(con, release_id: str, pool_dir: Path, out_path: Path,
@@ -142,7 +122,7 @@ def worklist(con, release_id: str, pool_dir: Path, out_path: Path,
                 resolved = resolve(work_id(record["id"]), aliases or {})
                 if resolved in seen:
                     continue
-                url = _row_url(record)
+                url = row_url(record)
                 # `osf_identifier` also decides what the backfill will ask about,
                 # so the worklist cannot select a row the phase then skips.
                 wanted = resolved in pending or (

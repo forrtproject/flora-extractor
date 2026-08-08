@@ -117,9 +117,36 @@ Two rules for writing one:
 
 - **Cheap and data-only.** A domain is evaluated over every pool row of every
   route, so it reads columns the pool always carries — the DOI registrant, the
-  work type, the year. `{"doi_prefix": ["10.17605"]}` is the OSF registration
-  domain; `doi_prefix` matches after `clean_doi()`, so the pool's `doi.org` URL
-  form needs nothing special.
+  work type, the year, the row's own URL. `doi_prefix` matches after
+  `clean_doi()`, so the pool's `doi.org` URL form needs nothing special;
+  `url_regex` runs over `open_access.oa_url` falling back to
+  `primary_location.landing_page_url`, which the pool ships as JSON strings and
+  the backend derives on first use (~6 s over the 5.1M-row pool, and nothing at
+  all for a bundle that declares no `url_regex`).
+- **Name the population by every identifier it has.** The OSF registration
+  domain is *not* `{"doi_prefix": ["10.17605"]}` — that was the first version of
+  it, and 202 of the 367 OSF records in the 2026-08-08 export have no DOI at
+  all, only a URL like `http://api.osf.io/v2/registrations/fehvb/`. The shipped
+  form is the registrant OR, for a row with no DOI, an osf.io URL:
+
+  ```json
+  {"any_of": [{"doi_prefix": ["10.17605"]},
+              {"all_of": [{"doi_regex": "^$"},
+                          {"url_regex": "osf\\.io/(?:v2/(?:nodes|registrations)/)?[a-z0-9]{5,}"}]}]}
+  ```
+
+  The `doi_regex: "^$"` arm is load-bearing, not pedantry: a published article
+  whose OA copy happens to live on OSF is not an OSF record, can never be given
+  a template line, and would otherwise sit in the uncovered-admitted column
+  forever. This is the population `osf_identifier()` accepts, and
+  `tests/test_osf_registrations.py` holds the two to each other.
+
+  The DOI-only version demonstrated the failure mode of an under-declared
+  domain. `osf-registration-protocol` went from 1,954 matches to 2,103 once a
+  backfill reached the URL-identified rows (releases `78607c53327d` →
+  `ce0ba03ce326`), while the report's matched column stayed at exactly 1,954 —
+  every newly matched work was outside the declared population, so the guard
+  could not see the class that was invisible in the first place.
 - **It must not depend on what the rule reads.** A domain written over the same
   overlay text as the match would go missing exactly when the match does, and
   would have reported the 2026-08-08 failure as full coverage.

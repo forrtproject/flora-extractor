@@ -154,6 +154,23 @@ def test_a_live_discard_that_reads_content_must_declare_the_abstract_guard():
     assert validate_spec(_valid_spec()) == []
 
 
+def test_url_regex_is_a_match_key_held_to_the_same_regex_rules():
+    """`url_regex` was added so a domain can name the URL-identified half of a
+    population (202 of the 367 OSF records in the 2026-08-08 export have no DOI).
+    It is an ordinary regex key: RE2 must be able to run it, in a match and in a
+    domain alike, and it is only a URL predicate — never abstract-reading, so it
+    does not pull a live discard into the `abstract_missing` guard."""
+    pattern = "osf\\.io/[a-z0-9]{5,}"
+    assert validate_spec(_valid_spec(match={"url_regex": pattern})) == []
+    assert validate_spec(_valid_spec(domain={"url_regex": pattern})) == []
+    assert validate_spec(_valid_spec(
+        pile="discard", precedence=900,
+        match={"url_regex": pattern},
+        measured=[{"level": "trusted", "rationale": "fixture"}])) == []
+    errors = validate_spec(_valid_spec(domain={"url_regex": r"osf(?=\.io)"}))
+    assert any("domain.url_regex" in e and "RE2 cannot run it" in e for e in errors)
+
+
 def test_pending_is_not_a_legal_spec_pile():
     errors = validate_spec(_valid_spec(pile="pending"))
     assert any("'pending' is never a spec target" in e for e in errors)

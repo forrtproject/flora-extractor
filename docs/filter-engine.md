@@ -182,6 +182,7 @@ version. Verbatim shape:
     "title_regex": null,
     "abstract_regex": null,
     "text_regex": null,
+    "url_regex": null,
     "fields": {"type": ["dataset"]},
     "abstract_missing": null,
     "any_of": [],
@@ -205,7 +206,12 @@ Match semantics:
   `all_of` / `none_of` hold nested match objects (same shape, recursion allowed)
   combined as OR / AND / NOR against the row.
 - `title_regex` runs over `coalesce(display_name, title)`; `abstract_regex` over
-  `abstract_text`; `text_regex` over `title + "\n" + abstract_text`. All regexes
+  `abstract_text`; `text_regex` over `title + "\n" + abstract_text`;
+  `url_regex` over the row's own URL — `open_access.oa_url`, falling back to
+  `primary_location.landing_page_url`. The pool has no `url` column: those two
+  are JSON strings, and `backends._url_array()` pulls the value out of the JSON
+  text, on FIRST USE only, so a bundle where nothing writes `url_regex` pays
+  nothing (~6 s over the 5.1M-row pool when something does). All regexes
   are **RE2-safe** (no lookaround/backreferences — enforced by `validate_spec`)
   and case-insensitive by default (`(?i)` is prepended; `re2_error()` rejects at
   spec load anything RE2 cannot run).
@@ -226,6 +232,11 @@ Match semantics:
   it did not match that another rule admitted to a paying pile — the count that
   would have caught the 2026-08-08 campaign, where a live discard over OSF
   registrations reached only the ones the text overlay had written text for.
+  A domain must name its population by every identifier the pool gives it: the
+  two `osf-registration-*` specs declare the OSF registrant OR a DOI-less row
+  with an osf.io URL, because 202 of the 367 OSF records in the 2026-08-08
+  export have no DOI and a DOI-only domain reported them as no population at
+  all.
   Policy and how to write one: `filter/spec/CONVENTIONS.md`, "`domain`".
 
 A LIVE (`shadow: false`) `discard` spec has three extra validation rules, all in
@@ -244,8 +255,8 @@ A LIVE (`shadow: false`) `discard` spec has three extra validation rules, all in
 The full accepted key sets, from `spec.py`: top level `id, description, match,
 domain, pile, vocabulary, precedence, shadow, measured`; inside a match or a
 domain `doi_prefix,
-doi_regex, title_regex, abstract_regex, text_regex, fields, abstract_missing,
-any_of, all_of, none_of`; inside
+doi_regex, title_regex, abstract_regex, text_regex, url_regex, fields,
+abstract_missing, any_of, all_of, none_of`; inside
 `fields` `type, publication_year, concept_ids`; inside a `measured` entry
 `level, precision, n, sample, date, owner, rationale`.
 

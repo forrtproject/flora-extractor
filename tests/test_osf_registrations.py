@@ -9,13 +9,20 @@ exactly one of them — is asserted here rather than by the format.
 All HTTP is mocked.
 """
 
+import json
 from pathlib import Path
 
+import pyarrow as pa
 import pytest
 
 from filter.engine import backfill
+from filter.engine.backends import row_url
+from filter.engine.route import eval_domains
 from filter.engine.spec import load_specs
 from search import fetch_abstracts as fa
+from search.snapshot_scan import _POOL_SCHEMA
+from shared.utils import clean_doi
+from tests.engine_bundle import pool_row
 from tests.test_rulebook_v2 import _matches, _row
 
 SPEC_DIR = Path(__file__).resolve().parent.parent / "filter" / "spec"
@@ -88,6 +95,16 @@ def test_a_project_doi_is_a_definitive_miss_not_a_transient_one(monkeypatch):
     404s on. Cached as a miss so no later run re-buys the answer."""
     monkeypatch.setattr(fa._SESSION, "get", lambda *a, **k: _Response(status_code=404))
     assert fa._fetch_osf_registration("10.17605/OSF.IO/AB12D") == (None, "empty")
+
+
+def _pool_row(work: int, doi: str = None, oa_url: str = None,
+              landing_page_url: str = None) -> dict:
+    """A pool row whose URL is where the pool really keeps it — inside JSON."""
+    row = pool_row(work, doi=doi, title="Registration of a study", abstract="")
+    row["open_access"] = json.dumps({"oa_url": oa_url})
+    row["primary_location"] = json.dumps({"source": {"display_name": "OSF"},
+                                          "landing_page_url": landing_page_url})
+    return row
 
 
 def _wl_row(work: int, doi: str = "", url: str = "") -> dict:
@@ -235,3 +252,42 @@ def test_the_prefix_the_fetcher_writes_is_the_prefix_the_specs_read(specs):
     for arm in admit.match.any_of:
         pattern = arm.abstract_regex or arm.all_of[0].abstract_regex
         assert pattern.startswith("^" + fa.OSF_TEMPLATE_PREFIX)
+
+
+def test_the_declared_domain_is_the_population_osf_identifier_accepts(specs):
+    """The domain and the backfill's target test are one definition in two files.
+
+    The domain declared 2026-08-08 read the DOI alone, and 202 of the 367 OSF
+    records in that day's export have no DOI. The consequence was measurable and
+    exactly backwards: `osf-registration-protocol` went from 1,954 matches to
+    2,103 across the backfill that reached those rows (releases 78607c53327d →
+    ce0ba03ce326) while the report's "in domain" stayed at 25,819, because every
+    newly matched work sat outside the declared population — the guard could not
+    see the class that was invisible in the first place.
+
+    Both arms are asserted over POOL-shaped rows, because that is where the URL
+    is hard: the pool has no `url` column and the value has to come back out of
+    the `open_access` / `primary_location` JSON. The last row is the one the
+    `doi_regex: "^$"` arm exists for — a published article whose OA copy lives on
+    OSF is not an OSF record, gets no template line, and would otherwise sit in
+    the uncovered-admitted column forever.
+    """
+    rows = [
+        _pool_row(1, doi="https://doi.org/10.17605/OSF.IO/AB12D"),
+        _pool_row(2, oa_url="http://api.osf.io/v2/nodes/qp4h8/"),
+        _pool_row(3, oa_url="http://api.osf.io/v2/registrations/fehvb/"),
+        _pool_row(4, landing_page_url="https://osf.io/w5cq6/"),
+        _pool_row(5, doi="https://doi.org/10.1016/j.jesp.2020.1"),
+        _pool_row(6, landing_page_url="https://example.org/paper"),
+        _pool_row(7, doi="https://doi.org/10.1037/xhp0000556",
+                  oa_url="https://osf.io/ebv4q"),
+    ]
+    batch = pa.RecordBatch.from_pylist(rows, schema=_POOL_SCHEMA)
+    wanted = [fa.osf_identifier(clean_doi(row["doi"] or ""), row_url(row)) is not None
+              for row in rows]
+    assert wanted == [True, True, True, True, False, False, False]
+
+    domains = eval_domains(specs, batch)
+    assert set(domains) == {ADMIT, DISCARD}
+    for spec_id, mask in domains.items():
+        assert mask.to_pylist() == wanted, spec_id

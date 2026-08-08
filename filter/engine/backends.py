@@ -26,6 +26,7 @@ ASCII in RE2 — the locator finds nothing and the evidence names the condition
 instead of inventing a phrase. No row's pile depends on it.
 """
 
+import json
 import re
 import unicodedata
 from typing import Any, Optional
@@ -47,7 +48,15 @@ _ROW_SCHEMA = pa.schema([
     ("concepts", pa.string()),
     ("type", pa.string()),
     ("publication_year", pa.int64()),
+    # The row's own URL. A pool batch has no such column and `_url_array()`
+    # derives it; a row dict carries it directly, under the same name the
+    # overlay worklist uses.
+    ("url", pa.string()),
 ])
+
+# Where a pool row's URL lives: the JSON column and the key inside it, in the
+# precedence `row_url()` applies.
+_URL_FIELDS = (("open_access", "oa_url"), ("primary_location", "landing_page_url"))
 
 
 def _ci(pattern: str) -> str:
@@ -123,9 +132,84 @@ class BatchContext:
         self.doi = _clean_doi_array(col("doi"))
         self.concepts = pc.fill_null(col("concepts"), "")
         self.abstract_empty = pc.equal(pc.utf8_trim_whitespace(self.abstract), "")
+        self._url: Optional[pa.Array] = None
+
+    @property
+    def url(self) -> pa.Array:
+        """The row's own URL, derived on first use only.
+
+        Lazy because it is the one derived column that costs real work — two
+        regex passes over the pool's `open_access` and `primary_location` JSON
+        strings, ~6 s over the 5.1M-row pool — and no bundle pays it unless some
+        spec's match or domain uses `url_regex`.
+        """
+        if self._url is None:
+            self._url = _url_array(self.batch, self.n)
+        return self._url
 
     def column(self, name: str) -> Optional[pa.Array]:
         return self.batch.column(name) if name in self.batch.schema.names else None
+
+
+def row_url(record: dict) -> str:
+    """A pool record's own URL — the same field Stage 3 knows as `url_r`.
+
+    The pool ships `open_access` and `primary_location` as JSON strings, so the
+    URL is derivable but not a column; this is `snapshot_scan._row_from_snapshot`'s
+    `oa_url or landing_page_url`, over the pool's storage form. Defined here
+    because `_url_array()` is the vectorised form of exactly this rule and two
+    copies of it would drift; the overlay worklist imports it.
+    """
+    for column, field in _URL_FIELDS:
+        raw = record.get(column)
+        if not raw:
+            continue
+        try:
+            value = (json.loads(raw) or {}).get(field)
+        except (TypeError, ValueError):
+            continue
+        if value:
+            return str(value)
+    return ""
+
+
+def _url_array(batch: pa.RecordBatch, n: int) -> pa.Array:
+    """`row_url()` over a whole batch, as a null-free string array.
+
+    A batch that already carries a `url` column (the row-shaped entry point) is
+    taken at its word. Otherwise the value is pulled straight out of the JSON
+    TEXT with a regex rather than by parsing 5.1M JSON documents — measured
+    ~0.08 s per 65k rows against ~0.13 s for `json.loads`, and the parse would
+    also build every unread key of `primary_location` as a Python dict.
+
+    The regex reads the JSON's escaped form, so a URL holding a `\\uXXXX` escape
+    or an escaped quote comes back wrong (7 rows in 65,486 measured 2026-08-08).
+    Those rows — and only those — are re-derived through `row_url()`, which is
+    the definition; a backslash anywhere in the extracted value is the trigger,
+    and an escaped quote truncates the match at its backslash, so it fires there
+    too.
+    """
+    names = set(batch.schema.names)
+    if "url" in names:
+        return pc.fill_null(batch.column("url"), "")
+
+    parts = []
+    for column, field in _URL_FIELDS:
+        if column not in names:
+            continue
+        found = pc.extract_regex(pc.fill_null(batch.column(column), ""),
+                                 f'"{field}":\\s*"(?P<u>[^"]+)"')
+        parts.append(pc.struct_field(found, "u"))
+    if not parts:
+        return pa.array([""] * n, type=pa.string())
+
+    url = pc.fill_null(pc.coalesce(*parts) if len(parts) > 1 else parts[0], "")
+    values = url.to_pylist()
+    if not any("\\" in value for value in values):
+        return url
+    records = batch.select([c for c, _ in _URL_FIELDS if c in names]).to_pylist()
+    return pa.array([row_url(records[i]) if "\\" in value else value
+                     for i, value in enumerate(values)], type=pa.string())
 
 
 def _normalize_array(col: pa.Array) -> pa.Array:
@@ -174,6 +258,8 @@ def _match_batch(block: MatchBlock, ctx: BatchContext) -> pa.Array:
         mask = pc.and_(mask, _re_match(ctx.abstract, block.abstract_regex))
     if block.text_regex is not None:
         mask = pc.and_(mask, _re_match(ctx.text, block.text_regex))
+    if block.url_regex is not None:
+        mask = pc.and_(mask, _re_match(ctx.url, block.url_regex))
     for name, values in block.fields:
         if name == "concept_ids":
             mask = pc.and_(mask, _re_match(ctx.concepts, _concept_pattern(values)))
@@ -295,6 +381,11 @@ def _block_evidence(block: MatchBlock, ctx: BatchContext) -> list[str]:
             continue
         _fill(out, _re_match(column, pattern), column,
               lambda text, pattern=pattern, label=label: _locate(pattern, text) or label)
+    # Read outside the loop above so that building its tuple does not touch
+    # `ctx.url`, which is derived on first access.
+    if block.url_regex is not None:
+        _fill(out, _re_match(ctx.url, block.url_regex), ctx.url,
+              lambda text: _locate(block.url_regex, text) or "url_regex")
     for name, values in block.fields:
         if name == "concept_ids":
             pattern = _concept_pattern(values)

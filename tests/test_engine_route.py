@@ -23,7 +23,10 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from filter.engine.backends import eval_spec_batch, eval_spec_rows, match_evidence
+from filter.engine.backends import (
+    BatchContext, eval_spec_batch, eval_spec_rows, match_evidence, row_url,
+    rows_to_batch,
+)
 from filter.engine.release import read_release, routing_release, write_release
 from filter.engine.route import eval_all, route_batch
 from filter.engine.spec import FilterSpec, load_specs
@@ -224,6 +227,51 @@ def test_evidence_is_recovered_for_matched_rows_and_never_decides_one(specs):
     assert eval_spec_rows(spec, rows) == [True]
     assert eval_spec_batch(spec, batch).to_pylist() == [True]
     assert all(match_evidence(spec, batch))
+
+
+def test_the_row_url_is_pulled_out_of_the_pool_json_exactly_as_row_url_reads_it():
+    """`url_regex` reads a column the pool does not have.
+
+    The URL lives inside the `open_access` / `primary_location` JSON strings, and
+    `_url_array()` pulls it out with a regex over the JSON TEXT rather than by
+    parsing 5.1M documents. That is only allowed if it agrees with `row_url()`,
+    the definition — including on the JSON escapes a regex over the text cannot
+    read (7 rows in 65,486 measured over the pool on 2026-08-08), which fall back
+    to `row_url()` per row.
+    """
+    records = [
+        {"open_access": json.dumps({"oa_url": "https://osf.io/w5cq6/"}),
+         "primary_location": json.dumps({"landing_page_url": "https://example.org/1"})},
+        # No oa_url: the landing page is the answer.
+        {"open_access": json.dumps({"oa_url": None}),
+         "primary_location": json.dumps({"landing_page_url": "https://example.org/2"})},
+        # An empty oa_url is not a URL either.
+        {"open_access": json.dumps({"oa_url": ""}),
+         "primary_location": json.dumps({"landing_page_url": "https://example.org/3"})},
+        # Neither.
+        {"open_access": json.dumps({"oa_url": None}),
+         "primary_location": json.dumps({"source": {"display_name": "J. Repl."}})},
+        # A `\\uXXXX` escape and an escaped quote — what the regex reads wrong.
+        {"open_access": json.dumps({"oa_url": "https://ma.cfuv.ru/res/Хайтович А. Б..pdf"}),
+         "primary_location": None},
+        {"open_access": json.dumps({"oa_url": 'https://x.example/a"b".pdf'}),
+         "primary_location": None},
+        # Unparseable JSON is not a URL, and must not raise.
+        {"open_access": "{not json", "primary_location": "{not json"},
+    ]
+    batch = pa.RecordBatch.from_pylist(
+        records, schema=pa.schema([("open_access", pa.string()),
+                                   ("primary_location", pa.string())]))
+    ctx = BatchContext(batch)
+    # Derived on first use only: no bundle without a `url_regex` pays for it.
+    assert ctx._url is None
+    assert ctx.url.to_pylist() == [row_url(record) for record in records]
+
+    # A batch that carries the column outright (the row-shaped entry point) is
+    # taken at its word rather than re-derived.
+    rows = [{"url": "https://osf.io/w5cq6/"}, {"url": None}]
+    assert BatchContext(rows_to_batch(rows)).url.to_pylist() == \
+        ["https://osf.io/w5cq6/", ""]
 
 
 def test_every_shipped_spec_claims_at_least_one_corpus_row(specs):

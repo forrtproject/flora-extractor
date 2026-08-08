@@ -50,10 +50,11 @@ AUTONOMOUS_LEVELS = ("human", "downstream", "trusted")
 _SPEC_KEYS = frozenset({"id", "description", "match", "domain", "pile",
                         "vocabulary", "precedence", "shadow", "measured"})
 _MATCH_KEYS = frozenset({"doi_prefix", "doi_regex", "title_regex",
-                         "abstract_regex", "text_regex", "fields",
+                         "abstract_regex", "text_regex", "url_regex", "fields",
                          "abstract_missing", "any_of", "all_of", "none_of"})
 _NESTED_KEYS = ("any_of", "all_of", "none_of")
-_REGEX_KEYS = ("doi_regex", "title_regex", "abstract_regex", "text_regex")
+_REGEX_KEYS = ("doi_regex", "title_regex", "abstract_regex", "text_regex",
+               "url_regex")
 _FIELD_KEYS = frozenset({"type", "publication_year", "concept_ids"})
 _MEASURED_KEYS = frozenset({"level", "precision", "n", "sample", "date",
                             "owner", "rationale"})
@@ -68,6 +69,9 @@ class MatchBlock:
     title_regex: Optional[str] = None
     abstract_regex: Optional[str] = None
     text_regex: Optional[str] = None
+    # Over the row's own URL, which the pool carries inside its `open_access` /
+    # `primary_location` JSON rather than as a column (`backends.row_url()`).
+    url_regex: Optional[str] = None
     # Pairs rather than a dict so the frozen dataclass stays hashable.
     fields: tuple[tuple[str, tuple[Any, ...]], ...] = ()
     abstract_missing: Optional[bool] = None
@@ -83,6 +87,7 @@ class MatchBlock:
             title_regex=raw.get("title_regex"),
             abstract_regex=raw.get("abstract_regex"),
             text_regex=raw.get("text_regex"),
+            url_regex=raw.get("url_regex"),
             fields=tuple((k, tuple(v)) for k, v in (raw.get("fields") or {}).items()),
             abstract_missing=raw.get("abstract_missing"),
             any_of=tuple(cls.from_dict(m) for m in (raw.get("any_of") or ())),

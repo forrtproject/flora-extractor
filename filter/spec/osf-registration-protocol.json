@@ -1,6 +1,6 @@
 {
   "id": "osf-registration-protocol",
-  "description": "DISCARD twin of `osf-registration-completed`: an OSF registration whose template line is present and whose template is neither a post-completion form nor an Open-Ended Registration carrying the replication stem. What is left is the preregistration vocabulary — `OSF Preregistration`, `AsPredicted`, `OSF-Standard Pre-Data Collection`, `Replication Recipe (Brandt et al., 2013): Pre-Registration`, `Registered Report Protocol Preregistration`, `EGAP` — every one of them a form filed BEFORE data collection, describing a study that has not happened. The record announces an intention, reports no outcome, and gives Stage 3 nothing to code. The discard is needed rather than merely absent because these records are not silent: a Replication Recipe pre-registration's responses are full of `we will directly replicate Smith (2009)`, so under a whitelist they are admitted by `replication-claim-text` (730) and would buy two voters to be told what the template already said. That is the only reason precedence is 935, above the whole admission band. It sits BELOW `osf-registration-completed` (936) on purpose: the two match blocks are hand-synced complements — the format gives a spec no way to reference another — so if they ever drift the row is kept and screened rather than deleted, the cheaper of the two errors, and `tests/test_osf_registrations.py` asserts the partition. It sits below the definitional discards (940-960): those say the record is not a paper at all, this one says the record is a registration whose own template says no study has been completed. It fires on nothing until a backfill has run — the first line it matches exists only in overlay text this project wrote. Evidence, the 2026-08-04 refused promotion and the 2026-08-05 re-adjudication that promoted it: `filter/spec/rule_ideas.md` §2b and `analysis/osf_registrations/REPORT.md`. DOMAIN: The registrant this rule speaks for. Its match reads a line that exists only in overlay text this project wrote, so a registration the backfill gave no text is outside what the rule can reach while staying inside what it claims to govern; the route report counts that gap (see CONVENTIONS.md, \"domain\").",
+  "description": "DISCARD twin of `osf-registration-completed`: an OSF registration whose template line is present and whose template is neither a post-completion form nor an Open-Ended Registration carrying the replication stem. What is left is the preregistration vocabulary — `OSF Preregistration`, `AsPredicted`, `OSF-Standard Pre-Data Collection`, `Replication Recipe (Brandt et al., 2013): Pre-Registration`, `Registered Report Protocol Preregistration`, `EGAP` — every one of them a form filed BEFORE data collection, describing a study that has not happened. The record announces an intention, reports no outcome, and gives Stage 3 nothing to code. The discard is needed rather than merely absent because these records are not silent: a Replication Recipe pre-registration's responses are full of `we will directly replicate Smith (2009)`, so under a whitelist they are admitted by `replication-claim-text` (730) and would buy two voters to be told what the template already said. That is the only reason precedence is 935, above the whole admission band. It sits BELOW `osf-registration-completed` (936) on purpose: the two match blocks are hand-synced complements — the format gives a spec no way to reference another — so if they ever drift the row is kept and screened rather than deleted, the cheaper of the two errors, and `tests/test_osf_registrations.py` asserts the partition. It sits below the definitional discards (940-960): those say the record is not a paper at all, this one says the record is a registration whose own template says no study has been completed. It fires on nothing until a backfill has run — the first line it matches exists only in overlay text this project wrote. Evidence, the 2026-08-04 refused promotion and the 2026-08-05 re-adjudication that promoted it: `filter/spec/rule_ideas.md` §2b and `analysis/osf_registrations/REPORT.md`. DOMAIN: The OSF records this rule speaks for, by either identifier the pool gives them — a DOI on the OSF registrant, or, for a row with no DOI at all, an osf.io URL, which is the same population `osf_identifier()` accepts and the same GUID pattern `osf_registration_guid()` reads. The URL arm is not decoration: 202 of the 367 OSF records in the 2026-08-08 export have no DOI, and a DOI-only domain reported 1,954 matched across the backfill that took the rule from 1,954 to 2,103 matches (releases 78607c53327d → ce0ba03ce326), because every newly matched work sat outside the declared population. Its match reads a line that exists only in overlay text this project wrote, so a registration the backfill gave no text is outside what the rule can reach while staying inside what it claims to govern; the route report counts that gap (see CONVENTIONS.md, \"domain\").",
   "match": {
     "abstract_missing": false,
     "abstract_regex": "^OSF registration template: ",
@@ -25,8 +25,22 @@
     ]
   },
   "domain": {
-    "doi_prefix": [
-      "10.17605"
+    "any_of": [
+      {
+        "doi_prefix": [
+          "10.17605"
+        ]
+      },
+      {
+        "all_of": [
+          {
+            "doi_regex": "^$"
+          },
+          {
+            "url_regex": "osf\\.io/(?:v2/(?:nodes|registrations)/)?[a-z0-9]{5,}"
+          }
+        ]
+      }
     ]
   },
   "pile": "discard",
