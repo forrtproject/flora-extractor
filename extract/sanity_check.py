@@ -24,6 +24,11 @@ data/extracted-test-set-aside/. Buckets:
     screen_disagreement→ screen_disagreement.csv   the two Q1 classifiers disagreed
     non_article        → not_a_replication.csv     doi_r is a figshare data record
                                                    or a peer-review object (DOI pattern)
+    unidentified_original    → unidentified_original.csv    link_method ==
+                                                   unidentified_original: the paper
+                                                   names an original nothing could
+                                                   identify — usually a GROBID
+                                                   reference line the OCR mangled
     author_year_provisional  → provisional_author_year.csv   link_method ==
                                                    llm_author_year_search: the target
                                                    was named as a bare citation and
@@ -146,6 +151,8 @@ def classify_row(row: Mapping) -> Optional[str]:
         return "title_search_provisional"
     if method == "llm_author_year_search":
         return "author_year_provisional"
+    if method == "unidentified_original":
+        return "unidentified_original"
     if method == "target_pending":
         return "target_pending"
     if method == "prescreen_discard":
@@ -168,7 +175,7 @@ def classify_row(row: Mapping) -> Optional[str]:
 _BUCKET_FILES = tuple(
     (name, SET_ASIDE_DESTINATIONS[name]) for name in (
         "screen_disagreement", "non_article", "title_search_provisional",
-        "author_year_provisional",
+        "author_year_provisional", "unidentified_original",
         "target_pending", "prescreen_discard", "not_a_replication", "api_error",
         "no_original_found", "self_link", "doi_mismatch"))
 

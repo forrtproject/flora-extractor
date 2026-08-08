@@ -1208,19 +1208,32 @@ class TestGuardOriginalLink:
         None,                              # nothing came back at all
         {"doi": "", "openalex_id": ""},    # a hit with no identifier on it
     ])
-    def test_genuinely_empty_doi_with_real_title_is_kept(self, openalex_hit):
-        """No DOI anywhere, but a substantive distinct title -> keep the row and
-        mark it explicitly rather than dropping a valid original. With no identifier
-        to key on, pair_id must stay exactly as it was."""
+    def test_genuinely_empty_doi_with_real_title_is_kept_but_not_resolved(
+            self, openalex_hit):
+        """No DOI and no work id anywhere: KEEP the link — plenty of genuine originals
+        have no registered DOI — but stop calling it resolved. `resolved` asserts an
+        identified original and its rows are the ones the validation import takes, and
+        a pair cannot be keyed on a title. pair_id must stay exactly as it was."""
         with patch("extract.run_extract._search_crossref_by_title", return_value=None), \
              patch("extract.run_extract._search_openalex_by_title",
                    return_value=openalex_hit):
             out = run_extract._guard_original_link(self._row(doi_o=""))
-        assert out["link_method"] == "llm_fulltext"
+        assert out["link_method"] == "unidentified_original", \
+            "an original with no identity at all still claimed to be resolved"
         assert out["doi_o"] == ""
         assert out["doi_o_verification"] == "no_doi"
         assert out.get("oa_work_id_o", "") == ""
         assert out["pair_id"] == "p"
+
+    def test_a_work_id_is_identity_enough_to_stay_resolved(self):
+        """An original that came from an OpenAlex record has a work id whether or not
+        it has a DOI, and that id is an identity the row can be keyed and audited on."""
+        with patch("extract.run_extract._search_crossref_by_title", return_value=None), \
+             patch("extract.run_extract._search_openalex_by_title",
+                   return_value={"doi": "", "openalex_id": "W77"}):
+            out = run_extract._guard_original_link(self._row(doi_o=""))
+        assert out["link_method"] == "llm_fulltext"
+        assert out["oa_work_id_o"] == "W77"
 
     def test_no_doi_and_no_usable_title_is_pending(self):
         with patch("extract.run_extract._search_crossref_by_title", return_value=None), \
@@ -3366,3 +3379,104 @@ class TestEveryAuthorTheCitationNamedIsUsed:
 
     def test_a_non_ascii_surname_survives(self):
         assert self._names("Usta & Häubl (2011), Study 3") == ["usta", "häubl"]
+
+
+class TestTheRecordsOwnWorkIdReachesTheRow:
+    """An original that came from an OpenAlex reference record carries an OpenAlex id
+    whether or not it carries a DOI, and that id IS its identity. It was used to build
+    the pair_id and then dropped, so the row arrived at the guard carrying nothing and
+    spent a title search re-finding what it had been handed. `_fill_work_ids` only ever
+    derives this column from doi_o, so for a DOI-less original nothing else filled it."""
+
+    _ROW = pd.Series({"doi_r": "10.1/rep", "title_r": "A replication",
+                      "abstract_r": "a", "filter_status": "replication"})
+
+    def test_a_doi_less_original_keeps_its_openalex_id(self):
+        entry = {"rank": 1, "doi": "", "title": "The original, unregistered",
+                 "year": 1991, "first_author": "Short", "openalex_id": "W1234",
+                 "study_number": "", "study_r": "", "evidence": "q",
+                 "confidence": "low", "provisional": False, "outcome_block": {}}
+        row = run_extract._merge_multi_row(self._ROW, entry, {}, "single_original",
+                                           "low", 1, "m", link_method="llm_fulltext",
+                                           classify_model="", screen=None)
+        assert row["oa_work_id_o"] == "W1234"
+
+    def test_an_original_with_a_doi_still_keeps_the_id(self):
+        entry = {"rank": 1, "doi": "10.9/orig", "title": "The original", "year": 2001,
+                 "first_author": "Smith", "openalex_id": "https://openalex.org/W9",
+                 "study_number": "", "study_r": "", "evidence": "q",
+                 "confidence": "high", "provisional": False, "outcome_block": {}}
+        row = run_extract._merge_multi_row(self._ROW, entry, {}, "single_original",
+                                           "high", 1, "m", link_method="llm_fulltext",
+                                           classify_model="", screen=None)
+        assert row["oa_work_id_o"] == "W9", "the bare id, not the OpenAlex URL"
+
+
+class TestWhatThePaperCitesIsLookedUpBeforeTheWorkIsClosed:
+    """`no_original_found` claims the paper re-tests nothing identifiable, and it
+    CLOSES the work. Before making that claim on a paper whose own text cites somebody,
+    the citation is looked up and the model is ASKED about it — not vetoed, which would
+    hold open every paper that says "we replicate X because Smith (2010) argued
+    replications matter". Holdout 3, work 6925248538: closed `no_original_found` with
+    "the study by Sela et al. investigating the effect of assortment size on option
+    choice" in its own abstract, having named no target at all."""
+
+    _HIT = {"doi": "10.1/sela", "title": "Variety, vice, and virtue", "year": 2009,
+            "first_author": "Sela", "openalex_id": "", "source": "crossref",
+            "flags": []}
+
+    @staticmethod
+    def _run(title_r, abstract_r, hits=(), pick=None, author_year=None):
+        row = pd.Series({"doi_r": "10.1/rep", "title_r": title_r,
+                         "abstract_r": abstract_r, "filter_status": "replication"})
+        link = dict(_MOCK_LINK, resolved=False, resolution_method="llm_no_target",
+                    resolved_doi_o="", resolved_title_o="", targets=[], n_targets=0,
+                    multi_target=False, target_stage="llm_openai", llm_evidence="")
+        no_pick = {"pick": None, "confident": False, "reasoning": "an aside",
+                   "llm_model": "gpt-5.4-mini", "llm_error": ""}
+        with patch.object(run_extract, "run_for_doi", return_value=link), \
+             patch.object(run_extract, "_has_document", return_value=False), \
+             patch("extract.link_original.title_search_candidates",
+                   return_value=(list(hits), False)), \
+             patch("shared.openalex_client.author_year_candidates",
+                   return_value=author_year or ([], 0, False)), \
+             patch("shared.llm_client.pick_author_year_original",
+                   return_value=pick or no_pick), \
+             patch.object(run_extract, "extract_outcome", return_value=_MOCK_OUTCOME):
+            return run_extract._resolve_and_code("10.1/rep", row, screen=None,
+                                                 no_llm=False, no_pdf=True,
+                                                 resolved_only=False)
+
+    _ABSTRACT = ("As part of the attempt to replicate the study by Sela et al. (2009) "
+                 "investigating the effect of assortment size on option choice")
+
+    def test_a_cited_work_the_model_accepts_becomes_the_link(self):
+        """"Sela et al. (2009)" carries no title, so it takes the author-and-year
+        route — the one that can answer a bare citation."""
+        found = {**self._HIT, "source": "openalex_authoryear", "authors": ["Sela, A."],
+                 "journal": "JCR", "cited_by": 40}
+        rows = self._run("Pre-test of product perception", self._ABSTRACT,
+                         author_year=([found], 1, False),
+                         pick={"pick": found, "confident": True,
+                               "reasoning": "same effect", "llm_model": "m",
+                               "llm_error": ""})
+        assert rows[0]["doi_o"] == "10.1/sela"
+        assert rows[0]["link_method"] == "llm_author_year_search"
+
+    def test_a_cited_work_the_model_declines_leaves_the_verdict_standing(self):
+        """An aside, not a target. The work still closes — but the row now records
+        that the question was asked, not only that the model said nothing."""
+        rows = self._run("A replication study", self._ABSTRACT,
+                         author_year=([self._HIT], 1, False))
+        assert rows[0]["link_method"] == "no_original_found"
+        assert "Sela et al. (2009)" in rows[0]["link_evidence"]
+        assert "not accepted" in rows[0]["link_evidence"]
+
+    def test_a_paper_that_cites_nobody_is_not_looked_up_at_all(self):
+        called: list = []
+        with patch("shared.openalex_client.author_year_candidates",
+                   side_effect=lambda *a, **k: called.append(a) or ([], 0, False)):
+            rows = self._run("A replication study in Senegal",
+                             "This study replicates a previous nutrition intervention.")
+        assert rows[0]["link_method"] == "no_original_found"
+        assert not called

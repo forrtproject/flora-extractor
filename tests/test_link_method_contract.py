@@ -23,7 +23,8 @@ from shared.schema import (EXTRACTED_COLS, LINK_METHOD_VALUES, RESOLVED_LINK_MET
 # Unresolved methods sanity_check moves to a set-aside CSV — all of them. extracted.csv
 # is validation-ready rows and nothing else, so no unresolved method survives the pass.
 _QUARANTINED = {"screen_disagreement", "llm_title_search",
-                "llm_author_year_search", "target_pending",
+                "llm_author_year_search", "unidentified_original",
+                "target_pending",
                 "not_a_replication", "prescreen_discard", "no_original_found",
                 "api_error"}
 

@@ -274,6 +274,15 @@ LINK_METHOD_VALUES = RESOLVED_LINK_METHODS | {
     # output in one year — but it has no measured precision yet, so it gets the same
     # quarantine and is kept apart from llm_title_search so each can be measured.
     "llm_author_year_search",
+    # RETAINED, and flagged for review. The ladder named an original from the paper's
+    # own text and nothing could identify it: no DOI on the record, none recoverable,
+    # and no OpenAlex id. In practice this is a reference GROBID parsed out of a PDF
+    # whose title the OCR mangled, so no title-similarity search can match it. The link
+    # is kept — the paper really does name that original, and a human can read it — but
+    # it is not `resolved`: a validation pair cannot be keyed on a title, and the one
+    # such row that reached a holdout was the paper matched to a garbled copy of its
+    # OWN title. Quarantined to unidentified_original.csv.
+    "unidentified_original",
     # Legacy rows written before the granular split, remapped by
     # tools/migrate_link_methods.py — they cannot be disaggregated retroactively.
     "author_year_match_legacy",
@@ -307,6 +316,7 @@ SET_ASIDE_DESTINATIONS = {
     "non_article_type": "not_a_replication.csv",
     "title_search_provisional": "provisional_title_search.csv",
     "author_year_provisional": "provisional_author_year.csv",
+    "unidentified_original": "unidentified_original.csv",
     "target_pending": "target_pending.csv",
     "prescreen_discard": "prescreen_discard.csv",
     "not_a_replication": "not_a_replication.csv",

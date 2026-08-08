@@ -63,6 +63,7 @@ from shared.schema import (
     LINK_METHOD_VALUES,
     OUTCOME_CATEGORIES,
     RESOLVED_LINK_METHODS,
+    RESOLVED_LINK_METHODS,
     VERIFICATION_SKIP_LINK_METHODS,
     assert_no_float_years,
     make_pair_id,
@@ -519,6 +520,14 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
                                         str(orig.get("openalex_id", "") or ""),
                                         title_o),
         "doi_o":           doi_o_clean,
+        # The record's OWN work id, kept rather than used for the pair_id and thrown
+        # away. An original that came from an OpenAlex reference record has an
+        # OpenAlex id whether or not it has a DOI, and that id was its identity; the
+        # row then reached `_guard_original_link` carrying nothing, which spent a
+        # title search re-finding what it had been handed. `_fill_work_ids` only ever
+        # derives this column FROM doi_o, so for a DOI-less original nothing else
+        # would have filled it.
+        "oa_work_id_o":    bare_work_id(str(orig.get("openalex_id", "") or "")),
         "title_o":         title_o,
         "year_o":          year_str(orig.get("year")),
         **dict(zip(("ref_o", "authors_o", "bibtex_ref_o"), _build_ref_o(
@@ -1170,6 +1179,25 @@ def _target_entry(target: dict, doi_r: str, context: dict) -> "dict | None":
         if hit:
             doi = clean_doi(str(hit.get("doi", "") or ""))
             provisional = bool(doi)
+    if not doi and not record.get("openalex_id"):
+        # Still nothing, and the record has no id of its own. This is a reference
+        # GROBID parsed out of the PDF, and its title is routinely mangled — "Report of
+        # an jnternship c:gndyctp1 lithe MemQrial Unjvmj'Y". `resolve_doi_by_metadata`
+        # scores its candidates by TITLE SIMILARITY, so on a mangled title it cannot
+        # succeed however well the paper is indexed. The author and the year survive
+        # OCR better than the title does, so the pooled search gets a turn: it asks
+        # CrossRef for that author in that year and lets the model judge the subject.
+        named = " ".join(str(x) for x in (record.get("first_author"),
+                                          f"({record.get('year')})" if record.get("year")
+                                          else "", title) if x).strip()
+        recovered = _title_searched_entry({**target, "target_as_named": named,
+                                           "record": None}, doi_r, context)
+        if recovered and recovered.get("doi"):
+            return {**recovered,
+                    "study_number": _clean_study_numbers(target.get("study_numbers", "")),
+                    "study_r": _clean_study_numbers(
+                        target.get("replication_study_numbers", "")),
+                    "outcome_block": target.get("outcome_block") or {}}
 
     return {
         "rank":         0,     # renumbered over the written rows, after every drop
@@ -1391,6 +1419,29 @@ def _guard_original_link(row: dict) -> dict:
             # re-key the existing DOI-less rows the validation DB holds under
             # md5("doi_r|") — a duplicate import. Only multi-original needs it.
             row["oa_work_id_o"] = work_id_o
+        elif str(row.get("link_method", "")) in RESOLVED_LINK_METHODS:
+            # No DOI, no OpenAlex id: the original has no identity anything downstream
+            # can use. `resolved` asserts an IDENTIFIED original and its rows are the
+            # ones the validation import takes — and a pair cannot be keyed on a title.
+            # So the row keeps its link and stops claiming to be resolved.
+            #
+            # This is not a similarity test, deliberately. Measured over 277 correct
+            # links on 2026-08-08, title Jaccard between an original and its
+            # replication reaches 0.73 ("Rurality in England and Wales 1981" against
+            # "…1991: A Replication and Extension"), while the two real self-links in
+            # the samples scored 0.50 and 0.17 — one of them because OCR had mangled
+            # the title it copied. Similarity does not separate the two classes at any
+            # threshold. Identifiability does: the self-link that got through was a
+            # full-text rung matching an OCR-garbled copy of the paper's own title,
+            # with no DOI and no work id behind it.
+            log.info("[%s] named original has neither a DOI nor a work id — kept, "
+                     "flagged unidentified_original", doi_r)
+            row["link_method"] = "unidentified_original"
+            row["link_confidence"] = "low"
+            note = ("the named original has no DOI and no OpenAlex id: kept for review "
+                    "as an unidentified original rather than written resolved")
+            prior = str(row.get("link_evidence", "") or "")
+            row["link_evidence"] = f"{prior} | {note}" if prior else note
         return row
 
     return row
@@ -1566,7 +1617,9 @@ def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | Non
     # subject matter rather than match its title.
     context  = {"title_r": str(row.get("title_r", "") or ""),
                 "abstract_r": str(row.get("abstract_r", "") or "")}
-    resolved = [(t, _target_entry(t, doi_r, context)) for t in targets]
+    recovered = link.get("_recovered_entry")
+    resolved = ([(targets[0], recovered)] if recovered and len(targets) == 1
+                else [(t, _target_entry(t, doi_r, context)) for t in targets])
     entries  = [e for _, e in resolved if e]
     # A target the title search recovered is no longer missing: it has a row, so
     # reporting it as unidentified would contradict the row written next to it.
@@ -1765,6 +1818,52 @@ def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
             "link_evidence": f"{prior} | {note}" if prior else note,
         })
         return [] if resolved_only else [pending]
+
+    # `no_original_found` claims the paper re-tests nothing identifiable, and it CLOSES
+    # the work. Before making that claim on a paper whose own text cites somebody, the
+    # citation is looked up and the model is asked about it. Not vetoed — a veto would
+    # hold open every paper that says "we replicate X because Smith (2010) argued
+    # replications matter", where Smith is an aside and not the target. Retrieved and
+    # CHECKED: if the model recognises the cited work as the original, the paper has a
+    # link; if it declines, `no_original_found` stands and is now supported by an
+    # answer rather than by one reader's silence.
+    #
+    # Holdout 3, work 6925248538: closed `no_original_found` with "the study by Sela et
+    # al. investigating the effect of assortment size on option choice" in its own
+    # abstract, having named no target at all.
+    if (not link.get("targets")
+            and _map_method(str(link.get("resolution_method", "") or ""))
+                == "no_original_found"):
+        from shared.openalex_client import extract_author_year_patterns
+        cited = extract_author_year_patterns(
+            f"{row.get('title_r', '')}\n{row.get('abstract_r', '')}")
+        if cited:
+            context = {"title_r": str(row.get("title_r", "") or ""),
+                       "abstract_r": str(row.get("abstract_r", "") or "")}
+            probe = {"key": None, "match_certain": True, "record": None,
+                     "study_numbers": "", "replication_study_numbers": "",
+                     "target_as_named": cited[0]["raw"],
+                     "evidence_quote": str(link.get("llm_evidence", "") or "")}
+            entry = _title_searched_entry(probe, doi_r, context)
+            attempt = probe.get("_search_attempt") or {}
+            if entry and entry.get("doi"):
+                log.info("[%s] the target prompt named nothing; %s was looked up and "
+                         "the model accepted it", doi_r, cited[0]["raw"])
+                link = {**link, "resolved": False, "targets": [{**probe, "record": None}],
+                        "n_targets": 1, "multi_target": False,
+                        "_recovered_entry": entry}
+                rows = _per_target_rows(row, doi_r, link, screen, no_llm, no_pdf,
+                                        resolved_only)
+                if rows:
+                    return rows
+            else:
+                # Asked and answered: the model was shown what the paper cites and did
+                # not recognise it as the original. The verdict stands, and the row now
+                # records the question rather than only the silence.
+                link = {**link, "llm_evidence": " | ".join(filter(None, [
+                    str(link.get("llm_evidence", "") or ""),
+                    f"named no target; the paper cites {cited[0]['raw']}, looked up and "
+                    f"not accepted ({attempt.get('outcome', 'no answer')})"]))}
 
     # original_match_confidence is an observation about the answer, not a prediction
     # made before it, and it is settled AFTER the guard by the same `_match_confidence`

@@ -460,7 +460,11 @@ OUTCOME_DESCENT = True
 #      citation named; otherwise its hits lead a pool OpenAlex also fills (2026-08-08)
 #  15  a title hit is accepted on containment as well as Jaccard, because the query is
 #      usually a fragment and a model now adjudicates the pool (2026-08-08)
-EXTRACT_LADDER_VERSION: int = 15
+#  16  the record's own OpenAlex id reaches the row; a DOI-less record is searched by
+#      author and year rather than by title similarity; an original nothing can
+#      identify is kept and flagged rather than written resolved; and what the paper
+#      cites is looked up before no_original_found closes it (2026-08-08)
+EXTRACT_LADDER_VERSION: int = 16
 
 
 # Columns to pass through from the input row (no renaming). Only columns
