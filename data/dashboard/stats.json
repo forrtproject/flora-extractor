@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-08-08T12:54:17",
+  "updated_at": "2026-08-08T17:31:45",
   "filtered": {
     "total": 2582749,
     "by_filter_status": {
@@ -155,11 +155,11 @@
     "rep_repro_no_abstract": 3408
   },
   "extracted": {
-    "total": 154,
+    "total": 954,
     "target_pending_count": 0,
     "by_match_type": {
-      "single_original": 135,
-      "multiple_original": 19
+      "single_original": 905,
+      "multiple_original": 49
     },
     "by_link_method": {
       "citation_context_match": 1,
@@ -169,81 +169,93 @@
       "grobid_ref_match": 0,
       "author_year_match_legacy": 0,
       "author_year_match": 0,
-      "llm_cited_candidates": 84,
+      "llm_cited_candidates": 86,
       "llm_fulltext": 6,
       "no_original_found": 0,
       "target_pending": 0,
       "api_error": 0,
-      "_other": 63
+      "_other": 861
     },
     "by_model": {
-      "gpt": 135,
-      "gemini": 18,
-      "none": 1
+      "gpt": 924,
+      "gemini": 24,
+      "none": 6
     },
     "by_outcome": {
-      "success": 55,
-      "failure": 54,
-      "mixed": 26,
-      "descriptive": 4,
-      "statistically_successful_but_flawed": 0,
+      "success": 190,
+      "failure": 143,
+      "mixed": 88,
+      "descriptive": 5,
+      "statistically_successful_but_flawed": 1,
       "uninformative": 1,
-      "cannot_be_determined": 8,
+      "cannot_be_determined": 510,
       "not_a_replication": 0,
       "pending": 0,
       "api_error": 0,
-      "_other": 6
+      "_other": 16
     },
     "by_doi_verification": {
-      "verified": 153,
-      "corrected": 1
+      "verified": 951,
+      "corrected": 3
     },
     "by_type": {
-      "replication": 147,
-      "reproduction": 7
+      "replication": 934,
+      "reproduction": 20
     },
     "by_outcome_replication": {
-      "success": 55,
-      "failure": 54,
-      "mixed": 26,
-      "cannot_be_determined": 7,
-      "descriptive": 4,
-      "uninformative": 1
+      "cannot_be_determined": 506,
+      "success": 190,
+      "failure": 143,
+      "mixed": 88,
+      "descriptive": 5,
+      "uninformative": 1,
+      "statistically_successful_but_flawed": 1
     },
     "by_outcome_reproduction": {
-      "not checked, robustness challenges": 2,
-      "computational issues, robustness challenges": 2,
-      "not checked, robust": 1,
-      "computationally reproducible, not checked": 1,
-      "cannot_be_determined": 1
+      "cannot_be_determined": 4,
+      "computationally reproducible, robustness challenges": 4,
+      "not checked, robust": 3,
+      "computational issues, robustness challenges": 3,
+      "computationally reproducible, not checked": 2,
+      "computationally reproducible, robust": 2,
+      "not checked, robustness challenges": 1,
+      "computational issues, robust": 1
     },
     "by_year": {
-      "2023": 21,
-      "2020": 15,
-      "2021": 15,
-      "2018": 14,
-      "2022": 13,
-      "2024": 12,
-      "2025": 12,
-      "2017": 9,
-      "2019": 8,
-      "2026": 6,
+      "2020": 124,
+      "2025": 119,
+      "2024": 102,
+      "2021": 98,
+      "2023": 96,
+      "2022": 94,
+      "2018": 80,
+      "2026": 57,
+      "2019": 45,
+      "2017": 42,
+      "2016": 24,
+      "2014": 13,
+      "2015": 10,
+      "2013": 7,
       "2004": 3,
-      "2015": 3,
       "2001": 3,
       "2003": 3,
-      "2016": 3,
+      "2010": 3,
       "2009": 2,
       "2011": 2,
-      "2013": 2,
+      "1988": 2,
+      "1999": 2,
+      "2002": 1,
+      "2007": 1,
+      "1998": 1,
       "1986": 1,
       "1979": 1,
-      "2010": 1,
       "1995": 1,
       "2008": 1,
-      "1999": 1,
+      "1997": 1,
       "2006": 1,
-      "2000": 1
+      "2012": 1,
+      "2000": 1,
+      "1972": 1
     }
   },
   "extracted_test": {
