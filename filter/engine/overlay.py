@@ -33,7 +33,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from filter.engine.workids import resolve, work_id
-from search.fetch_abstracts import OSF_REGISTRANT
+from search.fetch_abstracts import osf_identifier
 
 OVERLAY_SCHEMA = pa.schema([
     ("work_id", pa.int64()),
@@ -47,6 +47,10 @@ WORKLIST_SCHEMA = pa.schema([
     ("doi", pa.string()),
     ("title", pa.string()),
     ("year", pa.int32()),
+    # The row's own URL, derived exactly as `snapshot_scan._row_from_snapshot`
+    # derives `url_r`. It is here for the OSF phase: a third of the OSF records
+    # in the pool have no DOI and are identified by an osf.io URL alone.
+    ("url", pa.string()),
 ])
 
 CHUNK_GLOB = "overlay-*.parquet"
@@ -65,6 +69,27 @@ class OverlayError(RuntimeError):
 # ---------------------------------------------------------------------------
 
 
+def _row_url(record: dict) -> str:
+    """A pool record's own URL — the same field Stage 3 knows as `url_r`.
+
+    The pool ships `open_access` and `primary_location` as JSON strings, so the
+    URL is derivable but not a column; this is `snapshot_scan._row_from_snapshot`'s
+    `oa_url or landing_page_url`, over the pool's storage form.
+    """
+    for column, field in (("open_access", "oa_url"),
+                          ("primary_location", "landing_page_url")):
+        raw = record.get(column)
+        if not raw:
+            continue
+        try:
+            value = (json.loads(raw) or {}).get(field)
+        except (TypeError, ValueError):
+            continue
+        if value:
+            return str(value)
+    return ""
+
+
 def worklist(con, release_id: str, pool_dir: Path, out_path: Path,
              aliases: Optional[dict[int, int]] = None) -> int:
     """Write the backfill worklist for *release_id* to *out_path*; return its rows.
@@ -74,7 +99,9 @@ def worklist(con, release_id: str, pool_dir: Path, out_path: Path,
     rather than in `store.py`: the store knows routing, the pool knows metadata,
     and the overlay is the only thing that needs both.
 
-    PLUS every ADMITTED OSF-registrant row in the release, text or no text. The OSF phase
+    PLUS every ADMITTED row in the release that identifies an OSF record, text or
+    no text — a DOI on the OSF registrant, or (for a row with no DOI at all) an
+    osf.io URL, which is what `osf_identifier()` decides. The OSF phase
     does not fetch an abstract — it fetches the registration TEMPLATE line that
     the two `osf-registration-*` specs match on, and no abstract substitutes for
     it (`backfill._osf_targets` says so, and skips `done` rather than `found` for
@@ -86,6 +113,10 @@ def worklist(con, release_id: str, pool_dir: Path, out_path: Path,
     screen and the whole Stage 3 ladder to end at `cannot_be_determined`.
     Measured 2026-08-08 on release bc38ddd787e0: 0 of its 1,325 admitted works
     were in the overlay, and 225 of them settled with no codeable outcome.
+
+    The URL-identified half was invisible for a second reason: the predicate read
+    the DOI, and 202 of the 367 OSF records in the 2026-08-08 export have no DOI
+    at all. The pool carries their URL inside `open_access` / `primary_location`.
     """
     pending = {row[0] for row in con.execute(
         "SELECT work_id FROM routing WHERE release_id = ? AND pending_reason = ?",
@@ -105,15 +136,19 @@ def worklist(con, release_id: str, pool_dir: Path, out_path: Path,
     for path in sorted(Path(pool_dir).glob("*.parquet")):
         for batch in pq.ParquetFile(path).iter_batches(
                 batch_size=50_000,
-                columns=["id", "doi", "title", "display_name", "publication_year"]):
+                columns=["id", "doi", "title", "display_name", "publication_year",
+                         "open_access", "primary_location"]):
             for record in batch.to_pylist():
                 resolved = resolve(work_id(record["id"]), aliases or {})
-                # The pool stores a DOI as a doi.org URL, so the registrant is
-                # matched inside the string rather than as its first segment.
+                if resolved in seen:
+                    continue
+                url = _row_url(record)
+                # `osf_identifier` also decides what the backfill will ask about,
+                # so the worklist cannot select a row the phase then skips.
                 wanted = resolved in pending or (
                     resolved in admitted
-                    and f"/{OSF_REGISTRANT}/" in str(record.get("doi") or ""))
-                if not wanted or resolved in seen:
+                    and osf_identifier(record.get("doi") or "", url) is not None)
+                if not wanted:
                     continue
                 seen.add(resolved)
                 rows.append({
@@ -121,6 +156,7 @@ def worklist(con, release_id: str, pool_dir: Path, out_path: Path,
                     "doi": record.get("doi") or "",
                     "title": record.get("display_name") or record.get("title") or "",
                     "year": record.get("publication_year"),
+                    "url": url,
                 })
 
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)

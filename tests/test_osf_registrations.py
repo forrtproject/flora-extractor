@@ -90,13 +90,60 @@ def test_a_project_doi_is_a_definitive_miss_not_a_transient_one(monkeypatch):
     assert fa._fetch_osf_registration("10.17605/OSF.IO/AB12D") == (None, "empty")
 
 
-def test_only_osf_registrant_dois_are_targeted():
-    """The endpoint answers about OSF GUIDs and nothing else, so every other DOI
-    would be a call whose answer is known before it is made."""
-    rows = [{"work_id": 1, "oa": "https://openalex.org/W1", "doi_r": "10.17605/osf.io/ab12d"},
-            {"work_id": 2, "oa": "https://openalex.org/W2", "doi_r": "10.1016/j.jesp.2020.1"},
-            {"work_id": 3, "oa": "https://openalex.org/W3", "doi_r": ""}]
-    assert backfill._osf_targets(rows, set()) == ["10.17605/osf.io/ab12d"]
+def _wl_row(work: int, doi: str = "", url: str = "") -> dict:
+    return {"work_id": work, "oa": f"https://openalex.org/W{work}",
+            "doi_r": doi, "url_r": url}
+
+
+def test_a_registration_is_targeted_by_its_doi_or_by_its_url_and_nothing_else():
+    """The endpoint answers about OSF GUIDs and nothing else, so every other row
+    would be a call whose answer is known before it is made. A DOI-less row IS
+    one of those GUIDs: 202 of the 367 OSF records in the 2026-08-08 export are
+    identified by a URL alone, and until they were targeted their template line
+    could not exist, so neither `osf-registration-*` spec could act on them.
+
+    The last row is why the URL only counts when there is no DOI: a published
+    article's OA link is sometimes an OSF copy (`10.1037/xhp0000556` →
+    `https://osf.io/ebv4q` in the export). OSF leads SOURCE_ORDER, so asking
+    about it would put a registration template line in front of that article's
+    own abstract and hand it to the protocol discard."""
+    rows = [_wl_row(1, doi="10.17605/osf.io/ab12d"),
+            _wl_row(2, url="http://api.osf.io/v2/nodes/qp4h8/"),
+            _wl_row(3, url="https://osf.io/w5cq6/"),
+            _wl_row(4, doi="10.1016/j.jesp.2020.1"),
+            _wl_row(5),
+            _wl_row(6, doi="10.1037/xhp0000556", url="https://osf.io/ebv4q")]
+    assert backfill._osf_targets(rows, set()) == [
+        "10.17605/osf.io/ab12d", "osf.io/qp4h8", "osf.io/w5cq6"]
+
+
+def test_the_checkpoint_key_is_the_doi_where_there_is_one_and_the_guid_otherwise():
+    """The decision this widening turned on. A registrant DOI keeps the cleaned
+    DOI as its key, so the 878 `osf:10.17605/...` checkpoint entries already on
+    disk still suppress their rows — re-keying them to the GUID would silently
+    re-buy every answered call. A DOI-less row is keyed by the canonical
+    `osf.io/<guid>`: one key whichever URL form the pool holds, and it cannot
+    collide with a DOI key, which always begins `10.17605/`."""
+    # Every URL form the pool holds for one registration is the same key.
+    assert {fa.osf_identifier("", url) for url in
+            ("https://osf.io/qp4h8", "http://api.osf.io/v2/nodes/qp4h8/",
+             "http://api.osf.io/v2/registrations/qp4h8/", "https://osf.io/qp4h8/#!")} \
+        == {"osf.io/qp4h8"}
+    assert fa.osf_identifier("https://doi.org/10.17605/OSF.IO/AB12D") \
+        == "10.17605/osf.io/ab12d"
+
+    rows = [_wl_row(1, doi="10.17605/osf.io/ab12d"),
+            _wl_row(2, url="https://osf.io/qp4h8")]
+    assert backfill._osf_targets(
+        rows, {"osf:10.17605/osf.io/ab12d", "osf:osf.io/qp4h8"}) == []
+
+
+def test_the_fetcher_takes_either_identifier_form():
+    """Whatever `osf_identifier()` produced has to reach the same GUID, or a
+    targeted row is checkpointed as a miss it was never asked about."""
+    assert fa._osf_guid("10.17605/OSF.IO/AB12D") == "ab12d"
+    assert fa._osf_guid("osf.io/ab12d") == "ab12d"
+    assert fa._osf_guid("10.1016/j.jesp.2020.1") is None
 
 
 def test_osf_leads_the_attribution_order_and_ignores_what_others_found():

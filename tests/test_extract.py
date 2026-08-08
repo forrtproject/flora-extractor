@@ -2070,7 +2070,9 @@ class TestParseCacheOnlyAfterTheDocument:
         monkeypatch.setattr(run_extract, "PDF_CACHE_DIR", tmp_path)
         monkeypatch.setattr(run_extract, "OA_XML_CACHE_DIR", tmp_path)
         from shared.utils import cache_key
-        (tmp_path / f"{cache_key('10.1/x')}.pdf").write_bytes(b"%PDF")
+        # Sized like a real one: the cache lookup ignores anything under the byte
+        # floor every writing tier already enforces.
+        (tmp_path / f"{cache_key('10.1/x')}.pdf").write_bytes(b"%PDF" + b"x" * 10_000)
         assert run_extract._has_document("10.1/x", self._link())
 
     def _oa_xml(self, tmp_path, monkeypatch, sections: dict) -> None:

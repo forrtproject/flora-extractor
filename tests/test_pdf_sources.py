@@ -379,3 +379,177 @@ def test_an_xml_success_clears_the_retry_record_too():
             p.stop()
     assert out["pdf_source"] == "openalex_xml"
     assert _retry_log(doi) == {}
+
+
+# ── Word documents ────────────────────────────────────────────────────────────
+# OSF serves whatever the author uploaded: of twelve campaign preprint DOIs probed on
+# 2026-08-08, five answered with a PDF and seven with a Word file. The %PDF test
+# discarded all seven as "no document".
+
+def _docx_bytes(body: str) -> bytes:
+    """A minimal Word file — a ZIP whose word/document.xml holds *body* as paragraphs.
+
+    Built in-test rather than kept as a fixture so the suite carries no binary and no
+    Word library; the real files differ only in how much else is in the ZIP.
+    """
+    import io
+    import zipfile
+    ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    paras = "".join(f'<w:p><w:r><w:t>{line}</w:t></w:r></w:p>'
+                    for line in body.splitlines() if line)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("word/document.xml",
+                   f'<?xml version="1.0"?><w:document xmlns:w="{ns}"><w:body>'
+                   f'{paras}</w:body></w:document>')
+    return buf.getvalue()
+
+
+def _pad(content: bytes) -> bytes:
+    """Past _MIN_PDF_BYTES, which every writing tier enforces on any format."""
+    return content + b"\x00" * max(0, 6_000 - len(content))
+
+
+def test_a_word_download_is_saved_as_a_document():
+    url  = "https://osf.io/download/wordy/"
+    body = "\n".join(f"Paragraph {i} of a replication report." for i in range(60))
+    with patch.object(ps.requests, "get",
+                      return_value=_Resp(200, _pad(_docx_bytes(body)))):
+        out = ps.download_pdf(url, doi="10.31219/osf.io/wordy")
+
+    assert out["success"] is True
+    # Saved under its own suffix: the parsers dispatch on it, and pdfminer cannot
+    # read a file that only looks like a PDF because of where it was written.
+    assert out["path"].suffix == ".docx"
+    assert ps.cached_pdf("10.31219/osf.io/wordy") == out["path"]
+
+
+def test_a_pdf_download_is_unchanged():
+    url = "https://example.org/paper.pdf"
+    with patch.object(ps.requests, "get",
+                      return_value=_Resp(200, b"%PDF-1.4" + b"x" * 10_000)):
+        out = ps.download_pdf(url, doi="10.1/still-a-pdf")
+    assert out["success"] is True
+    assert out["path"].suffix == ".pdf"
+
+
+@pytest.mark.parametrize("content, reason", [
+    pytest.param(_docx_bytes("A Title\nAn Author"), "docx_no_content", id="trivial_docx"),
+    pytest.param(b"PK\x03\x04not-a-word-file", "not_a_pdf", id="some_other_zip"),
+])
+def test_a_word_file_with_no_paper_in_it_is_refused(content, reason):
+    """The content check that separates a document from a record of one applies to a
+    Word file too — and the ZIP magic alone is any ZIP, an epub or a data archive
+    included."""
+    url = f"https://osf.io/download/{reason}/"
+    with patch.object(ps.requests, "get", return_value=_Resp(200, _pad(content))):
+        out = ps.download_pdf(url, doi=f"10.31219/osf.io/{reason}")
+    assert out["success"] is False
+    assert out["reason"] == reason
+    assert ps.cached_pdf(f"10.31219/osf.io/{reason}") is None
+
+
+@pytest.mark.parametrize("doi, expected", [
+    ("10.31234/osf.io/8cqpk",    "https://osf.io/download/8cqpk/"),
+    ("10.31219/osf.io/zr7a5",    "https://osf.io/download/zr7a5/"),
+    # The version suffix stays: the bare guid serves the LATEST version, which for
+    # d3x9p is a different file from the one the DOI names.
+    ("10.31234/osf.io/d3x9p_v1", "https://osf.io/download/d3x9p_v1/"),
+    # The registration registrant — osf.io/download answers HTTP 500 for those, and
+    # Tier 0b reads them through the API instead.
+    ("10.17605/osf.io/tp32p",    None),
+    ("10.1016/j.example.2020.1", None),
+])
+def test_osf_preprint_download_urls(doi, expected):
+    assert ps.get_osf_pdf_url(doi) == expected
+
+
+# ── The row's own URL ─────────────────────────────────────────────────────────
+# Every other tier derives its URL from the DOI through an external index. For a row
+# whose registrant is not in Crossref the whole chain has nothing to say, while the
+# row itself carries a direct link — and that link was never fetched.
+
+def test_the_rows_own_url_is_tried_before_any_index():
+    doi = "10.15456/j1.2025082.1931045150"
+    url = "https://www.econstor.eu/bitstream/10419/318610/1/JCRE-2025-2.pdf"
+    patchers = _mock_all_tiers()
+    started = {name: p.start() for name, p in patchers.items()}
+    try:
+        with patch.object(ps.requests, "get",
+                          return_value=_Resp(200, b"%PDF-1.4" + b"x" * 10_000)):
+            out = ps.acquire_pdf(doi, "A Title", url_r=url)
+    finally:
+        for p in patchers.values():
+            p.stop()
+
+    assert out["pdf_ok"] is True
+    assert out["pdf_url"] == url
+    # Its own name, because it is a distinct acquisition route: not the Unpaywall
+    # landing scrape, and not the HTML tier at the bottom.
+    assert out["pdf_source"] == "row_url"
+    for name, mock in started.items():
+        assert not mock.called, f"{name} was consulted although the row's URL served"
+
+
+def test_a_row_url_that_is_a_web_page_falls_through():
+    """An HTML answer is a tier failure, not a document and not a verdict on the URL:
+    the DOI-keyed tiers still run, and Tier 11 can still argue for the page."""
+    url = "https://repo.example.org/item/1"
+    patchers = _mock_all_tiers()
+    started = {name: p.start() for name, p in patchers.items()}
+    try:
+        with patch.object(ps.requests, "get",
+                          return_value=_Resp(200, b"<html>a record page</html>")), \
+             patch.object(ps, "get_pdf_via_playwright", return_value=_NO_PLAYWRIGHT), \
+             patch.object(ps, "get_html_document", return_value=None) as html:
+            out = ps.acquire_pdf("10.1016/j.example.2020.01.011", "A Title",
+                                 url_r=url)
+    finally:
+        for p in patchers.values():
+            p.stop()
+
+    assert out["pdf_ok"] is False
+    assert out["pdf_source"] == "none"
+    assert started["get_openalex_oa_url"].called
+    html.assert_called_once_with(url)
+
+
+def test_a_row_with_no_doi_still_gets_its_url_tried():
+    """223 of the 568 no-document rows carry a URL and no DOI — the rows with nothing
+    else to go on are exactly the ones this tier is for."""
+    url = "https://osf.io/download/nodoi/"
+    patchers = _mock_all_tiers()
+    started = {name: p.start() for name, p in patchers.items()}
+    try:
+        with patch.object(ps.requests, "get",
+                          return_value=_Resp(200, b"%PDF-1.4" + b"x" * 10_000)):
+            out = ps.acquire_pdf("", "A Title", url_r=url)
+    finally:
+        for p in patchers.values():
+            p.stop()
+    assert (out["pdf_ok"], out["pdf_source"]) == (True, "row_url")
+
+
+def test_a_repository_that_answers_the_browser_identity_with_a_page_is_asked_again():
+    """econstor.eu serves a 4,806-byte interstitial to the spoofed Chrome identity and
+    774 KB of PDF to the named crawler. One identity is not a superset of the other."""
+    url = "https://www.econstor.eu/bitstream/10419/318610/1/JCRE-2025-2.pdf"
+    answers = [_Resp(200, b"<!doctype html><p>checking your browser</p>"),
+               _Resp(200, b"%PDF-1.4" + b"x" * 10_000)]
+    with patch.object(ps.requests, "get", side_effect=answers) as get:
+        out = ps.download_pdf(url, doi="10.15456/j1.2025082.1931045150")
+
+    assert out["success"] is True
+    assert get.call_count == 2
+    first, second = (call.kwargs["headers"]["User-Agent"] for call in get.call_args_list)
+    assert "Chrome" in first
+    assert "FLoRA" in second
+
+
+def test_a_url_with_no_document_under_either_identity_is_asked_no_more():
+    url = "https://repo.example.org/record/1"
+    with patch.object(ps.requests, "get",
+                      return_value=_Resp(200, b"<html>a record page</html>")) as get:
+        out = ps.download_pdf(url, doi="10.1/page-only")
+    assert (out["success"], out["reason"]) == (False, "not_a_pdf")
+    assert get.call_count == 2

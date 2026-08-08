@@ -39,8 +39,10 @@ CHEAP BULK — run first, over every missing-abstract row:
 EXPENSIVE TARGETED — run only over the rows the bulk pathway left without text,
 and only for a worklist that matters:
 
-  3. OSF registrations — rows on the OSF registrant (10.17605) ONLY, one call per
-                        DOI, keyless. Not an abstract source in the ordinary
+  3. OSF registrations — rows that identify an OSF record ONLY (a DOI on the OSF
+                        registrant 10.17605, or — for a row with no DOI at all —
+                        an osf.io URL), one call each, keyless. Not an abstract
+                        source in the ordinary
                         sense: these records HAVE no abstract, they have a
                         registration template and a responses form, and the
                         template is what says whether the record reports a
@@ -107,6 +109,7 @@ from shared.config import (
     OSF_TOKEN, RESEARCHER_EMAIL, S2_BATCH_RATE_SEC, S2_BATCH_SIZE, log,
 )
 from shared.openalex_keys import headers as oa_headers, is_budget_refusal, rotate_key
+from shared.pdf_sources import osf_registration_guid
 from shared.utils import clean_doi, reconstruct_abstract
 
 # ---------------------------------------------------------------------------
@@ -595,7 +598,7 @@ def _fetch_scopus_abstract(doi: str, api_key: str) -> tuple[Optional[str], str]:
 
 
 # ---------------------------------------------------------------------------
-# Source 3: OSF registrations by DOI — targeted pathway (registrant 10.17605 only)
+# Source 3: OSF registrations — targeted pathway (rows that identify an OSF record)
 # ---------------------------------------------------------------------------
 
 # The registrant OSF mints its registration and project DOIs on.
@@ -612,10 +615,45 @@ OSF_TEMPLATE_UNSPECIFIED = "unspecified"
 _OSF_API = "https://api.osf.io/v2/registrations/{guid}/"
 
 
-def _osf_guid(doi: str) -> Optional[str]:
-    """The OSF GUID in *doi* (`10.17605/OSF.IO/AB12D` → `ab12d`), or None."""
-    parts = clean_doi(doi).split("/")
-    return parts[-1].lower() if len(parts) >= 2 and parts[-1] else None
+def _osf_guid(identifier: str) -> Optional[str]:
+    """The OSF GUID in *identifier*, or None.
+
+    Both forms the phase is given reach the same GUID: `10.17605/OSF.IO/AB12D`
+    and `osf.io/ab12d` → `ab12d`. The derivation is imported rather than
+    re-written because Stage 3's PDF waterfall already had to answer this exact
+    question for the same rows (`osf_registration_guid()` in
+    `shared/pdf_sources.py`), and two regexes for one identifier drift.
+    """
+    return osf_registration_guid(identifier) or None
+
+
+def osf_identifier(doi: str, url: str = "") -> Optional[str]:
+    """What the OSF phase asks about for a row, and checkpoints under — or None.
+
+    Two forms, deliberately, because the checkpoint namespace has to stay
+    coherent across a change that widened the phase:
+
+    - A DOI on the OSF registrant keeps the cleaned DOI as its identifier,
+      unchanged. That is what the 878 `osf:10.17605/...` checkpoint entries
+      already on disk are keyed by; re-keying them to the GUID would re-buy
+      every one of those answered calls.
+    - A row with NO DOI and an osf.io URL is keyed `osf.io/<guid>`. It is
+      canonical, so `https://osf.io/ab12d`, `http://api.osf.io/v2/nodes/ab12d/`
+      and `.../v2/registrations/ab12d/` are one call and one key rather than
+      three; and it cannot collide with the DOI form, which always begins
+      `10.17605/`.
+
+    The URL only counts when the row has no DOI. A published article's OA link
+    is sometimes an OSF copy (`10.1037/xhp0000556` → `https://osf.io/ebv4q` in
+    the current export), and because OSF leads `backfill.SOURCE_ORDER`, asking
+    about it would replace that article's abstract with a registration template
+    line — handing a real paper to the `osf-registration-protocol` discard.
+    """
+    doi = clean_doi(str(doi or ""))
+    if doi:
+        return doi if doi.split("/", 1)[0] == OSF_REGISTRANT else None
+    guid = _osf_guid(str(url or ""))
+    return f"osf.io/{guid}" if guid else None
 
 
 def _osf_registration_text(attributes: dict) -> str:
@@ -642,8 +680,12 @@ def _osf_registration_text(attributes: dict) -> str:
     return "\n\n".join(blocks)
 
 
-def _fetch_osf_registration(doi: str) -> tuple[Optional[str], str]:
-    """Fetch an OSF registration's template and responses by DOI.
+def _fetch_osf_registration(identifier: str) -> tuple[Optional[str], str]:
+    """Fetch an OSF registration's template and responses.
+
+    *identifier* is whatever `osf_identifier()` produced for the row — a
+    registrant DOI or a canonical `osf.io/<guid>`; both carry the GUID the
+    endpoint answers about.
 
     Same (abstract, status) contract as the other per-item sources. A 404 is a
     definitive `empty`: the DOI is an OSF project or component rather than a
@@ -663,22 +705,22 @@ def _fetch_osf_registration(doi: str) -> tuple[Optional[str], str]:
     about our access, not about the record: a later token with more scope should
     ask again rather than read a checkpointed miss.
     """
-    guid = _osf_guid(doi)
+    guid = _osf_guid(identifier)
     if not guid:
         return None, "empty"
     headers = {"Authorization": f"Bearer {OSF_TOKEN}"} if OSF_TOKEN else {}
     resp, status = _request_with_retry(
-        f"OSF {doi}",
+        f"OSF {identifier}",
         lambda: _SESSION.get(_OSF_API.format(guid=guid), timeout=30, headers=headers))
     if status == "transient":
         return None, "transient"
     if resp.status_code == 401 or (resp.status_code == 403 and not OSF_TOKEN):
         log.warning("OSF refused the credential for %s (HTTP %d) — stopping the "
-                    "phase; check OSF_TOKEN.", doi, resp.status_code)
+                    "phase; check OSF_TOKEN.", identifier, resp.status_code)
         return None, "stop"
     if resp.status_code == 403:
         log.info("OSF registration %s is private or embargoed to this token — "
-                 "skipped, not checkpointed", doi)
+                 "skipped, not checkpointed", identifier)
         return None, "transient"
     if resp.status_code == 410 or resp.status_code == 404:
         return None, "empty"

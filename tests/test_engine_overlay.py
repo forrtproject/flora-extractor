@@ -131,7 +131,7 @@ def test_a_no_text_row_is_worklisted_and_an_overlay_reroutes_it_under_a_new_rele
     listed = overlay.read_worklist(wl)
     assert listed == [{"work_id": 1, "doi": "10.1234/one",
                        "title": "A direct replication of the Smith effect",
-                       "year": 2021}]
+                       "year": 2021, "url": ""}]
 
     overlay_dir = _overlay(tmp_path / "ov", [_overlay_row(1, _REPLICATION)])
     manifest = freeze(overlay_dir)
@@ -150,6 +150,29 @@ def test_a_no_text_row_is_worklisted_and_an_overlay_reroutes_it_under_a_new_rele
         != routing_release(overlay_hash=manifest["overlay_hash"], **common)
     assert overlay_manifest_hash(overlay_dir) == manifest["overlay_hash"]
     assert overlay_manifest_hash(None) is None
+
+
+def test_an_admitted_osf_row_is_worklisted_by_its_url_when_it_has_no_doi(specs, tmp_path):
+    """The OSF phase's targets are DOI-less for a third of the OSF corpus: 202 of
+    the 367 OSF records in the 2026-08-08 export carry only a URL. The pool has no
+    url COLUMN, so the worklist derives it from `open_access` /
+    `primary_location` — the same two JSON fields Stage 3's `url_r` comes from."""
+    pool_dir = tmp_path / "pool"
+    pool_dir.mkdir()
+    osf = _row(7, doi=None, title="A direct replication of the Smith effect",
+               abstract="We report a direct replication.", year=2023)
+    osf["open_access"] = json.dumps({"oa_url": "https://osf.io/qp4h8"})
+    pq.write_table(pa.Table.from_pylist([osf], schema=_POOL_SCHEMA),
+                   pool_dir / "2023.parquet")
+
+    con = open_store(Path(":memory:"))
+    build_routing(con, pool_dir, specs, "rel-a")
+    assert con.execute("SELECT pile FROM routing WHERE work_id=7").fetchone()[0] \
+        == "screen_cheap"                       # admitted, and it HAS text
+
+    wl = tmp_path / "worklist.parquet"
+    assert worklist(con, "rel-a", pool_dir, wl) == 1
+    assert overlay.read_worklist(wl)[0]["url"] == "https://osf.io/qp4h8"
 
 
 def test_build_routing_reads_the_pool_itself_when_no_batches_are_supplied(pool, specs):
@@ -325,6 +348,34 @@ def test_a_slice_never_writes_a_work_a_previous_slice_already_wrote(
 
     assert result["rows"] == 1
     assert overlay.validate(overlay_dir) == []
+
+
+def test_a_registration_identified_by_url_alone_reaches_the_overlay(
+        isolated_cache, tmp_path, monkeypatch):
+    """The three places a DOI-less OSF row has to agree — the target list, the
+    cache write and the lookup that builds the chunk — all key on
+    `osf_identifier()`. When the lookup did not, the run reported success and
+    wrote nothing, which is the failure this covers."""
+    asked: list = []
+
+    def fetch(identifier):
+        asked.append(identifier)
+        return f"OSF registration template: Open-Ended Registration\n\n{identifier}", "ok"
+
+    monkeypatch.setattr(backfill, "_fetch_osf_registration", fetch)
+    path = tmp_path / "worklist-url.parquet"
+    pq.write_table(pa.Table.from_pylist(
+        [{"work_id": 9, "doi": "", "title": "R", "year": 2023,
+          "url": "http://api.osf.io/v2/registrations/qp4h8/"}],
+        schema=overlay.WORKLIST_SCHEMA), path)
+
+    overlay_dir = tmp_path / "ov"
+    result = backfill.run(path, overlay_dir, sources=("osf",), phase="targeted")
+    assert asked == ["osf.io/qp4h8"]
+    assert result["rows"] == 1 and result["by_source"] == {"osf": 1}
+    written = pq.read_table(overlay.chunk_paths(overlay_dir)[0]).to_pylist()
+    assert written[0]["work_id"] == 9
+    assert written[0]["abstract_text"].startswith("OSF registration template: ")
 
 
 # ---------------------------------------------------------------------------

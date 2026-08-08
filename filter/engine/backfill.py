@@ -69,11 +69,11 @@ from filter.engine.overlay import (
     freeze, iter_worklist, overlay_work_ids, write_chunk,
 )
 from search.fetch_abstracts import (
-    OSF_REGISTRANT, _DATASET_PREFIXES, _already_resolved, _fetch_crossref_abstract,
+    _DATASET_PREFIXES, _already_resolved, _fetch_crossref_abstract,
     _fetch_epmc_batch, _fetch_openalex_batch, _fetch_osf_registration,
     _fetch_s2_batch, _fetch_scopus_abstract, _load_checkpoint,
     _load_found_index, _phase_targets, _read_abstract_cache, _run_batch_phase,
-    _run_item_phase,
+    _run_item_phase, osf_identifier,
 )
 from shared.config import (
     CROSSREF_RATE_SEC, ELSEVIER_API_KEY, EPMC_BATCH_SIZE, EPMC_RATE_SEC,
@@ -159,6 +159,9 @@ def _row_batches(worklist_path: Path, limit: Optional[int] = None,
             "work_id": int(record["work_id"]),
             "oa": f"https://openalex.org/W{int(record['work_id'])}",
             "doi_r": doi,
+            # `.get`: a worklist parquet written before the url column existed has
+            # no such key, and only the OSF phase reads it.
+            "url_r": str(record.get("url") or ""),
         })
         taken += 1
         if len(rows) >= batch_size:
@@ -221,11 +224,14 @@ def _targets(source: str, rows: list[dict], done: set[str],
 
 
 def _osf_targets(rows: list[dict], done: set[str]) -> list[str]:
-    """The OSF-registrant DOIs the OSF phase still has to try.
+    """The OSF identifiers the OSF phase still has to try.
 
-    The only source restricted to a registrant: the endpoint answers about OSF
-    GUIDs and nothing else, so every other DOI is a call whose answer is known
-    before it is made.
+    The only source restricted to one kind of record: the endpoint answers about
+    OSF GUIDs and nothing else, so every other row is a call whose answer is
+    known before it is made. `osf_identifier()` decides which rows those are and
+    what each is keyed by — a registrant DOI, or `osf.io/<guid>` for a row that
+    carries an OSF URL and no DOI at all (202 of the 367 OSF records in the
+    2026-08-08 export are only reachable that way).
 
     It is also the only phase whose targets ignore what other sources already
     found. Every other source is asked for an abstract, and one abstract is as
@@ -235,10 +241,9 @@ def _osf_targets(rows: list[dict], done: set[str]) -> list[str]:
     text in the overlay instead — silently, and only for the rows the bulk
     pathway happened to hit.
     """
-    return [doi for doi in
-            (clean_doi(str(r["doi_r"] or "")) for r in rows)
-            if doi and doi.split("/", 1)[0] == OSF_REGISTRANT
-            and f"{NAMESPACES['osf']}:{doi}" not in done]
+    return [ident for ident in
+            (osf_identifier(r.get("doi_r") or "", r.get("url_r") or "") for r in rows)
+            if ident and f"{NAMESPACES['osf']}:{ident}" not in done]
 
 
 def _source_shape(source: str) -> dict:
@@ -305,11 +310,21 @@ def _resolved(row: dict) -> Optional[tuple[str, str]]:
     The same key order `_lookup_cached_abstract()` uses; it returns only the text
     and the overlay records which source supplied it, so the lookup is repeated
     here rather than the source being guessed afterwards.
+
+    OSF is looked up under the identifier its phase asked and cached by, not
+    under the row's DOI: a DOI-less OSF row is keyed `osf.io/<guid>`, and reading
+    it back by DOI would leave its recovered registration out of the overlay
+    while the run reported success.
     """
     for source in SOURCE_ORDER:
         namespace = NAMESPACES[source]
-        ident = f"{namespace}:{row['oa']}" if source == "openalex" \
-            else (f"{namespace}:{row['doi_r']}" if row["doi_r"] else None)
+        if source == "openalex":
+            ident = f"{namespace}:{row['oa']}"
+        elif source == "osf":
+            osf = osf_identifier(row.get("doi_r") or "", row.get("url_r") or "")
+            ident = f"{namespace}:{osf}" if osf else None
+        else:
+            ident = f"{namespace}:{row['doi_r']}" if row["doi_r"] else None
         if not ident:
             continue
         value = _read_abstract_cache(ident)

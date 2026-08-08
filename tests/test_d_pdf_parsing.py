@@ -362,3 +362,58 @@ def test_a_transient_failure_is_recognised_by_its_error_not_its_method():
 
     assert not transient({"pdfminer": ok, "grobid": settled})
     assert transient({"pdfminer": ok, "markitdown": outage})
+
+
+# ── Word documents ────────────────────────────────────────────────────────────
+
+def _docx(tmp_path: Path, body: str) -> Path:
+    """A minimal Word file on disk: a ZIP whose word/document.xml holds *body*."""
+    import zipfile
+    ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    paras = "".join(f'<w:p><w:r><w:t>{line}</w:t></w:r></w:p>'
+                    for line in body.splitlines() if line)
+    path = tmp_path / "paper.docx"
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("word/document.xml",
+                   f'<?xml version="1.0"?><w:document xmlns:w="{ns}"><w:body>'
+                   f'{paras}</w:body></w:document>')
+    return path
+
+
+class TestWordDocuments:
+    """A .docx is parsed by parse_docx and named by it, so a reader can tell a Word
+    extraction from a PDF one."""
+
+    def test_a_word_file_is_parsed_to_sections(self, tmp_path):
+        from shared.pdf_parsing import parse_docx
+        body = ("Abstract\nWe replicated Smith (2009).\n"
+                "Introduction\nThe original reported a large effect.\n"
+                "References\nSmith, J. (2009). A paper. Journal, 1, 1-10.")
+        out = parse_docx(_docx(tmp_path, body))
+        assert out["error"] is None
+        assert out["source"] == "docx"
+        assert "We replicated Smith" in out["raw_text"]
+        assert "large effect" in out["intro"]
+
+    def test_a_zip_that_is_not_a_word_file_errors(self, tmp_path):
+        import zipfile
+        from shared.pdf_parsing import parse_docx
+        path = tmp_path / "data.docx"
+        with zipfile.ZipFile(path, "w") as z:
+            z.writestr("data/values.csv", "a,b\n1,2\n")
+        assert parse_docx(path)["error"] == "no word/document.xml text"
+
+    def test_parse_all_sends_a_word_file_to_parse_docx_alone(self, tmp_path):
+        """The six PDF methods have no answer about a Word file, and an error-shaped
+        result scores -1 rather than losing to the real parse on merit."""
+        from shared.pdf_parsing import best_parse_result, parse_all
+        path = _docx(tmp_path, "\n".join(f"Sentence {i}." for i in range(40)))
+        results = parse_all("10.31219/osf.io/x", path)
+        assert set(results) == {"openalex_xml", "docx"}
+        assert best_parse_result(results)["source"] == "docx"
+
+    def test_a_pdf_still_goes_to_the_pdf_methods(self, tmp_path):
+        from shared.pdf_parsing import parse_all
+        results = parse_all("10.1/x", _fake_pdf(tmp_path))
+        assert "docx" not in results
+        assert "pdfminer" in results

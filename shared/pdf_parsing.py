@@ -1,5 +1,5 @@
 """
-pdf_parsing.py — Uniform interface for six PDF/text parsing methods.
+pdf_parsing.py — Uniform interface for the PDF/text parsing methods.
 
 Each parse_* function returns the same shape dict so callers can compare
 outputs side-by-side without branching on the method:
@@ -21,8 +21,9 @@ Public API:
     parse_docpluck(pdf_path)         -> dict
     parse_docling(pdf_path)          -> dict
     parse_opendataloader(pdf_path)   -> dict
+    parse_docx(docx_path)            -> dict
     parse_all(doi_r, pdf_path, oa_xml=None) -> dict[str, dict]
-    PARSE_METHODS                    -> list[str]  (keys of parse_all output)
+    PARSE_METHODS                    -> list[str]  (keys parse_all can return)
 """
 from __future__ import annotations
 
@@ -35,7 +36,9 @@ from .grobid import run_grobid
 from .config import PARSE_CACHE_DIR, log
 from .utils import cache_key
 
-PARSE_METHODS: list[str] = ["openalex_xml", "pdfminer", "grobid", "docpluck", "opendataloader", "markitdown"]  # docling excluded (heavy deps)
+# "docx" is not one of the PDF methods — it is the only method a Word file gets, and
+# the PDF methods are the only ones a PDF gets. See parse_all.
+PARSE_METHODS: list[str] = ["openalex_xml", "pdfminer", "grobid", "docpluck", "opendataloader", "markitdown", "docx"]  # docling excluded (heavy deps)
 
 _EMPTY: dict[str, Any] = {
     "source": "", "title": "", "abstract": "", "intro": "",
@@ -380,6 +383,83 @@ def parse_markitdown(pdf_path, doi_r: str) -> dict:
     })
 
 
+# ── Method 8: Word (.docx) ───────────────────────────────────────────────────
+# A preprint server hands back whatever the author uploaded, and for OSF that is a
+# Word file about as often as a PDF: of twelve campaign DOIs probed on 2026-08-08,
+# five answered with a PDF and seven with a .docx. Every one of the seven used to be
+# thrown away for its format alone.
+#
+# A .docx is a ZIP of XML, so the standard library reaches the text — which is also
+# the only option here: neither python-docx nor markitdown is installed in this
+# checkout, and a parser that needs an install is a parser that silently returns
+# nothing on the machine that skipped it.
+
+_DOCX_BODY = "word/document.xml"
+_W_NS      = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+
+def docx_text(source: "Path | str | bytes") -> str:
+    """The paragraph text of a Word document, or "" when *source* is not one.
+
+    Takes bytes so the acquisition tier can test a download before it saves it, or a
+    path so this module can read one that was saved.
+
+    Paragraphs are joined by a blank line rather than run together, because everything
+    downstream — the section splitter, the reference-block parser, outcome_text() —
+    reads line structure, and a single wall of text hides every heading in the file.
+
+    Never raises: a ZIP that is not a Word document, or a body that will not parse, is
+    "", and the caller decides what that means. The two callers mean different things
+    by it (not a document / not parseable), so neither judgement belongs here.
+    """
+    import io
+    import zipfile
+    from xml.etree import ElementTree as ET
+
+    try:
+        data = source if isinstance(source, bytes) else Path(source).read_bytes()
+        with zipfile.ZipFile(io.BytesIO(data)) as bundle:
+            if _DOCX_BODY not in bundle.namelist():
+                return ""     # some other ZIP — an epub, a spreadsheet, a data archive
+            root = ET.fromstring(bundle.read(_DOCX_BODY))
+    except Exception as exc:
+        log.debug("Word document unreadable: %s", exc)
+        return ""
+
+    paragraphs: list[str] = []
+    for para in root.iter(f"{_W_NS}p"):
+        # A paragraph's text is split across runs at every formatting change, so the
+        # runs are joined without a separator and the paragraph is the unit.
+        line = "".join(node.text or "" for node in para.iter(f"{_W_NS}t")).strip()
+        if line:
+            paragraphs.append(line)
+    return "\n\n".join(paragraphs)
+
+
+def parse_docx(docx_path) -> dict:
+    """Extract text sections from a Word document, in the shape every method returns."""
+    if docx_path is None:
+        return _error_result("docx", "no docx_path")
+    docx_path = Path(docx_path)
+    if not docx_path.exists():
+        return _error_result("docx", f"file not found: {docx_path}")
+
+    raw_text = docx_text(docx_path)
+    if not raw_text:
+        return _error_result("docx", "no word/document.xml text")
+
+    from .grobid import _split_sections, _parse_references_block
+    sections   = _split_sections(raw_text)
+    refs_raw   = sections.pop("references_raw", "")
+    references = _parse_references_block(refs_raw)
+    return _uniform_shape("docx", {
+        "abstract":   sections.get("abstract", ""),
+        "intro":      sections.get("intro", ""),
+        "references": references,
+        "raw_text":   raw_text[:50000],
+    })
+
+
 # ── Outcome-bearing text ──────────────────────────────────────────────────────
 # FLoRA codes the outcome from the abstract and, when the abstract does not state
 # it, from "what is written in the report (discussion and conclusion sections)"
@@ -592,7 +672,19 @@ def read_parse_cache(cache_id: str, cache_dir: "Path | None" = None) -> "dict | 
 
 def parse_all(doi_r: str, pdf_path, oa_xml: dict | None = None,
              no_llm: bool = False) -> dict[str, dict]:
-    """Run all parsing methods and return a dict keyed by method name."""
+    """Run every method that can read this document, keyed by method name.
+
+    A Word file gets parse_docx and nothing else. The six PDF methods have no answer
+    about one — pdfminer and GROBID reject the bytes, the rest are not installed — so
+    running them would fill the dict with errors, and an error-shaped result scores -1
+    rather than losing to the real parse on merit. The OpenAlex XML is a separate
+    document from a separate source, so it is asked either way.
+    """
+    if pdf_path is not None and Path(pdf_path).suffix.lower() == ".docx":
+        return {
+            "openalex_xml": parse_openalex_xml(oa_xml),
+            "docx":         parse_docx(pdf_path),
+        }
     return {
         "openalex_xml":   parse_openalex_xml(oa_xml),
         "pdfminer":       parse_pdfminer(pdf_path),

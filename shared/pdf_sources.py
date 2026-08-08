@@ -2,6 +2,7 @@
 pdf_sources.py — Multi-tier PDF acquisition.
 
 Acquisition order:
+  0c. The row's own URL, downloaded directly (no index, no DOI needed)
   1. OSF preprint direct download  (DOI-pattern based, no API)
   2. Unpaywall — all direct PDF URLs
   3. SemanticScholar open-access PDF
@@ -20,6 +21,10 @@ evidence and the one result that has to be argued for rather than downloaded. A 
 back empty is timestamped and not re-probed for PDF_RETRY_AFTER_DAYS; so is a single
 URL the server answered 404/410 for, which holds that URL back without holding back
 the other URLs its tier offers.
+
+A downloaded document may be a PDF or a Word file — OSF serves whatever the author
+uploaded — and each is saved under its own suffix, because the parsers dispatch on it.
+Both are `pdf_source` values of the TIER that supplied them; the format is not a tier.
 
 Tier 8 requires a one-time setup:
     pip install playwright
@@ -97,6 +102,25 @@ _PLAYWRIGHT_SKIP_REASONS = {"playwright_not_installed", "no_doi"}
 # writes one, and of the up-front "is it already on disk" check.
 _MIN_PDF_BYTES = 5_000
 
+# The two file formats a download may be. The %PDF test is untouched — a Word file is
+# a SECOND recognised type beside it, not a loosening of it, and anything matching
+# neither is still refused. OSF serves what the author uploaded, and for preprints
+# that is a Word file about as often as a PDF (twelve campaign DOIs probed on
+# 2026-08-08: five PDFs, seven .docx), so the format alone was closing works that
+# had a full text sitting on the server.
+_PDF_MAGIC = b"%PDF"
+_ZIP_MAGIC = b"PK\x03\x04"
+_DOCUMENT_SUFFIXES = (".pdf", ".docx")
+
+# A Word file's content check — the counterpart of the three in _STRUCTURED_SOURCES,
+# asking the same question they do: is this the paper, or a wrapper around a title?
+# A ZIP with a word/document.xml is a Word document; a Word document carrying a title
+# page and an author line is no more a paper than a repository record page is. The
+# threshold is the same as _MIN_OSF_REGISTRATION_CHARS for that reason — same
+# question, same answer — and the byte count cannot stand in for it: a Word file's styles,
+# theme and font table alone run to several kilobytes.
+_MIN_DOCX_CHARS = 1_000
+
 # Sources that hand back a sections dict instead of a file. They are documents in
 # every sense the pipeline cares about, so the retry log is cleared for them exactly
 # as it is for a downloaded PDF.
@@ -171,21 +195,41 @@ def _atomic_write_text(path: Path, text: str) -> None:
 # One naming rule for the saved file and for the tier that supplied it, shared by
 # download_pdf(), get_pdf_via_playwright() and acquire_pdf()'s up-front check.
 
+def document_cache_path(doi_or_url: str, suffix: str = ".pdf",
+                        cache_dir: "Path | None" = None) -> Path:
+    """Where a document for *doi_or_url* is saved. The cache key of every tier.
+
+    The suffix is part of the path rather than always ".pdf" because the parsers
+    dispatch on it: a Word file written to a .pdf path would be handed to pdfminer.
+    """
+    return (cache_dir or PDF_CACHE_DIR) / f"{cache_key(doi_or_url)}{suffix}"
+
+
 def pdf_cache_path(doi_or_url: str) -> Path:
-    """Where a PDF for *doi_or_url* is saved. The cache key of every tier."""
-    return PDF_CACHE_DIR / f"{cache_key(doi_or_url)}.pdf"
+    """Where a PDF for *doi_or_url* is saved."""
+    return document_cache_path(doi_or_url, ".pdf")
 
 
-def cached_pdf(doi_or_url: str, min_bytes: int = _MIN_PDF_BYTES) -> "Path | None":
-    """The already-downloaded PDF for *doi_or_url*, or None when there is none."""
+def cached_pdf(doi_or_url: str, min_bytes: int = _MIN_PDF_BYTES,
+               cache_dir: "Path | None" = None) -> "Path | None":
+    """The already-downloaded document for *doi_or_url*, or None when there is none.
+
+    Both recognised formats are looked for, PDF first. Callers must use the path this
+    returns rather than rebuilding it: for a Word file it is not pdf_cache_path().
+
+    *cache_dir* defaults to PDF_CACHE_DIR; a caller that holds its own copy of that
+    path passes it, so the directory stays patchable where the caller lives (the same
+    arrangement `read_parse_cache` has).
+    """
     if not doi_or_url:
         return None
-    path = pdf_cache_path(doi_or_url)
-    try:
-        if path.exists() and path.stat().st_size >= min_bytes:
-            return path
-    except OSError as e:
-        log.debug("PDF cache stat failed (%s): %s", path, e)
+    for suffix in _DOCUMENT_SUFFIXES:
+        path = document_cache_path(doi_or_url, suffix, cache_dir)
+        try:
+            if path.exists() and path.stat().st_size >= min_bytes:
+                return path
+        except OSError as e:
+            log.debug("Document cache stat failed (%s): %s", path, e)
     return None
 
 
@@ -400,19 +444,40 @@ def get_europepmc_pdf_url(doi: str) -> Optional[str]:
 
 # ── OSF preprint ──────────────────────────────────────────────────────────────
 
+# Every OSF preprint server files its downloads under the same osf.io/download/<guid>/,
+# so the REGISTRANT is not the test — `osf.io/<guid>` as the DOI suffix is. The old
+# pattern was `10.3123\d`, and it cost two things measured against the 2026-08-07
+# export: 10.31219 (OSF Preprints) never matched at all (12 rows), and because the
+# pattern forbade an underscore, neither did any versioned DOI on any registrant
+# (30 rows, e.g. 10.31234/osf.io/d3x9p_v1).
+#
+# The version suffix stays in the URL. Probed 2026-08-08: `osf.io/download/d3x9p_v1/`
+# serves the version the DOI names, while the bare guid serves the LATEST version, and
+# for that work the two are different files.
+#
+# 10.17605 is excluded because it is the REGISTRATION registrant, whose downloads are
+# not files: five probed on 2026-08-08 answered HTTP 500, as the ten probed on
+# 2026-08-07 did. Tier 0b reads a registration through the API instead.
+_OSF_REGISTRATION_REGISTRANT = "10.17605"
+_OSF_PREPRINT_DOI = re.compile(r"^(10\.\d{4,5})/osf\.io/([a-z0-9]+(?:_v\d+)?)$",
+                               re.IGNORECASE)
+
+
 def get_osf_pdf_url(doi: str) -> Optional[str]:
     """
     Construct a direct OSF download URL from a preprint DOI.
     Covers: 10.31234/osf.io/{id}  (PsyArXiv),
-            10.31235/osf.io/{id}  (SocArXiv), etc.
+            10.31219/osf.io/{id}  (OSF Preprints),
+            10.31235/osf.io/{id}  (SocArXiv), and versioned forms such as
+            10.31234/osf.io/{id}_v2.
     """
     doi = clean_doi(doi)
     if not doi:
         return None
-    m = re.match(r"^10\.3123\d/osf\.io/([a-z0-9]+)$", doi, re.IGNORECASE)
-    if m:
-        return f"https://osf.io/download/{m.group(1)}/"
-    return None
+    m = _OSF_PREPRINT_DOI.match(doi)
+    if not m or m.group(1) == _OSF_REGISTRATION_REGISTRANT:
+        return None
+    return f"https://osf.io/download/{m.group(2).lower()}/"
 
 
 # ── OSF registration content ──────────────────────────────────────────────────
@@ -1311,19 +1376,75 @@ def _url_is_gone(url: str) -> bool:
                for slot in entries)
 
 
+# The two identities a download is asked under, in order. Neither is a superset of the
+# other, so a URL that gives one identity no document is asked again under the other.
+#
+# The browser identity gets past publisher bot walls. The polite identity gets past the
+# repositories that do the opposite — serve a challenge page to a spoofed browser and
+# the file to a named crawler with a contact address. econstor.eu is exactly that:
+# measured 2026-08-08, `econstor.eu/bitstream/10419/318610/1/JCRE-2025-2.pdf` answers
+# the Chrome identity with a 4,806-byte HTML interstitial and the FLoRA identity with
+# 774,018 bytes of PDF.
+#
+# The second attempt is made only when the first ANSWERED and its answer was not a
+# document — a refusal, a timeout and a 5xx are all the same to both identities, and
+# a 404/410 is the server saying there is nothing here for anyone. So the extra
+# request is paid on rows that were about to get nothing, and nowhere else.
+_BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/pdf,*/*;q=0.9",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.google.com/",
+}
+
+
+def _polite_headers() -> dict:
+    """Built per call so a changed RESEARCHER_EMAIL takes effect without a reimport."""
+    return {"User-Agent": f"FLoRA-DisambiguationPipeline/1.0 (mailto:{RESEARCHER_EMAIL})",
+            "Accept": "application/pdf,*/*;q=0.9"}
+
+
+def _document_format(content: bytes, url: str) -> tuple[str, str]:
+    """(suffix, "") when these bytes are a document, ("", reason) when they are not.
+
+    A PDF is its magic number. A Word file is a ZIP that carries a word/document.xml
+    with enough text in it — the ZIP magic alone is any ZIP, an epub or a data archive
+    included, and a Word file holding a title page is no more a paper than a
+    repository record page is.
+    """
+    if content.startswith(_PDF_MAGIC):
+        return ".pdf", ""
+    if content[:4] == _ZIP_MAGIC:
+        from .pdf_parsing import docx_text   # lazy: pdf_parsing pulls in grobid
+        text = docx_text(content).strip()
+        if not text:
+            return "", "not_a_pdf"
+        if len(text) < _MIN_DOCX_CHARS:
+            log.info("  Word file carries %d chars — no document: %s", len(text), url)
+            return "", "docx_no_content"
+        return ".docx", ""
+    return "", "not_a_pdf"
+
+
 def download_pdf(url: str, doi: str = "", min_bytes: int = _MIN_PDF_BYTES) -> dict:
     """
-    Download a PDF and save to PDF_CACHE_DIR.
+    Download a document and save it to PDF_CACHE_DIR.
 
     Cache key = MD5 of doi (or url if doi missing), so repeat calls skip download.
+    A PDF and a Word file are both documents; anything else is refused, and a Word
+    file with too little text in it is refused as well, so nothing that failed its
+    content check is ever saved.
 
     Returns: {"success", "path", "source", "reason"}
     """
     if not url:
         return {"success": False, "path": None, "source": "", "reason": "no_url"}
 
-    pdf_path = pdf_cache_path(doi or url)
-    have     = cached_pdf(doi or url, min_bytes)
+    have = cached_pdf(doi or url, min_bytes)
     if have is not None:
         return {"success": True, "path": have, "source": "cache", "reason": ""}
 
@@ -1332,35 +1453,35 @@ def download_pdf(url: str, doi: str = "", min_bytes: int = _MIN_PDF_BYTES) -> di
                   PDF_RETRY_AFTER_DAYS, url)
         return {"success": False, "path": None, "source": "", "reason": "url_gone"}
 
-    try:
-        r = requests.get(
-            url,
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/124.0.0.0 Safari/537.36"
-                ),
-                "Accept": "application/pdf,*/*;q=0.9",
-                "Accept-Language": "en-US,en;q=0.9",
-                "Referer": "https://www.google.com/",
-            },
-            timeout=60,
-            stream=True,
-        )
-        if r.status_code in _PERMANENT_HTTP_STATUS:
-            _write_retry_log(_url_failure_path(url),
-                             {f"http_{r.status_code}": _now_iso()})
+    for headers in (_BROWSER_HEADERS, _polite_headers()):
+        try:
+            r = requests.get(url, headers=headers, timeout=60, stream=True)
+            if r.status_code in _PERMANENT_HTTP_STATUS:
+                _write_retry_log(_url_failure_path(url),
+                                 {f"http_{r.status_code}": _now_iso()})
+                return {"success": False, "path": None, "source": "",
+                        "reason": f"http_{r.status_code}"}
+            r.raise_for_status()
+            content = b"".join(r.iter_content(chunk_size=65_536))
+        except Exception as e:
             return {"success": False, "path": None, "source": "",
-                    "reason": f"http_{r.status_code}"}
-        r.raise_for_status()
-        content = b"".join(r.iter_content(chunk_size=65_536))
+                    "reason": f"download_error: {e}"}
 
-        if not content.startswith(b"%PDF"):
-            return {"success": False, "path": None, "source": "", "reason": "not_a_pdf"}
+        suffix, reason = _document_format(content, url)
+        if not suffix:
+            # The server answered, and what it sent is not a document. That can be the
+            # URL's answer — or it can be an answer to WHO ASKED, which is why the
+            # second identity exists. Only the last one's reason is reported.
+            if headers is _BROWSER_HEADERS:
+                log.debug("  %s to the browser identity: %s — asking again as "
+                          "FLoRA", reason, url)
+                continue
+            return {"success": False, "path": None, "source": "", "reason": reason}
+
         if len(content) < min_bytes:
             return {"success": False, "path": None, "source": "", "reason": "file_too_small"}
 
+        pdf_path = document_cache_path(doi or url, suffix)
         pdf_path.write_bytes(content)
         try:                     # the URL serves a document after all
             _url_failure_path(url).unlink(missing_ok=True)
@@ -1368,9 +1489,7 @@ def download_pdf(url: str, doi: str = "", min_bytes: int = _MIN_PDF_BYTES) -> di
             log.debug("URL failure record delete failed (%s): %s", url, e)
         return {"success": True, "path": pdf_path, "source": "download", "reason": ""}
 
-    except Exception as e:
-        return {"success": False, "path": None, "source": "",
-                "reason": f"download_error: {e}"}
+    return {"success": False, "path": None, "source": "", "reason": "not_a_pdf"}
 
 
 # ── Orchestrator ──────────────────────────────────────────────────────────────
@@ -1381,8 +1500,8 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
     Try every document source in priority order for *doi_r*.
 
     *url_r* is the row's own URL, and for 30% of the 2026-08-06 worklist it is the
-    only identifier there is. Two tiers use it: the OSF registration lookup, and the
-    HTML tier at the bottom.
+    only identifier there is. Three tiers use it: the OSF registration lookup, the
+    direct download at Tier 0c, and the HTML tier at the bottom.
 
     Returns:
         pdf_url        str
@@ -1493,10 +1612,13 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
     # supplied it is recorded next to the file, and replayed here. A PDF saved before
     # that record existed has none and falls through to the waterfall as before — where
     # the first cache hit writes the record for next time.
-    if doi_r and cached_pdf(doi_r) is not None:
+    on_disk = cached_pdf(doi_r) if doi_r else None
+    if on_disk is not None:
         prov = _read_provenance(doi_r)
         if prov.get("source"):
-            dl      = {"success": True, "path": pdf_cache_path(doi_r),
+            # The path cached_pdf found, not a rebuilt one: a Word file is saved under
+            # .docx, and a rebuilt .pdf path would name a file that is not there.
+            dl      = {"success": True, "path": on_disk,
                        "source": "cache", "reason": ""}
             pdf_url = prov["url"]
             pdf_src = prov["source"]
@@ -1505,9 +1627,38 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
             log.debug("  [%s] PDF already on disk (source=%s)", doi_r, pdf_src)
             return _result()
 
+    # Tier 0c — the row's own URL, downloaded directly.
+    #
+    # Every tier below this one derives its candidate URL from the DOI through an
+    # external index, and the row's own URL was passed in only to key the retry log
+    # and to look for an OSF guid — it was never fetched. Measured 2026-08-08:
+    # 10.15456/j1.2025082.1931045150 carries
+    # `econstor.eu/bitstream/10419/318610/1/JCRE-2025-2.pdf`, a direct PDF link that
+    # answers 200 with 774,018 bytes to this pipeline's own User-Agent, and all eight
+    # DOI-keyed tiers had recorded empty for it the day before. They had nothing to
+    # say: 10.15456 is not a Crossref registrant, and Unpaywall covers Crossref only.
+    # 553 of the 568 no-document rows in the 2026-08-07 export carry a url_r, and 223
+    # of them carry one and no DOI at all.
+    #
+    # It goes above the DOI-keyed tiers because it is free, needs no API and no DOI,
+    # and the row already holds the answer. It stays below Tiers 0 and 0b because
+    # those hand back parsed structure rather than a file to parse.
+    #
+    # HTML is left entirely to Tier 11. A page that is really a paper is worth
+    # reading, but deciding that takes html_document_has_content() and the section
+    # splitter, and running them here would put the weakest evidence in the
+    # waterfall ABOVE every PDF tier. download_pdf refuses the page as "not_a_pdf",
+    # which is a tier failure and not a URL verdict, so the row falls through to the
+    # PDF tiers and reaches Tier 11 with that page still available.
+    if url_r.lower().startswith(("http://", "https://")) and not _held("row_url"):
+        if not _try(url_r, "row_url"):
+            _failed("row_url")
+
     # Tier 1 — arXiv direct (before any API calls; the URL is a DOI pattern, so a
     # non-arXiv DOI is not a tier failure — there was nothing to ask.)
-    arxiv = get_arxiv_pdf_url(doi_r, title)
+    # The `not dl["success"]` guard every tier below carries: this one used to be
+    # first and had nothing above it to succeed.
+    arxiv = get_arxiv_pdf_url(doi_r, title) if not dl["success"] else None
     if arxiv and not _held("arxiv"):
         if not _try(arxiv, "arxiv"):
             _failed("arxiv")

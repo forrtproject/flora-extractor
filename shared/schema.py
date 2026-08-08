@@ -145,12 +145,15 @@ EXTRACT_ADDED_COLS = [
     # Both are blank on every row that never acquired or never parsed a document,
     # which is the honest reading: no document, no provenance.
     "pdf_source",          # str   — acquisition tier that supplied the document
-                           #         (arxiv | osf | openalex_oa | unpaywall_pdf |
+                           #         (row_url | arxiv | osf | openalex_oa | unpaywall_pdf |
                            #          semanticscholar | core | europepmc | landing_* |
                            #          serpapi | playwright | openalex_xml); blank when none
     "parse_method",        # str   — winning parser from best_parse_result()
                            #         (openalex_xml | pdfminer | grobid | docpluck |
-                           #          opendataloader | markitdown); blank when nothing parsed
+                           #          opendataloader | markitdown | docx); blank when
+                           #          nothing parsed. `docx` is a Word file, which a
+                           #          preprint server serves as readily as a PDF; the
+                           #          format is not a tier, so pdf_source is unaffected
 
     # Outcome
     "outcome",             # str   — success | failure | mixed | descriptive | cannot_be_determined | pending | api_error

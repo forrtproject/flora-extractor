@@ -44,7 +44,7 @@ from shared.openalex_client import fetch_openalex_full_metadata as _oa_full_meta
 from shared.openalex_client import (
     _TitleSearchUnavailable, _search_crossref_by_title, _search_openalex_by_title,
 )
-from shared.pdf_sources import openalex_xml_has_content
+from shared.pdf_sources import cached_pdf, openalex_xml_has_content
 from shared.pdf_parsing import (
     best_parse_result,
     outcome_text,
@@ -628,15 +628,16 @@ def _has_document(doi_r: str, link: dict, openalex_id: str = "") -> bool:
     in for the real one on any later run that DID get the PDF (audit B4). A document
     cached by an earlier run still counts — that is what --recalibrate-outcomes reads.
 
-    The PDF is looked up by DOI because that is what `download_pdf()` keys it on; the
-    XML by OpenAlex id, for the same reason (`_cached_oa_xml`). A DOI-less row simply
-    has no PDF to find here, which is what it had before too.
+    The document is looked up by DOI because that is what `download_pdf()` keys it on;
+    the XML by OpenAlex id, for the same reason (`_cached_oa_xml`). A DOI-less row
+    simply has no document to find here, which is what it had before too. `cached_pdf`
+    does the looking, so a Word file counts as much as a PDF.
     """
     if bool(link.get("pdf_ok")):
         return True
     if str(link.get("pdf_source", "none") or "none") not in {"", "none"}:
         return True
-    if doi_r and (PDF_CACHE_DIR / f"{cache_key(doi_r)}.pdf").exists():
+    if doi_r and cached_pdf(doi_r, cache_dir=PDF_CACHE_DIR) is not None:
         return True
     return _cached_oa_xml(openalex_id) is not None
 
@@ -671,9 +672,7 @@ def _save_parse_cache(cache_id: str, doi_r: str = "", openalex_id: str = "") -> 
     if _read_parse_cache(cache_id) is not None:
         return
 
-    pdf_path = PDF_CACHE_DIR / f"{cache_key(doi_r)}.pdf" if doi_r else None
-    if pdf_path is not None and not pdf_path.exists():
-        pdf_path = None  # type: ignore[assignment]
+    pdf_path = cached_pdf(doi_r, cache_dir=PDF_CACHE_DIR) if doi_r else None
 
     results = _parse_all(doi_r, pdf_path, oa_xml=_cached_oa_xml(openalex_id))
     if parse_result_is_empty(results):
