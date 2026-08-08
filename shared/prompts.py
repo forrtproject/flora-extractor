@@ -139,6 +139,13 @@ Two separate judgments per target — do not let one stand in for the other:
   the evidence identifies that record and no other listed record fits as well.
   Otherwise set `key` to null and match_certain to false, and put the identifying
   details as the paper gives them in target_as_named — it is looked up separately.
+  What that lookup can use is an author surname with a year, or the original's title.
+  Write the citation the paper uses, e.g. "Okonkwo and Barr (2013)" or "Okonkwo et al.
+  (2013), Study 2", and add the title when the paper gives one. A description of the
+  finding or the design — "the reward-anticipation effect", "the two vignette
+  experiments", "Experiment 1" — identifies nothing that can be looked up. If the
+  paper names the authors and the year ANYWHERE, including in its own title, that is
+  what goes in this field; use a description only when it truly never names them.
   A wrong original is worse than an unresolved one, so returning null is the right
   answer whenever two records fit equally well or the target is absent from the lists.
 - Omit an entry only when you cannot tell that a target exists at all. Knowing one
@@ -922,6 +929,164 @@ def _fill(template: str, values: dict[str, str]) -> str:
     """
     pattern = re.compile(r"\{(" + "|".join(map(re.escape, values)) + r")\}")
     return pattern.sub(lambda m: values[m.group(1)], template)
+
+
+_AUTHOR_YEAR_PICK_TEMPLATE = """You are identifying which published paper a replication study re-tested.
+
+The replication named its target in a way that matched no record it was offered, so
+every search that could say something about it was run: a title search where there was
+a title to search, and a query for that author in that year. Their results are pooled
+below. Exactly one of them may be the target, or none of them may be.
+
+The list may be a sample of a larger set — the count says so when it is. A target
+missing from a sampled list is an ordinary outcome, and "none" is the answer for it.
+
+A surname and a year identify a person's output, not a topic. Lists like this
+routinely contain papers from unrelated fields by a different researcher of the same
+surname: a list for "Turri 2015" contains epistemology and polymer chemistry. Judge
+each candidate on whether its subject matter is what the replication says it
+re-tested. Answering "none" is the expected answer whenever nothing in the list is
+about the right thing, and it costs nothing — the pipeline asks again by other means.
+
+Do NOT pick a paper because it is the most cited, because it is the only one left, or
+because its author list matches. The subject has to match.
+
+The list was built by matching the surname anywhere in the author list, so a candidate
+may be one the cited author co-wrote rather than led. Check the author list against how
+the replication cited them: "Ramscar et al." means Ramscar led it, "Weisel and Shalvi"
+means those two in that order.
+
+THE REPLICATION:
+Title: {title_r}
+Abstract: {abstract_r}
+
+HOW THE REPLICATION NAMED ITS TARGET: {target_as_named}
+WHAT IT SAID ABOUT IT: {evidence_quote}
+
+CANDIDATES — {candidate_count}. A flag is a reason to doubt a candidate, not a reason
+it was excluded; judge it yourself.
+{candidate_block}
+
+Answer with JSON and nothing else:
+{
+  "pick": "<the key of the one candidate that is the target, or null>",
+  "confident": <true|false>,
+  "reasoning": "<one sentence: what in the subject matter decided it>"
+}
+
+"confident" is false when the subject matter is merely compatible rather than a
+match. A pick that is not confident is not used.
+"""
+
+
+def build_author_year_pick_prompt(title_r: str, abstract_snip: str,
+                                  target_as_named: str, evidence_quote: str,
+                                  candidates: list, total: int = 0) -> str:
+    """Which of a pooled candidate list is the original this paper re-tested.
+
+    The pool is everything every search found for one target — the CrossRef and
+    OpenAlex title hits and the OpenAlex author-and-year shortlist — so the model
+    chooses from a BOUNDED set and can only return a key that is in it. That is the
+    same shape as the reference-list rung, and the reason this is not a search of the
+    whole literature.
+
+    Candidates a mechanical check doubts are IN the list, carrying the doubt as a
+    flag. Dropping them is the expensive mistake: a candidate the model never sees can
+    be neither confirmed nor disconfirmed, and the work goes back into a worklist that
+    pays for the whole ladder again. Rejecting a bad candidate costs one field of one
+    answer.
+
+    "None" is offered first-class and its cost is stated, because a small model asked
+    to choose from a list picks the least-bad entry unless declining is made an
+    ordinary answer (measured for the pre-screen voters: `analysis/prescreen_eval`).
+    """
+    lines = []
+    for i, c in enumerate(candidates, 1):
+        authors = ", ".join(str(a) for a in list(c.get("authors") or [])[:4])
+        flags = "; ".join(c.get("flags") or [])
+        lines.append(f"[{i}] {c.get('title') or '(no title)'}\n"
+                     f"    {authors or '(authors unknown)'} — "
+                     f"{c.get('journal') or 'venue unknown'}, {c.get('year') or '?'}"
+                     + (f"\n    found by: {c.get('source')}" if c.get("source") else "")
+                     + (f"\n    ! {flags}" if flags else ""))
+    shown, total = len(candidates), max(int(total or 0), len(candidates))
+    return _fill(_AUTHOR_YEAR_PICK_TEMPLATE, {
+        "candidate_count": (f"all {shown} the searches found" if shown >= total
+                            else f"{shown} of the {total} the searches matched"),
+        "title_r": title_r or "(not available)",
+        "abstract_r": abstract_snip or "(not available)",
+        "target_as_named": target_as_named or "(not stated)",
+        "evidence_quote": evidence_quote or "(none)",
+        "candidate_block": "\n".join(lines) or "(none)",
+    })
+
+
+_KEYED_CONFIRM_TEMPLATE = """You are checking a link between a study and the paper an earlier stage identified as the original work it re-tests or re-analyses.
+
+The identification was made by picking one entry from the study's own reference and
+candidate list. That pick is usually right; this check exists for when it is not. The
+failure it looks for is the wrong entry picked from the right list — the linked record
+is then a real, correctly described paper that has nothing to do with what the study
+re-tested.
+
+THE STUDY:
+Title: {title_r}
+Abstract: {abstract_r}
+
+WHAT THE STUDY SAID ABOUT ITS TARGET: {evidence_quote}
+
+THE RECORD IT WAS LINKED TO:
+{record_block}
+
+Is the linked record plausibly the paper the study names as its target?
+
+Judge subject matter and authorship together, against the abstract and the quoted
+evidence. Say no only when the record is about something else, or by somebody else,
+than the work the study describes re-testing. These are NOT reasons to say no:
+- A year a few off: a preprint or working paper and its published version are the
+  same work.
+- A title that differs in wording, subtitle or language, when subject and authors
+  agree.
+- Thin evidence: judge on what you have, and put the doubt in "confident".
+
+Answer with JSON and nothing else:
+{
+  "plausible": <true|false>,
+  "confident": <true|false>,
+  "reasoning": "<one sentence: what decided it>"
+}
+
+"confident" is false when what you were given cannot settle the question either way.
+Nothing is removed on your answer alone — a "false" flags the link for a human, so a
+confident "false" on a mismatched subject is the useful answer, not a risky one.
+"""
+
+
+def build_keyed_confirm_prompt(title_r: str, abstract_snip: str,
+                               evidence_quote: str, record: dict) -> str:
+    """Is the record an accepted @key resolved to plausibly the paper the study
+    names as its target — issue #186's Shape 1, on the keyed-record path.
+
+    The inputs are deliberately limited to what a stored result row can reconstruct
+    (title_r, abstract_r, the link evidence, and the record's title/author/year/DOI),
+    so the offline measurement over the evaluation samples exercises exactly the
+    prompt the ladder sends — a measurement of a richer prompt than the one shipped
+    would be the title-search rung's mistake over again.
+
+    One prompt for both vocabularies: the question is the record's identity, not the
+    outcome, and a reproduction mis-linked to the wrong paper fails the same way.
+    """
+    lines = [f"Title: {record.get('title') or '(no title)'}",
+             f"First author: {record.get('first_author') or '(unknown)'}",
+             f"Year: {record.get('year') or '?'}"]
+    if record.get("doi"):
+        lines.append(f"DOI: {record['doi']}")
+    return _fill(_KEYED_CONFIRM_TEMPLATE, {
+        "title_r": title_r or "(not available)",
+        "abstract_r": (abstract_snip or "(not available)")[:TARGET_ABSTRACT_CHARS],
+        "evidence_quote": evidence_quote or "(none recorded)",
+        "record_block": "\n".join(lines),
+    })
 
 
 def build_outcome_prompt(title_r: str, abstract_snip: str,

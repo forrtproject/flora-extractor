@@ -579,6 +579,11 @@ _MOCK_OUTCOME = {
 }
 
 
+# What the paper is ABOUT — the context the author-and-year resolver judges a
+# candidate's subject matter against.
+_CONTEXT = {"title_r": "A replication", "abstract_r": "We replicate the study."}
+
+
 def _mock_target(key: str, doi: str, title: str, author: str, year: int,
                  **over) -> dict:
     """One entry of resolve_targets_and_outcomes's validated target list.
@@ -1203,19 +1208,32 @@ class TestGuardOriginalLink:
         None,                              # nothing came back at all
         {"doi": "", "openalex_id": ""},    # a hit with no identifier on it
     ])
-    def test_genuinely_empty_doi_with_real_title_is_kept(self, openalex_hit):
-        """No DOI anywhere, but a substantive distinct title -> keep the row and
-        mark it explicitly rather than dropping a valid original. With no identifier
-        to key on, pair_id must stay exactly as it was."""
+    def test_genuinely_empty_doi_with_real_title_is_kept_but_not_resolved(
+            self, openalex_hit):
+        """No DOI and no work id anywhere: KEEP the link — plenty of genuine originals
+        have no registered DOI — but stop calling it resolved. `resolved` asserts an
+        identified original and its rows are the ones the validation import takes, and
+        a pair cannot be keyed on a title. pair_id must stay exactly as it was."""
         with patch("extract.run_extract._search_crossref_by_title", return_value=None), \
              patch("extract.run_extract._search_openalex_by_title",
                    return_value=openalex_hit):
             out = run_extract._guard_original_link(self._row(doi_o=""))
-        assert out["link_method"] == "llm_fulltext"
+        assert out["link_method"] == "unidentified_original", \
+            "an original with no identity at all still claimed to be resolved"
         assert out["doi_o"] == ""
         assert out["doi_o_verification"] == "no_doi"
         assert out.get("oa_work_id_o", "") == ""
         assert out["pair_id"] == "p"
+
+    def test_a_work_id_is_identity_enough_to_stay_resolved(self):
+        """An original that came from an OpenAlex record has a work id whether or not
+        it has a DOI, and that id is an identity the row can be keyed and audited on."""
+        with patch("extract.run_extract._search_crossref_by_title", return_value=None), \
+             patch("extract.run_extract._search_openalex_by_title",
+                   return_value={"doi": "", "openalex_id": "W77"}):
+            out = run_extract._guard_original_link(self._row(doi_o=""))
+        assert out["link_method"] == "llm_fulltext"
+        assert out["oa_work_id_o"] == "W77"
 
     def test_no_doi_and_no_usable_title_is_pending(self):
         with patch("extract.run_extract._search_crossref_by_title", return_value=None), \
@@ -1299,7 +1317,7 @@ class TestReferenceStringTargets:
                   "record": {"doi": doi, "title": title, "first_author": "Balter",
                              "year": 2018}}
         with patch("shared.doi_verify.resolve_doi_by_metadata", return_value=hit):
-            return run_extract._target_entry(target, "10.1/repl")
+            return run_extract._target_entry(target, "10.1/repl", _CONTEXT)
 
     def test_a_citation_string_is_cleaned_down_to_its_title(self):
         entry = self._entry(self._CITATION, doi="10.2/orig")
@@ -2059,10 +2077,18 @@ class TestParseCacheOnlyAfterTheDocument:
         assert run_extract._has_document("10.1/x", self._link())
 
     def _oa_xml(self, tmp_path, monkeypatch, sections: dict) -> None:
+        """Write the XML cache entry under the name its real writer uses.
+
+        `get_openalex_fulltext()` files the entry under the OpenAlex WORK ID, not the
+        DOI. This helper used to name it after the DOI and the reader looked it up the
+        same way, so the pair agreed with each other and with nothing on disk: across
+        the 285 rows of the 2026-08-06 extracted.csv the DOI-derived name matched 0
+        real entries.
+        """
         monkeypatch.setattr(run_extract, "PDF_CACHE_DIR", tmp_path)
         monkeypatch.setattr(run_extract, "OA_XML_CACHE_DIR", tmp_path)
         from shared.utils import cache_key
-        (tmp_path / f"oa_xml_{cache_key('10.1/x')}.json").write_text(
+        (tmp_path / f"oa_xml_{cache_key('W123')}.json").write_text(
             json.dumps({"sections": sections}), encoding="utf-8")
 
     def test_a_content_free_openalex_xml_shell_is_no_document(self, tmp_path, monkeypatch):
@@ -2071,12 +2097,41 @@ class TestParseCacheOnlyAfterTheDocument:
         full text and codes an outcome from nothing."""
         self._oa_xml(tmp_path, monkeypatch,
                      {"abstract": "", "body": "  ", "references": []})
-        assert not run_extract._has_document("10.1/x", self._link())
+        assert not run_extract._has_document("10.1/x", self._link(), "W123")
 
     def test_openalex_xml_with_text_is_a_document(self, tmp_path, monkeypatch):
         self._oa_xml(tmp_path, monkeypatch,
                      {"body": "We replicated the original.", "references": []})
-        assert run_extract._has_document("10.1/x", self._link())
+        assert run_extract._has_document("10.1/x", self._link(), "W123")
+        # ...and the DOI alone does not find it, which is what used to be asserted.
+        assert not run_extract._has_document("10.1/x", self._link())
+
+
+class TestParseCacheIdentity:
+    """Two rows without a DOI must not share one parse cache entry.
+
+    30% of the 2026-08-06 handoff carries no DOI (repository handles, working-paper
+    URLs). Keying the parse cache on `doi_r` filed every one of them under
+    `cache_key("")`, so the first blank-DOI row's full text was served back as every
+    later one's — four works in the 2026-08-07 run logged byte-identical parses.
+    """
+
+    def test_blank_doi_rows_get_distinct_identities(self):
+        import pandas as pd
+        a = pd.Series({"doi_r": "", "openalex_id_r": "W1", "url_r": "http://a/x"})
+        b = pd.Series({"doi_r": "", "openalex_id_r": "W2", "url_r": "http://b/y"})
+        assert run_extract._cache_id(a) != run_extract._cache_id(b)
+        assert run_extract._cache_id(a) and run_extract._cache_id(b)
+
+    def test_a_doi_row_keeps_the_key_it_already_had_on_disk(self):
+        import pandas as pd
+        row = pd.Series({"doi_r": "10.1/x", "openalex_id_r": "W1", "url_r": "http://a"})
+        assert run_extract._cache_id(row, "10.1/x") == "10.1/x"
+
+    def test_an_empty_identity_raises_instead_of_sharing_a_bucket(self):
+        from shared.pdf_parsing import parse_cache_path
+        with pytest.raises(ValueError):
+            parse_cache_path("")
 
 
 class TestOutcomeReadsTheDiscussion:
@@ -2441,10 +2496,16 @@ class TestPerTargetAdapter:
         assert [r["original_rank"] for r in rows] == [1, 2]
         assert all(r["n_originals"] == 2 for r in rows)
 
-    def test_an_unmatched_target_is_reported_not_written(self):
-        """A target with no keyed record names a study we cannot identify: there is no
-        published record to write a row about, and the shortfall belongs on the rows
-        that were written."""
+    def test_an_unmatched_target_both_providers_disown_is_reported_not_written(
+            self, monkeypatch):
+        """A target with no keyed record is searched by name first. When the search
+        answers and knows nothing, there is no published record to write a row about
+        and the shortfall belongs on the rows that were written. "Ramirez (2014)"
+        carries no title, so the search is the author-and-year one."""
+        monkeypatch.setattr("extract.link_original.title_search_candidates",
+                            lambda *a: ([], False))
+        monkeypatch.setattr("shared.openalex_client.author_year_candidates",
+                            lambda *a, **k: ([], 0, False))
         targets = self._TWO + [{"key": None, "match_certain": False,
                                 "target_as_named": "Ramirez (2014)",
                                 "study_numbers": "", "replication_study_numbers": "",
@@ -2466,7 +2527,7 @@ class TestPerTargetAdapter:
 
         assert len(rows) == 1
         assert rows[0]["link_method"] == "target_pending"
-        assert "2 originals" in rows[0]["link_evidence"]
+        assert "2 original(s)" in rows[0]["link_evidence"]
 
     def test_an_unresolved_rerouted_row_keeps_what_the_screen_decided(self):
         """The screen ran and classified the paper; the ladder finding no original
@@ -2961,3 +3022,546 @@ class TestTargetCheckOnTheRow:
             {"outcome": "success", "target_check": "this_original"})
         assert row["link_confidence"] == "high"
         assert row["link_evidence"] == "citation context"
+
+
+class TestHtmlAndOsfAreDocuments:
+    """The two structured sources added 2026-08-07, and the checks that keep a record
+    page from being coded as if it were the paper.
+
+    Thresholds measured over three full texts (PLOS/PMC/eLife) and five repository
+    landing pages: text beyond the abstract was 0–1,706 chars for the landing pages
+    and 49,193–71,641 for the full texts.
+    """
+
+    def _doc(self, **sections):
+        base = {"abstract": "", "raw_text": "", "references_raw": ""}
+        base.update(sections)
+        return {"sections": base}
+
+    def test_a_page_restating_its_abstract_is_refused(self):
+        from shared.pdf_sources import html_document_has_content
+        abstract = "A" * 1_500
+        # 1,980 chars of page for a 1,500-char abstract: the handle.net case.
+        assert not html_document_has_content(
+            self._doc(abstract=abstract, raw_text=abstract + "B" * 480))
+
+    def test_a_page_carrying_the_paper_is_accepted(self):
+        from shared.pdf_sources import html_document_has_content
+        # Length AND year density: a body this long that never cites a year is page
+        # furniture, which is the case the length-only rule let through.
+        body = ("we replicate the original finding (Smith 1999; Jones 2004) " * 900)
+        assert html_document_has_content(
+            self._doc(abstract="A" * 2_000, raw_text="A" * 2_000 + body))
+
+    def test_a_long_page_with_no_scholarship_is_still_refused(self):
+        """A repository page of related items, comments and metadata can be long."""
+        from shared.pdf_sources import html_document_has_content
+        assert not html_document_has_content(
+            self._doc(abstract="", raw_text="download cite share export " * 3_000))
+
+    def test_a_real_reference_block_is_enough_on_its_own(self):
+        """eLife's full text splits into almost no sections but a 71k reference block."""
+        from shared.pdf_sources import html_document_has_content
+        refs = "Smith J (1999) A paper. Journal 1(1). Jones K (2004) Another. " * 200
+        assert html_document_has_content(
+            self._doc(abstract="A" * 23, raw_text="A" * 500, references_raw=refs))
+
+    def test_a_thin_osf_registration_is_no_document(self):
+        """The 326-char campaign case: a title, an author line, nothing to read."""
+        from shared.pdf_sources import osf_registration_has_content
+        assert not osf_registration_has_content(
+            {"sections": {"abstract": "", "raw_text": "TITLE: x\n\nq1: y"}})
+
+    def test_a_filled_osf_registration_is_a_document(self):
+        from shared.pdf_sources import osf_registration_has_content
+        assert osf_registration_has_content(
+            {"sections": {"abstract": "D" * 1_948, "raw_text": "Q" * 4_036}})
+
+    def test_the_guid_comes_out_of_both_a_doi_and_a_url(self):
+        from shared.pdf_sources import osf_registration_guid
+        assert osf_registration_guid("10.17605/osf.io/2tsc6") == "2tsc6"
+        assert osf_registration_guid("https://osf.io/3ke27") == "3ke27"
+        assert osf_registration_guid("http://api.osf.io/v2/nodes/s6m7y/") == "s6m7y"
+        assert osf_registration_guid("https://doi.org/10.1037/xyz") == ""
+
+
+class TestNamedButUnmatchedTargets:
+    """A target the model named in plain text must not settle as no_original_found.
+
+    Every OSF registration and every URL-only row gets 0 OpenAlex candidates, so the
+    key namespace is empty and no named target can ever be matched. A 25-work pilot on
+    2026-08-07 closed 15 works as `no_original_found` whose stored evidence named the
+    original outright ("Conceptual replication of Hyman & Sheatsley (1950)").
+    `no_original_found` is not in UNSETTLING_VERDICTS, so those works were closed for
+    good.
+
+    Every search that can say something about the target now contributes to ONE pool,
+    and the linking model picks from it — so each test says what the searches found
+    AND what the model made of it.
+    """
+
+    _CONTEXT = {"title_r": "A replication", "abstract_r": "We replicate the study."}
+
+    def _target(self, **over):
+        base = {"target_as_named": "Hyman and Sheatsley (1950) Interviewing in "
+                                   "social research", "record": None,
+                "match_certain": False, "evidence_quote": "Conceptual replication"}
+        base.update(over)
+        return base
+
+    @staticmethod
+    def _pick(index=0, confident=True):
+        def pick(doi_r, title_r, abstract_r, named, quote, candidates,
+                 total=0):
+            chosen = candidates[index] if candidates and index is not None else None
+            return {"pick": chosen, "confident": confident and chosen is not None,
+                    "reasoning": "same subject", "llm_model": "gpt-5.4-mini",
+                    "llm_error": ""}
+        return pick
+
+    def _run(self, monkeypatch, hits=(), unavailable=False, author_year=([], 0, False),
+             pick=None, target=None):
+        monkeypatch.setattr("extract.link_original.title_search_candidates",
+                            lambda *a, **k: (list(hits), unavailable))
+        monkeypatch.setattr("shared.openalex_client.author_year_candidates",
+                            lambda *a, **k: author_year)
+        monkeypatch.setattr("shared.llm_client.pick_author_year_original",
+                            pick or self._pick())
+        return run_extract._target_entry(target or self._target(), "10.9/rep",
+                                         self._CONTEXT)
+
+    _HITS = [{"doi": "10.1/one", "title": "Interviewing in social research",
+              "year": 1950, "first_author": "Hyman", "openalex_id": "",
+              "source": "crossref", "flags": []},
+             {"doi": "10.2/two", "title": "Interviewing in social research",
+              "year": 1954, "first_author": "Hyman", "openalex_id": "",
+              "source": "openalex", "flags": []}]
+
+    def test_an_unmatched_named_target_is_searched_and_the_model_picks(self, monkeypatch):
+        entry = self._run(monkeypatch, hits=self._HITS)
+        assert entry is not None
+        assert entry["doi"] == "10.1/one"
+        # Provisional, so _per_target_rows writes it at low confidence and never codes
+        # an outcome for it.
+        assert entry["provisional"] is True
+        assert entry["confidence"] == "low"
+        assert entry["provisional_method"] == "llm_title_search"
+        # BOTH candidates survive onto the row — that is the test data issue #186 needs.
+        assert "10.1/one" in entry["evidence"] and "10.2/two" in entry["evidence"]
+        assert len(entry["title_search_candidates"]) == 2
+
+    def test_a_pool_the_model_declines_resolves_nothing(self, monkeypatch):
+        entry = self._run(monkeypatch, hits=self._HITS, pick=self._pick(index=None))
+        assert entry is None
+
+    def test_a_target_the_model_declined_is_not_searched(self, monkeypatch):
+        """A record WAS offered and the model said no. Searching anyway is how a paper
+        gets linked to a landmark it merely cites."""
+        called = []
+        monkeypatch.setattr("extract.link_original.title_search_candidates",
+                            lambda *a, **k: called.append(a) or ([], False))
+        entry = run_extract._target_entry(
+            self._target(record={"title": "Some original", "doi": "10.3/x"},
+                         match_certain=False), "10.9/rep", self._CONTEXT)
+        assert entry is None
+        assert not called
+
+    def test_no_candidates_settles_as_no_row(self, monkeypatch):
+        """Every search answered and none knows the paper: there is nothing to pick."""
+        entry = self._run(monkeypatch)
+        assert entry is None
+
+    def test_an_unreachable_provider_does_not_settle(self, monkeypatch):
+        """Neither provider answered, so the row is api_error — which a re-run
+        reopens — rather than no_original_found, which would close it for good."""
+        entry = self._run(monkeypatch, unavailable=True)
+        assert entry is not None and entry["search_unavailable"] is True
+        assert entry["doi"] == ""
+
+    def test_the_author_year_shortlist_joins_the_pool_when_the_title_hits_are_doubted(
+            self, monkeypatch):
+        """The two searches used to be exclusive. A candidate only one of them can
+        find must still reach the model — but only where the net came up empty or
+        flagged: widening it over a clean title hit buys a sibling-paper distractor
+        and a second free-text query at 10x a filter query."""
+        doubted = [{**h, "flags": ["does not carry the cited author (hyman)"]}
+                   for h in self._HITS]
+        extra = [{"doi": "10.3/three", "title": "Interviewing", "year": 1950,
+                  "first_author": "Hyman", "openalex_id": "W3", "journal": "J",
+                  "authors": ["Hyman, H."], "cited_by": 9}]
+        entry = self._run(monkeypatch, hits=doubted,
+                          author_year=(extra, 4, False), pick=self._pick(index=2))
+        assert entry["doi"] == "10.3/three"
+        assert entry["provisional_method"] == "llm_author_year_search"
+
+    def test_a_clean_title_hit_spends_nothing_on_the_author_year_query(self, monkeypatch):
+        called: list = []
+        monkeypatch.setattr("shared.openalex_client.author_year_candidates",
+                            lambda *a, **k: called.append(a) or ([], 0, False))
+        monkeypatch.setattr("extract.link_original.title_search_candidates",
+                            lambda *a, **k: (list(self._HITS), False))
+        monkeypatch.setattr("shared.llm_client.pick_author_year_original", self._pick())
+        run_extract._target_entry(self._target(), "10.9/rep", self._CONTEXT)
+        assert not called
+
+
+class TestASearchThatFoundNothingIsRecorded:
+    """What was searched for has to survive onto a work that resolved nothing.
+
+    A work that settled `no_original_found` stored NOTHING about what had been tried:
+    not the strings searched, not that every provider answered, not the candidates.
+    Evaluating a better resolver would then mean re-running every work instead of
+    reading rows already on disk — and `no_original_found` settles, so the re-run
+    would not even be offered the work.
+    """
+
+    _ROW = pd.Series({"doi_r": "10.1/rep", "title_r": "T", "abstract_r": "a",
+                      "filter_status": "replication"})
+
+    @staticmethod
+    def _unmatched(named: str) -> dict:
+        """A target the model named that no keyed record could match — every OSF
+        registration and every URL-only row, whose key namespace is empty."""
+        return {"key": "@x", "match_certain": True, "target_as_named": named,
+                "study_numbers": "", "replication_study_numbers": "", "record": None,
+                "evidence_quote": "a direct replication of"}
+
+    def _run(self, targets, hits=(), unavailable=False, author_year=([], 0, False),
+             pick=None, multi=False, link_over=None):
+        link = dict(_MOCK_LINK, resolved=False, resolution_method="llm_multi_target",
+                    resolved_doi_o="", resolved_title_o="", multi_target=multi,
+                    n_targets=len(targets), target_stage="llm_gemini",
+                    unidentified_count=0, targets=targets, llm_model="gemini-heavy",
+                    llm_evidence="")
+        link.update(link_over or {})
+        observed: dict = {}
+        no_pick = {"pick": None, "confident": False, "reasoning": "",
+                   "llm_model": "gpt-5.4-mini", "llm_error": ""}
+        with patch.object(run_extract, "run_for_doi", return_value=link), \
+             patch.object(run_extract, "_has_document", return_value=False), \
+             patch("extract.link_original.title_search_candidates",
+                   return_value=(list(hits), unavailable)), \
+             patch("shared.openalex_client.author_year_candidates",
+                   return_value=author_year), \
+             patch("shared.llm_client.pick_author_year_original",
+                   return_value=pick or no_pick), \
+             patch.object(run_extract, "extract_outcome", return_value=_MOCK_OUTCOME):
+            rows = run_extract._resolve_and_code(
+                "10.1/rep", self._ROW, screen=None, no_llm=False, no_pdf=True,
+                resolved_only=False, observed=observed)
+        return rows, observed
+
+    def test_a_work_that_resolves_nothing_still_says_what_it_searched(self):
+        """The single-row path: no target resolved, so _per_target_rows returns [] and
+        never sees the row that gets written. The search has to reach it through the
+        link."""
+        rows, observed = self._run(
+            [self._unmatched("Smith et al. (2009) The original paper")])
+
+        assert len(rows) == 1
+        assert "searches: no_candidates(" in rows[0]["link_evidence"]
+        assert "The original paper" in rows[0]["link_evidence"]
+        # And onto the observation the tier stores beside the row, which is taken
+        # BEFORE the per-target adapter runs its searches.
+        assert "no_candidates(" in observed["link_evidence"]
+
+    def test_a_target_nothing_can_be_searched_for_is_recorded_as_unsearchable(self):
+        """"Study 2" carries no title, no author and no year, so no search runs at
+        all. That is a different finding from a search that came back empty."""
+        rows, _ = self._run([self._unmatched("Study 2")])
+
+        assert "searches: unsearchable(" in rows[0]["link_evidence"]
+
+    def test_the_multi_target_pending_row_keeps_the_searches(self):
+        """Two named targets, neither matched: the row written is target_pending with
+        its own evidence, which used to overwrite the searches rather than carry them."""
+        rows, _ = self._run([self._unmatched("Smith et al. (2009) One original"),
+                             self._unmatched("Jones et al. (2011) Another original")],
+                            multi=True)
+
+        assert rows[0]["link_method"] == "target_pending"
+        assert "none could be matched" in rows[0]["link_evidence"]
+        assert "searches: no_candidates(" in rows[0]["link_evidence"]
+
+    def test_one_named_target_that_could_not_be_found_does_not_settle(self):
+        """"We know which paper it replicates and could not look it up" is not "this
+        paper replicates nothing". The first must reopen on a re-run; the second
+        settles. Falling through to the single-row path wrote `no_original_found` for
+        both — 24 of 100 works on the frozen dev sample."""
+        rows, _ = self._run([self._unmatched("Ramscar et al. (2010)")],
+                            link_over={"resolution_method": "llm_no_target"})
+
+        assert rows[0]["link_method"] == "target_pending"
+        assert rows[0]["outcome"] == "pending"
+        # The facts about the run survive the ending: a pending row a reviewer cannot
+        # trace back to a model is not evidence of anything.
+        assert rows[0]["link_llm_model"] == "gemini-heavy"
+        assert rows[0]["original_match_confidence"] == "low"
+        assert "Ramscar" in rows[0]["link_evidence"]
+
+    def test_a_target_the_model_named_nothing_for_still_settles(self):
+        """The model read the paper and named no target: that IS evidence about the
+        original, and the work closes."""
+        rows, _ = self._run([], link_over={"resolution_method": "llm_no_target"})
+
+        assert rows[0]["link_method"] == "no_original_found"
+
+    def test_a_confident_pick_is_recorded_on_the_row_it_wrote(self):
+        hit = {"doi": "10.1/found", "title": "The original paper", "year": 2009,
+               "first_author": "Smith", "openalex_id": "", "source": "crossref",
+               "flags": []}
+        rows, _ = self._run(
+            [self._unmatched("Smith et al. (2009) The original paper")], hits=[hit],
+            pick={"pick": hit, "confident": True, "reasoning": "same subject",
+                  "llm_model": "gpt-5.4-mini", "llm_error": ""})
+
+        assert rows[0]["doi_o"] == "10.1/found"
+        assert rows[0]["link_method"] == "llm_title_search"
+
+
+class TestATransientSourceFailureIsNotAFourteenDayVerdict:
+    """The retry log suppresses a source for PDF_RETRY_AFTER_DAYS. Recording a timeout
+    in it turns a minute of provider trouble into two weeks of "this source has
+    nothing", and an ordinary re-run cannot undo it."""
+
+    def test_osf_transport_failure_raises_rather_than_reading_as_absent(self, monkeypatch):
+        from shared import pdf_sources as ps
+        monkeypatch.setattr(ps.requests, "get",
+                            lambda *a, **k: (_ for _ in ()).throw(OSError("boom")))
+        with pytest.raises(ps.DocumentSourceUnavailable):
+            ps.get_osf_registration("abcde")
+
+    def test_osf_404_is_a_definitive_absence(self, monkeypatch, tmp_path):
+        from shared import pdf_sources as ps
+        monkeypatch.setattr(ps, "OA_CACHE_DIR", tmp_path)
+
+        class R:
+            status_code = 404
+        monkeypatch.setattr(ps.requests, "get", lambda *a, **k: R())
+        assert ps.get_osf_registration("abcde") is None
+        assert (tmp_path / f"osfreg_{ps.cache_key('abcde')}.json").exists()
+
+    def test_html_5xx_raises_and_4xx_does_not(self, monkeypatch, tmp_path):
+        from shared import pdf_sources as ps
+        monkeypatch.setattr(ps, "OA_CACHE_DIR", tmp_path)
+
+        class R:
+            def __init__(self, code):
+                self.status_code, self.headers, self.content = code, {}, b""
+        monkeypatch.setattr(ps.requests, "get", lambda *a, **k: R(503))
+        with pytest.raises(ps.DocumentSourceUnavailable):
+            ps.get_html_document("https://example.org/x")
+        monkeypatch.setattr(ps.requests, "get", lambda *a, **k: R(403))
+        assert ps.get_html_document("https://example.org/y") is None
+
+
+class TestEveryAuthorTheCitationNamedIsUsed:
+    """extract_author_year_patterns reports ONE surname per match, and for a
+    multi-author citation that is a run-on of all of them or just the first. The names
+    it drops are what makes a shortlist usable: measured 2026-08-07, "jones 1995"
+    matches 8,348 OpenAlex works and "jones AND macken 1995" matches 7, with the right
+    paper third."""
+
+    @staticmethod
+    def _names(citation):
+        from shared.openalex_client import extract_author_year_patterns
+        return run_extract._cited_surnames(extract_author_year_patterns(citation)[0])
+
+    def test_two_named_authors_both_survive(self):
+        assert self._names("Jones and Macken (1995)") == ["jones", "macken"]
+
+    def test_a_run_on_surname_is_split_back_apart(self):
+        assert self._names("Kaufmann, Weber, and Haisley (2013)") == [
+            "kaufmann", "weber", "haisley"]
+
+    def test_et_al_leaves_one_name_and_no_stopword(self):
+        assert self._names("Anderson et al. (2012), Study 5") == ["anderson"]
+
+    def test_a_non_ascii_surname_survives(self):
+        assert self._names("Usta & Häubl (2011), Study 3") == ["usta", "häubl"]
+
+
+class TestTheRecordsOwnWorkIdReachesTheRow:
+    """An original that came from an OpenAlex reference record carries an OpenAlex id
+    whether or not it carries a DOI, and that id IS its identity. It was used to build
+    the pair_id and then dropped, so the row arrived at the guard carrying nothing and
+    spent a title search re-finding what it had been handed. `_fill_work_ids` only ever
+    derives this column from doi_o, so for a DOI-less original nothing else filled it."""
+
+    _ROW = pd.Series({"doi_r": "10.1/rep", "title_r": "A replication",
+                      "abstract_r": "a", "filter_status": "replication"})
+
+    def test_a_doi_less_original_keeps_its_openalex_id(self):
+        entry = {"rank": 1, "doi": "", "title": "The original, unregistered",
+                 "year": 1991, "first_author": "Short", "openalex_id": "W1234",
+                 "study_number": "", "study_r": "", "evidence": "q",
+                 "confidence": "low", "provisional": False, "outcome_block": {}}
+        row = run_extract._merge_multi_row(self._ROW, entry, {}, "single_original",
+                                           "low", 1, "m", link_method="llm_fulltext",
+                                           classify_model="", screen=None)
+        assert row["oa_work_id_o"] == "W1234"
+
+    def test_an_original_with_a_doi_still_keeps_the_id(self):
+        entry = {"rank": 1, "doi": "10.9/orig", "title": "The original", "year": 2001,
+                 "first_author": "Smith", "openalex_id": "https://openalex.org/W9",
+                 "study_number": "", "study_r": "", "evidence": "q",
+                 "confidence": "high", "provisional": False, "outcome_block": {}}
+        row = run_extract._merge_multi_row(self._ROW, entry, {}, "single_original",
+                                           "high", 1, "m", link_method="llm_fulltext",
+                                           classify_model="", screen=None)
+        assert row["oa_work_id_o"] == "W9", "the bare id, not the OpenAlex URL"
+
+
+class TestWhatThePaperCitesIsLookedUpBeforeTheWorkIsClosed:
+    """`no_original_found` claims the paper re-tests nothing identifiable, and it
+    CLOSES the work. Before making that claim on a paper whose own text cites somebody,
+    the citation is looked up and the model is ASKED about it — not vetoed, which would
+    hold open every paper that says "we replicate X because Smith (2010) argued
+    replications matter". Holdout 3, work 6925248538: closed `no_original_found` with
+    "the study by Sela et al. investigating the effect of assortment size on option
+    choice" in its own abstract, having named no target at all."""
+
+    _HIT = {"doi": "10.1/sela", "title": "Variety, vice, and virtue", "year": 2009,
+            "first_author": "Sela", "openalex_id": "", "source": "crossref",
+            "flags": []}
+
+    @staticmethod
+    def _run(title_r, abstract_r, hits=(), pick=None, author_year=None):
+        row = pd.Series({"doi_r": "10.1/rep", "title_r": title_r,
+                         "abstract_r": abstract_r, "filter_status": "replication"})
+        link = dict(_MOCK_LINK, resolved=False, resolution_method="llm_no_target",
+                    resolved_doi_o="", resolved_title_o="", targets=[], n_targets=0,
+                    multi_target=False, target_stage="llm_openai", llm_evidence="")
+        no_pick = {"pick": None, "confident": False, "reasoning": "an aside",
+                   "llm_model": "gpt-5.4-mini", "llm_error": ""}
+        with patch.object(run_extract, "run_for_doi", return_value=link), \
+             patch.object(run_extract, "_has_document", return_value=False), \
+             patch("extract.link_original.title_search_candidates",
+                   return_value=(list(hits), False)), \
+             patch("shared.openalex_client.author_year_candidates",
+                   return_value=author_year or ([], 0, False)), \
+             patch("shared.llm_client.pick_author_year_original",
+                   return_value=pick or no_pick), \
+             patch.object(run_extract, "extract_outcome", return_value=_MOCK_OUTCOME):
+            return run_extract._resolve_and_code("10.1/rep", row, screen=None,
+                                                 no_llm=False, no_pdf=True,
+                                                 resolved_only=False)
+
+    _ABSTRACT = ("As part of the attempt to replicate the study by Sela et al. (2009) "
+                 "investigating the effect of assortment size on option choice")
+
+    def test_a_cited_work_the_model_accepts_becomes_the_link(self):
+        """"Sela et al. (2009)" carries no title, so it takes the author-and-year
+        route — the one that can answer a bare citation."""
+        found = {**self._HIT, "source": "openalex_authoryear", "authors": ["Sela, A."],
+                 "journal": "JCR", "cited_by": 40}
+        rows = self._run("Pre-test of product perception", self._ABSTRACT,
+                         author_year=([found], 1, False),
+                         pick={"pick": found, "confident": True,
+                               "reasoning": "same effect", "llm_model": "m",
+                               "llm_error": ""})
+        assert rows[0]["doi_o"] == "10.1/sela"
+        assert rows[0]["link_method"] == "llm_author_year_search"
+
+    def test_a_cited_work_the_model_declines_leaves_the_verdict_standing(self):
+        """An aside, not a target. The work still closes — but the row now records
+        that the question was asked, not only that the model said nothing."""
+        rows = self._run("A replication study", self._ABSTRACT,
+                         author_year=([self._HIT], 1, False))
+        assert rows[0]["link_method"] == "no_original_found"
+        assert "Sela et al. (2009)" in rows[0]["link_evidence"]
+        assert "not accepted" in rows[0]["link_evidence"]
+
+    def test_a_paper_that_cites_nobody_is_not_looked_up_at_all(self):
+        called: list = []
+        with patch("shared.openalex_client.author_year_candidates",
+                   side_effect=lambda *a, **k: called.append(a) or ([], 0, False)):
+            rows = self._run("A replication study in Senegal",
+                             "This study replicates a previous nutrition intervention.")
+        assert rows[0]["link_method"] == "no_original_found"
+        assert not called
+
+
+class TestARecoveredDoiSupersedesTheRecordsWorkId:
+    """The work id a row arrives with came from the REFERENCE RECORD; a DOI recovered
+    afterwards came from a title search of that record's title. They need not describe
+    the same work, and a row exposing a DOI for one and an OpenAlex id for another
+    sends a validator to two different papers."""
+
+    _ROW = {"doi_r": "10.1/rep", "title_r": "A replication", "study_r": "",
+            "doi_o": "", "title_o": "The original study of something",
+            "year_o": "2001", "authors_o": "Smith", "pair_id": "p",
+            "link_method": "llm_fulltext", "oa_work_id_o": "W_FROM_RECORD"}
+
+    def test_the_stale_work_id_is_cleared(self):
+        with patch("extract.run_extract._search_crossref_by_title",
+                   return_value={"doi": "10.9/found", "openalex_id": "W_OTHER"}):
+            out = run_extract._guard_original_link(dict(self._ROW))
+        assert out["doi_o"] == "10.9/found"
+        assert out["oa_work_id_o"] == "", "the row kept a work id from another record"
+
+    def test_a_row_that_needed_no_recovery_keeps_its_id(self):
+        out = run_extract._guard_original_link({**self._ROW, "doi_o": "10.9/already"})
+        assert out["oa_work_id_o"] == "W_FROM_RECORD"
+
+
+class TestConfirmKeyedRow:
+    """Issue #186's Shape 1 on the keyed-record path: a finished LLM-keyed row is
+    adjudicated cold before it is written, and only a confident "not the same
+    paper" demotes it — to keyed_link_disputed, with everything kept."""
+
+    _ROW = {"doi_r": "10.1/rep", "title_r": "A replication of Smith",
+            "abstract_r": "We replicate Smith (2010).",
+            "doi_o": "10.9/orig", "title_o": "The original", "year_o": "2010",
+            "authors_o": "Smith, J.", "oa_work_id_o": "",
+            "link_method": "llm_fulltext", "link_confidence": "high",
+            "link_evidence": "we replicate Smith (2010); unidentified=1"}
+
+    @staticmethod
+    def _verdict(plausible, confident, reasoning="different subject"):
+        return {"plausible": plausible, "confident": confident,
+                "reasoning": reasoning, "llm_model": "m", "llm_error": ""}
+
+    def test_confident_disconfirm_demotes_and_keeps_the_link(self):
+        with patch("shared.llm_client.confirm_keyed_original",
+                   return_value=self._verdict(False, True)) as check:
+            out = run_extract._confirm_keyed_row(dict(self._ROW))
+        assert out["link_method"] == "keyed_link_disputed"
+        assert out["link_confidence"] == "low"
+        assert out["doi_o"] == "10.9/orig", "the disputed link must be kept"
+        assert "different subject" in out["link_evidence"]
+        # The quote reaches the check with the run notes stripped.
+        assert check.call_args.args[3] == "we replicate Smith (2010)"
+
+    def test_unconfident_disconfirm_only_flags(self):
+        with patch("shared.llm_client.confirm_keyed_original",
+                   return_value=self._verdict(False, False)):
+            out = run_extract._confirm_keyed_row(dict(self._ROW))
+        assert out["link_method"] == "llm_fulltext"
+        assert out["link_confidence"] == "low"
+        assert "link kept, flagged" in out["link_evidence"]
+
+    def test_plausible_passes_untouched(self):
+        with patch("shared.llm_client.confirm_keyed_original",
+                   return_value=self._verdict(True, True)):
+            out = run_extract._confirm_keyed_row(dict(self._ROW))
+        assert out == self._ROW
+
+    def test_no_answer_does_not_settle(self):
+        with patch("shared.llm_client.confirm_keyed_original",
+                   return_value={"plausible": None, "confident": False,
+                                 "reasoning": "", "llm_model": "",
+                                 "llm_error": "503"}):
+            out = run_extract._confirm_keyed_row(dict(self._ROW))
+        assert out["link_method"] == "api_error"
+
+    @pytest.mark.parametrize("row_change", [
+        {"link_method": "title_pattern_match"},   # a rule's link — target_check's job
+        {"link_method": "llm_title_search"},      # already adjudicated by the pick
+        {"doi_o": "", "oa_work_id_o": ""},        # nothing identifiable to dispute
+    ])
+    def test_out_of_scope_rows_never_call(self, row_change):
+        with patch("shared.llm_client.confirm_keyed_original") as check:
+            out = run_extract._confirm_keyed_row({**self._ROW, **row_change})
+        check.assert_not_called()
+        assert out == {**self._ROW, **row_change}

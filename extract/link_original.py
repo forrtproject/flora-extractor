@@ -38,10 +38,11 @@ from shared.pdf_parsing import (
     parse_all as _parse_all,
     best_parse_result as _best_parse_shared,
     outcome_text,
+    parse_cache_path,
     parse_result_is_empty,
     read_parse_cache,
 )
-from shared.openalex_client import author_matches, extract_author_year_patterns, find_all_candidates, fetch_opencitations_references, fetch_referenced_works_metadata, _search_crossref_by_title, _search_openalex_by_title
+from shared.openalex_client import TitleSearchUnavailable, author_matches, extract_author_year_patterns, find_all_candidates, fetch_opencitations_references, fetch_referenced_works_metadata, _search_crossref_by_title, _search_openalex_by_title
 from shared.prompts import (
     TARGET_DISCUSSION_CHARS, TARGET_INTRO_CHARS, TARGET_METHODS_CHARS,
     _abstract_tail, rendered_reference_entries,
@@ -49,7 +50,7 @@ from shared.prompts import (
 from shared.schema import outcome_is_settled
 from shared.target_keys import assign_target_keys
 from shared.pdf_sources import acquire_pdf
-from shared.utils import cache_key, clean_doi
+from shared.utils import cache_key, clean_doi, non_article_doi, usable_title
 
 # ── Unified rule-based resolver (runs before any LLM call) ───────────────────
 # Combines citation-context scoring with a same-author/year title-Jaccard fallback
@@ -422,9 +423,51 @@ OUTCOME_DESCENT = True
 # What the ladder was when a row was written. Bump it when the ANSWER a row would get
 # changes, not when the code moves: rung order or membership, the acceptance rule
 # (match_certain), may_stop_at_a_rule / _HELD_ONLY_METHODS, the PDF acquisition tier
-# order, best_parse_result's scoring, or assign_target_keys' namespace rule. Nothing
-# reads it yet; a later engine tier will, to decide which rows a re-run must revisit.
-EXTRACT_LADDER_VERSION: int = 1
+# order, best_parse_result's scoring, or assign_target_keys' namespace rule.
+# It is part of `extract_generation()`, so bumping it mints a new generation and
+# reopens every work at once — which is how a resolution change gets re-run without
+# --redo, and how the previous generation's verdict rows stay live and readable.
+#
+#   2  a named target that could not be identified writes target_pending rather than
+#      falling through to no_original_found (2026-08-07)
+#   3  a target named as a citation with no title in it goes to an author-and-year
+#      shortlist judged by the linking model, not to a title search (2026-08-07)
+#   4  the abstract rung's gate reads the TITLE's author-year citations too, not the
+#      abstract's alone (2026-08-07)
+#   5  the per-target title search is given the year the paper cited, so the +/-2-year
+#      check both providers already implement actually runs (2026-08-07)
+#   6  a title-search hit that does not carry the author the citation named is
+#      dropped (2026-08-07)
+#   7  the author-and-year query ANDs every surname the citation named, not just the
+#      first (2026-08-07)
+#   8  a citation parenthesis may carry the venue or the study number after the year,
+#      and a playwright navigation failure ends its tier rather than the row
+#      (2026-08-07)
+#   9  the author-and-year narrowing ADDS to the shortlist rather than replacing it,
+#      on a few topic words rather than a whole title, and the author filter is
+#      accent-folded (2026-08-07)
+#  10  ONE pooled candidate list per unmatched target, from every search, and one
+#      model decision over it; the metadata rules flag candidates instead of dropping
+#      them (2026-08-07)
+#  11  the reviews of 10: the self-link guard is given the replication's title, an
+#      authorless record is dropped, and the author-and-year query runs only where the
+#      title search came up empty or flagged (2026-08-08)
+#  12  a DOI non_article_doi() calls not-a-study is not offered as an original
+#      (2026-08-08)
+#  13  the author-and-year shortlist is asked of CrossRef first, in relevance order;
+#      OpenAlex is the fallback (2026-08-08)
+#  14  CrossRef ends the search only when one of its hits carries EVERY surname the
+#      citation named; otherwise its hits lead a pool OpenAlex also fills (2026-08-08)
+#  15  a title hit is accepted on containment as well as Jaccard, because the query is
+#      usually a fragment and a model now adjudicates the pool (2026-08-08)
+#  16  the record's own OpenAlex id reaches the row; a DOI-less record is searched by
+#      author and year rather than by title similarity; an original nothing can
+#      identify is kept and flagged rather than written resolved; and what the paper
+#      cites is looked up before no_original_found closes it (2026-08-08)
+#  17  every LLM-accepted keyed link is adjudicated cold before it is written (issue
+#      #186 Shape 1): a confident "not the named target" demotes the row to
+#      keyed_link_disputed for human arbitration (2026-08-08)
+EXTRACT_LADDER_VERSION: int = 17
 
 
 # Columns to pass through from the input row (no renaming). Only columns
@@ -474,13 +517,13 @@ def clear_pipeline_caches(doi_r: str) -> list[str]:
     return deleted
 
 
-def _write_parse_cache(doi_r: str, parse_results: dict) -> None:
+def _write_parse_cache(cache_id: str, parse_results: dict) -> None:
     """Persist parse_all results to PARSE_CACHE_DIR so run_extract._save_parse_cache() skips re-parsing.
 
     An all-empty parse is never written, and an all-empty cache left by an earlier
     PDF-less run is overwritten rather than preserved (audit B4).
     """
-    out_file = PARSE_CACHE_DIR / f"parse_{cache_key(doi_r)}.json"
+    out_file = parse_cache_path(cache_id, PARSE_CACHE_DIR)
     if parse_result_is_empty(parse_results):
         return
     if out_file.exists():
@@ -494,7 +537,7 @@ def _write_parse_cache(doi_r: str, parse_results: dict) -> None:
         out_file.parent.mkdir(parents=True, exist_ok=True)
         write_json(out_file, parse_results, indent=2)
     except Exception as exc:
-        log.debug("[%s] _write_parse_cache failed: %s", doi_r, exc)
+        log.debug("[%s] _write_parse_cache failed: %s", cache_id, exc)
 
 
 def _cands_row(doi_r: str, cands_df: pd.DataFrame) -> dict:
@@ -580,6 +623,203 @@ def _search_title_for_original(doi_r: str, target_desc: str,
             "resolution_score":  1.0,
         }
     return None
+
+
+# A target description is however the PAPER referred to the study it replicates, so it
+# usually leads with a citation: "Zhong, Bohns, & Gino (2010) Good lamps are the best
+# police". Both searches confirm a hit by title Jaccard against the whole string, and
+# the author tokens drag that below the 0.7 threshold — so the citation that makes the
+# target identifiable to a human is what stops the search identifying it. Measured over
+# four real campaign targets on 2026-08-07: the raw string resolved 2 of 4 (both
+# CrossRef-only), the stripped title resolved 4 of 4 from both sources.
+_CITATION_PREFIXES = (
+    # The parenthesis may carry the venue or the study number after the year —
+    # "Wilson et al. (2017, JPSP)", "Vess (2012, PS, Study 1)" — and demanding the year
+    # alone read those as no citation, so the ladder searched their titles instead of
+    # their authors.
+    r"^.*?\((?:19|20)\d{2}[a-z]?(?:\s*[,;][^)]{0,60})?\)[\s,:.\-–]*",  # Authors (2010) Title
+    r"^.*?,\s*(?:19|20)\d{2}[a-z]?\s*[,:.\-–]\s*",     # Authors, 2007, Title
+    r"^.{0,60}?\b(?:19|20)\d{2}[a-z]?\b[\s,:.\-–]+",   # Authors 2007 Title
+)
+
+# What must survive the strip for it to be worth doing. Below this the "title" is a
+# fragment and searching it would match anything.
+_MIN_STRIPPED_TITLE = 20
+
+
+def strip_citation_prefix(text: str) -> str:
+    """*text* with a leading author-year citation removed, when one is there.
+
+    Conservative: the first pattern that leaves enough behind wins, and a strip that
+    would leave a fragment is not made at all.
+    """
+    stripped = str(text or "").strip()
+    for pattern in _CITATION_PREFIXES:
+        m = re.match(pattern, stripped)
+        if m and len(stripped) - m.end() >= _MIN_STRIPPED_TITLE:
+            return stripped[m.end():].strip()
+    return stripped
+
+
+def citation_without_title(text: str) -> bool:
+    """True when *text* is a citation that carries no title to search on.
+
+    "Ramscar et al. (2010)" and "Job, Dweck, and Walton (2010), Study 1" both name
+    an original unambiguously to a reader and give a title index nothing to match:
+    `usable_title` passes them — they are long enough and not a recognised fragment —
+    so both providers were asked, at 10x a filter query each, and both answered
+    nothing. On the frozen dev sample that shape was every one of the 24 works closed
+    as `no_original_found`.
+
+    A leading author-year citation is there, and no way of removing it leaves
+    something that could stand for a paper. `usable_title` is that second test rather
+    than `_MIN_STRIPPED_TITLE`, which is the higher floor `strip_citation_prefix` uses
+    to decide whether a strip is worth MAKING: at 20 characters it calls "The original
+    paper" a fragment, and diverting a short but real title to the author-and-year
+    route would ask the wrong question about it.
+
+    "Zhong, Bohns, & Gino (2010) Good lamps are the best police" fails this, and is
+    title-searched as before.
+    """
+    stripped = str(text or "").strip()
+    ends = [m.end() for m in (re.match(p, stripped) for p in _CITATION_PREFIXES) if m]
+    if not ends:
+        return False
+    # The LONGEST match, which is as much citation as any pattern can recognise. Taking
+    # any match instead let a shorter one stop at the year and hand back the rest of
+    # the parenthesis — "Vess (2012, PS, Study 1)" left "PS, Study 1)", which passes
+    # `usable_title` and is not a title of anything.
+    return not usable_title(stripped[max(ends):].strip())
+
+
+def _hit_author_list(hit: dict) -> str:
+    """*hit*'s authors as one string — "" when the record names nobody."""
+    authors = hit.get("authors")
+    return (" ".join(map(str, authors)) if isinstance(authors, list)
+            else str(authors or "")).strip()
+
+
+def _hit_carries_author(hit: dict, surname: str) -> bool:
+    """Whether *surname* is one of *hit*'s authors — True when nothing was cited.
+
+    A citation names an author, and a paper that does not have that author is not
+    that paper however well its title scored. The two title-search failures left on
+    the frozen dev sample after the year filter were both this: "Bem (2011)" matched
+    an Oxford Handbook chapter by Snyder and Deaux, and "Svensson (…2015)" matched a
+    journal's front matter, which has no author at all. Front matter is the reason
+    an EMPTY author list is rejected rather than waved through: a record with nobody
+    on it cannot be the paper a citation names.
+    """
+    # `extract_author_year_patterns` returns a multi-author citation as ONE run-on
+    # token — "Kaufmann, Weber, and Haisley (2013)" comes back as
+    # "kaufmann,weber,andhaisley" — so the value is split before it is matched, and
+    # ANY of its names carrying is enough. Matching the run-on string as a word cost
+    # a correct link on the first run of this guard.
+    names = [n for n in re.split(r"[^a-z]+", str(surname or "").lower())
+             if len(n) > 2 and n != "and"]
+    if not names:
+        return True
+    text = _hit_author_list(hit).lower()
+    return any(re.search(rf"\b{re.escape(n)}\b", text) for n in names)
+
+
+def title_search_candidates(doi_r: str, target_desc: str,
+                            study_r: str,
+                            cited_year: str = "",
+                            cited_surname: str = "") -> "tuple[list[dict], bool]":
+    """(candidates, unavailable) for *target_desc*.
+
+    `_search_title_for_original` returns the first confident hit and discards the
+    other source's; this keeps both, because which of them is right is the open
+    question (issue #186) and nothing on disk recorded that the two disagreed. The
+    list is the test data that question needs, so it is written to the row whether or
+    not it is acted on.
+
+    The second value is what makes the two endings distinguishable. `unavailable=False`
+    means EVERY provider answered, so an empty list is a settled `no_original_found`:
+    re-running would ask the same question and get the same nothing. `unavailable=True`
+    means at least one provider never answered, which must not settle anything.
+
+    Any silent provider makes the answer incomplete — not just both of them. The
+    result is an aggregate over both sources and they disagree in practice: of four
+    real campaign targets, CrossRef and OpenAlex returned DIFFERENT originals for two
+    (for "D. Wood et al. (1978)" CrossRef gave a book-chapter reprint and OpenAlex the
+    1976 paper). So "OpenAlex said nothing while CrossRef was down" is not evidence
+    that nothing exists, and settling on it would close a work on an outage.
+
+    Same guards as the single-hit resolver: never link a paper to itself, and never
+    accept a hit whose title is the replication's own.
+
+    *cited_surname* is the author the paper named. A hit that does not carry it is
+    FLAGGED rather than dropped, because dropping it is the expensive mistake: a
+    candidate the model never sees cannot be confirmed OR disconfirmed, and the work
+    goes back into a worklist that will pay for the whole ladder again. Rejecting a
+    bad candidate costs one field of one LLM answer. `_hit_carries_author` still
+    decides; what changed is what its answer does.
+
+    *cited_year* is the year the PAPER gave for its target, and both searches reject a
+    hit more than two years from it. The check has always been in both of them and
+    this call never supplied a year, so it never ran: "Bem (2011)" matched a 1965
+    paper called "Personality and social psychology" — the target string carried the
+    journal name and the title index matched that. Two of the four wrong links on the
+    frozen dev sample were this, and both were off by decades.
+    """
+    query = strip_citation_prefix(target_desc)
+    seen: set[str] = set()
+    candidates: list[dict] = []
+    unavailable = False
+    for label, search in (("crossref", _search_crossref_by_title),
+                          ("openalex", _search_openalex_by_title)):
+        try:
+            hit = search(query, cited_year, True)
+        except TitleSearchUnavailable as exc:
+            log.info("[%s] %s title search unavailable: %s", doi_r, label, exc)
+            unavailable = True
+            continue
+        if not hit:
+            continue
+        doi_o = clean_doi(hit.get("doi", "") or "")
+        oa_id = str(hit.get("openalex_id") or "")
+        ident = doi_o or oa_id
+        # A hit with no DOI but an OpenAlex id is still a paper, and dropping it here
+        # is how a real original — an old work, a report, a chapter — never reached the
+        # model at all. Only a hit that cannot be identified AT ALL is dropped.
+        if not ident or doi_o and doi_o == clean_doi(doi_r) or ident in seen:
+            continue
+        if jaccard_similarity(hit.get("title", ""), study_r) > 0.9:
+            continue
+        flags = []
+        reason = non_article_doi(doi_o)
+        if reason:
+            # The project already has a word for a DOI that is not a study; a record
+            # it names cannot be the original a replication re-tested, so it is not
+            # offered as one. Both wrong originals the evaluation could not otherwise
+            # reach were an APA PsycEXTRA conference abstract.
+            log.info("[%s] %s title hit %s dropped: %s", doi_r, label, doi_o, reason)
+            continue
+        if cited_surname and not _hit_author_list(hit):
+            # A record with nobody on it — a journal's front matter, a table of
+            # contents — cannot be the paper a citation names. This one IS dropped
+            # rather than flagged: there is no judgment for the model to make, and
+            # nothing about the record for it to make one on.
+            log.info("[%s] %s title hit %s dropped: the record has no author at all",
+                     doi_r, label, ident)
+            continue
+        if not _hit_carries_author(hit, cited_surname):
+            flags.append(f"does not carry the cited author ({cited_surname})")
+        seen.add(ident)
+        candidates.append({
+            "doi":          doi_o,
+            "title":        hit.get("title", ""),
+            "year":         hit.get("year"),
+            "first_author": _first_author(hit.get("authors")),
+            "openalex_id":  str(hit.get("openalex_id") or ""),
+            "authors":      hit.get("authors") or [],
+            "journal":      str(hit.get("journal") or ""),
+            "source":       label,
+            "flags":        flags,
+        })
+    return candidates, unavailable
 
 
 # What a target-identifying stage produced, as it has to survive to the row. Three
@@ -698,9 +938,15 @@ def run_for_doi(doi_r:              str,
                 no_llm:             bool = False,
                 no_pdf:             bool = False,
                 classification:     Optional[dict] = None,
-                record_type:        str = "replication") -> dict:
+                record_type:        str = "replication",
+                cache_id:           str = "") -> dict:
     """
     Run the full disambiguation pipeline for *doi_r*.
+
+    *cache_id* is the row's identity for the on-disk parse cache, and defaults to
+    *doi_r*. A caller with rows that may carry no DOI must pass one — 30% of the
+    2026-08-06 handoff has none, and they all keyed on `cache_key("")`, so the
+    first such row's full text was read back as every later one's.
 
     force=True clears all intermediate caches (LLM, GROBID, OpenAlex candidates)
     before running, but keeps the cached PDF so the download step is skipped.
@@ -749,6 +995,7 @@ def run_for_doi(doi_r:              str,
     abstract_r = cands_row.get("abstract_r", "")
     pattern_r  = cands_row.get("author_year_pattern_r", "")
     oa_id_r    = cands_row.get("openalex_id_r", "")
+    cache_id   = cache_id or doi_r or (f"oa:{oa_id_r}" if oa_id_r else "")
 
     try:
         year_r = int(cands_row.get("year_r") or 2099)
@@ -921,11 +1168,21 @@ def run_for_doi(doi_r:              str,
 
     # ── Stage 4: Abstract-level LLM ──────────────────────────────────────────
     if not no_llm:
-        abstract_patterns = extract_author_year_patterns(abstract_r, max_year=year_r)
-        distinct_pairs    = {(p["surname"], p["year"]) for p in abstract_patterns}
+        # The TITLE is read for the citation as well as the abstract. The gate exists
+        # so the call is not made with nothing to reason from, and "A multilab
+        # investigation into the N2pc: Direct replication of Eimer (1996)" is not
+        # nothing — the title is already in the prompt, as its TITLE block. Reading
+        # the abstract alone left 18 of 100 works on the frozen dev sample with no
+        # rung ever naming a target: they are OSF registrations whose abstract is
+        # boilerplate ("Stage 1 IPA at PCI RR"), so this gate closed, the reference
+        # rung had no references to pick from, and no document was acquired.
+        named_in    = "\n".join(filter(None, [study_r, abstract_r]))
+        patterns      = extract_author_year_patterns(named_in, max_year=year_r)
+        distinct_pairs = {(p["surname"], p["year"]) for p in patterns}
 
-        if abstract_r and distinct_pairs:
-            log.info("[%s] Abstract has %d author-year patterns — early abstract LLM", doi_r, len(distinct_pairs))
+        if named_in and distinct_pairs:
+            log.info("[%s] Title/abstract has %d author-year pattern(s) — early "
+                     "abstract LLM", doi_r, len(distinct_pairs))
             token_counter.set_stage("extract_abstract")
             # The real doi_r goes in: resolve_targets_and_outcomes uses it as the
             # exclude_doi for its title search, and a suffixed one never matches the
@@ -1064,7 +1321,8 @@ def run_for_doi(doi_r:              str,
         log.info("[%s] no_pdf mode — abstract/rules insufficient, writing target_pending", doi_r)
         return _exit(_unresolved("needs_fulltext"))
 
-    pdf = acquire_pdf(doi_r, study_r, openalex_id=oa_id_r)
+    pdf = acquire_pdf(doi_r, study_r, openalex_id=oa_id_r,
+                      url_r=str(cands_row.get("url_r", "") or ""))
     log.info("[%s] PDF: %s (%s)", doi_r, pdf["pdf_source"], pdf["pdf_url"])
 
     pdf_path       = Path(pdf["pdf_path"]) if pdf.get("pdf_path") else None
@@ -1090,10 +1348,10 @@ def run_for_doi(doi_r:              str,
     # document whose parse was already on disk, and the only reader was run_extract.
     # A hit is the same dict this call would have produced (an empty or transient-
     # failure cache reads as a miss — read_parse_cache's job).
-    parse_results = read_parse_cache(doi_r, PARSE_CACHE_DIR)
+    parse_results = read_parse_cache(cache_id, PARSE_CACHE_DIR)
     if parse_results is None:
         parse_results = _parse_all(doi_r, pdf_path, oa_xml=oa_xml_content, no_llm=no_llm)
-        _write_parse_cache(doi_r, parse_results)
+        _write_parse_cache(cache_id, parse_results)
     else:
         log.debug("[%s] parse cache hit — six parsers skipped", doi_r)
 

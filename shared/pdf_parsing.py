@@ -537,8 +537,25 @@ def parse_result_is_empty(results: "dict[str, dict] | None") -> bool:
                 if isinstance(r, dict)), default=0) <= 0
 
 
-def read_parse_cache(doi_r: str, cache_dir: "Path | None" = None) -> "dict | None":
-    """Return the cached parse_all() results for *doi_r*, or None on a miss.
+def parse_cache_path(cache_id: str, cache_dir: "Path | None" = None) -> "Path":
+    """Where the parse_all() results for *cache_id* live.
+
+    *cache_id* is the row's identity, not necessarily its DOI: 30% of the
+    2026-08-06 handoff carries no DOI, and keying those on `doi_r` filed every one
+    of them under `cache_key("") = d41d8cd9…` — a single bucket in which the first
+    blank-DOI row's full text was served to every later one. It raises rather than
+    returning that shared path, so a caller that loses the identity fails loudly
+    instead of silently reading another paper's document.
+    """
+    if not str(cache_id or "").strip():
+        raise ValueError(
+            "parse cache needs a row identity (doi_r, or url:/oa:/title: from "
+            "primary_key) — an empty one collides across every identity-less row")
+    return (cache_dir or PARSE_CACHE_DIR) / f"parse_{cache_key(cache_id)}.json"
+
+
+def read_parse_cache(cache_id: str, cache_dir: "Path | None" = None) -> "dict | None":
+    """Return the cached parse_all() results for *cache_id*, or None on a miss.
 
     *cache_dir* defaults to PARSE_CACHE_DIR; each caller passes its own module-level
     copy so the directory stays patchable where the caller lives.
@@ -558,7 +575,7 @@ def read_parse_cache(doi_r: str, cache_dir: "Path | None" = None) -> "dict | Non
     own references. Treating them as a miss re-parses the document — which is what
     heals them, since the re-parse is only cached once every method has answered.
     """
-    cache_file = (cache_dir or PARSE_CACHE_DIR) / f"parse_{cache_key(doi_r)}.json"
+    cache_file = parse_cache_path(cache_id, cache_dir)
     if not cache_file.exists():
         return None
     try:

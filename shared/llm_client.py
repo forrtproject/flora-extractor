@@ -38,8 +38,8 @@ from . import token_counter, token_usage
 from .cache import content_key, read_cache, read_cache_migrating, write_cache
 from .rate_limit import throttle
 from .prompts import (
-    build_classify_prompt, build_repro_target_outcome_prompt,
-    build_target_outcome_prompt, prompt_version,
+    build_author_year_pick_prompt, build_classify_prompt, build_keyed_confirm_prompt,
+    build_repro_target_outcome_prompt, build_target_outcome_prompt, prompt_version,
 )
 from .schema import normalise_outcome_block
 from .target_keys import assign_target_keys
@@ -1404,6 +1404,146 @@ _UNPICKED_TARGET = {
     "targets": [], "multi_target": False, "target_stage": "",
     "unidentified_count": 0, "outcome_block": {},
 }
+
+
+def pick_author_year_original(doi_r: str, title_r: str, abstract_r: str,
+                              target_as_named: str, evidence_quote: str,
+                              candidates: list[dict], total: int = 0) -> dict:
+    """Which of an author-and-year shortlist is the original — or none of them.
+
+    Returns {"pick": <the candidate dict or None>, "confident": bool,
+             "reasoning": str, "llm_model": str, "llm_error": str}.
+
+    A pick is used only when the model both named a candidate IN the list and stood
+    behind it: an index the list does not hold, an unparseable reply and a `null` are
+    all "no pick", and none of them resolves anything. The row that results is
+    provisional whatever the answer, because this resolver has no measured precision
+    yet — see `link_method = llm_author_year_search`.
+
+    The candidate list is part of the cache key on its own account. It is an INPUT the
+    prompt renders, and a re-queried list that differs — a work merged, a DOI
+    backfilled, a new paper indexed under that year — must miss rather than replay a
+    pick made over other candidates.
+
+    A decline is cached; a provider failure is not.
+    """
+    if not candidates:
+        return {"pick": None, "confident": False, "reasoning": "",
+                "llm_model": "", "llm_error": ""}
+
+    prompt = build_author_year_pick_prompt(title_r, abstract_r, target_as_named,
+                                           evidence_quote, candidates, total)
+    identities = "|".join(f"{c.get('doi') or c.get('openalex_id') or ''}"
+                          for c in candidates)
+    key = content_key("authoryearpick", doi_r or target_as_named,
+                      prompt_version("build_author_year_pick_prompt"),
+                      cache_model_id(LINKING_MODEL, LINKING_EFFORT),
+                      identities, prompt)
+    cached = read_cache(LLM_CACHE_DIR, key)
+    if cached is not None:
+        index = cached.get("pick_index")
+        return {"pick": candidates[index] if isinstance(index, int)
+                        and 0 <= index < len(candidates) else None,
+                "confident": bool(cached.get("confident")),
+                "reasoning": str(cached.get("reasoning", "") or ""),
+                "llm_model": LINKING_MODEL, "llm_error": ""}
+
+    result, _provider, llm_error = call_model(prompt, LINKING_MODEL,
+                                              reasoning_effort=LINKING_EFFORT)
+    if not result:
+        # Never cached: an outage is not the model declining to recognise a paper.
+        return {"pick": None, "confident": False, "reasoning": "",
+                "llm_model": "", "llm_error": llm_error}
+
+    if "pick" not in result:
+        # Valid JSON that does not answer the question asked. Caching it would file a
+        # non-answer as a decline, permanently, so it is treated as no answer at all.
+        return {"pick": None, "confident": False, "reasoning": "",
+                "llm_model": "", "llm_error": "reply carried no 'pick' field"}
+
+    raw = result.get("pick")
+    index = None
+    if raw is not None:
+        # The prompt numbers the candidates from 1 and asks for that key back. A
+        # model that answers with a title or a DOI is answering a different question,
+        # and guessing which candidate it meant is how the wrong original gets linked:
+        # a DOI "10.1234/abc" read as digits picks candidate 1, and "Study 3" picks
+        # candidate 3. So the whole answer must BE the number, bare or bracketed.
+        text = str(raw).strip()
+        m = re.fullmatch(r"\[?\s*(\d{1,3})\s*\]?", text)
+        if m and 1 <= int(m.group(1)) <= len(candidates):
+            index = int(m.group(1)) - 1
+        else:
+            # A title, a DOI, or a number outside the list. The model answered a
+            # different question, and that is not a decline: caching it as one would
+            # file "we could not read the reply" as "none of these is the paper", for
+            # ever. Not cached, so a re-run asks again.
+            return {"pick": None, "confident": False, "reasoning": "",
+                    "llm_model": "",
+                    "llm_error": f"pick {text[:60]!r} is not one of the "
+                                 f"{len(candidates)} candidates"}
+    confident = bool(result.get("confident"))
+    reasoning = str(result.get("reasoning", "") or "")[:500]
+    write_cache(LLM_CACHE_DIR, key, {"pick_index": index, "confident": confident,
+                                     "reasoning": reasoning})
+    return {"pick": candidates[index] if index is not None else None,
+            "confident": confident, "reasoning": reasoning,
+            "llm_model": LINKING_MODEL, "llm_error": ""}
+
+
+def confirm_keyed_original(doi_r: str, title_r: str, abstract_r: str,
+                           evidence_quote: str, record: dict) -> dict:
+    """Is the record an accepted @key resolved to plausibly the paper the study
+    names as its target — issue #186's Shape 1, on the keyed-record path.
+
+    A SEPARATE call from the one that made the pick, deliberately: the target call
+    marking a key `match_certain` and then being asked "are you sure?" in the same
+    breath is the model grading its own answer. Here it adjudicates the record cold,
+    with only the study's abstract and the quoted evidence in front of it — the same
+    footing the search-path check (`pick_author_year_original`) works on.
+
+    Returns {"plausible": bool | None, "confident": bool, "reasoning": str,
+             "llm_model": str, "llm_error": str} — `plausible` is None when there is
+    no answer (provider failure, or a reply without the field), and None decides
+    nothing. A parsed answer is cached, a "false" included; a failure is not.
+    """
+    prompt = build_keyed_confirm_prompt(title_r, abstract_r, evidence_quote, record)
+    # The record's identity on its own account, like the target call's `identities`:
+    # the prompt shows title/author/year, but the row is written from the record's
+    # DOI, and a re-fetch can move the DOI under an identical-looking record block.
+    identity = str(record.get("doi") or record.get("openalex_id") or "")
+    key = content_key("keyedconfirm", doi_r or title_r,
+                      prompt_version("build_keyed_confirm_prompt"),
+                      cache_model_id(LINKING_MODEL, LINKING_EFFORT),
+                      identity, prompt)
+    cached = read_cache(LLM_CACHE_DIR, key)
+    if cached is not None:
+        return {"plausible": cached.get("plausible"),
+                "confident": bool(cached.get("confident")),
+                "reasoning": str(cached.get("reasoning", "") or ""),
+                "llm_model": LINKING_MODEL, "llm_error": ""}
+
+    result, _provider, llm_error = call_model(prompt, LINKING_MODEL,
+                                              reasoning_effort=LINKING_EFFORT)
+    no_answer = {"plausible": None, "confident": False, "reasoning": "",
+                 "llm_model": "", "llm_error": llm_error}
+    if not result:
+        return no_answer
+    if "plausible" not in result:
+        # Valid JSON that does not answer the question. Caching it would file a
+        # non-answer as a verdict, permanently.
+        no_answer["llm_error"] = "reply carried no 'plausible' field"
+        return no_answer
+
+    raw = result.get("plausible")
+    plausible = raw is True or str(raw).strip().lower() == "true"
+    confident = bool(result.get("confident")
+                     is True or str(result.get("confident")).strip().lower() == "true")
+    reasoning = str(result.get("reasoning", "") or "")[:500]
+    write_cache(LLM_CACHE_DIR, key, {"plausible": plausible, "confident": confident,
+                                     "reasoning": reasoning})
+    return {"plausible": plausible, "confident": confident, "reasoning": reasoning,
+            "llm_model": LINKING_MODEL, "llm_error": ""}
 
 
 def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,

@@ -113,7 +113,8 @@ class TestChangeDetection:
         after = self._versions()
         changed = {n for n in PROMPT_NAMES if after[n] != before[n]}
         assert changed == {"build_target_outcome_prompt",
-                           "build_repro_target_outcome_prompt"}
+                           "build_repro_target_outcome_prompt",
+                           "build_keyed_confirm_prompt"}
 
     def test_the_retired_system_message_is_frozen_into_every_version(self, monkeypatch):
         """The system message is sent to nobody now, but its text still salts every

@@ -130,13 +130,39 @@ Never change a column name without updating `schema.py` and notifying all teams.
 - `pdf_source` and `parse_method` are full-text provenance: the acquisition tier that
   supplied the document and the parser that won `best_parse_result()`. Both blank when
   the row acquired or parsed nothing — a `llm_fulltext` row with a blank `pdf_source`
-  is a contradiction. There is no landing-page HTML substitute for a document any
-  more, and a content-free OpenAlex XML result (`openalex_xml_has_content()` in
-  `shared/pdf_sources.py`) is no document either: it ends the row at
-  `no_fulltext_available` and is never cached as a success. That guard lives in
-  `pdf_sources` alone now — `get_openalex_fulltext` neither returns nor caches a
-  shell, and `acquire_pdf` never lets one out as a document, so the duplicate
-  demotion in `run_for_doi` is gone.
+  is a contradiction.
+
+  **A document need not be a PDF, but every source has a content check that
+  a record page fails.** Three sources hand back a sections dict instead of a file
+  (`_STRUCTURED_SOURCES` in `shared/pdf_sources.py`), and each is paired with the
+  test that says whether what came back is a document:
+
+  | `pdf_source` | What it is | The check it must pass |
+  | ------------ | ---------- | ---------------------- |
+  | `openalex_xml` | OpenAlex GROBID XML | `openalex_xml_has_content()` — any section text or any reference |
+  | `osf_registration` | The OSF registration form, from the API | `osf_registration_has_content()` — ≥ 1,000 chars of description + form fields |
+  | `html_landing` | The row's own page, parsed with lxml | `html_document_has_content()` — ≥ 10,000 chars BEYOND the abstract, or a ≥ 2,000-char reference block |
+
+  A result that fails its check is no document: it ends the row at
+  `no_fulltext_available` and is never cached as a success. Each guard lives in
+  `pdf_sources` alone — `acquire_pdf` never lets a shell out as a document, so the
+  duplicate demotion in `run_for_doi` is gone.
+
+  The HTML check exists because a repository landing page restates the abstract and
+  adds citation chrome; coding a row from one looks like full text and is not. The
+  abstract is SUBTRACTED rather than the total thresholded, because chrome inflates
+  length without adding a word of the paper (measured 2026-08-07: five landing pages
+  carried 0–1,706 chars beyond their abstracts, three full texts 49,193–71,641).
+  Section headings are deliberately not the test — the PDF-oriented splitter finds no
+  intro in any of PLOS, PMC or eLife.
+
+  `osf_registration` covers the 33% of the worklist on the `10.17605` registrant,
+  whose DOIs are registrations rather than files (`osf.io/download/<guid>/` answers
+  HTTP 500). Stage 3 does not judge which registrations are worth reading — Stage 2
+  already did: `osf-registration-protocol` (live, discard) drops the preregistration
+  templates and `osf-registration-completed` (live, `screen_expensive`) admits the
+  post-completion forms and the Open-Ended Registrations carrying the replication
+  stem.
 
 ## Stage 3 — Front Door and Resolution
 
@@ -301,6 +327,35 @@ unsettled verdict is the ladder's job — see `OUTCOME_DESCENT` below.
 **Outcome coding runs only on a resolved link** (`_outcome_without_coding()` gates on
 `RESOLVED_LINK_METHODS`); unresolved rows are written `pending`, except
 `not_a_replication` where the screen's verdict is the outcome.
+
+## Before a Run That Spends
+
+Three rules, each written after it was broken on 2026-08-07. They cost minutes; the
+runs they guard cost money and can close works permanently with a wrong verdict.
+
+1. **The first run of changed Stage 3 code goes through the sandbox.**
+   `python -m extract.tier --run --mode validation` records real verdicts the live
+   export ignores, and re-running the same works live is the promotion — near-free,
+   because the LLM calls are cached. There is no reason for the first exercise of
+   new code to write live verdicts. A live pilot of a new resolution path closed 15
+   works as `no_original_found` whose own stored evidence named the original in plain
+   text; in the sandbox those would have been shadow rows to read and discard.
+
+2. **Read the implementation of any worklist-changing flag before spending through
+   it.** `--redo`, `--only` and `--limit` decide what gets bought. `--redo` was passed
+   to a live run without reading the batch loop it feeds; the loop re-applies the redo
+   set on every worklist rebuild, so the same 29 works were re-extracted nine times in
+   ten minutes before the run was killed.
+
+3. **Run `/code-review` on the diff before any run that spends more than trivially.**
+   A review pass is a rounding error against a $20 campaign.
+
+The general form, which is what actually separated the useful work from the wasted
+work that day: **verify against the artifact before spending, and read the output
+before concluding.** Probing the OSF API showed the obvious regex fix would not have
+helped; reading the stored payloads showed a clean-looking verdict distribution was
+wrong; measuring eight pages set a threshold that reasoning about HTML would not have.
+Every mistake came from acting before one of those checks.
 
 ## API Budgets and Usage
 
@@ -539,6 +594,20 @@ the correction. `extract/backfill_authors.py` takes the same route for
 `shared/doi_verify.py`. The searches go through `_oa_get`, so they are throttled,
 key-rotated, counted (`search_query_count()`, printed at the end of a run) and a quota
 refusal raises `OpenAlexQuotaExhausted` instead of reading as "no match".
+
+**Verification checks the DOI against the row's own metadata, never the record
+against the target the paper NAMED** — the wrong entry picked from the right list
+passes it as `verified`. That class is caught by the keyed-record check (issue #186
+Shape 1): `_confirm_keyed_row()` in `extract/run_extract.py`, inside `_finalise_row`,
+adjudicates every LLM-accepted keyed link cold — a separate cached call
+(`confirm_keyed_original` in `shared/llm_client.py`) shown only the study's
+title/abstract, the quoted evidence and the record. A confident "not the named
+target" demotes the row to `link_method = keyed_link_disputed` (provisional: settles,
+quarantined to `keyed_link_disputed.csv`, not imported), keeping the link, the
+outcome and both readings for a human; an unconfident "no" only flags; no answer
+writes `api_error` so the row is not settled on a transient failure. Measured before
+wiring over all 63 settled keyed links in the evaluation samples: the one known-wrong
+link flagged, zero false positives (`analysis/stage3_eval/keyed_confirm_eval.py`).
 
 ## Further Reference
 

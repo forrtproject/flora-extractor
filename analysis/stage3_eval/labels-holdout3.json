@@ -1,0 +1,758 @@
+{
+  "batch": "eval-holdout3",
+  "commit": "HEAD",
+  "adjudicated": "2026-08-08",
+  "note": "All 74 SETTLED works adjudicated, every DOI against Crossref.",
+  "labels": {
+    "1997538511": {
+      "verdict": "resolved",
+      "doi_o": [
+        "10.1037/0893-3200.9.3.227"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/0893-3200.9.3.227 = Gottman; Jacobson; Rushe; Shor 1995, The relationship between heart rate reactivity, emotiona"
+    },
+    "2057725226": {
+      "verdict": "resolved",
+      "doi_o": [
+        "10.1037/0893-3200.9.3.227"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/0893-3200.9.3.227 = Gottman; Jacobson; Rushe; Shor 1995, The relationship between heart rate reactivity, emotiona"
+    },
+    "2102376455": {
+      "verdict": "resolved",
+      "doi_o": [
+        "10.1037//0096-1523.9.3.427"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037//0096-1523.9.3.427 = Thomson 1983, Is continuous visual monitoring necessary in visually gu"
+    },
+    "2218284474": {
+      "verdict": "resolved",
+      "doi_o": [
+        "10.1177/0956797613493642"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1177/0956797613493642 = White; Kenrick; Neuberg 2013, Beauty at the Ballot Box"
+    },
+    "2749540800": {
+      "verdict": "resolved",
+      "doi_o": [
+        "10.1016/j.econlet.2015.12.016"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1016/j.econlet.2015.12.016 = B\u00e9k\u00e9s; Murak\u00f6zy 2016, Measuring productivity premia with many modes of interna"
+    },
+    "2754306982": {
+      "verdict": "resolved",
+      "doi_o": [
+        "10.1162/rest_a_00437"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1162/rest_a_00437 = McCabe; Snyder 2015, Does Online Availability Increase Citations? Theory and "
+    },
+    "2972834983": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "2972957444": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "2989584893": {
+      "verdict": "resolved",
+      "doi_o": [
+        "10.1111/j.1467-9280.2008.02072.x"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1111/j.1467-9280.2008.02072.x = Crosby; Monin; Richardson 2008, Where Do We Look During Potentially Offensive Behavior?"
+    },
+    "3091730662": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1108/arj-09-2020-0312"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1108/arj-09-2020-0312 = Bachmann; Spiropoulos 2021, Female directors and acquisition outcomes: a reflection "
+    },
+    "3095284420": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "3107685864": {
+      "verdict": "resolved",
+      "doi_o": [
+        "10.1177/0956797610397956"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1177/0956797610397956 = Brady; Alvarez 2011, Hierarchical Encoding in Visual Working Memory"
+    },
+    "3159433821": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1037/0096-1523.1.3.288",
+        "10.1037/0096-1523.3.4.544"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/0096-1523.1.3.288 = Fischhoff 1975, Hindsight is not equal to foresight: The effect of outco; 10.1037/0096-1523.3.4.544 = Slovic; Fischhoff 1977, On the psychology of experimental surprises."
+    },
+    "4231607312": {
+      "verdict": "resolved",
+      "doi_o": [
+        "10.1080/00221309.1942.10544410"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1080/00221309.1942.10544410 = Middleton 1942, The Frequency with which a Group of Unselected College S"
+    },
+    "4234718578": {
+      "verdict": "resolved",
+      "doi_o": [
+        "10.2466/pms.1999.89.1.151"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.2466/pms.1999.89.1.151 = Onwuegbuzie 1999, Defense or Offense? Which is the Better Predictor of Suc"
+    },
+    "4242919532": {
+      "verdict": "resolved",
+      "doi_o": [
+        "10.1177/0261927x12438532",
+        "10.1177/0261927x12460666"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1177/0261927x12438532 = Abe 2012, Cognitive\u2013Affective Styles Associated With Position on W; 10.1177/0261927x12460666 = Matsumoto; Hwang 2012, The Language of Political Aggression"
+    },
+    "4244715016": {
+      "verdict": "resolved",
+      "doi_o": [
+        "10.1073/pnas.0804388105"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1073/pnas.0804388105 = Yoon; Johnson; Csibra 2008, Communication-induced memory biases in preverbal infants"
+    },
+    "4248569678": {
+      "verdict": "resolved",
+      "doi_o": [
+        "10.1016/j.humov.2016.08.009",
+        "10.1123/jmld.2015-0036"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1123/jmld.2015-0036 = Daou; Buchanan; Lindsey; Lohse 2016, Expecting to Teach Enhances Learning: Evidence From a Mo; 10.1016/j.humov.2016.08.009 = Daou; Lohse; Miller 2016, Expecting to teach enhances motor learning and informati"
+    },
+    "4308866009": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1016/j.obhdp.2013.10.003"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1016/j.obhdp.2013.10.003 = Tsay 2014, The vision heuristic: Judging music ensembles by sight a"
+    },
+    "4308956564": {
+      "verdict": "resolved",
+      "doi_o": [
+        "10.1111/1745-9125.12035"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1111/1745-9125.12035 = PICKETT; BAKER 2014, THE PRAGMATIC AMERICAN: EMPIRICAL REALITY OR METHODOLOGI"
+    },
+    "4388672999": {
+      "verdict": "resolved",
+      "doi_o": [
+        "10.1177/0956797612450892"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1177/0956797612450892 = Rodeheffer; Hill; Lord 2012, Does This Recession Make Me Look Black? The Effect of Re"
+    },
+    "4407918676": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1177/1362168820921895"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1177/1362168820921895 = Teimouri; Plonsky; Tabandeh 2020, L2 grit: Passion and perseverance for second-language le"
+    },
+    "4408593429": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1037/0096-1523.1.3.288"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/0096-1523.1.3.288 = Fischhoff 1975, Hindsight is not equal to foresight: The effect of outco"
+    },
+    "4409052879": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "4415109486": {
+      "verdict": "resolved",
+      "doi_o": [
+        "10.1186/s12889-025-24026-y"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1186/s12889-025-24026-y = Li; Liu; Zhang; Pei; Hou 2025, Electronic cigarette use and risk of chronic kidney dise"
+    },
+    "4415618716": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1177/09567976241249183"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1177/09567976241249183 = DeKay; Dou 2024, Risky-Choice Framing Effects Result Partly From Mismatch"
+    },
+    "6884631785": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "6885081064": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.5465/amj.2011.0744"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.5465/amj.2011.0744 = Flammer 2013, Corporate Social Responsibility and Shareholder Reaction"
+    },
+    "6887686622": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1111/bjso.12597",
+        "10.31234/osf.io/mnfrd"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1111/bjso.12597 = Adam\u2010Troian; Chayinska; Paladi 2022, Of precarity and conspiracy: Introducing a\n             ; 10.31234/osf.io/mnfrd = Adam-Troian; Chayinska; Paladi 2021, Of Precarity and Conspiracy: Introducing A Socio-Functio"
+    },
+    "6887707117": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "6887745400": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "6887752256": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1016/s0306-4603(02)00220-4",
+        "10.1037/pha0000143"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1016/s0306-4603(02)00220-4 = Kollins 2003, Delay discounting is associated with substance use in co; 10.1037/pha0000143 = Acuff; Soltis; Dennhardt; Bors 2017, Future so bright? Delay discounting and consideration of"
+    },
+    "6887791951": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1037/pspi0000092"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/pspi0000092 = Wilson; Hugenberg; Rule 2017, Racial bias in judgments of physical size and formidabil"
+    },
+    "6887802368": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1037/0022-3514.77.4.785"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/0022-3514.77.4.785 = Kim; Markus 1999, Deviance or uniqueness, harmony or conformity? A cultura"
+    },
+    "6887833737": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "6902485643": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1371/journal.pone.0139159"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1371/journal.pone.0139159 = Jalal; Krishnakumar; Ramachand 2015, \u201cI Feel Contaminated in My Fake Hand\u201d: Obsessive-Compuls"
+    },
+    "6906508059": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "6906527563": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1037/h0031322"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/h0031322 = Tversky; Kahneman 1971, Belief in the law of small numbers."
+    },
+    "6906571738": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "6906573331": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1007/s40806-015-0017-5"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1007/s40806-015-0017-5 = Perilloux; Mu\u00f1oz-Reyes; Turieg 2015, Do (non-American) Men Overestimate Women\u2019s Sexual Intent"
+    },
+    "6906589178": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1086/648381"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1086/648381 = Karmarkar; Tormala 2010, Believe Me, I Have No Idea What I\u2019m Talking About: The E"
+    },
+    "6906612480": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1016/j.jenvp.2020.101499"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1016/j.jenvp.2020.101499 = Fido; Rees; Clarke; Petronzi;  2020, Examining the connection between nature connectedness an"
+    },
+    "6906621346": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1177/0956797611431465"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1177/0956797611431465 = Levinson; Smallwood; Davidson 2012, The Persistence of Thought"
+    },
+    "6906628983": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "6907444642": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "6924407137": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1002/soej.12223"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1002/soej.12223 = Chowdhury; Jeon; Saha 2017, Gender Differences in the Giving and Taking Variants of "
+    },
+    "6925197951": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "6925205352": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1016/j.jbusvent.2003.12.007"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1016/j.jbusvent.2003.12.007 = Dimov; Shepherd 2005, Human capital theory and venture capital firms: explorin"
+    },
+    "6925248538": {
+      "verdict": "no_original_found",
+      "doi_o": [],
+      "label": "wrong_settle",
+      "reason": "NO_ORIGINAL_FOUND, which closes the work, while the abstract names 'the study by Sela et al. investigating the effect of assortment size on option choice'. The target prompt named NO target, so iteration 1's rule \u2014 a named target that could not be identified writes target_pending \u2014 never fires."
+    },
+    "6931708800": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1007/978-3-642-36742-7_22",
+        "10.1109/fmcad.2009.5351148"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1109/fmcad.2009.5351148 = Vizel; Grumberg 2009, Interpolation-sequence based model checking; 10.1007/978-3-642-36742-7_22 = Vizel; Grumberg; Shoham 2013, Intertwined Forward-Backward Reachability Analysis Using"
+    },
+    "6939876929": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1037/0022-3514.73.2.321"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/0022-3514.73.2.321 = McCullough; Worthington; Racha 1997, Interpersonal forgiving in close relationships."
+    },
+    "6943140641": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "6943841677": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1016/s0191-8869(98)00209-8"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1016/s0191-8869(98)00209-8 = Dudley 1999, The effect of superstitious belief on performance follow"
+    },
+    "6944019578": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1111/cogs.12364"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1111/cogs.12364 = De Freitas; Tobia; Newman; Kno 2016, Normative Judgments and Individual Essence"
+    },
+    "6961855366": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1257/aer.20210122"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1257/aer.20210122 = Bold; Ghisolfi; Nsonzi; Svenss 2022, Market Access and Quality Upgrading: Evidence from Four "
+    },
+    "6962149960": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1002/jrsm.1298"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1002/jrsm.1298 = Alinaghi; Reed 2018, Meta\u2010analysis and publication bias: How well does the FA"
+    },
+    "6962248742": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "6962554213": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1037/a0027407"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/a0027407 = Carter; Gilovich 2012, I am what I do, not what I have: The differential centra"
+    },
+    "6962783498": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1093/analys/63.3.190"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1093/analys/63.3.190 = Knobe 2003, Intentional action and side effects in ordinary language"
+    },
+    "6963064030": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "6963478887": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1177/0261927x01020004004"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1177/0261927x01020004004 = Stahlberg; Sczesny; Braun 2001, Name Your Favorite Musician"
+    },
+    "6966700237": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1037/xap0000013"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/xap0000013 = Park; Ramirez; Beilock 2014, The role of expressive writing in math anxiety."
+    },
+    "6983531904": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1002/tea.21643"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1002/tea.21643 = Liou 2020, Students' attitudes toward science and science achieveme"
+    },
+    "6997614104": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1037/a0024208"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/a0024208 = Janata; Tomic; Haberman 2012, Sensorimotor coupling in music and the psychology of the"
+    },
+    "7001503455": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1016/j.respol.2020.104151"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1016/j.respol.2020.104151 = Deleidi; Mazzucato 2021, Directed innovation policies and the supermultiplier: An"
+    },
+    "7008747589": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "7009979263": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1177/0267658315589656"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1177/0267658315589656 = McDonough; Crowther; Kielstra; 2015, Exploring the potential relationship between eye gaze an"
+    },
+    "7014923322": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1257/pol.20200226"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1257/pol.20200226 = Baron 2022, School Spending and Student Outcomes: Evidence from Reve"
+    },
+    "7025070027": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1086/209174"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1086/209174 = Levin; Gaeth 1988, How Consumers are Affected by the Framing of Attribute I"
+    },
+    "7028210935": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1016/j.visres.2018.02.010"
+      ],
+      "label": "wrong_settle",
+      "reason": "Civile et al. (2019) -> 10.1016/j.visres.2018.02.010, Civile's face-inversion work. The abstract says the target showed a decreased inversion effect for faces labelled 'diagnosed with autism'; this paper is about experience-based perceptual learning. Right author and topic area, probably the wrong paper. Counted wrong because it cannot be shown right."
+    },
+    "7029424840": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.7551/mitpress/4117.003.0010"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.7551/mitpress/4117.003.0010 = Boroditsky; Schmidt; Phillips 2003, Sex, Syntax, and Semantics"
+    },
+    "7033867410": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "7038320865": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1016/j.jesp.2011.11.012"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1016/j.jesp.2011.11.012 = DeVoe; House 2012, Time, money, and happiness: How does putting a price on "
+    },
+    "7055459422": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "7070830194": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "7073822415": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1016/j.jbankfin.2014.05.033"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1016/j.jbankfin.2014.05.033 = Dias 2014, Semiparametric estimation of multi-asset portfolio tail "
+    },
+    "7081928671": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1177/0261927x01020004004"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1177/0261927x01020004004 = Stahlberg; Sczesny; Braun 2001, Name Your Favorite Musician"
+    },
+    "7104052239": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1080/00220973.2024.2358480"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1080/00220973.2024.2358480 = Asberger; Thomm; Bauer 2024, Do Reading Goals Make a Difference for Refutation Text E"
+    },
+    "7106509199": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1037/xge0000232"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037/xge0000232 = Landkammer; Sassenberg 2016, Competing while cooperating with the same others: The co"
+    },
+    "7107940658": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1073/pnas.2206531119"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1073/pnas.2206531119 = Hannikainen; Tobia; de Almeida 2022, Coordination and expertise foster legal textualism"
+    },
+    "7108216044": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1257/aer.20170029"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1257/aer.20170029 = Bursztyn; Fujiwara; Pallais 2017, \u2018Acting Wife\u2019: Marriage Market Incentives and Labor Mark"
+    },
+    "7110687940": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1111/j.1551-6709.2009.01092.x"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1111/j.1551-6709.2009.01092.x = Ramscar; Yarlett; Dye; Denny;  2010, The Effects of Feature\u2010Label\u2010Order and Their Implication"
+    },
+    "7112194545": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "7113258559": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1037//0003-066x.51.2.157"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1037//0003-066x.51.2.157 = Martell; Lane; Emrich 1996, Male-female differences: A computer simulation."
+    },
+    "7113384109": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "7113800531": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.5334/joc.77"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.5334/joc.77 = Yoshimura; Yonemitsu; Marmolej 2019, Task Difficulty Modulates the Disrupting Effects of Oral"
+    },
+    "7117714676": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1016/j.cogpsych.2024.101692"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1016/j.cogpsych.2024.101692 = Sehl; Denison; Friedman 2024, Doing things efficiently: Testing an account of why simp"
+    },
+    "7125737614": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "7128314621": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "7128386839": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "7131099568": {
+      "verdict": "target_pending",
+      "doi_o": [],
+      "label": "open",
+      "reason": "target_pending / api_error"
+    },
+    "7131806013": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1177/0956797618756862"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1177/0956797618756862 = Alves; Koch; Unkelbach 2018, A Cognitive-Ecological Explanation of Intergroup Biases"
+    },
+    "7159830318": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.48550/arxiv.2602.19159"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: (no doi) Beyond Behavioural Trade-Offs: Mechanistic Traci"
+    },
+    "7160367151": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1073/pnas.1415086111"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1073/pnas.1415086111 = Alter; Hershfield 2014, People search for meaning when they approach a new decad"
+    },
+    "7160472329": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1177/0956797612452574"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1177/0956797612452574 = Calogero 2013, Objects Don\u2019t Object"
+    },
+    "7160472820": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1126/science.1189993"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1126/science.1189993 = Ackerman; Nocera; Bargh 2010, Incidental Haptic Sensations Influence Social Judgments "
+    },
+    "7160473880": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1017/s1930297500002771"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1017/s1930297500002771 = Huang; Zeelenberg 2012, Investor regret: The role of expectation in comparing wh"
+    },
+    "7164996001": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1086/658999"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1086/658999 = Newman; Diesendruck; Bloom 2011, Celebrity Contagion and the Value of Objects"
+    },
+    "7165008125": {
+      "verdict": "provisional",
+      "doi_o": [
+        "10.1086/658999"
+      ],
+      "label": "correct_settle",
+      "reason": "Crossref-checked: 10.1086/658999 = Newman; Diesendruck; Bloom 2011, Celebrity Contagion and the Value of Objects"
+    },
+    "96773735": {
+      "verdict": "resolved",
+      "doi_o": [],
+      "label": "wrong_settle",
+      "reason": "RESOLVED \u2014 the most damaging kind, because resolved rows are imported \u2014 to a title that is an OCR-mangled copy of the REPLICATION's own ('Report of an jnternship c:gndyctp1 lithe MemQrial Unjvmj'Y'), with no DOI. Its own evidence names Short's (1991) as the target. A self-link the guards miss: doi_o == doi_r cannot fire when both are empty, and the Jaccard-0.9 title guard lives in title_search_candidates, which the full-text rung does not go through."
+    }
+  }
+}

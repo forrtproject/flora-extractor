@@ -76,6 +76,16 @@ _NON_ARTICLE_DOI_RE = re.compile(r"/reviews/|/decisions/", re.IGNORECASE)
 # Zenodo (10.5281) is absent: CODECHECK certificates live there and the reproduction-of
 # arm admits them on purpose. Instances on prefixes not listed here are the title
 # rule's job, not this one's.
+# APA files PsycEXTRA under 10.1037/e<digits>-<digits>: conference abstracts, posters,
+# government reports and unpublished instruments, typed `dataset` in Crossref. The
+# published article by the same authors carries an ordinary 10.1037 DOI, so the two
+# are told apart by the leading "e" and nothing else. Both wrong originals the Stage 3
+# evaluation could not otherwise reach were one of these — "Olivola & Shafir (2013)"
+# matched an Olivola conference abstract instead of the martyrdom-effect paper, and
+# the surveillance-task replication matched an abstract instead of Olson & Fazio
+# (2001). A record of a talk is not the study a replication re-tested.
+_PSYCEXTRA_DOI_RE = re.compile(r"^10\.1037/e\d+-\d+$")
+
 _DATA_REPOSITORY_PREFIXES = frozenset({
     "10.7910",   # Harvard Dataverse
     "10.3886",   # ICPSR / openICPSR
@@ -109,6 +119,8 @@ def non_article_doi(doi: str) -> str:
         return ""
     if doi.startswith("10.6084/"):
         return "figshare_data_record"
+    if _PSYCEXTRA_DOI_RE.match(doi):
+        return "psycextra_record"
     if doi.split("/", 1)[0] in _DATA_REPOSITORY_PREFIXES:
         return "data_repository_deposit"
     if _NON_ARTICLE_DOI_RE.search(doi):

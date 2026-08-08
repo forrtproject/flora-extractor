@@ -12,6 +12,7 @@ import json
 import re
 import threading
 import time
+import unicodedata
 from pathlib import Path
 from typing import Optional
 
@@ -27,7 +28,7 @@ from .openalex_keys import (
     rotate_key,
 )
 from .rate_limit import throttle
-from .utils import bare_work_id, clean_doi, cache_key
+from .utils import bare_work_id, clean_doi, cache_key, non_article_doi
 
 # ── Unicode ranges (chr() avoids \u in compiled regexes for Python < 3.12) ────
 _UNI_RANGE  = chr(0x00C0) + "-" + chr(0x024F) + chr(0x1E00) + "-" + chr(0x1EFF)
@@ -37,23 +38,28 @@ _PREFIX     = (r"(?:van\s+der\s+|van\s+|von\s+|de\s+la\s+|de\s+|da\s+|"
                r"del\s+|den\s+|der\s+|du\s+|le\s+|la\s+|el\s+|al\s+)?")
 _NAME       = rf"(?:{_PREFIX}[A-Z{_UPPER_UNI}]{_LETTER}{{2,}})"
 _YEAR       = r"(?:19|20)\d{2}"
+# What may sit inside the citation's parentheses after the year. Papers routinely put
+# the venue or the study number there — "Wilson et al. (2017, JPSP)", "Vess (2012, PS,
+# Study 1)" — and a pattern that demanded the year alone read those as no citation at
+# all, so the ladder searched their titles instead of their authors.
+_PAREN_TAIL = r"(?:\s*[,;][^)]{0,60})?"
 
 # Patterns ordered most-specific → least-specific (avoids partial overlaps)
 _PATTERNS: list[tuple[str, str]] = [
     ("multi_and_paren",
-     rf"({_NAME}(?:,\s*{_NAME}){{1,}},?\s+(?:and|&)\s+{_NAME})\s*'?s?\s*\(({_YEAR})\)"),
+     rf"({_NAME}(?:,\s*{_NAME}){{1,}},?\s+(?:and|&)\s+{_NAME})\s*'?s?\s*\(({_YEAR}){_PAREN_TAIL}\)"),
     ("multi_and_bare",
      rf"({_NAME}(?:,\s*{_NAME}){{1,}},?\s+(?:and|&)\s+{_NAME}),?\s+({_YEAR})(?!\d)"),
     ("etal_paren",
-     rf"({_NAME})\s+et\s+al\.?\s*'?s?\s*\(({_YEAR})\)"),
+     rf"({_NAME})\s+et\s+al\.?\s*'?s?\s*\(({_YEAR}){_PAREN_TAIL}\)"),
     ("etal_bare",
      rf"({_NAME})\s+et\s+al\.?\s*,?\s+({_YEAR})(?!\d)"),
     ("two_and_paren",
-     rf"({_NAME})\s+(?:and|&)\s+({_NAME})\s*'?s?\s*\(({_YEAR})\)"),
+     rf"({_NAME})\s+(?:and|&)\s+({_NAME})\s*'?s?\s*\(({_YEAR}){_PAREN_TAIL}\)"),
     ("two_and_bare",
      rf"({_NAME})\s+(?:and|&)\s+({_NAME}),?\s+({_YEAR})(?!\d)"),
     ("single_paren",
-     rf"({_NAME})\s*'?s?\s*\(({_YEAR})\)"),
+     rf"({_NAME})\s*'?s?\s*\(({_YEAR}){_PAREN_TAIL}\)"),
     ("single_bare",
      rf"({_NAME}),?\s+({_YEAR})(?!\d)"),
 ]
@@ -248,6 +254,18 @@ def print_search_summary() -> None:
           f"(billed ~10x a filter query — see CLAUDE.md cost table)\n")
 
 
+def _params_summary(params: "dict | None") -> str:
+    """The identifying part of an OpenAlex query, for a log line.
+
+    Only `filter` and `search` — the rest is `select`/`mailto`/`per-page` boilerplate
+    that would bury the one thing a reader needs to know: which question failed.
+    """
+    if not params:
+        return ""
+    parts = [f"{k}={str(params[k])[:120]}" for k in ("filter", "search") if params.get(k)]
+    return f"({' '.join(parts)})" if parts else ""
+
+
 def _oa_get(url: str, params: dict | None = None) -> Optional[dict]:
     """GET from OpenAlex with rate limiting, 429 retry, and error handling.
 
@@ -292,17 +310,45 @@ def _oa_get(url: str, params: dict | None = None) -> Optional[dict]:
                 time.sleep(delay)
                 attempt += 1
                 continue
+            # A 5xx is OpenAlex having a moment, not an answer about the query, and
+            # under EXTRACT_WORKERS concurrent callers they arrive in clusters: a
+            # 27-work run on 2026-08-07 logged 15 failures whose requests all
+            # succeeded when replayed one at a time. Breaking out on the first one
+            # spent the row's whole question on a blip, and — now that a title search
+            # that finds nothing settles a work as `no_original_found` — would have
+            # closed works on it. Retried on the same schedule as a 429.
+            if r.status_code >= 500:
+                if attempt >= len(_RETRY_DELAYS):
+                    log.warning("OpenAlex %s after %d retries: %s %s", r.status_code,
+                                attempt, url, _params_summary(params))
+                    return None
+                delay = _RETRY_DELAYS[attempt]
+                log.warning("OpenAlex %s — waiting %ds before retry %d/%d: %s",
+                            r.status_code, delay, attempt + 1, len(_RETRY_DELAYS),
+                            _params_summary(params))
+                time.sleep(delay)
+                attempt += 1
+                continue
             r.raise_for_status()
             return r.json()
         except OpenAlexQuotaExhausted:
             raise
-        except requests.exceptions.HTTPError:
-            break
+        except requests.exceptions.HTTPError as e:
+            # 4xx other than 429: the query itself is the problem, so a retry asks the
+            # same bad question again. The status and the query go in the log — the
+            # bare "failed after retries" this used to print was reached by BOTH this
+            # path and the 429 path, so a run's failures could not be told apart.
+            log.warning("OpenAlex %s (not retried): %s %s",
+                        getattr(e.response, "status_code", "?"), url,
+                        _params_summary(params))
+            return None
         except Exception as e:
-            log.warning("OpenAlex request failed: %s — %s", url, e)
+            log.warning("OpenAlex request failed: %s — %s %s", url, e,
+                        _params_summary(params))
             return None
 
-    log.warning("OpenAlex request failed after retries: %s", url)
+    log.warning("OpenAlex 429 after %d retries: %s %s", attempt, url,
+                _params_summary(params))
     return None
 
 
@@ -769,6 +815,37 @@ def _fetch_doi_org_full_meta(doi: str) -> Optional[dict]:
     }
 
 
+_TITLE_CONTAINMENT_MIN_WORDS = 3
+
+
+def title_matches(hit_title: str, query: str) -> bool:
+    """Whether *hit_title* is the paper *query* names.
+
+    Jaccard alone, at 0.7, asks the two titles to be nearly the same STRING. That is
+    the wrong question for a query which is however the replication quoted its target
+    — usually a fragment. "Imagine being a nice guy: A note on hypothetical vs.
+    incentivized" scores 0.70 against the full title it is the opening of, "the
+    superiority effect in crowding" scores 0.67 against "The word superiority effect
+    overcomes crowding", and "Ambivalence of Neutral Ratings" scores 0.60 against "Do
+    Neutral Ratings Imply Indifference or Ambivalence?". All three are the paper; all
+    three were rejected, and the works were written `no_match` — 25 of the 101 open
+    works across the three samples are title searches that found nothing.
+
+    So containment counts too: every content word of the query appearing in the title.
+    A floor of three words keeps a short query from matching the literature — "the
+    martyrdom effect" is two and stays out.
+
+    This is only safe because the hits now go into a pool a model adjudicates. While
+    the first hit BECAME the link, a generous retrieval was a generous supply of wrong
+    originals; now it is a supply of candidates to reject.
+    """
+    if _jaccard(hit_title, query) >= 0.7:
+        return True
+    q = set(re.findall(r"\b\w{3,}\b", str(query or "").lower()))
+    h = set(re.findall(r"\b\w{3,}\b", str(hit_title or "").lower()))
+    return len(q) >= _TITLE_CONTAINMENT_MIN_WORDS and q <= h
+
+
 def _jaccard(a: str, b: str) -> float:
     ta = set(re.findall(r"\b\w{3,}\b", a.lower()))
     tb = set(re.findall(r"\b\w{3,}\b", b.lower()))
@@ -777,14 +854,30 @@ def _jaccard(a: str, b: str) -> float:
     return len(ta & tb) / len(ta | tb)
 
 
-class _TitleSearchUnavailable(Exception):
-    """The provider never answered — distinct from a genuine no-match."""
+class TitleSearchUnavailable(Exception):
+    """The provider never answered — distinct from a genuine no-match.
+
+    Public because the difference now decides a work's ENDING. A title search that
+    finds nothing settles the work `no_original_found`, and there is no point
+    re-running a query that will return nothing again; a title search that never
+    reached its provider must settle nothing, or an outage closes the work for good.
+    Callers that need to tell them apart pass `raise_on_unavailable=True`.
+    """
 
 
-_TITLE_SEARCH_SHAPE = "v2-openalex-id"
+# The private alias the module's own raisers still use.
+_TitleSearchUnavailable = TitleSearchUnavailable
 
 
-def _cached_title_search(source: str, title: str, year: str, search) -> Optional[dict]:
+# Bumped whenever the returned dict gains or loses a field — AND whenever the rule
+# that decides which hit is returned changes, because a miss cached under a stricter
+# rule is replayed as a miss under the looser one. The containment rule in
+# `title_matches` would have been a no-op on every previously-searched title.
+_TITLE_SEARCH_SHAPE = "v3-containment"
+
+
+def _cached_title_search(source: str, title: str, year: str, search,
+                         raise_on_unavailable: bool = False) -> Optional[dict]:
     """Disk-cache a title search, misses included.
 
     The title searches fire three to five times for a single row — the pre-PDF
@@ -805,13 +898,20 @@ def _cached_title_search(source: str, title: str, year: str, search) -> Optional
         return cached.get("hit")
     try:
         hit = search(title, year)
-    except _TitleSearchUnavailable:
+    except TitleSearchUnavailable:
+        # Never cached — caching it would pin the outage forever. Whether it is
+        # RAISED is the caller's choice: most callers treat a failed search as a
+        # miss and move on, but one that would settle a work on the answer must be
+        # able to tell the two apart.
+        if raise_on_unavailable:
+            raise
         return None
     write_cache(OA_CACHE_DIR, key, {"hit": hit})
     return hit
 
 
-def _search_crossref_by_title(title: str, year: str = "") -> Optional[dict]:
+def _search_crossref_by_title(title: str, year: str = "",
+                            raise_on_unavailable: bool = False) -> Optional[dict]:
     """Search CrossRef by title and return full metadata if a confident hit is found.
 
     Uses a Jaccard threshold of 0.7 to confirm the top hit matches *title*,
@@ -819,7 +919,8 @@ def _search_crossref_by_title(title: str, year: str = "") -> Optional[dict]:
     Returns the fetch_openalex_full_metadata shape plus openalex_id (always "" here
     — CrossRef has no OpenAlex ids), or None. Cached per (title, year) in OA_CACHE_DIR.
     """
-    return _cached_title_search("crossref", title, year, _search_crossref_by_title_live)
+    return _cached_title_search("crossref", title, year, _search_crossref_by_title_live,
+                                raise_on_unavailable)
 
 
 def _search_crossref_by_title_live(title: str, year: str = "") -> Optional[dict]:
@@ -841,7 +942,7 @@ def _search_crossref_by_title_live(title: str, year: str = "") -> Optional[dict]
     for item in items:
         hit_titles = item.get("title") or []
         hit_title  = hit_titles[0] if hit_titles else ""
-        if _jaccard(hit_title, title) < 0.7:
+        if not title_matches(hit_title, title):
             continue
 
         # Year check
@@ -889,7 +990,8 @@ def _search_crossref_by_title_live(title: str, year: str = "") -> Optional[dict]
     return None
 
 
-def _search_openalex_by_title(title: str, year: str = "") -> Optional[dict]:
+def _search_openalex_by_title(title: str, year: str = "",
+                            raise_on_unavailable: bool = False) -> Optional[dict]:
     """Search OpenAlex by title and return full metadata if a confident hit is found.
 
     Jaccard threshold 0.7 against *title*; year ±2 when *year* is provided.
@@ -897,12 +999,42 @@ def _search_openalex_by_title(title: str, year: str = "") -> Optional[dict]:
     which is the only identity a DOI-less original has), or None. Cached per
     (title, year) in OA_CACHE_DIR.
     """
-    return _cached_title_search("openalex", title, year, _search_openalex_by_title_live)
+    return _cached_title_search("openalex", title, year, _search_openalex_by_title_live,
+                                raise_on_unavailable)
+
+
+def _openalex_filter_value(text: str) -> str:
+    """*text* as a value an OpenAlex `filter=` can carry.
+
+    A comma SEPARATES FILTERS in OpenAlex's filter syntax, so a value containing one
+    is rejected at the API edge with HTTP 400 ("A filter value contains an unescaped
+    comma"). There is no escape for it — the character has to go.
+
+    This is not an edge case for the title search: what it is given is however the
+    paper referred to the study it replicates, which is routinely "Toya and Skidmore,
+    2007, Economic development and..." or "Zhong, Bohns, & Gino (2010) Good lamps...".
+    Every one of those was a 400 that `_oa_get` reported as "request failed after
+    retries", which reads as an outage and, before this, as no such paper.
+
+    A pipe is stripped for the same reason (it is OpenAlex's OR separator).
+
+    So are `?` and `*`, which are WILDCARDS: a stemmed field rejects them outright —
+    "Wildcards (* or ?) require the exact (no-stem) field". Titles ending in a
+    question are ordinary ("Are STEM Faculty Biased Against Female Applicants?",
+    "Is Eco-Friendly Unmanly?"), and every one of them was an HTTP 400 that read
+    downstream as an outage. Measured 2026-08-07: of five 400s in a 100-work run, four
+    were a question mark and the fifth was this same title. Parentheses, colons,
+    apostrophes, percent signs and ampersands were probed at the same time and are all
+    accepted.
+    """
+    for char in (",", "|", "?", "*"):
+        text = text.replace(char, " ")
+    return " ".join(text.split())
 
 
 def _search_openalex_by_title_live(title: str, year: str = "") -> Optional[dict]:
     params: dict = {
-        "filter" : f"title.search:{title[:200]}",
+        "filter" : f"title.search:{_openalex_filter_value(title)[:200]}",
         "select" : "id,doi,title,publication_year,authorships,primary_location,biblio",
         "per-page": "5",
         "mailto" : RESEARCHER_EMAIL,
@@ -915,7 +1047,7 @@ def _search_openalex_by_title_live(title: str, year: str = "") -> Optional[dict]
 
     for work in data["results"]:
         hit_title = work.get("title", "") or ""
-        if _jaccard(hit_title, title) < 0.7:
+        if not title_matches(hit_title, title):
             continue
 
         if year:
@@ -943,6 +1075,353 @@ def _search_openalex_by_title_live(title: str, year: str = "") -> Optional[dict]
             "last_page"  : biblio.get("last_page") or "",
         }
     return None
+
+
+# How many candidates an author-and-year query may hand on to be judged, and how
+# large the raw hit list may get before the topic words are added to narrow it.
+# Measured against six real campaign targets on 2026-08-07: an author-and-year filter
+# alone returns 12 works for "Ramscar 2010" and 154 for "Turri 2015" — a surname that
+# collides across fields drowns the right paper, and the top-cited hits for that one
+# are 3D-printing papers. Adding the replication's own topic words cut those to 5.
+AUTHOR_YEAR_MAX_OFFERED = 10
+AUTHOR_YEAR_NARROW_ABOVE = 12
+# How many of the citation's authors are ANDed into the query. Three is enough to make
+# a shortlist unique and stops a long author list from over-narrowing when the citation
+# abbreviates it differently from the record.
+AUTHOR_YEAR_MAX_NAMES = 3
+# How many topic words the narrowing query carries, tried longest first. OpenAlex ANDs
+# every word of a `.search` value, so a whole replication title matches nothing at all:
+# "anderson 2012" + the full title "Does Desire for Status Increase Overconfidence? A
+# Replication and Extension of Study 5 in Anderson et al. (2012)" returned 0, and the
+# narrowing was silently discarded in favour of 15,015 unnarrowed works. The same query
+# on three words returned exactly the right paper.
+AUTHOR_YEAR_TOPIC_WORDS = (3, 2)
+# CrossRef gets more of them, because it RANKS where OpenAlex ANDs — but not
+# unboundedly: six words returned nothing for a target that five found.
+CROSSREF_TOPIC_WORDS = (5, 3)
+_AUTHOR_YEAR_SHAPE = "v5-crossref-then-pool"
+
+# Words that carry no topic: ordinary English, and the vocabulary every replication
+# title is built from. Dropping them is what leaves "status overconfidence" behind.
+_TOPIC_STOPWORDS = frozenset("""
+about above after again against  all also among  and  another  any  are  because
+been  before  being  between  both  but  can  conceptual  could  direct  does
+during  each  effect  effects  evidence  experiment  experiments  extension
+extensions  first  from  further  have  high  higher  how  into  investigation  its
+large  low  lower  many  materials  more  most  new  not  novel  one  only  other
+over  paper  papers  pre  preregistered  registered  replicate  replicates
+replicating  replication  replications  report  reports  research  results  revisited
+same  second  several  study  studies  such  test  testing  tests  than  that  the
+their  them  then  there  these  they  this  those  three  through  two  under  using
+very  was  were  what  when  where  which  while  who  why  will  with  within
+without  would  your
+""".split())
+
+
+def _topic_words(text: str, limit: int, exclude: "list[str] | None" = None) -> str:
+    """The first *limit* topic-bearing words of *text*, in the order they appear.
+
+    *exclude* is the cited authors' own surnames. They are in the replication's title
+    more often than not — "Conceptual Replication (Young et al., 2016, Study 1)" has no
+    other word of four letters — and searching an author's name in a title-and-abstract
+    field alongside an author filter narrows to the papers that discuss them, which is
+    not the same set as the papers they wrote.
+    """
+    skip = {_fold_accents(str(e or "")).lower() for e in (exclude or [])}
+    words: list[str] = []
+    for word in re.findall(r"[^\W\d_]{4,}", str(text or "").lower(), re.UNICODE):
+        if (word in _TOPIC_STOPWORDS or word in words
+                or _fold_accents(word) in skip):
+            continue
+        words.append(word)
+        if len(words) >= limit:
+            break
+    return " ".join(words)
+
+
+def _fold_accents(text: str) -> str:
+    """*text* without diacritics — "Zárate" as "Zarate".
+
+    An author filter is matched against however OpenAlex spelled the name, and a
+    citation's spelling and a record's routinely differ by an accent alone.
+    """
+    return "".join(c for c in unicodedata.normalize("NFKD", str(text or ""))
+                   if not unicodedata.combining(c))
+
+
+def _covers_every_name(candidates: list[dict], surnames: list[str]) -> bool:
+    """Whether any candidate's author list carries EVERY surname the citation named.
+
+    The sufficiency test for stopping at a free search: a work by all three of Turri,
+    Buckwalter and Blouw is identified; three works by Turri alone are a shortlist.
+    """
+    wanted = {_fold_accents(s).lower() for s in surnames}
+    for c in candidates:
+        folded = {_fold_accents(str(a)).lower() for a in (c.get("authors") or [])}
+        text = " ".join(folded)
+        if all(any(w in f for f in folded) or w in text for w in wanted):
+            return True
+    return False
+
+
+def _crossref_author_year(surnames: list[str], year: int,
+                          topic: str) -> "list[dict] | None":
+    """An author-and-year shortlist from CrossRef — free — or None if it never answered.
+
+    Asked FIRST, because CrossRef costs nothing and OpenAlex bills every one of these
+    at 10x a filter query against a daily budget that a single 100-work run can empty.
+
+    Three things about CrossRef decide the shape of this query, all measured against
+    real campaign targets on 2026-08-08:
+
+    * `query.author` is a RELEVANCE search, not an AND of the names, so on a common
+      surname alone it is useless — "Jones Macken 1995" matches 6,182 works and "Han
+      Kahn 2017" 41,372. The replication's own topic words go beside it.
+    * **Its results must not be re-sorted.** Asked with `sort=is-referenced-by-count`
+      the right paper for "Jones Macken 1995" is nowhere in the first three and the
+      leader is a prefrontal-cortex PET study; asked in relevance order it is FIRST.
+      Re-sorting a relevance search by citations throws away the only thing it knew.
+      This is the opposite of the OpenAlex query, which FILTERS rather than ranks and
+      therefore does need a sort to choose among equals.
+    * More topic words than OpenAlex, because CrossRef ranks where OpenAlex ANDs — but
+      not unboundedly: six words returned nothing for one target where five returned
+      the paper, so the count relaxes.
+
+    A hit carrying none of the cited surnames is dropped; relevance will happily return
+    a soccer-fan paper for "Turri Buckwalter".
+    """
+    items: list = []
+    for limit in CROSSREF_TOPIC_WORDS:
+        words = _topic_words(topic, limit, surnames)
+        if not words:
+            break
+        try:
+            throttle("crossref", CROSSREF_RATE_SEC)
+            r = requests.get(
+                "https://api.crossref.org/works",
+                params={"query.author": " ".join(surnames),
+                        "query.bibliographic": words,
+                        "filter": f"from-pub-date:{year}-01-01,"
+                                  f"until-pub-date:{year}-12-31",
+                        "rows": str(AUTHOR_YEAR_MAX_OFFERED),
+                        "select": "DOI,title,author,issued,container-title,"
+                                  "is-referenced-by-count"},
+                headers={"User-Agent": f"FLoRAExtractor/1.0 (mailto:{RESEARCHER_EMAIL})"},
+                timeout=20)
+            r.raise_for_status()
+            items = r.json().get("message", {}).get("items") or []
+        except Exception as exc:
+            log.debug("CrossRef author-year search failed (%s): %s", words, exc)
+            return None
+        if items:
+            break
+
+    wanted = {_fold_accents(s).lower() for s in surnames}
+    out: list[dict] = []
+    for item in items:
+        authors = [str(a.get("family") or "") for a in (item.get("author") or [])]
+        folded = {_fold_accents(a).lower() for a in authors if a}
+        if wanted and not (wanted & folded):
+            continue
+        titles = item.get("title") or []
+        out.append({
+            "doi":          clean_doi(item.get("DOI", "") or ""),
+            "openalex_id":  "",
+            "title":        titles[0] if titles else "",
+            "year":         (item.get("issued", {}).get("date-parts")
+                             or [[None]])[0][0],
+            "authors":      [format_author_apa(a) for a in authors],
+            "first_author": (authors[0] if authors else "").lower(),
+            "journal":      (item.get("container-title") or [""])[0],
+            "cited_by":     int(item.get("is-referenced-by-count") or 0),
+        })
+    return out
+
+
+def _author_year_query(surnames: list[str], year: int, topic: str) -> Optional[dict]:
+    """One OpenAlex works query for a set of author surnames, a year and a topic.
+
+    Every surname is its own filter, so they AND: a work has to carry all of them.
+    That is what makes the shortlist usable at all. Measured 2026-08-07 against real
+    campaign targets: "jones 1995" matches 8,348 works and the right paper is nowhere
+    near the top; "jones AND macken 1995" matches 7 and it is third. "han 2017"
+    matches 54,802; "han AND kahn 2017" matches 12.
+    """
+    parts = [f"publication_year:{year}"] + [
+        f"raw_author_name.search:{_openalex_filter_value(_fold_accents(s))[:80]}"
+        for s in surnames]
+    if topic:
+        parts.append(f"title_and_abstract.search:{_openalex_filter_value(topic)[:120]}")
+    return _oa_get("https://api.openalex.org/works", {
+        "filter":   ",".join(parts),
+        "select":   "id,doi,title,publication_year,authorships,primary_location,"
+                    "cited_by_count",
+        "per-page": str(AUTHOR_YEAR_MAX_OFFERED),
+        # Most-cited first, because the paper a replication targets is the one that got
+        # noticed. It is a ranking for the shortlist, never a pick: which of these is
+        # the original is a judgment about the topic, and an LLM makes it.
+        "sort":     "cited_by_count:desc",
+        "mailto":   RESEARCHER_EMAIL,
+    })
+
+
+def author_year_candidates(surnames: "str | list[str]", year: int,
+                           topic: str = "") -> "tuple[list[dict], int, bool]":
+    """(candidates, how many the query matched, unavailable) for an author and a year.
+
+    The resolver for a target the paper named as a bare citation — "Ramscar et al.
+    (2010)", "Turri, Buckwalter, & Blouw (2015)". A title search cannot answer that:
+    the string contains no title, so both providers return nothing and the work used
+    to be closed as though no original existed.
+
+    It is not cheaper per request than the title search it replaces: `raw_author_name`
+    and `title_and_abstract` are `.search` filters, which OpenAlex bills as free-text
+    queries and `_oa_get` counts as such. What it saves is the two requests the title
+    search spent on a question it could not answer — one or two here against CrossRef
+    plus OpenAlex there, and unlike those, these can succeed.
+
+    `raw_author_name.search` matches the surname ANYWHERE in the author list, so the
+    shortlist includes works the cited author co-wrote rather than led. That is
+    deliberate: "Ramscar et al." is a first-author citation but "Van der Werff et al."
+    may not be, and the prompt shows the whole author list so the model can judge it.
+
+    Two steps, and the second only when it is needed. A surname that is rare in its
+    year returns a handful of works and they all go forward. A surname that collides
+    across fields returns hundreds, so a second query adds the replication's own topic
+    words.
+
+    The narrowed hits are ADDED to the head of the broad list, never substituted for
+    it. Which words of a title carry its topic is a guess, and a wrong guess returns a
+    short list that does not contain the paper: measured 2026-08-07, narrowing
+    "anderson 2012" on the first three content words of its replication's title
+    returned 3 works, none of them the right one, where the unnarrowed list at least
+    had it somewhere. Adding cannot hide an answer; replacing can.
+
+    The count is returned so the caller can record it: offering 8 of 154 and getting
+    "none of these" is not the same finding as offering all 3 there were, and a row
+    that does not say which cannot be read later.
+
+    `unavailable=True` means OpenAlex never answered, which must settle nothing.
+    """
+    if isinstance(surnames, str):
+        surnames = [surnames]
+    surnames = [" ".join(str(s or "").split()) for s in surnames]
+    surnames = [s for s in surnames if s][:AUTHOR_YEAR_MAX_NAMES]
+    if not surnames or not year:
+        return [], 0, False
+
+    # Keyed on the values that actually go into the request, after the same cleaning
+    # the request applies — a key that normalised the topic differently from the
+    # query would file two different questions under one answer. The two constants
+    # are in the key because they change the answer without changing any argument:
+    # one decides how many candidates come back, the other whether the topic is used
+    # at all.
+    # Keyed on the values that actually reach the API: the folded surnames and the
+    # topic words each narrowing attempt would send, not the raw topic. Keying the raw
+    # topic truncated to 120 characters let two long inputs whose first three content
+    # words differ share one answer, and left the stopword list and the folding rule
+    # out of the key entirely — both change the query without changing an argument.
+    narrowings = "|".join(_topic_words(topic, n, surnames)
+                          for n in AUTHOR_YEAR_TOPIC_WORDS)
+    key = content_key("authoryear", "",
+                      "|".join(_openalex_filter_value(_fold_accents(s)).lower()
+                               for s in surnames),
+                      str(year), narrowings,
+                      str(AUTHOR_YEAR_MAX_OFFERED), str(AUTHOR_YEAR_NARROW_ABOVE),
+                      str(AUTHOR_YEAR_MAX_NAMES), str(CROSSREF_TOPIC_WORDS),
+                      "|".join(_topic_words(topic, n, surnames)
+                               for n in CROSSREF_TOPIC_WORDS),
+                      _AUTHOR_YEAR_SHAPE)
+    cached = read_cache(OA_CACHE_DIR, key)
+    if cached is not None:
+        return cached["candidates"], int(cached["total"]), False
+
+    # CrossRef first, because it is free — but it STOPS the search only when it has
+    # clearly identified the paper, which is when one of its hits carries every surname
+    # the citation named. Asked for "Jones and Macken (1995)" it returns a Jones-and-
+    # Macken paper and there is nothing left to buy; asked for "Turri, Buckwalter &
+    # Blouw (2015)" it returns Turri-only papers, and the work OpenAlex finds
+    # ("Knowledge and luck", all three authors) is the right one. Treating a partial
+    # answer as a whole one lost nine links on the dev sample while gaining eight —
+    # the same replace-instead-of-add mistake the narrowing made in iteration 9.
+    crossref_answered = _crossref_author_year(surnames, year, topic)
+    from_crossref = crossref_answered or []
+    if from_crossref and _covers_every_name(from_crossref, surnames):
+        write_cache(OA_CACHE_DIR, key,
+                    {"candidates": from_crossref[:AUTHOR_YEAR_MAX_OFFERED],
+                     "total": len(from_crossref)})
+        return from_crossref[:AUTHOR_YEAR_MAX_OFFERED], len(from_crossref), False
+
+    data = _author_year_query(surnames, year, "")
+    if data is None:
+        # CrossRef's partial answer is better than nothing when OpenAlex is silent.
+        if from_crossref:
+            return from_crossref[:AUTHOR_YEAR_MAX_OFFERED], len(from_crossref), False
+        return [], 0, True
+    total = int((data.get("meta") or {}).get("count") or 0)
+    if not total and len(surnames) > 1:
+        # Every co-author has to be indexed under the surname the citation used for
+        # the AND to hold, and one of them routinely is not — an initial in the
+        # record, a hyphen dropped, an author OpenAlex never attached. Falling back
+        # to the first name alone is a longer list, not no list.
+        log.info("[author-year] %s %s matched nothing together — retrying on %s",
+                 "+".join(surnames), year, surnames[0])
+        first = _author_year_query(surnames[:1], year, "")
+        if first is None:
+            return [], 0, True
+        data, total = first, int((first.get("meta") or {}).get("count") or 0)
+    narrowed_results: list[dict] = []
+    if total > AUTHOR_YEAR_NARROW_ABOVE and topic:
+        for limit in AUTHOR_YEAR_TOPIC_WORDS:
+            words = _topic_words(topic, limit, surnames)
+            if not words:
+                break
+            narrowed = _author_year_query(surnames, year, words)
+            # A narrowing that failed is not an outage of the question: the broad
+            # answer is in hand and is the answer, just a longer one. Reporting
+            # `unavailable` here wrote api_error over four works in a 100-work run
+            # whose broad query had answered perfectly well.
+            if narrowed is None:
+                log.info("[author-year] narrowing failed for %s %s — keeping the "
+                         "unnarrowed shortlist", "+".join(surnames), year)
+                break
+            if narrowed.get("results"):
+                narrowed_results = narrowed["results"]
+                break
+
+    # CrossRef's hits lead: they were ranked by relevance to this paper's own topic,
+    # where OpenAlex's are an author's output in a year sorted by citations.
+    candidates = [dict(c) for c in from_crossref[:AUTHOR_YEAR_MAX_OFFERED]]
+    seen_ids: set[str] = {c["doi"] for c in candidates if c.get("doi")}
+    for work in (narrowed_results + (data.get("results") or [])):
+        ident = str(work.get("id") or work.get("doi") or "")
+        if ident in seen_ids:
+            continue
+        seen_ids.add(ident)
+        if len(candidates) >= AUTHOR_YEAR_MAX_OFFERED:
+            break
+        loc = work.get("primary_location") or {}
+        src = loc.get("source") or {}
+        candidates.append({
+            "doi":          clean_doi(work.get("doi", "") or ""),
+            "openalex_id":  bare_work_id(work.get("id", "") or ""),
+            "title":        work.get("title", "") or "",
+            "year":         work.get("publication_year"),
+            "authors":      _all_authors_apa(work),
+            "first_author": (_first_author_surnames(work) or [""])[0],
+            "journal":      (src.get("display_name") or "").strip(),
+            "cited_by":     int(work.get("cited_by_count") or 0),
+        })
+    if crossref_answered is None:
+        # CrossRef never answered, so this pool is missing whatever it would have
+        # contributed. Returned — the OpenAlex half is real — but not CACHED, or the
+        # outage is replayed for ever and CrossRef is never asked about this target
+        # again.
+        log.info("[author-year] CrossRef was silent for %s %s — pool returned, not "
+                 "cached", "+".join(surnames), year)
+        return candidates, total, False
+    write_cache(OA_CACHE_DIR, key, {"candidates": candidates, "total": total})
+    return candidates, total, False
 
 
 def _fetch_openalex_work(doi: str) -> Optional[dict]:

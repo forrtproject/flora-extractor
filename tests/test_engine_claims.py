@@ -249,3 +249,29 @@ def test_verdicts_selects_payload_only_when_asked():
         client.verdicts("extract", with_payload=True)
     select = get.call_args.kwargs["params"]["select"]
     assert "payload" in select and "prompt_hash" in select
+
+
+class TestNulsNeverReachPostgres:
+    """Postgres text/jsonb cannot hold U+0000; PostgREST answers 22P05.
+
+    NULs arrive in parsed PDF text and ride into `quote` and the extract tier's
+    stored payload. On 2026-08-07 one such byte returned HTTP 400 from
+    `engine_verdicts` and, because a verdict write is fatal, aborted a 1,325-work
+    campaign at work 84.
+    """
+
+    def test_a_nul_in_a_nested_payload_is_stripped_before_the_post(self):
+        client = _client()
+        with patch("filter.engine.claims.requests.post") as post:
+            post.return_value = _response(payload=[{"id": "v1"}])
+            client.record_verdict(
+                claim_id="c1", work_id=7, tier="extract", verdict="resolved",
+                quote="ends with a nul\x00",
+                payload={"targets": [{"evidence": "text\x00more",
+                                      "n": 3, "ok": True}]})
+        sent = post.call_args.kwargs["json"]
+        assert sent["quote"] == "ends with a nul"
+        assert sent["payload"]["targets"][0]["evidence"] == "textmore"
+        # Non-strings pass through untouched.
+        assert sent["payload"]["targets"][0]["n"] == 3
+        assert sent["payload"]["targets"][0]["ok"] is True

@@ -104,7 +104,8 @@ from shared.flora_skip import (VALIDATED_SKIP_NAME,
                                load_validated_skip as _load_validated_skip,
                                validated_work_id as _validated_work_id)
 from shared.llm_client import cache_model_id
-from shared.schema import (EXTRACTED_COLS, FILTERED_COLS, RESOLVED_LINK_METHODS,
+from shared.schema import (EXTRACTED_COLS, FILTERED_COLS,
+                           PROVISIONAL_LINK_METHODS, RESOLVED_LINK_METHODS,
                            SCREEN_COLS)
 from shared.utils import clean_doi
 
@@ -159,7 +160,16 @@ def _ttl_seconds() -> int:
 _GENERATION_PROMPTS = ("build_target_outcome_prompt",
                        "build_repro_target_outcome_prompt",
                        "build_outcome_prompt",
-                       "build_repro_outcome_prompt")
+                       "build_repro_outcome_prompt",
+                       # The pooled-candidate pick DECIDES a link now, so an edit to it
+                       # changes what a row concludes and must reopen the works it
+                       # decided. It was outside the fingerprint while it was a
+                       # tie-breaker of last resort; it is not one any more.
+                       "build_author_year_pick_prompt",
+                       # The keyed-record confirm (issue #186 Shape 1) can demote a
+                       # resolved row to keyed_link_disputed, so an edit to it changes
+                       # what a row concludes and must reopen the works it decided.
+                       "build_keyed_confirm_prompt")
 
 
 def generation_inputs() -> dict:
@@ -305,9 +315,16 @@ def _verdict_for(rows: list[dict], observed: dict) -> str:
         # means the pipeline wrote nothing at all, which only a flag can cause.
         return API_ERROR if observed.get("error") else TARGET_PENDING
     methods = [str(r.get("link_method", "") or "") for r in rows]
+    # An errored target first, ahead of everything: a work with one original found and
+    # another whose search never completed has not been answered, and settling it
+    # closes the second original for good. Flagged twice in review and deferred twice;
+    # the trade the primary metric asks for is that an incomplete answer settles
+    # nothing, and `api_error` is the ending a re-run is meant to redo.
+    if API_ERROR in methods:
+        return API_ERROR
     if any(m in RESOLVED_LINK_METHODS for m in methods):
         return RESOLVED
-    if "llm_title_search" in methods:
+    if any(m in PROVISIONAL_LINK_METHODS for m in methods):
         return PROVISIONAL
     for ending in (NOT_A_REPLICATION, NO_ORIGINAL_FOUND, TARGET_PENDING, API_ERROR):
         if ending in methods:
@@ -533,7 +550,8 @@ def extract_works(con, client: Optional[ClaimsClient], pool_dir: Path,
                   aliases: Optional[dict[int, int]] = None,
                   record: Optional[dict] = None,
                   data_dir: Path = DATA_DIR,
-                  redo: Optional[Iterable[int]] = None) -> list[ExtractWork]:
+                  redo: Optional[Iterable[int]] = None,
+                  attempted: Optional[Iterable[int]] = None) -> list[ExtractWork]:
     """Works this tier should extract next, each carrying its whole handoff row.
 
     The subtraction, in the order the cost of asking rises:
@@ -554,6 +572,14 @@ def extract_works(con, client: Optional[ClaimsClient], pool_dir: Path,
     representation of the same thing, and a place for the two to drift.
 
     *redo* re-admits works the checkpoint would have subtracted (`--redo`).
+
+    *attempted* is what the CURRENT run has already judged, and it is subtracted
+    whatever the verdict was. The checkpoint at (2) subtracts only works that
+    SETTLED, and `target_pending` deliberately does not settle — so without this the
+    rebuild between batches hands every unsettled work straight back and the run
+    never ends. Observed 2026-08-07: a 100-work sandbox run judged the same 51
+    unsettled works eight times in twenty minutes before it was killed. A re-run is
+    how those works get another chance; the same run is not.
     """
     check_release_binding(spec_dir, release_id,
                           (record or {}).get("bundle_hash"),
@@ -562,6 +588,7 @@ def extract_works(con, client: Optional[ClaimsClient], pool_dir: Path,
 
     wanted = {int(w) for w in only} if only is not None else None
     reopen = {int(w) for w in (redo or ())}
+    done = {int(w) for w in (attempted or ())}
 
     drop: set[int] = set()
     screen: dict[int, dict] = {}
@@ -582,7 +609,7 @@ def extract_works(con, client: Optional[ClaimsClient], pool_dir: Path,
             specs=specs, aliases=aliases, spec_dir=spec_dir, overlay_dir=overlay_dir):
         if wanted is not None and work not in wanted:
             continue
-        if work in drop or work in held:
+        if work in drop or work in held or work in done:
             continue
         decision = screen.get(work)
         if client is not None and not decision:
@@ -859,7 +886,9 @@ def run_extract_tier(con, client: Optional[ClaimsClient], release_id: str, *,
              "decided": 0, "outcomes": {}, "verdicts": 0, "claims": [],
              "generation": extract_generation(), "release_id": release_id}
     done = 0
-    superseded = _supersedable(client, redo) if redo else {}
+    attempted: set[int] = set()
+    superseded = _supersedable(client, redo, mode) if redo else {}
+    reopened = {int(w) for w in (redo or ())}
     while works:
         batch = works[:batch_size]
         report = _run_batch(EXTRACT, client, release_id, batch, mode=mode,
@@ -871,16 +900,24 @@ def run_extract_tier(con, client: Optional[ClaimsClient], release_id: str, *,
         for outcome, count in report["outcomes"].items():
             total["outcomes"][outcome] = total["outcomes"].get(outcome, 0) + count
         done += len(batch)
+        attempted |= {w.work_id for w in batch}
         if report.get("lease_lost"):
             total["stopped"] = "claim lease lost"
             break
         if limit is not None and done >= limit:
             break
         remaining = None if limit is None else limit - done
+        # A redone work must stop being re-admitted once it HAS been redone, or the
+        # rebuild hands it back every batch and the run never ends: `redo` is exactly
+        # the set the settled-work subtraction is told to ignore. Observed 2026-08-07,
+        # `--redo` over 29 works re-extracted them nine times in ten minutes before the
+        # run was killed. Works named in --redo that this batch has not reached yet
+        # stay admitted, so a redo set larger than one batch still completes.
+        reopened -= {w.work_id for w in batch}
         works = extract_works(con, client, pool_dir, release_id, only=only,
                               limit=remaining, mode=mode, spec_dir=spec_dir,
                               overlay_dir=overlay_dir, aliases=aliases,
-                              record=record, redo=redo)
+                              record=record, redo=reopened, attempted=attempted)
 
     if superseded:
         total["superseded"] = _supersede(client, superseded)
@@ -915,19 +952,30 @@ def _run_batch(spec: TierSpec, client: ClaimsClient, release_id: str,
     return report
 
 
-def _supersedable(client: ClaimsClient, redo: Iterable[int]) -> dict[int, str]:
-    """The live result row id of each work `--redo` is about to re-extract.
+def _supersedable(client: ClaimsClient, redo: Iterable[int],
+                  mode: str = "live") -> dict[int, str]:
+    """The *mode* result row id of each work `--redo` is about to re-extract.
 
     Read BEFORE the re-run, because afterwards the "previous" row is whichever of
     two rows sorts earlier and the query cannot tell them apart by anything the
     caller asked for.
+
+    Restricted to the run's own mode, for the reason `settled_work_ids` is: a
+    sandbox re-run must not touch live state. Without the filter a
+    `--mode validation --redo` marked the work's LIVE result row superseded, and the
+    export — which reads live rows — silently lost it.
     """
-    from filter.engine.tiers import checkpoint_decisions
+    from filter.engine.tiers import _by_work
 
     wanted = {int(w) for w in redo}
+    claims = client.claims(tier=TIER_EXTRACT)
+    generations = {c["id"]: (c.get("meta") or {}).get("generation") for c in claims}
+    in_mode = {c["id"] for c in claims
+               if ((c.get("meta") or {}).get("mode") or "live") == mode}
+    rows = [r for r in client.verdicts(TIER_EXTRACT) if r.get("claim_id") in in_mode]
     out: dict[int, str] = {}
-    for work, decision in checkpoint_decisions(client, TIER_EXTRACT).items():
-        row = decision.get("row") or {}
+    for work, work_rows in _by_work(TIER_EXTRACT, rows, generations).items():
+        row = (_decide(work_rows) or {}).get("row") or {}
         if work in wanted and row.get("id"):
             out[work] = str(row["id"])
     return out

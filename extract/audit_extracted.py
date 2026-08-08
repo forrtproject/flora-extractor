@@ -56,7 +56,12 @@ _REPORT_COLS = ["pair_id", "doi_r", "check", "severity", "detail"]
 _VERIFIED_OK = {"verified", "corrected"}
 
 _UNRESOLVED_OUTCOMES = {"pending", "api_error"}
-_UNRESOLVED_LINK_METHODS = {"target_pending", "api_error", "no_original_found"}
+_UNRESOLVED_LINK_METHODS = {"target_pending", "api_error", "no_original_found",
+                            # The paper names an original nothing could identify: no
+                            # DOI, none recoverable, no work id. A validator has no
+                            # record to compare against, so the row is unresolved here
+                            # however real the link is.
+                            "unidentified_original"}
 
 _QUOTE_FUZZ_THRESHOLD = 85  # rapidfuzz partial_ratio; below this the quote is not in the abstract
 _YEAR_TOLERANCE = 1         # original may be up to 1 year after replication (in-press ordering)

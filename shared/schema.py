@@ -248,6 +248,16 @@ RESOLVED_LINK_METHODS = {
     "llm_references",
 }
 
+# PROVISIONAL: a link the pipeline made without a bounded, semantically checked
+# candidate set behind it. Not in RESOLVED_LINK_METHODS — these rows are quarantined
+# and never imported for validation — but they SETTLE the work, because the answer
+# they carry is the answer a re-run would get. `_verdict_for()` in extract/tier.py
+# reads this to decide the work's ending; it used to name llm_title_search alone, and
+# a second provisional method was therefore filed as target_pending and reopened for
+# ever.
+PROVISIONAL_LINK_METHODS = {"llm_title_search", "llm_author_year_search",
+                            "unidentified_original", "keyed_link_disputed"}
+
 LINK_METHOD_VALUES = RESOLVED_LINK_METHODS | {
     # PROVISIONAL, not resolved. The DOI came from a CrossRef/OpenAlex title search
     # because the LLM named an original that was NOT in the candidate/reference list —
@@ -258,6 +268,32 @@ LINK_METHOD_VALUES = RESOLVED_LINK_METHODS | {
     # it is simply not the paper's target. These rows are quarantined by sanity_check
     # for human confirmation and are NOT imported for validation.
     "llm_title_search",
+    # PROVISIONAL, and for the case a title search cannot answer at all: the paper
+    # named its target as a bare citation ("Ramscar et al. (2010)"), so one OpenAlex
+    # author-and-year query built a shortlist and the linking model said which of them
+    # it was. Bounded, unlike llm_title_search — the choice is among one author's
+    # output in one year — but it has no measured precision yet, so it gets the same
+    # quarantine and is kept apart from llm_title_search so each can be measured.
+    "llm_author_year_search",
+    # RETAINED, and flagged for review. The ladder named an original from the paper's
+    # own text and nothing could identify it: no DOI on the record, none recoverable,
+    # and no OpenAlex id. In practice this is a reference GROBID parsed out of a PDF
+    # whose title the OCR mangled, so no title-similarity search can match it. The link
+    # is kept — the paper really does name that original, and a human can read it — but
+    # it is not `resolved`: a validation pair cannot be keyed on a title, and the one
+    # such row that reached a holdout was the paper matched to a garbled copy of its
+    # OWN title. Quarantined to unidentified_original.csv.
+    "unidentified_original",
+    # PROVISIONAL, demoted from a resolved LLM method. The ladder accepted a keyed
+    # record and the issue #186 Shape 1 check — a separate call shown only the study's
+    # abstract, the quoted evidence and the record — confidently judged the record NOT
+    # to be the named target. Everything the row had is kept for a human to arbitrate
+    # (the linked record, the evidence naming the other paper, the check's reasoning),
+    # because the disagreement is between two LLM readings and dropping either answer
+    # would hide it. Quarantined to keyed_link_disputed.csv; not imported. Measured
+    # before wiring (analysis/stage3_eval/keyed_confirm_eval.py, 2026-08-08): 63
+    # keyed link rows, the one known-wrong link flagged, zero false positives.
+    "keyed_link_disputed",
     # Legacy rows written before the granular split, remapped by
     # tools/migrate_link_methods.py — they cannot be disaggregated retroactively.
     "author_year_match_legacy",
@@ -290,6 +326,9 @@ SET_ASIDE_DESTINATIONS = {
     "non_article": "not_a_replication.csv",
     "non_article_type": "not_a_replication.csv",
     "title_search_provisional": "provisional_title_search.csv",
+    "author_year_provisional": "provisional_author_year.csv",
+    "unidentified_original": "unidentified_original.csv",
+    "keyed_link_disputed": "keyed_link_disputed.csv",
     "target_pending": "target_pending.csv",
     "prescreen_discard": "prescreen_discard.csv",
     "not_a_replication": "not_a_replication.csv",

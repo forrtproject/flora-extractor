@@ -983,3 +983,167 @@ class TestOutcomeDescent:
         assert "did not replicate" in seen["discussion"]
         assert seen["discussion_provenance"] in ("discussion", "tail")
         assert row["grobid_discussion"] == seen["discussion"]
+
+
+class TestTheAbstractRungReadsTheTitleToo:
+    """An OSF registration's abstract is boilerplate — "Stage 1 IPA at PCI RR" — and
+    its original is in the paper's own title. Reading the abstract alone left 18 of
+    100 works on the frozen dev sample with no rung ever naming a target: this gate
+    closed, the reference rung had no references to pick from, and no document was
+    acquired."""
+
+    @staticmethod
+    def _run(title_r: str, abstract_r: str):
+        cands_df = pd.DataFrame([{
+            "doi_r": "10.1/rep", "study_r": title_r, "abstract_r": abstract_r,
+            "year_r": "2020", "openalex_id_r": "", "url_r": "",
+            "author_year_pattern_r": "",
+        }])
+        with patch.object(link_original, "find_all_candidates", return_value=[]), \
+             patch.object(link_original, "_resolve_by_title_pattern", return_value=None), \
+             patch.object(link_original, "_resolve_rule_based",
+                          return_value={"resolved": False,
+                                        "resolution_method": "needs_fulltext"}), \
+             patch.object(link_original, "resolve_targets_and_outcomes",
+                          return_value={"resolved": False,
+                                        "resolution_method": "llm_no_target",
+                                        "llm_source": "openai"}) as llm, \
+             patch.object(link_original, "fetch_referenced_works_metadata", return_value=[]), \
+             patch.object(link_original, "fetch_opencitations_references", return_value=[]), \
+             patch.object(link_original, "screen_references_with_llm",
+                          return_value=_screen_result()), \
+             patch.object(link_original, "acquire_pdf",
+                          return_value={"pdf_path": None, "openalex_xml": None,
+                                        "pdf_source": "none", "pdf_url": "",
+                                        "pdf_ok": False, "pdf_url_tried": []}):
+            run_for_doi("10.1/rep", cands_df=cands_df)
+        return [c for c in llm.call_args_list if c.kwargs.get("rung") == "abstract"]
+
+    def test_a_citation_in_the_title_alone_opens_the_rung(self):
+        calls = self._run("A multilab investigation into the N2pc: Direct replication "
+                          "of Eimer (1996)", "Stage 1 IPA at PCI RR")
+        assert calls, "the abstract rung never ran for a title that names its original"
+
+    def test_a_paper_that_names_nobody_still_does_not_open_it(self):
+        """The gate is there so the call is not made with nothing to reason from."""
+        assert not self._run("A replication study in Senegal",
+                             "This study aims to replicate a previous intervention.")
+
+
+class TestTheTitleSearchIsGivenTheCitedYear:
+    """Both searches reject a hit more than two years from the year they are given,
+    and `title_search_candidates` was called with none, so the check never ran.
+    "Bem (2011)" matched a 1965 paper called "Personality and social psychology" —
+    the target string carried the journal name and the title index matched that."""
+
+    @staticmethod
+    def _search(seen):
+        def search(title, year, raise_on_unavailable=False):
+            seen.append((title, year))
+            return None
+        return search
+
+    def test_the_year_reaches_both_providers(self):
+        seen: list = []
+        with patch.object(link_original, "_search_crossref_by_title",
+                          side_effect=self._search(seen)), \
+             patch.object(link_original, "_search_openalex_by_title",
+                          side_effect=self._search(seen)):
+            link_original.title_search_candidates("10.1/rep", "Bem (2011) precognition",
+                                                  "", "2011")
+        assert [y for _, y in seen] == ["2011", "2011"]
+
+    def test_no_year_in_the_citation_still_searches(self):
+        """A target with no year is not a reason to skip the search — it is a reason
+        not to filter on one."""
+        seen: list = []
+        with patch.object(link_original, "_search_crossref_by_title",
+                          side_effect=self._search(seen)), \
+             patch.object(link_original, "_search_openalex_by_title",
+                          side_effect=self._search(seen)):
+            link_original.title_search_candidates("10.1/rep", "A named study", "")
+        assert [y for _, y in seen] == ["", ""]
+
+
+class TestATitleHitThatMissesTheCitedAuthorIsFlagged:
+    """A citation names an author, and a paper that does not have that author is
+    probably not that paper however well its title scored. It is FLAGGED rather than
+    dropped: a candidate the model never sees can be neither confirmed nor
+    disconfirmed, and the work then goes back into a worklist that pays for the whole
+    ladder again. Rejecting a bad candidate costs one field of one LLM answer."""
+
+    @staticmethod
+    def _run(hit, surname):
+        with patch.object(link_original, "_search_crossref_by_title", return_value=hit), \
+             patch.object(link_original, "_search_openalex_by_title", return_value=None):
+            return link_original.title_search_candidates(
+                "10.1/rep", "Bem (2011) precognition", "", "2011", surname)[0]
+
+    _CHAPTER = {"doi": "10.1093/oxfordhb/9780195398991.013.0001",
+                "title": "Personality and Social Psychology",
+                "year": 2012, "authors": ["Snyder, M.", "Deaux, K."]}
+
+    def test_a_hit_by_other_authors_is_flagged(self):
+        [hit] = self._run(self._CHAPTER, "bem")
+        assert hit["flags"] == ["does not carry the cited author (bem)"]
+
+    def test_front_matter_with_no_author_at_all_is_dropped(self):
+        """The Svensson case. This one is dropped rather than flagged: a record with
+        nobody on it cannot be the paper a citation names, and there is no judgment
+        for the model to make — nothing about the record to make one on."""
+        assert self._run({**self._CHAPTER, "authors": []}, "svensson") == []
+
+    def test_the_named_author_carries_no_flag(self):
+        [hit] = self._run({**self._CHAPTER, "authors": ["Bem, D. J."]}, "bem")
+        assert hit["flags"] == []
+
+    def test_a_citation_with_no_author_flags_nothing(self):
+        [hit] = self._run(self._CHAPTER, "")
+        assert hit["flags"] == []
+
+    def test_a_hit_with_no_doi_but_an_openalex_id_still_reaches_the_pool(self):
+        """An old work, a report, a chapter. Dropping it here is how a real original
+        never reached the model at all."""
+        [hit] = self._run({**self._CHAPTER, "doi": "", "openalex_id": "W7",
+                           "authors": ["Bem, D. J."]}, "bem")
+        assert hit["openalex_id"] == "W7" and hit["doi"] == ""
+
+    def test_a_hit_that_cannot_be_identified_at_all_is_dropped(self):
+        assert self._run({**self._CHAPTER, "doi": "", "openalex_id": ""}, "bem") == []
+
+    def test_a_psycextra_record_is_not_offered_as_an_original(self):
+        """APA files conference abstracts under 10.1037/e…. A record of a talk is not
+        the study a replication re-tested, and one standing in for the paper is the
+        wrong-original class this evaluation could not otherwise reach."""
+        assert self._run({**self._CHAPTER, "doi": "10.1037/e513702014-051",
+                          "authors": ["Olivola, C."]}, "olivola") == []
+
+
+
+    def test_a_multi_author_citation_matches_on_any_of_its_names(self):
+        """extract_author_year_patterns returns "Kaufmann, Weber, and Haisley (2013)"
+        as one run-on token. Matching that as a word dropped the right paper."""
+        assert self._run({**self._CHAPTER,
+                          "authors": ["Kaufmann, C.", "Weber, M.", "Haisley, E."]},
+                         "kaufmann,weber,andhaisley")
+
+
+class TestACitationParenthesisMayCarryMoreThanTheYear:
+    """Papers put the venue or the study number inside the citation's parentheses —
+    "Wilson et al. (2017, JPSP)", "Vess (2012, PS, Study 1)". Demanding the year alone
+    read those as no citation, so the ladder searched their titles instead of their
+    authors."""
+
+    def test_a_venue_after_the_year_is_still_a_titleless_citation(self):
+        assert link_original.citation_without_title("Wilson et al. (2017, JPSP)")
+        assert link_original.citation_without_title("Vess (2012, PS, Study 1)")
+
+    def test_the_longest_recognised_citation_decides(self):
+        """A shorter pattern stops at the year and hands back the rest of the
+        parenthesis; "PS, Study 1)" passes usable_title and is a title of nothing."""
+        assert link_original.citation_without_title(
+            "Bem (2011, Journal of Personality and Social Psychology)")
+
+    def test_a_real_title_after_the_citation_still_wins(self):
+        assert not link_original.citation_without_title(
+            "Zhong, Bohns, & Gino (2010) Good lamps are the best police")

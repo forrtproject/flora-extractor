@@ -21,7 +21,8 @@ from extract.tier import (API_ERROR, NOT_A_REPLICATION, NO_ORIGINAL_FOUND,
                           PROVISIONAL, RESOLVED, TARGET_PENDING, ExtractWork,
                           extract_generation, generation_inputs)
 from filter.engine.claims import ClaimLeaseLost
-from shared.schema import EXTRACTED_COLS, FILTERED_COLS, SCREEN_COLS
+from shared.schema import (EXTRACTED_COLS, FILTERED_COLS,
+                           PROVISIONAL_LINK_METHODS, SCREEN_COLS)
 
 _INPUT = {
     "doi_r": "10.1000/repl", "title_r": "A replication of something",
@@ -160,6 +161,36 @@ def test_only_a_conclusive_ending_settles_a_work(verdict, settles):
     assert tier_mod._decide(_rows(verdict))["settles"] is settles
 
 
+@pytest.mark.parametrize("method", sorted(PROVISIONAL_LINK_METHODS))
+def test_every_provisional_link_method_settles_the_work(method):
+    """A provisional link is the answer a re-run would get, so it ends the work. The
+    ending used to name llm_title_search alone, so a second provisional method was
+    filed target_pending and the work reopened for ever."""
+    verdict = tier_mod._verdict_for([{"link_method": method}], {})
+    assert verdict == PROVISIONAL
+    assert verdict not in tier_mod.UNSETTLING_VERDICTS
+
+
+def test_a_sandbox_redo_never_supersedes_a_live_result_row():
+    """`--mode validation --redo` re-extracts in the sandbox. Marking the work's LIVE
+    row superseded would delete it from the export, which reads live rows — the one
+    thing the sandbox exists not to touch."""
+    generation = tier_mod.extract_generation()
+    client = MagicMock()
+    client.claims.return_value = [
+        {"id": "c-live", "meta": {"mode": "live", "generation": generation}},
+        {"id": "c-sandbox", "meta": {"mode": "validation", "generation": generation}},
+    ]
+    client.verdicts.return_value = [
+        {"id": "v-live", "claim_id": "c-live", "work_id": 7, "verdict": RESOLVED,
+         "created_at": "2026-08-01T00:00:00Z"},
+        {"id": "v-sandbox", "claim_id": "c-sandbox", "work_id": 7,
+         "verdict": NO_ORIGINAL_FOUND, "created_at": "2026-08-02T00:00:00Z"},
+    ]
+    assert tier_mod._supersedable(client, [7], "validation") == {7: "v-sandbox"}
+    assert tier_mod._supersedable(client, [7], "live") == {7: "v-live"}
+
+
 def test_evidence_rows_alone_never_settle_a_work():
     """The screens' `decided_work_ids` would call this decided — it counts any row
     that adds up to a decision — and the work would never be extracted."""
@@ -187,7 +218,13 @@ def test_the_generation_is_pinned_by_its_inputs():
     assert set(inputs) == {"ladder", "prompts", "models"}
     assert set(inputs["prompts"]) == {
         "build_target_outcome_prompt", "build_repro_target_outcome_prompt",
-        "build_outcome_prompt", "build_repro_outcome_prompt"}
+        "build_outcome_prompt", "build_repro_outcome_prompt",
+        # The pooled-candidate pick decides a link, so an edit to it changes what a
+        # row concludes and must reopen the works it decided.
+        "build_author_year_pick_prompt",
+        # The keyed-record confirm (issue #186 Shape 1) can demote a resolved row,
+        # so it reopens works on the same grounds.
+        "build_keyed_confirm_prompt"}
     assert set(inputs["models"]) == {"linking", "outcome", "pdf_parse"}
     assert isinstance(inputs["ladder"], int)
     # The efforts are IN the model ids, or two runs at different reasoning levels
@@ -287,6 +324,26 @@ def test_redo_re_admits_a_settled_work(monkeypatch):
     assert [w.work_id for w in works] == [1]
 
 
+def test_a_work_this_run_already_judged_is_not_offered_again(monkeypatch):
+    """`target_pending` does not settle, so the checkpoint hands it straight back —
+    and the rebuild between batches would judge it again, and again. A re-run is how
+    an unsettled work gets another chance; the same run is not. Observed on
+    2026-08-07: 51 unsettled works judged eight times in twenty minutes."""
+    works = _run_worklist(monkeypatch, rows=_export_rows(1, 2),
+                          screen={1: _PROCEED, 2: _PROCEED},
+                          settled=set(), attempted={1})
+    assert [w.work_id for w in works] == [2]
+
+
+def test_a_redone_work_is_still_dropped_once_this_run_has_judged_it(monkeypatch):
+    """--redo re-admits past the checkpoint; it must not re-admit past the run's own
+    memory, or the redo set loops for exactly the same reason."""
+    works = _run_worklist(monkeypatch, rows=_export_rows(1),
+                          screen={1: _PROCEED}, settled={1}, redo=[1],
+                          attempted={1})
+    assert works == []
+
+
 # ---------------------------------------------------------------------------
 # The lease
 # ---------------------------------------------------------------------------
@@ -339,6 +396,29 @@ def test_the_batch_loop_stops_after_a_lost_lease(monkeypatch):
                                        batch_size=2)
     assert calls == [2], "a second batch was claimed after the lease was lost"
     assert report["stopped"] == "claim lease lost"
+
+
+def test_the_batch_loop_ends_although_no_work_settled(monkeypatch):
+    """Every work ends `target_pending`, which the checkpoint does not subtract. The
+    loop must terminate on its own memory of what it judged, not on the checkpoint."""
+    calls: list = []
+
+    def run_batch(spec, client, release_id, works, **kwargs):
+        calls.append([w.work_id for w in works])
+        return {"claim_id": f"c{len(calls)}", "decided": len(works),
+                "outcomes": {TARGET_PENDING: len(works)}, "verdicts": len(works)}
+
+    def works_for(*a, attempted=None, limit=None, **k):
+        # A checkpoint that subtracts nothing, which is what an all-unsettled run has.
+        remaining = [_work(i) for i in range(4) if i not in (attempted or set())]
+        return remaining if limit is None else remaining[:limit]
+
+    monkeypatch.setattr(tier_mod, "_run_batch", run_batch)
+    monkeypatch.setattr(tier_mod, "extract_works", works_for)
+    report = tier_mod.run_extract_tier(None, MagicMock(), "rel-1", run=True,
+                                       batch_size=2)
+    assert calls == [[0, 1], [2, 3]]
+    assert report["decided"] == 4
 
 
 # ---------------------------------------------------------------------------
@@ -394,3 +474,20 @@ def test_validation_verdicts_do_not_settle_the_live_worklist():
 
     assert tier_mod.settled_work_ids(client, "live") == {1}
     assert tier_mod.settled_work_ids(client, "validation") == {2}
+
+
+def test_one_errored_target_stops_a_multi_target_work_settling():
+    """A work with one original found and another whose search never completed has
+    not been answered. Settling it closes the second original for good, and `resolved`
+    used to outrank `api_error` — so a two-target work lost its second target to a
+    five-minute outage, permanently."""
+    verdict = tier_mod._verdict_for(
+        [{"link_method": "llm_references"}, {"link_method": "api_error"}], {})
+    assert verdict == API_ERROR
+    assert verdict in tier_mod.UNSETTLING_VERDICTS
+
+
+def test_a_work_whose_targets_all_answered_still_settles():
+    verdict = tier_mod._verdict_for(
+        [{"link_method": "llm_references"}, {"link_method": "target_pending"}], {})
+    assert verdict == RESOLVED

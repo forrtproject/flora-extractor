@@ -447,3 +447,195 @@ class TestReferenceFetchNoAnswerIsNotAnEmptyList:
             assert find_all_candidates("10.9/rep", "W999", "",
                                        "We replicated Smith (2010).", 2020, "") is None
         assert list(tmp_path.glob("*.json")) == []
+
+
+class TestAFilterValueOpenAlexWillAccept:
+    """Every character in this class produced an HTTP 400 that `_oa_get` reported as
+    "request failed after retries" — which reads downstream as an outage, and before
+    the retry rule as "no such paper"."""
+
+    def test_a_question_mark_is_stripped_because_it_is_a_wildcard(self):
+        """A stemmed field rejects `?` outright, and titles that end in a question are
+        ordinary. Four of five 400s in a 100-work run on 2026-08-07 were this."""
+        assert oa._openalex_filter_value(
+            "Are STEM Faculty Biased Against Female Applicants?"
+        ) == "Are STEM Faculty Biased Against Female Applicants"
+        assert "*" not in oa._openalex_filter_value("Smith* et al")
+
+    def test_a_comma_is_stripped_because_it_separates_filters(self):
+        assert oa._openalex_filter_value("Toya and Skidmore, 2007, Economic") == \
+            "Toya and Skidmore 2007 Economic"
+
+    def test_punctuation_openalex_accepts_is_left_alone(self):
+        """Probed against the live API on 2026-08-07: parentheses, colons,
+        apostrophes, percent signs and ampersands all answer 200."""
+        assert oa._openalex_filter_value("(when) do 50% of Smith's & Jones: tests") == \
+            "(when) do 50% of Smith's & Jones: tests"
+
+
+class TestTheAuthorAndYearShortlist:
+    _HIT = {"meta": {"count": 3},
+            "results": [{"id": "https://openalex.org/W1", "doi": "https://doi.org/10.1/a",
+                         "title": "The right paper", "publication_year": 2010,
+                         "authorships": [], "cited_by_count": 300}]}
+
+    def test_a_failed_narrowing_keeps_the_broad_answer(self, tmp_path):
+        """The broad query answered; only the attempt to shorten its list failed.
+        Reporting that as unavailable wrote api_error over four works whose shortlist
+        was in hand."""
+        broad = {"meta": {"count": 50}, "results": self._HIT["results"]}
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client._author_year_query",
+                   side_effect=[broad, None]):
+            candidates, total, unavailable = oa.author_year_candidates(
+                "smith", 2010, topic="a topic")
+        assert unavailable is False
+        assert total == 50 and [c["doi"] for c in candidates] == ["10.1/a"]
+
+    def test_a_silent_openalex_is_not_an_empty_shortlist(self, tmp_path):
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client._author_year_query", return_value=None):
+            assert oa.author_year_candidates("smith", 2010) == ([], 0, True)
+        assert list(tmp_path.glob("authoryear_*.json")) == []
+
+    def test_the_shortlist_is_cached_and_the_query_runs_once(self, tmp_path):
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client._author_year_query",
+                   return_value=self._HIT) as query:
+            first = oa.author_year_candidates("smith", 2010)
+            second = oa.author_year_candidates("smith", 2010)
+        assert first == second and query.call_count == 1
+
+
+class TestNarrowingAddsRatherThanReplaces:
+    """Which words of a title carry its topic is a guess, and a wrong guess returns a
+    short list that does not contain the paper. Adding cannot hide an answer;
+    replacing can."""
+
+    @staticmethod
+    def _work(i, title):
+        return {"id": f"https://openalex.org/W{i}", "doi": f"https://doi.org/10.1/{i}",
+                "title": title, "publication_year": 2012, "authorships": [],
+                "cited_by_count": 100 - i}
+
+    def test_the_narrowed_hits_lead_and_the_broad_ones_survive(self, tmp_path):
+        broad = {"meta": {"count": 400},
+                 "results": [self._work(i, f"broad {i}") for i in range(3)]}
+        narrow = {"meta": {"count": 2},
+                  "results": [self._work(9, "the topical one")]}
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client._author_year_query",
+                   side_effect=[broad, narrow]):
+            candidates, total, _ = oa.author_year_candidates(
+                ["anderson"], 2012, topic="status overconfidence in groups")
+        assert [c["title"] for c in candidates] == [
+            "the topical one", "broad 0", "broad 1", "broad 2"]
+        # The count reported is the BROAD one: it is what "none of these" was said
+        # against, and the narrowing does not shrink the population.
+        assert total == 400
+
+    def test_a_narrowing_that_finds_nothing_leaves_the_broad_list_alone(self, tmp_path):
+        broad = {"meta": {"count": 400},
+                 "results": [self._work(i, f"broad {i}") for i in range(3)]}
+        empty = {"meta": {"count": 0}, "results": []}
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client._author_year_query",
+                   side_effect=[broad, empty, empty]):
+            candidates, _, _ = oa.author_year_candidates(
+                ["anderson"], 2012, topic="status overconfidence in groups")
+        assert [c["title"] for c in candidates] == ["broad 0", "broad 1", "broad 2"]
+
+
+class TestTopicWordsAndAccents:
+    def test_the_cited_authors_own_name_is_not_a_topic_word(self):
+        """"Conceptual Replication (Young et al., 2016, Study 1)" has no other word of
+        four letters, and an author's name in a title field finds the papers that
+        discuss them, not the papers they wrote."""
+        assert "young" not in oa._topic_words(
+            "Conceptual Replication (Young et al., 2016, Study 1) of moral judgment",
+            3, ["young"])
+
+    def test_replication_vocabulary_carries_no_topic(self):
+        assert oa._topic_words(
+            "A Preregistered Replication and Extension of the anchoring effect", 2,
+            []) == "anchoring"
+
+    def test_an_accent_is_folded_for_the_author_filter(self):
+        assert oa._fold_accents("Zárate") == "Zarate"
+        assert oa._fold_accents("Häubl") == "Haubl"
+
+
+class TestCrossRefLeadsAndOpenAlexFillsIn:
+    """CrossRef is free and OpenAlex bills at 10x a filter query, so CrossRef is asked
+    first — but it ENDS the search only when it has identified the paper, which is when
+    one of its hits carries every surname the citation named. Treating a partial answer
+    as a whole one lost nine links on the dev sample while gaining eight."""
+
+    @staticmethod
+    def _cr(*author_lists):
+        return [{"doi": f"10.1/c{i}", "openalex_id": "", "title": f"cr {i}",
+                 "year": 2015, "authors": list(a), "first_author": a[0].lower(),
+                 "journal": "J", "cited_by": 5}
+                for i, a in enumerate(author_lists)]
+
+    def test_a_hit_with_every_cited_name_ends_the_search(self, tmp_path):
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client._crossref_author_year",
+                   return_value=self._cr(["Jones", "Macken"])), \
+             patch("shared.openalex_client._author_year_query") as query:
+            candidates, _, _ = oa.author_year_candidates(
+                ["jones", "macken"], 1995, topic="irrelevant speech spatial location")
+        assert query.call_count == 0, "a free answer that identified the paper still " \
+                                      "paid OpenAlex"
+        assert [c["title"] for c in candidates] == ["cr 0"]
+
+    def test_a_partial_answer_leads_a_pool_openalex_also_fills(self, tmp_path):
+        broad = {"meta": {"count": 3},
+                 "results": [{"id": "https://openalex.org/W9",
+                              "doi": "https://doi.org/10.9/oa", "title": "the right one",
+                              "publication_year": 2015, "authorships": [],
+                              "cited_by_count": 99}]}
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client._crossref_author_year",
+                   return_value=self._cr(["Turri"])), \
+             patch("shared.openalex_client._author_year_query", return_value=broad):
+            candidates, _, _ = oa.author_year_candidates(
+                ["turri", "buckwalter", "blouw"], 2015, topic="knowledge attribution")
+        assert [c["title"] for c in candidates] == ["cr 0", "the right one"]
+
+    def test_a_silent_openalex_leaves_crossrefs_partial_answer_standing(self, tmp_path):
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client._crossref_author_year",
+                   return_value=self._cr(["Turri"])), \
+             patch("shared.openalex_client._author_year_query", return_value=None):
+            candidates, _, unavailable = oa.author_year_candidates(
+                ["turri", "buckwalter"], 2015, topic="knowledge attribution")
+        assert unavailable is False and [c["title"] for c in candidates] == ["cr 0"]
+
+
+class TestATitleQueryIsUsuallyAFragment:
+    """Jaccard at 0.7 asks two titles to be nearly the same STRING. The query is
+    however the replication quoted its target — usually a fragment — so containment
+    counts too. 25 of the 101 open works across the three samples were title searches
+    that found nothing, several of them this."""
+
+    def test_a_query_that_is_the_start_of_the_title_matches(self):
+        assert oa.title_matches(
+            "Imagine being a nice guy: A note on hypothetical vs. incentivized social "
+            "preference elicitation",
+            "Imagine being a nice guy: A note on hypothetical vs. incentivized")
+
+    def test_a_query_whose_words_are_scattered_through_the_title_matches(self):
+        assert oa.title_matches("The word superiority effect overcomes crowding",
+                                "the superiority effect in crowding")
+        assert oa.title_matches("Do Neutral Ratings Imply Indifference or Ambivalence?",
+                                "Ambivalence of Neutral Ratings")
+
+    def test_two_words_are_too_few_to_match_on(self):
+        """A short query would otherwise match the literature."""
+        assert not oa.title_matches("Some paper about martyrs and their effects",
+                                    "the martyrdom effect")
+
+    def test_a_title_missing_a_query_word_still_fails(self):
+        assert not oa.title_matches("A paper on quantum gravity",
+                                    "Ambivalence of Neutral Ratings")

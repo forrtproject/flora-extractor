@@ -51,15 +51,18 @@ from shared.pdf_parsing import (
     parse_all as _parse_all,
     parse_result_has_transient_failure,
     parse_result_is_empty,
+    parse_cache_path as _parse_cache_path,
     read_parse_cache as _read_parse_cache_shared,
     score_parse_result,
 )
 from shared.prompts import OUTCOME_TEXT_CHARS
 from shared.doi_verify import keeps_no_doi, verify_and_correct
+from shared.row_key import primary_key
 from shared.schema import (
     EXTRACTED_COLS,
     LINK_METHOD_VALUES,
     OUTCOME_CATEGORIES,
+    RESOLVED_LINK_METHODS,
     RESOLVED_LINK_METHODS,
     VERIFICATION_SKIP_LINK_METHODS,
     assert_no_float_years,
@@ -67,7 +70,8 @@ from shared.schema import (
     year_str,
 )
 from shared.utils import (bare_work_id, cache_key, citation_fragment,
-                          clean_citation_title, clean_doi, usable_title)
+                          clean_citation_title, clean_doi, non_article_doi,
+                          usable_title)
 from extract.link_original import run_for_doi
 from extract.code_outcome import extract_outcome
 
@@ -516,6 +520,14 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
                                         str(orig.get("openalex_id", "") or ""),
                                         title_o),
         "doi_o":           doi_o_clean,
+        # The record's OWN work id, kept rather than used for the pair_id and thrown
+        # away. An original that came from an OpenAlex reference record has an
+        # OpenAlex id whether or not it has a DOI, and that id was its identity; the
+        # row then reached `_guard_original_link` carrying nothing, which spent a
+        # title search re-finding what it had been handed. `_fill_work_ids` only ever
+        # derives this column FROM doi_o, so for a DOI-less original nothing else
+        # would have filled it.
+        "oa_work_id_o":    bare_work_id(str(orig.get("openalex_id", "") or "")),
         "title_o":         title_o,
         "year_o":          year_str(orig.get("year")),
         **dict(zip(("ref_o", "authors_o", "bibtex_ref_o"), _build_ref_o(
@@ -572,15 +584,29 @@ def _empty_row(filter_row: pd.Series, match_type: str, match_conf: str,
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _cached_oa_xml(key: str) -> "dict | None":
-    """The cached OpenAlex GROBID-XML result for *key*, or None when it is no document.
+def _cached_oa_xml(openalex_id: str) -> "dict | None":
+    """The cached OpenAlex GROBID-XML result for *openalex_id*, or None when it is
+    no document.
+
+    The argument is the OpenAlex WORK ID, because that is what
+    `get_openalex_fulltext()` files the entry under. This reader used to be handed
+    `cache_key(doi_r)` instead, which named a file the writer never creates: across
+    the 285 rows of the 2026-08-06 `extracted.csv`, the DOI-derived name matched 0
+    entries on disk and the id-derived name matched every one that had been fetched.
+    So `_has_document()` reported "nothing to read" for a row whose only document was
+    OpenAlex XML, and `_save_parse_cache()` re-parsed with `oa_xml=None`.
 
     A content-free shell (`openalex_xml_has_content()`) is not a document — the ladder
     applies that test before it will read one, and so must every reader of the same
     cache file, or the shell counts as full text here while ending the row at
     `no_fulltext_available` there.
     """
-    cache_file = OA_XML_CACHE_DIR / f"oa_xml_{key}.json"
+    if not openalex_id:
+        return None
+    oa_id = openalex_id.strip()
+    if not oa_id.startswith("W"):
+        oa_id = f"W{oa_id}"
+    cache_file = OA_XML_CACHE_DIR / f"oa_xml_{cache_key(oa_id)}.json"
     if not cache_file.exists():
         return None
     try:
@@ -591,7 +617,7 @@ def _cached_oa_xml(key: str) -> "dict | None":
     return cached if openalex_xml_has_content(cached) else None
 
 
-def _has_document(doi_r: str, link: dict) -> bool:
+def _has_document(doi_r: str, link: dict, openalex_id: str = "") -> bool:
     """True when there is something for the parsers to read.
 
     Every stage before Stage 5 returns with pdf={}, so pdf_source is "none" and no
@@ -599,39 +625,57 @@ def _has_document(doi_r: str, link: dict) -> bool:
     because the writers early-return on an existing file that empty cache then stood
     in for the real one on any later run that DID get the PDF (audit B4). A document
     cached by an earlier run still counts — that is what --recalibrate-outcomes reads.
+
+    The PDF is looked up by DOI because that is what `download_pdf()` keys it on; the
+    XML by OpenAlex id, for the same reason (`_cached_oa_xml`). A DOI-less row simply
+    has no PDF to find here, which is what it had before too.
     """
     if bool(link.get("pdf_ok")):
         return True
     if str(link.get("pdf_source", "none") or "none") not in {"", "none"}:
         return True
-    key = cache_key(doi_r)
-    return ((PDF_CACHE_DIR / f"{key}.pdf").exists()
-            or _cached_oa_xml(key) is not None)
+    if doi_r and (PDF_CACHE_DIR / f"{cache_key(doi_r)}.pdf").exists():
+        return True
+    return _cached_oa_xml(openalex_id) is not None
 
 
-def _read_parse_cache(doi_r: str) -> "dict | None":
-    """The cached parse_all results for doi_r, or None on a miss.
+def _cache_id(row: pd.Series, doi_r: str = "") -> str:
+    """This row's identity for the on-disk parse cache.
+
+    The DOI when there is one, so every entry written before this existed still
+    matches; otherwise `primary_key()`'s next-strongest identifier (`oa:` → `url:` →
+    `title:`). Verified against the 2026-08-06 `extracted.csv`: all 278 rows with a
+    DOI keep the key they already had on disk, and the 7 without stop sharing one.
+    """
+    return doi_r or primary_key(row)
+
+
+def _read_parse_cache(cache_id: str) -> "dict | None":
+    """The cached parse_all results for *cache_id*, or None on a miss.
 
     The reader itself lives in shared/pdf_parsing.py: the ladder reads the same files
     before it parses (link_original Stage 6), and it cannot import this module.
     """
-    return _read_parse_cache_shared(doi_r, PARSE_CACHE_DIR)
+    return _read_parse_cache_shared(cache_id, PARSE_CACHE_DIR)
 
 
-def _save_parse_cache(doi_r: str) -> None:
-    """Run all PDF parsers for doi_r and cache results to PARSE_CACHE_DIR."""
-    key      = cache_key(doi_r)
-    out_file = PARSE_CACHE_DIR / f"parse_{key}.json"
-    if _read_parse_cache(doi_r) is not None:
+def _save_parse_cache(cache_id: str, doi_r: str = "", openalex_id: str = "") -> None:
+    """Run all PDF parsers for *cache_id*'s document and cache the results.
+
+    *cache_id* names the cache entry (see `parse_cache_path`); *doi_r* and
+    *openalex_id* say where the document itself is, which are different keys.
+    """
+    out_file = _parse_cache_path(cache_id, PARSE_CACHE_DIR)
+    if _read_parse_cache(cache_id) is not None:
         return
 
-    pdf_path = PDF_CACHE_DIR / f"{key}.pdf"
-    if not pdf_path.exists():
+    pdf_path = PDF_CACHE_DIR / f"{cache_key(doi_r)}.pdf" if doi_r else None
+    if pdf_path is not None and not pdf_path.exists():
         pdf_path = None  # type: ignore[assignment]
 
-    results = _parse_all(doi_r, pdf_path, oa_xml=_cached_oa_xml(key))
+    results = _parse_all(doi_r, pdf_path, oa_xml=_cached_oa_xml(openalex_id))
     if parse_result_is_empty(results):
-        log.debug("[%s] parse produced no text — not caching", doi_r)
+        log.debug("[%s] parse produced no text — not caching", cache_id)
         return
     if parse_result_has_transient_failure(results):
         # One method never got an answer (the reference extractor while its provider
@@ -639,12 +683,12 @@ def _save_parse_cache(doi_r: str) -> None:
         # goes to disk and what comes back, so caching now would make an outage this
         # paper's permanent answer about its references. Nothing is cached until every
         # method has answered; the text costs a re-parse, which is local.
-        log.info("[%s] parse carries a transient failure — not caching", doi_r)
+        log.info("[%s] parse carries a transient failure — not caching", cache_id)
         return
     try:
         write_json(out_file, results, indent=2)
     except Exception as exc:
-        log.debug("[%s] _save_parse_cache write failed: %s", doi_r, exc)
+        log.debug("[%s] _save_parse_cache write failed: %s", cache_id, exc)
 
 
 # --resolved-only drops these, and they are never outcome-coded: there is no link.
@@ -759,7 +803,7 @@ def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False,
     # receives whichever parser extracted the richest text, not always GROBID —
     # narrowed to the discussion/conclusion, which is where FLoRA's rule says the
     # outcome is stated when the abstract does not state it.
-    fulltext, provenance, intro = _best_fulltext_from_cache(doi_r)
+    fulltext, provenance, intro = _best_fulltext_from_cache(_cache_id(row, doi_r))
     if not fulltext:
         # Fallback: sections that run_for_doi already extracted. The intro is in here
         # for want of anything better; it is the section that most often discusses
@@ -786,8 +830,8 @@ def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False,
     )
 
 
-def _best_fulltext_from_cache(doi_r: str) -> tuple[str, str, str]:
-    """The outcome-bearing text for doi_r, as (closing text, provenance, intro).
+def _best_fulltext_from_cache(cache_id: str) -> tuple[str, str, str]:
+    """The outcome-bearing text for *cache_id*, as (closing text, provenance, intro).
 
     Reads the parse cache, and takes the raw text of the highest-scoring method
     that actually has raw text — the top-scoring method overall can be GROBID,
@@ -799,7 +843,7 @@ def _best_fulltext_from_cache(doi_r: str) -> tuple[str, str, str]:
     the prompt names them separately, so a quote can be attributed to the right one.
     Returns ("", "none", "") on a cache miss or an all-empty cache.
     """
-    results = _read_parse_cache(doi_r)
+    results = _read_parse_cache(cache_id)
     if not results:
         return "", "none", ""
     ranked = sorted((r for r in results.values() if isinstance(r, dict)),
@@ -894,7 +938,198 @@ def _aggregate_axes(members: list[dict]) -> dict:
     return merged
 
 
-def _target_entry(target: dict, doi_r: str) -> "dict | None":
+_CITED_NAME_RE = re.compile(r"[^\W\d_]{3,}", re.UNICODE)
+_CITED_NAME_STOPWORDS = {"and", "the", "et", "al", "study", "studies", "experiment",
+                         "experiments", "claim"}
+
+
+def _cited_surnames(pattern: dict) -> list[str]:
+    """Every author surname the citation named, most significant first.
+
+    `extract_author_year_patterns` reports ONE surname per match, and for a
+    multi-author citation that is a run-on of all of them ("kaufmann,weber,andhaisley")
+    or just the first ("jones" for "Jones and Macken (1995)"). Either way the other
+    names are thrown away, and they are what makes a shortlist usable: measured
+    2026-08-07, "jones 1995" matches 8,348 OpenAlex works and "jones AND macken 1995"
+    matches 7, with the right paper third.
+
+    Read off the matched span rather than the reported surname, because the span is
+    the citation as the paper wrote it.
+    """
+    raw = str(pattern.get("raw") or pattern.get("surname") or "")
+    # Only the part before the parenthesis: what follows the year inside it is the
+    # venue or the study number — "Wilson et al. (2017, JPSP)" — and reading "jpsp" as
+    # an author name would AND a word no author list carries into the query.
+    names = [n.lower() for n in _CITED_NAME_RE.findall(raw.split("(")[0] or raw)]
+    seen: list[str] = []
+    for name in names:
+        if name in _CITED_NAME_STOPWORDS or name in seen:
+            continue
+        seen.append(name)
+    return seen or [str(pattern.get("surname") or "")]
+
+
+def _title_searched_entry(target: dict, doi_r: str, context: dict) -> "dict | None":
+    """An entry for a target the model NAMED but no keyed record could match.
+
+    ONE pooled candidate list per target, from every search that can say anything
+    about it, and ONE decision over that pool by the linking model.
+
+    The two searches used to be exclusive: a description with a title in it went to
+    the title search, one without went to the author-and-year query, and each
+    mechanically dropped what its own guards doubted. That is the expensive way round.
+    A candidate the model never sees can be neither confirmed nor disconfirmed, and a
+    target left unresolved sends the whole work back to a worklist that pays for the
+    ladder again — the abstract call, the reference list, the PDF. Asking the model to
+    reject one bad candidate costs one field of one answer. So the pool is wide and
+    the model, not a metadata rule, decides; the rules survive as FLAGS on the
+    candidates they doubt.
+
+    Measured across the dev iterations: switching a work between the two routes gained
+    links and lost them in roughly equal numbers, because each route saw only its own
+    half of what was findable.
+    """
+    named = str(target.get("target_as_named") or "").strip()
+    cleaned = clean_citation_title(named)
+
+    from extract.link_original import (citation_without_title, strip_citation_prefix,
+                                       title_search_candidates)
+    from shared.openalex_client import (author_year_candidates,
+                                        extract_author_year_patterns)
+    from shared.llm_client import pick_author_year_original
+
+    patterns      = extract_author_year_patterns(named)
+    cited_year    = str(patterns[0]["year"]) if patterns else ""
+    cited_surnames = _cited_surnames(patterns[0]) if patterns else []
+
+    pool: list[dict] = []
+    unavailable = False
+    asked: list[str] = []
+    # How many works the searches matched, against how many the model was shown. The
+    # author-and-year query is the only one that reports a population; a title search
+    # returns its hits and nothing else, so on a title-only pool the two are equal.
+    total = 0
+
+    # The title search, whenever there is something that could be a title. A citation
+    # with no title in it — "Ramscar et al. (2010)" — has nothing to search on, and
+    # asking anyway costs two free-text queries at 10x a filter query each.
+    if usable_title(cleaned) and not citation_without_title(named):
+        # The replication's own title, not "": `title_search_candidates` refuses a hit
+        # whose title is the replication's at Jaccard 0.9, and that check has never
+        # once run because this call has never supplied one. Holdout wrong-settle
+        # 2266446612 is exactly that class — a repository record titled all but
+        # identically to the replication itself.
+        hits, hits_unavailable = title_search_candidates(
+            doi_r, named, str(context.get("title_r") or ""), cited_year,
+            "|".join(cited_surnames))
+        unavailable = unavailable or hits_unavailable
+        asked.append(f"title:{strip_citation_prefix(named)[:50]!r}")
+        pool.extend(hits)
+
+    # The author-and-year query, whenever the citation names an author and a year AND
+    # the title search has not already returned a candidate nothing doubts. Widening
+    # the net where the net came up empty or flagged is the point; widening it over a
+    # clean title hit buys a sibling-paper distractor and a second free-text query at
+    # 10x a filter query. A 100-work sandbox run that asked both of everything
+    # exhausted the OpenAlex daily budget outright (2026-08-07).
+    clean_hit = any(not c.get("flags") for c in pool)
+    if cited_surnames and cited_year and not clean_hit:
+        found, oa_total, oa_unavailable = author_year_candidates(
+            cited_surnames, int(cited_year),
+            topic=f"{context.get('title_r') or ''} {context.get('abstract_r') or ''}")
+        unavailable = unavailable or oa_unavailable
+        total = max(total, oa_total)
+        asked.append(f"authoryear:{'+'.join(cited_surnames)} {cited_year}")
+        seen = {c.get("doi") or c.get("openalex_id") for c in pool}
+        for c in found:
+            # Filtered HERE rather than where the shortlist is fetched, because the
+            # shortlist is cached: a rule applied at fetch time leaves every list
+            # already on disk carrying what the rule now excludes, and only a cache
+            # shape bump — which re-pays every query — would clear them.
+            if non_article_doi(str(c.get("doi") or "")):
+                continue
+            if (c.get("doi") or c.get("openalex_id")) not in seen:
+                pool.append({**c, "source": "openalex_authoryear", "flags": []})
+
+    # The named string leads, then what was asked of it: the evidence line is what an
+    # adjudication reads, and "authoryear:ramscar 2010" does not say which citation in
+    # the paper it came from.
+    attempt = {"named": named,
+               "query": f"{named} -> {'; '.join(asked)}" if asked else named,
+               "candidates": pool, "candidates_total": max(total, len(pool))}
+    target["_search_attempt"] = attempt
+
+    if not asked:
+        attempt["outcome"] = "unsearchable"
+        return None
+    if unavailable:
+        # A provider was silent, so the answer is incomplete however good the part in
+        # hand. The row is written api_error, which a re-run reopens; settling on
+        # incomplete evidence is not reversible and a re-run is nearly free.
+        attempt["outcome"] = "unavailable"
+        found = "; ".join(f"{c['source']}: {c['doi']}" for c in pool)
+        return {"rank": 0, "doi": "", "title": "", "year": None, "first_author": "",
+                "openalex_id": "", "study_number": "", "study_r": "",
+                "evidence": ("the searches for the named target did not reach every "
+                             "provider" + (f"; what did answer: {found}" if found else "")),
+                "confidence": "low", "provisional": False, "outcome_block": {},
+                "search_unavailable": True, "title_search_candidates": pool}
+    if not pool:
+        attempt["outcome"] = "no_candidates"
+        return None
+
+    verdict = pick_author_year_original(
+        doi_r, str(context.get("title_r") or ""), str(context.get("abstract_r") or ""),
+        named, str(target.get("evidence_quote") or ""), pool,
+        attempt["candidates_total"])
+    if verdict["llm_error"]:
+        attempt["outcome"] = "unavailable"
+        return {"rank": 0, "doi": "", "title": "", "year": None, "first_author": "",
+                "openalex_id": "", "study_number": "", "study_r": "",
+                "evidence": f"the pick over {len(pool)} candidates failed: "
+                            f"{verdict['llm_error']}",
+                "confidence": "low", "provisional": False, "outcome_block": {},
+                "search_unavailable": True, "title_search_candidates": pool}
+
+    pick = verdict["pick"]
+    attempt["reasoning"] = verdict["reasoning"]
+    if not pick or not verdict["confident"]:
+        attempt["outcome"] = ("declined" if pick is None else "unconfident")
+        return None
+
+    attempt["outcome"] = "resolved"
+    # Which search found the chosen candidate is what the row is filed under, so the
+    # two resolvers' precision stays measurable apart even though one call decides.
+    method = ("llm_author_year_search" if pick.get("source") == "openalex_authoryear"
+              else "llm_title_search")
+    evidence = str(target.get("evidence_quote") or "")
+    note = (f"target named but unmatched to any record; picked by "
+            f"{verdict['llm_model']} from {len(pool)} candidate(s) "
+            f"({', '.join(sorted({str(c.get('source')) for c in pool}))}): "
+            f"{verdict['reasoning']}. All considered: "
+            + "; ".join(f"{c.get('source')}: {c.get('doi') or c.get('openalex_id')}"
+                        for c in pool))
+    return {
+        "rank":         0,
+        "doi":          pick.get("doi", ""),
+        "title":        pick.get("title", ""),
+        "year":         pick.get("year"),
+        "first_author": pick.get("first_author", ""),
+        "openalex_id":  pick.get("openalex_id", ""),
+        "study_number": _clean_study_numbers(target.get("study_numbers", "")),
+        "study_r":      _clean_study_numbers(target.get("replication_study_numbers", "")),
+        "evidence":     f"{evidence} | {note}" if evidence else note,
+        "confidence":   "low",
+        "provisional":  True,
+        "provisional_method": method,
+        "outcome_block": target.get("outcome_block") or {},
+        # Kept whole so a later evaluation can read what the alternatives were, not
+        # just that there were some.
+        "title_search_candidates": pool,
+    }
+
+
+def _target_entry(target: dict, doi_r: str, context: dict) -> "dict | None":
     """One confirmed target as the entry shape _collapse_same_paper_originals() and
     _merge_multi_row() read.
 
@@ -912,7 +1147,20 @@ def _target_entry(target: dict, doi_r: str) -> "dict | None":
     confidence one: the row names an original nobody can look up.
     """
     record = target.get("record")
-    if not (target.get("match_certain") and record):
+    if not record:
+        # No record at ALL — the key namespace was empty, so the model could not have
+        # matched anything however plainly it named the target. That is every OSF
+        # registration and every URL-only row: OpenAlex returns no candidates and no
+        # reference list for them. Dropping the target here wrote the work
+        # `no_original_found`, which SETTLES, so a work whose original the model had
+        # named in plain text ("Conceptual replication of Hyman & Sheatsley (1950)")
+        # was closed permanently as though none existed. Search the name instead.
+        #
+        # Not reached when a record WAS offered and the model declined it: that is the
+        # model judging the evidence, and second-guessing it by search is how a paper
+        # gets linked to a landmark it merely cites.
+        return _title_searched_entry(target, doi_r, context)
+    if not target.get("match_certain"):
         return None
 
     raw_title = str(record.get("title") or "")
@@ -931,6 +1179,25 @@ def _target_entry(target: dict, doi_r: str) -> "dict | None":
         if hit:
             doi = clean_doi(str(hit.get("doi", "") or ""))
             provisional = bool(doi)
+    if not doi and not record.get("openalex_id"):
+        # Still nothing, and the record has no id of its own. This is a reference
+        # GROBID parsed out of the PDF, and its title is routinely mangled — "Report of
+        # an jnternship c:gndyctp1 lithe MemQrial Unjvmj'Y". `resolve_doi_by_metadata`
+        # scores its candidates by TITLE SIMILARITY, so on a mangled title it cannot
+        # succeed however well the paper is indexed. The author and the year survive
+        # OCR better than the title does, so the pooled search gets a turn: it asks
+        # CrossRef for that author in that year and lets the model judge the subject.
+        named = " ".join(str(x) for x in (record.get("first_author"),
+                                          f"({record.get('year')})" if record.get("year")
+                                          else "", title) if x).strip()
+        recovered = _title_searched_entry({**target, "target_as_named": named,
+                                           "record": None}, doi_r, context)
+        if recovered and recovered.get("doi"):
+            return {**recovered,
+                    "study_number": _clean_study_numbers(target.get("study_numbers", "")),
+                    "study_r": _clean_study_numbers(
+                        target.get("replication_study_numbers", "")),
+                    "outcome_block": target.get("outcome_block") or {}}
 
     return {
         "rank":         0,     # renumbered over the written rows, after every drop
@@ -1133,6 +1400,12 @@ def _guard_original_link(row: dict) -> dict:
             log.info("[%s] recovered doi_o=%s from title search", doi_r, found)
             row["doi_o"] = found
             row["pair_id"] = make_pair_id(doi_r, found)
+            # The work id the row arrived with came from the REFERENCE RECORD, and the
+            # DOI just recovered came from a title search of that record's title. They
+            # need not describe the same work, and a row exposing a DOI for one and an
+            # OpenAlex id for another sends a validator to two different papers.
+            # `_fill_work_ids` refills the column from the DOI, but only when blank.
+            row["oa_work_id_o"] = ""
             return row
 
     # 3/4. no DOI: keep only if the title is a usable, distinct original
@@ -1152,6 +1425,29 @@ def _guard_original_link(row: dict) -> dict:
             # re-key the existing DOI-less rows the validation DB holds under
             # md5("doi_r|") — a duplicate import. Only multi-original needs it.
             row["oa_work_id_o"] = work_id_o
+        elif str(row.get("link_method", "")) in RESOLVED_LINK_METHODS:
+            # No DOI, no OpenAlex id: the original has no identity anything downstream
+            # can use. `resolved` asserts an IDENTIFIED original and its rows are the
+            # ones the validation import takes — and a pair cannot be keyed on a title.
+            # So the row keeps its link and stops claiming to be resolved.
+            #
+            # This is not a similarity test, deliberately. Measured over 277 correct
+            # links on 2026-08-08, title Jaccard between an original and its
+            # replication reaches 0.73 ("Rurality in England and Wales 1981" against
+            # "…1991: A Replication and Extension"), while the two real self-links in
+            # the samples scored 0.50 and 0.17 — one of them because OCR had mangled
+            # the title it copied. Similarity does not separate the two classes at any
+            # threshold. Identifiability does: the self-link that got through was a
+            # full-text rung matching an OCR-garbled copy of the paper's own title,
+            # with no DOI and no work id behind it.
+            log.info("[%s] named original has neither a DOI nor a work id — kept, "
+                     "flagged unidentified_original", doi_r)
+            row["link_method"] = "unidentified_original"
+            row["link_confidence"] = "low"
+            note = ("the named original has no DOI and no OpenAlex id: kept for review "
+                    "as an unidentified original rather than written resolved")
+            prior = str(row.get("link_evidence", "") or "")
+            row["link_evidence"] = f"{prior} | {note}" if prior else note
         return row
 
     return row
@@ -1252,14 +1548,115 @@ def _sanitise_row(result_row: dict) -> dict:
     return result_row
 
 
-def _finalise_row(result_row: dict) -> dict:
-    """Verify doi_o, fill the work ids, and make the row's text safe to write.
+# The link methods the keyed-record check covers: an LLM accepted a keyed record.
+# Rule resolutions get the standalone coder's target_check, and the provisional
+# search picks were already adjudicated cold by pick_author_year_original.
+_KEYED_CONFIRM_METHODS = {"llm_fulltext", "llm_references", "llm_cited_candidates"}
 
-    Split out of the write because it is the part that calls APIs: two lookups per
-    row, which the workers must make on their own time rather than while holding the
-    write lock the whole pool queues on.
+# What llm_evidence appends after the quote itself, on "; " — see
+# resolve_targets_and_outcomes' evidence_notes. Later run notes join on " | ".
+_EVIDENCE_NOTE_RE = re.compile(r";\s*(unidentified=\d+|stated_count=.*)$")
+
+
+def evidence_quote(link_evidence: str) -> str:
+    """The quoted evidence out of a row's link_evidence, run notes stripped.
+
+    Public because analysis/stage3_eval/keyed_confirm_eval.py rebuilds the check's
+    inputs from stored rows with it — the measurement and the ladder must send the
+    same prompt or the measurement is of something else.
     """
-    return _sanitise_row(_fill_work_ids(_verify_row(result_row)))
+    quote = str(link_evidence or "").split(" | ")[0]
+    return _EVIDENCE_NOTE_RE.sub("", quote).strip()
+
+
+def _confirm_keyed_row(row: dict) -> dict:
+    """Issue #186's Shape 1 on the keyed-record path: before an LLM-accepted keyed
+    link is written, a separate call adjudicates the record cold against the study's
+    abstract and the quoted evidence.
+
+    The wrong entry picked from the right list is invisible to every other guard —
+    `_verify_row` checks DOI-against-title, never title-against-target (work
+    3124119366, linked to a margin-squeeze paper while its own evidence named
+    Abel-Koch). The verdict decides:
+
+    - plausible                → the row passes unchanged; nothing is written on it.
+    - not plausible, confident → demoted to `keyed_link_disputed`: the link, the
+      outcome and the check's reasoning are all KEPT, quarantined for a human —
+      the disagreement is between two LLM readings, so neither answer is dropped.
+    - not plausible, unsure    → flagged: confidence low, note on the evidence,
+      link kept. An unconfident "no" removes nothing.
+    - no answer                → `api_error`: an unchecked link must not settle
+      permanently on a transient failure, and a re-run is near-free off the caches.
+
+    Runs after `_verify_row` so it judges the record as corrected, and it is
+    downstream of the targetoutcome cache — editing the confirm prompt re-decides
+    rows without disturbing the pick's cached answer. It also runs after
+    `--resolved-only`'s drops, which is fine where it matters: the tier — the one
+    live caller — never sets that flag (`extract/tier.py` passes False), and a
+    demotion here still carries a link, while `api_error` un-settling the work is
+    correct whatever was filtered.
+
+    Measured before wiring (analysis/stage3_eval/keyed_confirm_eval.py,
+    2026-08-08): over all 63 keyed link rows in the four evaluation batches and
+    the live re-extraction, the one known-wrong link was flagged, confidently, and
+    none of the 62 correct ones — including the preprint-vs-published year gaps that
+    sank the mechanical author/year check. That is adjudication against Crossref,
+    not the issue's human-confirmed precision, and it is a first exercise, not a
+    guarantee.
+    """
+    if str(row.get("link_method") or "") not in _KEYED_CONFIRM_METHODS:
+        return row
+    doi_o = clean_doi(str(row.get("doi_o") or ""))
+    if not doi_o and not row.get("oa_work_id_o"):
+        # Nothing identifiable to dispute; the unidentified_original path owns these.
+        return row
+
+    from shared.llm_client import confirm_keyed_original
+    verdict = confirm_keyed_original(
+        clean_doi(str(row.get("doi_r") or "")),
+        str(row.get("title_r") or ""), str(row.get("abstract_r") or ""),
+        evidence_quote(str(row.get("link_evidence") or "")),
+        {"doi": doi_o, "title": str(row.get("title_o") or ""),
+         "first_author": str(row.get("authors_o") or ""),
+         "year": str(row.get("year_o") or ""),
+         "openalex_id": str(row.get("oa_work_id_o") or "")})
+
+    def _note(text: str) -> None:
+        prior = str(row.get("link_evidence", "") or "")
+        row["link_evidence"] = f"{prior} | {text}" if prior else text
+
+    if verdict["plausible"] is None:
+        log.warning("[%s] keyed-record check got no answer: %s",
+                    row.get("doi_r"), verdict["llm_error"])
+        row["link_method"] = "api_error"
+        _note(f"keyed-record check got no answer ({verdict['llm_error']}); "
+              "re-run decides")
+        return row
+    if verdict["plausible"]:
+        return row
+    if verdict["confident"]:
+        log.info("[%s] keyed link disputed by %s: %s", row.get("doi_r"),
+                 verdict["llm_model"], verdict["reasoning"])
+        row["link_method"] = "keyed_link_disputed"
+        row["link_confidence"] = "low"
+        _note(f"keyed-record check ({verdict['llm_model']}): the linked record was "
+              f"judged not to be the named target — {verdict['reasoning']}")
+    else:
+        row["link_confidence"] = "low"
+        _note(f"keyed-record check ({verdict['llm_model']}), unconfident: "
+              f"{verdict['reasoning']} — link kept, flagged")
+    return row
+
+
+def _finalise_row(result_row: dict) -> dict:
+    """Verify doi_o, check an LLM-accepted keyed link, fill the work ids, and make
+    the row's text safe to write.
+
+    Split out of the write because it is the part that calls APIs: two lookups plus
+    one short confirm call per row, which the workers must make on their own time
+    rather than while holding the write lock the whole pool queues on.
+    """
+    return _sanitise_row(_fill_work_ids(_confirm_keyed_row(_verify_row(result_row))))
 
 
 
@@ -1322,11 +1719,35 @@ def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | Non
     no published record to write one about. The shortfall is reported in the
     link_evidence of every row that WAS written, so it cannot vanish silently.
     """
-    targets = link.get("targets") or []
-    entries = [e for e in (_target_entry(t, doi_r) for t in targets) if e]
-    missing = [str(t.get("target_as_named", "") or "") for t in targets
-               if not (t.get("match_certain") and t.get("record"))]
+    targets  = link.get("targets") or []
+    # What the paper is ABOUT, for the resolvers that need to judge a candidate's
+    # subject matter rather than match its title.
+    context  = {"title_r": str(row.get("title_r", "") or ""),
+                "abstract_r": str(row.get("abstract_r", "") or "")}
+    recovered = link.get("_recovered_entry")
+    resolved = ([(targets[0], recovered)] if recovered and len(targets) == 1
+                else [(t, _target_entry(t, doi_r, context)) for t in targets])
+    entries  = [e for _, e in resolved if e]
+    # A target the title search recovered is no longer missing: it has a row, so
+    # reporting it as unidentified would contradict the row written next to it.
+    missing  = [str(t.get("target_as_named", "") or "") for t, e in resolved if not e]
     shortfall = len(missing) + int(link.get("unidentified_count") or 0)
+    # Every title search this work ran, and what it got — kept whether or not any
+    # target resolved, so a later resolver can be evaluated off stored rows.
+    attempts = "; ".join(
+        f"{a['outcome']}({a['query'][:60]!r})"
+        for a in (t.get("_search_attempt") for t, _ in resolved) if a)
+    link["search_attempts"] = attempts
+    if attempts:
+        # Onto the LINK, not just the rows written below: when NO target resolves,
+        # this function returns [] and the work is written by the single-row path
+        # further up, which never sees `resolved`. That is precisely the case worth
+        # recording — the work settles `no_original_found` and the only way to tell
+        # later whether a better resolver would have found it is to know what was
+        # searched and that both providers disowned it.
+        prior = str(link.get("llm_evidence", "") or "")
+        note = f"title searches: {attempts}"
+        link["llm_evidence"] = f"{prior} | {note}" if prior else note
     if not entries:
         return []
 
@@ -1340,8 +1761,9 @@ def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | Non
     # Once for the paper, not once per target: the outcome escalation reads the parse
     # cache, and the retired multi path never populated it — which is why its rows
     # were coded from the abstract alone however much full text had been acquired.
-    if not no_pdf and _has_document(doi_r, link):
-        _save_parse_cache(doi_r)
+    oa_id_r = str(row.get("openalex_id_r", "") or "")
+    if not no_pdf and _has_document(doi_r, link, oa_id_r):
+        _save_parse_cache(_cache_id(row, doi_r), doi_r, oa_id_r)
 
     # An observation, not a prediction: the row count IS the match type.
     match_type = "multiple_original" if len(entries) > 1 else "single_original"
@@ -1352,7 +1774,9 @@ def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | Non
         # A DOI the pipeline had to search for is provisional at ~50% precision — the
         # same rule _link_confidence applies on the single path, applied here rather
         # than writing a constant "high" onto a link nobody confirmed.
-        link_method = ("llm_title_search" if entry["provisional"]
+        link_method = ("api_error" if entry.get("search_unavailable")
+                       else entry.get("provisional_method", "llm_title_search")
+                       if entry["provisional"]
                        else _map_method(str(link.get("target_stage") or "llm_fulltext")))
         entry = {**entry, "confidence": ("low" if entry["provisional"]
                                          else entry["confidence"])}
@@ -1366,6 +1790,8 @@ def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | Non
         if shortfall:
             note = (f"identified {len(entries)} of {len(entries) + shortfall} targets; "
                     f"unidentified: {'; '.join(filter(None, missing)) or 'not named'}")
+            if attempts:
+                note += f" | searches: {attempts}"
             prior = str(result_row.get("link_evidence", "") or "")
             result_row["link_evidence"] = f"{prior} | {note}" if prior else note
 
@@ -1453,7 +1879,8 @@ def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
     """
     link = run_for_doi(doi_r, cands_df=_build_cands_df(row),
                        no_llm=no_llm, no_pdf=no_pdf, classification=screen,
-                       record_type=_record_type(row, screen))
+                       record_type=_record_type(row, screen),
+                       cache_id=_cache_id(row, doi_r))
     _observe_link(observed, link)
 
     if link.get("targets") and not link.get("resolved"):
@@ -1461,14 +1888,89 @@ def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
         log.info("[%s] target prompt named %d original(s) without a single accepted "
                  "link — writing one row per target", doi_r, n_targets)
         rows = _per_target_rows(row, doi_r, link, screen, no_llm, no_pdf, resolved_only)
+        # Re-observed: the title searches happen INSIDE _per_target_rows, so the
+        # observation taken above predates them and would report the run without the
+        # one thing that says what was tried for a work that resolved nothing.
+        _observe_link(observed, link)
         if rows:
             return rows
-        if link.get("multi_target"):
-            pending = _empty_row(row, "multiple_original", "high",
-                                 link_method="target_pending", screen=screen)
-            pending["link_evidence"] = (f"target prompt named {n_targets} originals; "
-                                        "none could be matched to a record")
-            return [] if resolved_only else [pending]
+        # Named, and not identified. That is not "this paper replicates nothing" — it
+        # is "we know which paper it replicates and could not look it up", and the two
+        # must not share an ending: `no_original_found` SETTLES and closes the work for
+        # good. Falling through to the single-row path wrote exactly that, because the
+        # ladder's resolution_method is still `llm_no_target`. Measured on the frozen
+        # dev sample 2026-08-07: 24 of 100 works closed this way, every one of them
+        # naming an author and a year that identify a single published paper.
+        #
+        # It covers every reason the identification failed — no record in the key
+        # namespace, a title search both providers answered nothing to, a target
+        # description with no searchable title in it — because none of them is
+        # evidence about the original's existence.
+        match_type = "multiple_original" if link.get("multi_target") else "single_original"
+        pending = _empty_row(row, match_type, "low",
+                             link_method="target_pending", screen=screen)
+        # The facts about the RUN survive the ending, exactly as they did when this
+        # row came out of the single-row path: which model named the targets, and
+        # which tier and parser supplied the document it read them from. A reviewer
+        # cannot judge a pending row whose provenance columns are blank, and a blank
+        # pdf_source next to a full-text rung reads as a contradiction.
+        searches = str(link.get("search_attempts") or "")
+        note = (f"target prompt named {n_targets} original(s); "
+                "none could be matched to a record"
+                + (f" | searches: {searches}" if searches else ""))
+        prior = str(link.get("llm_evidence", "") or "")
+        pending.update({
+            **_provenance(link),
+            "link_llm_model": str(link.get("llm_model", "") or ""),
+            "link_evidence": f"{prior} | {note}" if prior else note,
+        })
+        return [] if resolved_only else [pending]
+
+    # `no_original_found` claims the paper re-tests nothing identifiable, and it CLOSES
+    # the work. Before making that claim on a paper whose own text cites somebody, the
+    # citation is looked up and the model is asked about it. Not vetoed — a veto would
+    # hold open every paper that says "we replicate X because Smith (2010) argued
+    # replications matter", where Smith is an aside and not the target. Retrieved and
+    # CHECKED: if the model recognises the cited work as the original, the paper has a
+    # link; if it declines, `no_original_found` stands and is now supported by an
+    # answer rather than by one reader's silence.
+    #
+    # Holdout 3, work 6925248538: closed `no_original_found` with "the study by Sela et
+    # al. investigating the effect of assortment size on option choice" in its own
+    # abstract, having named no target at all.
+    if (not link.get("targets")
+            and _map_method(str(link.get("resolution_method", "") or ""))
+                == "no_original_found"):
+        from shared.openalex_client import extract_author_year_patterns
+        cited = extract_author_year_patterns(
+            f"{row.get('title_r', '')}\n{row.get('abstract_r', '')}")
+        if cited:
+            context = {"title_r": str(row.get("title_r", "") or ""),
+                       "abstract_r": str(row.get("abstract_r", "") or "")}
+            probe = {"key": None, "match_certain": True, "record": None,
+                     "study_numbers": "", "replication_study_numbers": "",
+                     "target_as_named": cited[0]["raw"],
+                     "evidence_quote": str(link.get("llm_evidence", "") or "")}
+            entry = _title_searched_entry(probe, doi_r, context)
+            attempt = probe.get("_search_attempt") or {}
+            if entry and entry.get("doi"):
+                log.info("[%s] the target prompt named nothing; %s was looked up and "
+                         "the model accepted it", doi_r, cited[0]["raw"])
+                link = {**link, "resolved": False, "targets": [{**probe, "record": None}],
+                        "n_targets": 1, "multi_target": False,
+                        "_recovered_entry": entry}
+                rows = _per_target_rows(row, doi_r, link, screen, no_llm, no_pdf,
+                                        resolved_only)
+                if rows:
+                    return rows
+            else:
+                # Asked and answered: the model was shown what the paper cites and did
+                # not recognise it as the original. The verdict stands, and the row now
+                # records the question rather than only the silence.
+                link = {**link, "llm_evidence": " | ".join(filter(None, [
+                    str(link.get("llm_evidence", "") or ""),
+                    f"named no target; the paper cites {cited[0]['raw']}, looked up and "
+                    f"not accepted ({attempt.get('outcome', 'no answer')})"]))}
 
     # original_match_confidence is an observation about the answer, not a prediction
     # made before it, and it is settled AFTER the guard by the same `_match_confidence`
@@ -1489,8 +1991,9 @@ def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
         # Only a link no LLM chose — a deterministic rule's — is coded on its own.
         outcome = link.get("outcome_block") or {}
         if not outcome:
-            if not no_pdf and _has_document(doi_r, link):
-                _save_parse_cache(doi_r)
+            oa_id_r = str(row.get("openalex_id_r", "") or "")
+            if not no_pdf and _has_document(doi_r, link, oa_id_r):
+                _save_parse_cache(_cache_id(row, doi_r), doi_r, oa_id_r)
             outcome = _get_outcome(doi_r, row, link,
                                    no_llm=no_llm,
                                    screen=screen)
