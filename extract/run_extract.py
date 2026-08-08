@@ -44,7 +44,8 @@ from shared.openalex_client import fetch_openalex_full_metadata as _oa_full_meta
 from shared.openalex_client import (
     _TitleSearchUnavailable, _search_crossref_by_title, _search_openalex_by_title,
 )
-from shared.pdf_sources import cached_pdf, openalex_xml_has_content
+from shared.pdf_sources import (cached_pdf, openalex_xml_has_content,
+                                verified_cached_document)
 from shared.pdf_parsing import (
     best_parse_result,
     outcome_text,
@@ -662,17 +663,24 @@ def _read_parse_cache(cache_id: str) -> "dict | None":
     return _read_parse_cache_shared(cache_id, PARSE_CACHE_DIR)
 
 
-def _save_parse_cache(cache_id: str, doi_r: str = "", openalex_id: str = "") -> None:
+def _save_parse_cache(cache_id: str, doi_r: str = "", openalex_id: str = "",
+                      title_r: str = "") -> None:
     """Run all PDF parsers for *cache_id*'s document and cache the results.
 
     *cache_id* names the cache entry (see `parse_cache_path`); *doi_r* and
     *openalex_id* say where the document itself is, which are different keys.
+
+    The document is taken by identifier, not from what acquire_pdf just returned, so
+    a row that resolved above the acquisition rung parses whatever an earlier run
+    left on disk — including a file the server mis-served. *title_r* is what says it
+    is the right paper.
     """
     out_file = _parse_cache_path(cache_id, PARSE_CACHE_DIR)
     if _read_parse_cache(cache_id) is not None:
         return
 
-    pdf_path = cached_pdf(doi_r, cache_dir=PDF_CACHE_DIR) if doi_r else None
+    pdf_path = (verified_cached_document(doi_r, title_r, cache_dir=PDF_CACHE_DIR)
+                if doi_r else None)
 
     results = _parse_all(doi_r, pdf_path, oa_xml=_cached_oa_xml(openalex_id))
     if parse_result_is_empty(results):
@@ -1769,7 +1777,8 @@ def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | Non
     # were coded from the abstract alone however much full text had been acquired.
     oa_id_r = str(row.get("openalex_id_r", "") or "")
     if not no_pdf and _has_document(doi_r, link, oa_id_r):
-        _save_parse_cache(_cache_id(row, doi_r), doi_r, oa_id_r)
+        _save_parse_cache(_cache_id(row, doi_r), doi_r, oa_id_r,
+                          str(row.get("title_r", "") or ""))
 
     # An observation, not a prediction: the row count IS the match type.
     match_type = "multiple_original" if len(entries) > 1 else "single_original"
@@ -1999,7 +2008,8 @@ def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
         if not outcome:
             oa_id_r = str(row.get("openalex_id_r", "") or "")
             if not no_pdf and _has_document(doi_r, link, oa_id_r):
-                _save_parse_cache(_cache_id(row, doi_r), doi_r, oa_id_r)
+                _save_parse_cache(_cache_id(row, doi_r), doi_r, oa_id_r,
+                                  str(row.get("title_r", "") or ""))
             outcome = _get_outcome(doi_r, row, link,
                                    no_llm=no_llm,
                                    screen=screen)

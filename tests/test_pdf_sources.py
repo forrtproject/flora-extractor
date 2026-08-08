@@ -43,7 +43,7 @@ def _ago(days: float) -> str:
 
 _ALL_TIERS = [
     "get_openalex_fulltext", "get_arxiv_pdf_url", "get_osf_pdf_url",
-    "get_openalex_oa_url", "get_all_unpaywall_pdf_urls",
+    "get_openalex_locations", "get_datacite_urls", "get_all_unpaywall_pdf_urls",
     "get_semanticscholar_pdf_url", "get_core_pdf_url", "get_europepmc_pdf_url",
     "scrape_pdf_from_landing_page", "get_serpapi_pdf_url",
 ]
@@ -57,7 +57,9 @@ def _mock_all_tiers(**overrides):
     """
     patchers = {}
     for name in _ALL_TIERS:
-        default = [] if name == "get_all_unpaywall_pdf_urls" else None
+        default = [] if name in ("get_all_unpaywall_pdf_urls",
+                                 "get_openalex_locations",
+                                 "get_datacite_urls") else None
         patchers[name] = patch.object(ps, name, return_value=overrides.get(name, default))
     return patchers
 
@@ -136,7 +138,7 @@ def test_a_tier_that_failed_inside_the_ttl_is_not_re_probed():
 
     out2, mocks2 = _run_all_tiers_missing(doi)
     assert out2["pdf_ok"] is False
-    for name in ("get_openalex_oa_url", "get_all_unpaywall_pdf_urls",
+    for name in ("get_openalex_locations", "get_all_unpaywall_pdf_urls",
                  "get_semanticscholar_pdf_url", "get_core_pdf_url",
                  "get_europepmc_pdf_url", "get_serpapi_pdf_url",
                  "get_pdf_via_playwright"):
@@ -153,7 +155,7 @@ def test_a_tier_is_re_probed_once_the_ttl_lapses():
                             "europepmc", "landing", "serpapi", "playwright")})
 
     _, mocks = _run_all_tiers_missing(doi)
-    mocks["get_openalex_oa_url"].assert_called_once()
+    mocks["get_openalex_locations"].assert_called_once()
     mocks["get_semanticscholar_pdf_url"].assert_called_once()
     mocks["get_pdf_via_playwright"].assert_called_once()
 
@@ -217,6 +219,9 @@ class _Resp:
 
     def iter_content(self, chunk_size=0):
         yield self._body
+
+    def json(self):
+        return json.loads(self._body.decode("utf-8"))
 
 
 def _url_record(url: str) -> dict:
@@ -305,7 +310,7 @@ def test_a_pdf_already_on_disk_returns_before_any_tier_runs():
     assert out["pdf_url_tried"] == ["https://x/y.pdf"]
     assert out["pdf_path"] == str(ps.pdf_cache_path(ps.clean_doi(doi)))
     dl.assert_not_called()
-    for name in ("get_arxiv_pdf_url", "get_osf_pdf_url", "get_openalex_oa_url",
+    for name in ("get_arxiv_pdf_url", "get_osf_pdf_url", "get_openalex_locations",
                  "get_all_unpaywall_pdf_urls"):
         started[name].assert_not_called()
 
@@ -315,7 +320,8 @@ def test_a_saved_pdf_without_provenance_still_runs_the_waterfall():
     behaviour — the waterfall runs, its first cache hit writes the record."""
     doi = "10.1016/j.example.2020.01.010"
     _save_pdf(doi)
-    patchers = _mock_all_tiers(get_openalex_oa_url="https://x/z.pdf")
+    patchers = _mock_all_tiers(get_openalex_locations=[
+        {"url": "https://x/z.pdf", "type": "pdf", "host": "", "license": ""}])
     started = {name: p.start() for name, p in patchers.items()}
     try:
         out = ps.acquire_pdf(doi, "A Title")
@@ -323,7 +329,7 @@ def test_a_saved_pdf_without_provenance_still_runs_the_waterfall():
         for p in patchers.values():
             p.stop()
 
-    started["get_openalex_oa_url"].assert_called_once()
+    started["get_openalex_locations"].assert_called_once()
     assert out["pdf_ok"] is True
     assert out["pdf_source"] == "openalex_oa"
     assert ps._read_provenance(ps.clean_doi(doi)) == {"source": "openalex_oa",
@@ -510,7 +516,7 @@ def test_a_row_url_that_is_a_web_page_falls_through():
 
     assert out["pdf_ok"] is False
     assert out["pdf_source"] == "none"
-    assert started["get_openalex_oa_url"].called
+    assert started["get_openalex_locations"].called
     html.assert_called_once_with(url)
 
 
@@ -553,3 +559,209 @@ def test_a_url_with_no_document_under_either_identity_is_asked_no_more():
         out = ps.download_pdf(url, doi="10.1/page-only")
     assert (out["success"], out["reason"]) == (False, "not_a_pdf")
     assert get.call_count == 2
+
+
+# ── The document is the paper that was asked for ──────────────────────────────
+#
+# Observed 2026-08-08: two fetches of one PLOS printable URL returned two different
+# papers. Nothing below acquisition can notice — a wrong document parses and codes as
+# the row's evidence — so the check is here, on the bytes, before they are saved.
+
+_TITLE = "Do infants prefer prosocial others? A direct replication of Hamlin & Wynn (2011)"
+
+
+def test_a_document_whose_title_matches_is_saved():
+    url = "https://journals.plos.org/plosone/article/file?id=10.1/x&type=printable"
+    page = ("Do infants prefer prosocial others? A direct replication of Hamlin and "
+            "Wynn (2011)\n\nAbstract\n" + "text " * 200)
+    with patch.object(ps.requests, "get",
+                      return_value=_Resp(200, b"%PDF-1.4" + b"x" * 10_000)), \
+         patch.object(ps, "_front_matter_text", return_value=page):
+        out = ps.download_pdf(url, doi="10.1/prosocial", title=_TITLE)
+
+    assert out["success"] is True
+    assert out["title_check"] == "match"
+    assert ps.cached_pdf("10.1/prosocial") == out["path"]
+
+
+def test_the_wrong_paper_at_the_right_url_is_refused():
+    """The bug's shape: the URL is right, the server hands back another paper."""
+    url = "https://journals.plos.org/plosone/article/file?id=10.1/x&type=printable"
+    windfall = ("Revisiting the psychology of windfall gains: Replication and "
+                "extensions of Arkes et al. (1994)\n\n" + "money " * 200)
+    with patch.object(ps.requests, "get",
+                      return_value=_Resp(200, b"%PDF-1.4" + b"x" * 10_000)), \
+         patch.object(ps, "_front_matter_text", return_value=windfall):
+        out = ps.download_pdf(url, doi="10.1/prosocial", title=_TITLE)
+
+    assert (out["success"], out["reason"]) == (False, "wrong_document")
+    assert ps.cached_pdf("10.1/prosocial") is None
+    # Not recorded against the URL: the observed mis-serve was transient, and the same
+    # URL served the right paper on another fetch.
+    assert not ps._url_is_gone(url)
+
+
+def test_a_document_with_no_title_in_it_is_kept():
+    """A scanned page image, a slide deck, a data deposit: absence of a title is not
+    evidence of mismatch, and the measured sample holds one PDF with 17 characters of
+    text in the whole file."""
+    url = "https://example.org/scanned.pdf"
+    with patch.object(ps.requests, "get",
+                      return_value=_Resp(200, b"%PDF-1.4" + b"x" * 10_000)), \
+         patch.object(ps, "_front_matter_text", return_value="\x0c\x0c"):
+        out = ps.download_pdf(url, doi="10.1/scanned", title=_TITLE)
+
+    assert out["success"] is True
+    assert out["title_check"] == "no_text"
+    assert ps.cached_pdf("10.1/scanned") == out["path"]
+
+
+def test_a_mis_served_document_already_on_disk_is_discarded():
+    """Refusing it is not enough: every tier asks download_pdf, which reads this same
+    cache entry before fetching, so a stored mismatch left in place would close the
+    row to every tier for ever."""
+    doi = "10.1/poisoned"
+    ps.document_cache_path(doi, ".pdf").write_bytes(b"%PDF-1.4" + b"x" * 10_000)
+    ps._write_provenance(doi, "openalex_oa", "https://example.org/wrong.pdf")
+    good = ("Do infants prefer prosocial others? A direct replication of Hamlin and "
+            "Wynn (2011)\n\n" + "text " * 200)
+
+    with patch.object(ps, "_front_matter_text",
+                      side_effect=["Some entirely different paper. " * 40, good]), \
+         patch.object(ps.requests, "get",
+                      return_value=_Resp(200, b"%PDF-1.4" + b"y" * 10_000)):
+        out = ps.download_pdf("https://example.org/right.pdf", doi=doi, title=_TITLE)
+
+    assert out["success"] is True
+    assert out["title_check"] == "match"
+    assert out["path"].read_bytes().endswith(b"y" * 10)
+
+
+def test_the_title_check_scores_are_the_measured_ones():
+    """The 61-document measurement: a right document with its title on the page scored
+    ≥ 0.90, the wrong-paper pairs a median of 0.25, and the observed mis-serve 0.067."""
+    body = "Attentional priority for temporary goals: a replication and extension. " \
+           + "body " * 200
+    assert ps._title_check(b"", ".pdf", "")[0] == "no_text"
+    with patch.object(ps, "_front_matter_text", return_value=body):
+        assert ps._title_check(b"", ".pdf",
+                               "Attentional Priority for Temporary Goals")[0] == "match"
+        # Escaped entities come off OpenAlex doubly encoded; an "amp" token no PDF
+        # can carry would count against every title that has one.
+        verdict, coverage = ps._title_check(
+            b"", ".pdf", "Attentional Priority &amp;amp; Temporary Goals")
+        assert (verdict, coverage) == ("match", 1.0)
+
+
+# ── Every copy, and every registrant ──────────────────────────────────────────
+
+@pytest.fixture
+def _oa_cache_in_tmp(tmp_path, monkeypatch):
+    monkeypatch.setattr(ps, "OA_CACHE_DIR", tmp_path)
+    return tmp_path
+
+
+_OA_WORK = {
+    "open_access": {"oa_url": "https://publisher.example/article"},
+    "best_oa_location": {"pdf_url": "https://publisher.example/article.pdf",
+                         "landing_page_url": "https://publisher.example/article",
+                         "source": {"host_organization_name": "Wiley"}},
+    "locations": [
+        {"pdf_url": None, "landing_page_url": "https://pure.uva.nl/record/1",
+         "is_oa": False, "source": None},
+        {"pdf_url": "https://repo.example/full.pdf",
+         "landing_page_url": "https://repo.example/record", "is_oa": True,
+         "source": {"host_organization_name": "Porto"}},
+    ],
+}
+
+
+def test_openalex_offers_every_location_not_just_the_oa_url(_oa_cache_in_tmp):
+    """The repository mirrors live in locations[], which was never requested — and
+    that decides rows whose publisher copy is walled while a university copy is free.
+    """
+    with patch.object(ps.requests, "get",
+                      return_value=_Resp(200, json.dumps(_OA_WORK).encode())) as get:
+        cands = ps.get_openalex_locations("10.1/many-copies")
+
+    assert [c["url"] for c in cands] == [
+        "https://publisher.example/article",      # oa_url, the one URL tried before
+        "https://publisher.example/article.pdf",
+        "https://repo.example/full.pdf",
+        "https://pure.uva.nl/record/1",
+        "https://repo.example/record",
+    ]
+    # Files before pages, and no is_oa filter: both measured hits were on locations
+    # OpenAlex marks is_oa false.
+    assert [c["type"] for c in cands[:3]] == ["pdf", "pdf", "pdf"]
+    # A single-entity lookup by DOI is free; it must not become a search query.
+    assert "search" not in get.call_args.kwargs["params"]
+
+
+def test_a_datacite_doi_gets_candidates_from_its_own_registrant(_oa_cache_in_tmp):
+    """Unpaywall is Crossref-only, so every tier above asks an index that has never
+    heard of 10.23668. DataCite is where that DOI is registered."""
+    body = json.dumps({"data": {"attributes": {
+        "url": "https://www.psycharchives.org/handle/20.500.12034/4416",
+        "contentUrl": "https://www.psycharchives.org/bitstream/paper.pdf",
+        "publisher": "PsychArchives"}}}).encode()
+    with patch.object(ps.requests, "get", return_value=_Resp(200, body)):
+        cands = ps.get_datacite_urls("10.23668/psycharchives.4988")
+
+    assert [(c["url"], c["type"]) for c in cands] == [
+        ("https://www.psycharchives.org/bitstream/paper.pdf", "pdf"),
+        ("https://www.psycharchives.org/handle/20.500.12034/4416", "landing"),
+    ]
+
+
+def test_unpaywall_404_is_an_answer_and_a_5xx_is_not(_oa_cache_in_tmp):
+    """A DataCite DOI 404s at Unpaywall — a permanent fact about that API's coverage,
+    cacheable. A 503 is a minute of trouble, and the caller turns a recorded tier
+    failure into a fourteen-day suppression, so it must not be reported as absence."""
+    with patch.object(ps.requests, "get", return_value=_Resp(404, b"<!doctype html>")):
+        assert ps.get_all_unpaywall_pdf_urls("10.23668/psycharchives.4988") == []
+    # Cached: the second call asks nobody.
+    with patch.object(ps.requests, "get", side_effect=AssertionError("re-asked")):
+        assert ps.get_all_unpaywall_pdf_urls("10.23668/psycharchives.4988") == []
+
+    with patch.object(ps.requests, "get", return_value=_Resp(503, b"")):
+        with pytest.raises(ps.DocumentSourceUnavailable):
+            ps.get_all_unpaywall_pdf_urls("10.1/flaky")
+
+
+def test_an_unpaywall_outage_does_not_hold_the_tier_for_a_fortnight(_oa_cache_in_tmp):
+    patchers = _mock_all_tiers()
+    patchers["get_all_unpaywall_pdf_urls"] = patch.object(
+        ps, "get_all_unpaywall_pdf_urls",
+        side_effect=ps.DocumentSourceUnavailable("Unpaywall HTTP 503"))
+    started = {name: p.start() for name, p in patchers.items()}
+    try:
+        with patch.object(ps, "download_pdf", return_value=_NO_PDF), \
+             patch.object(ps, "scrape_pdf_from_landing_page", return_value=None), \
+             patch.object(ps, "get_pdf_via_playwright", return_value=_NO_PDF), \
+             patch.object(ps, "get_html_document", return_value=None):
+            ps.acquire_pdf("10.1/outage", title="A paper")
+    finally:
+        for p in patchers.values():
+            p.stop()
+
+    log = _retry_log("10.1/outage")
+    assert "unpaywall_pdf" not in log
+    # Nor the landing tier it feeds: its candidates come from the same call, so
+    # recording it would suppress for a fortnight a tier that saw nothing.
+    assert "landing" not in log
+
+
+def test_a_stale_mis_served_document_is_not_parsed(tmp_path):
+    """A row that resolves above the acquisition rung never calls acquire_pdf, and
+    finds its document by DOI — so the check has to live on that lookup too."""
+    doi = "10.1/stale"
+    path = ps.document_cache_path(doi, ".pdf", cache_dir=tmp_path)
+    path.write_bytes(b"%PDF-1.4" + b"x" * 10_000)
+
+    with patch.object(ps, "_front_matter_text",
+                      return_value="Some entirely different paper. " * 40):
+        found = ps.verified_cached_document(doi, _TITLE, cache_dir=tmp_path)
+
+    assert found is None
+    assert not path.exists()

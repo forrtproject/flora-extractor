@@ -50,3 +50,17 @@ def jaccard_similarity(a: str, b: str) -> float:
     if not ta or not tb:
         return 0.0
     return len(ta & tb) / len(ta | tb)
+
+
+def token_coverage(needle: str, haystack: str) -> float:
+    """Fraction of *needle*'s word tokens that appear in *haystack*.
+
+    Jaccard's counterpart for the asymmetric question: it is symmetric, so a title
+    against three pages of text scores near zero however well it matches — the page's
+    thousand other tokens swamp the union. Coverage asks only whether the title's own
+    words are on the page, which is what "is this the paper I asked for" means.
+    """
+    tn, th = _tokens(needle), _tokens(haystack)
+    if not tn or not th:
+        return 0.0
+    return len(tn & th) / len(tn)

@@ -4,6 +4,9 @@ pdf_sources.py — Multi-tier PDF acquisition.
 Acquisition order:
   0c. The row's own URL, downloaded directly (no index, no DOI needed)
   1. OSF preprint direct download  (DOI-pattern based, no API)
+  1b. OpenAlex locations[] — every copy it knows of, files then landing pages
+  1c. DataCite — the registrant's own metadata, for the DOIs Unpaywall never indexed
+       (numbered Tier 3 and 3b in acquire_pdf, whose count starts at the XML tiers)
   2. Unpaywall — all direct PDF URLs
   3. SemanticScholar open-access PDF
   4. CORE.ac.uk aggregator
@@ -33,10 +36,15 @@ Tier 8 requires a one-time setup:
 Public API:
     acquire_pdf(doi_r, title) → dict
         keys: pdf_url, pdf_source, pdf_path, pdf_ok, pdf_url_tried
-    download_pdf(url, doi, min_bytes) → dict
-        keys: success, path, source, reason
+    download_pdf(url, doi, min_bytes, title) → dict
+        keys: success, path, source, reason, title_check, title_coverage
+
+Every downloaded document is checked against the title that was asked for before it
+is saved (_title_check): a server can answer the right URL with the wrong paper, and
+a wrong document is worse than no document — it parses and codes as evidence.
 """
 import gzip
+import html
 import json
 import os
 import re
@@ -55,6 +63,7 @@ from .config import (
 from .openalex_keys import (current_index, headers as oa_headers,
                             is_budget_refusal, rotate_key)
 from .cache import write_json
+from .disambiguation import token_coverage
 from .rate_limit import throttle
 from .utils import clean_doi, cache_key
 
@@ -70,6 +79,7 @@ _CORE_RATE_SEC            = 0.6
 _EUROPEPMC_RATE_SEC       = 0.3
 _OPENALEX_RATE_SEC        = 0.1
 _OSF_RATE_SEC             = 0.5
+_DATACITE_RATE_SEC        = 0.5
 _HTML_RATE_SEC           = 0.5
 
 # The key is optional: without it you get the polite pool (mailto= parameter);
@@ -120,6 +130,42 @@ _DOCUMENT_SUFFIXES = (".pdf", ".docx")
 # question, same answer — and the byte count cannot stand in for it: a Word file's styles,
 # theme and font table alone run to several kilobytes.
 _MIN_DOCX_CHARS = 1_000
+
+# A server can answer the right URL with the wrong paper: two fetches of one PLOS
+# printable URL on 2026-08-08 returned 2,256,430 bytes of a windfall-gains paper and
+# 422,071 bytes of the Hamlin/Wynn paper that was asked for. Nothing downstream can
+# notice — a wrong document parses, codes and stores as that work's evidence — so the
+# document is checked against the row's own title before it is saved.
+#
+# The statistic is title-token COVERAGE of the opening pages (token_coverage() in
+# shared/disambiguation.py), measured over the 61 cached documents that could be
+# matched to a row on 2026-08-08:
+#
+#   right document, title on the page  57 of 61 scored ≥ 0.90
+#   right work, no title page          0.33 and 0.50 (two "Supplemental Material for
+#                                      …" rows, whose file is the supplement), 0.53
+#                                      (a supplementary appendix bundle)
+#   no extractable text                1 scanned PDF, 17 chars in the whole file
+#   wrong paper                        3,606 title × other-document pairs: median
+#                                      0.25, 65% below 0.30, none of the true
+#                                      documents there; the observed mis-serve scores
+#                                      0.067
+#
+# 0.30 is the highest cut that refuses none of the 61 — the next real document sits at
+# 0.33 — and it refuses 65% of wrong papers and every unrelated one. A stricter cut
+# buys more of the mildly-related wrong pairs and starts costing real documents: 0.40
+# catches 87% and loses 2, 0.60 catches 99.5% and loses 4. Losing a document costs a
+# rung of the ladder; storing the wrong one costs a wrong verdict in a research
+# database, but only the cut that keeps every measured document earns that trade
+# without guessing. 0.30–0.60 is accepted and recorded as "low" for audit.
+_TITLE_MATCH_MIN   = 0.30
+_TITLE_MATCH_CLEAR = 0.60
+_TITLE_CHECK_PAGES = 3
+_TITLE_CHECK_DOCX_CHARS = 6_000
+# Below this much extracted text the document said nothing about its identity — a
+# scanned page image, a slide deck, a data deposit. Absence of a title is not a
+# mismatch, so it is accepted and recorded as unchecked.
+_MIN_TITLE_EVIDENCE_CHARS = 200
 
 # Sources that hand back a sections dict instead of a file. They are documents in
 # every sense the pipeline cares about, so the retry log is cleared for them exactly
@@ -251,23 +297,73 @@ def _read_provenance(doi: str) -> dict:
     return {}
 
 
-def _write_provenance(doi: str, source: str, url: str) -> None:
-    """Record which tier supplied the saved PDF, so a later run can report it."""
+def _write_provenance(doi: str, source: str, url: str, title_check: str = "",
+                      title_coverage: "float | None" = None) -> None:
+    """Record which tier supplied the saved PDF, so a later run can report it.
+
+    The title check's verdict rides along so an accepted-but-weak document ("low", or
+    "no_text" for a file that carries no title at all) can be audited afterwards
+    without re-reading it. Nothing reads these two fields; they are the audit trail.
+    """
     if not (doi and source):
         return
     path = _provenance_path(doi)
+    record = {"source": source, "url": url}
+    if title_check:
+        record["title_check"] = title_check
+        record["title_coverage"] = round(float(title_coverage or 0.0), 3)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        _atomic_write_text(path, json.dumps({"source": source, "url": url},
-                                            ensure_ascii=False))
+        _atomic_write_text(path, json.dumps(record, ensure_ascii=False))
     except Exception as e:
         log.debug("PDF provenance write failed (%s): %s", path, e)
+
+
+def verified_cached_document(doi_or_url: str, title: str,
+                             cache_dir: "Path | None" = None) -> "Path | None":
+    """The document cached for *doi_or_url*, unless it is some other paper than *title*.
+
+    For the readers that find a saved document by identifier rather than taking the
+    path acquire_pdf just returned: a row resolved before the acquisition rung never
+    calls acquire_pdf at all, so a mis-served file an earlier run stored would reach
+    the parsers without anything having checked it. A mismatch is discarded here too,
+    so the next run acquires afresh.
+    """
+    path = cached_pdf(doi_or_url, cache_dir=cache_dir)
+    if path is None or not title.strip():
+        return path
+    verdict, coverage = _title_check(path.read_bytes(), path.suffix, title)
+    if verdict != "mismatch":
+        return path
+    log.warning("  Cached document for %s is not %r (title coverage %.2f) — "
+                "discarding it: %s", doi_or_url, title[:80], coverage, path)
+    _discard_document(doi_or_url, path)
+    return None
+
+
+def _discard_document(doi_or_url: str, path: "Path") -> None:
+    """Remove a saved document and the provenance beside it."""
+    for victim in (path, _provenance_path(doi_or_url)):
+        try:
+            victim.unlink(missing_ok=True)
+        except Exception as e:
+            log.debug("Document discard failed (%s): %s", victim, e)
 
 
 # ── Unpaywall ─────────────────────────────────────────────────────────────────
 
 def _fetch_unpaywall_data(doi: str) -> Optional[dict]:
-    """Fetch raw Unpaywall JSON for *doi* (cached)."""
+    """Fetch raw Unpaywall JSON for *doi* (cached), or None when it has no record.
+
+    Unpaywall indexes CROSSREF ONLY. Every DataCite DOI — PsychArchives, ZBW
+    JournalData, most university repositories — gets a 404 with an HTML body
+    (measured 2026-08-08 for 10.23668, 10.15456 and 10.17605), which is a permanent
+    answer about this API's coverage, not about the paper. It is cached as absence.
+
+    Raises DocumentSourceUnavailable when the API did not answer, because the caller
+    records a tier failure as a fourteen-day retry suppression and a timeout must
+    never buy that.
+    """
     doi = clean_doi(doi)
     if not doi:
         return None
@@ -275,7 +371,8 @@ def _fetch_unpaywall_data(doi: str) -> Optional[dict]:
     cf = OA_CACHE_DIR / f"unpaywall_{cache_key(doi)}.json"
     if cf.exists():
         with cf.open(encoding="utf-8") as fh:
-            return json.load(fh)
+            data = json.load(fh)
+        return None if data.get("__none__") else data
 
     throttle("unpaywall", UNPAYWALL_RATE_SEC)
 
@@ -285,12 +382,16 @@ def _fetch_unpaywall_data(doi: str) -> Optional[dict]:
             params={"email": RESEARCHER_EMAIL},
             timeout=15,
         )
-        if r.status_code != 200:
+        if r.status_code in (404, 422):
+            write_json(cf, {"__none__": True})
             return None
+        if r.status_code != 200:
+            raise DocumentSourceUnavailable(f"Unpaywall HTTP {r.status_code}")
         data = r.json()
+    except DocumentSourceUnavailable:
+        raise
     except Exception as e:
-        log.debug("Unpaywall error for %s: %s", doi, e)
-        return None
+        raise DocumentSourceUnavailable(f"Unpaywall error for {doi}: {e}") from e
 
     write_json(cf, data)
     return data
@@ -787,39 +888,145 @@ def get_arxiv_pdf_url(doi: str, title: str = "") -> Optional[str]:
 
 # ── OpenAlex OA URL ───────────────────────────────────────────────────────────
 
-def get_openalex_oa_url(doi: str) -> Optional[str]:
-    """
-    Query OpenAlex for the open_access.oa_url field for this DOI.
-    Returns the OA PDF/landing URL, or None.
-    Cached in OA_CACHE_DIR as oa_<hash>.json.
+def get_openalex_locations(doi: str) -> list[dict]:
+    """Every copy OpenAlex knows of for *doi*, ordered, in get_all_unpaywall_pdf_urls'
+    shape: {"url", "type": "pdf"|"landing", "host", "license"}.
+
+    This used to ask for `open_access` alone and return the single `oa_url`, and the
+    `locations[]` array — which is where the repository mirrors are — was never
+    requested. That decides rows: a publisher copy behind Cloudflare while a
+    university repository serves the same paper freely, and works whose one green copy
+    is dead where a second would have answered. A single-entity lookup by DOI is free,
+    so the wider `select` costs nothing; it must not become a search query.
+
+    Ordering, measured 2026-08-08 over the 88 location URLs beyond `oa_url` that 60
+    no-document rows carry: 2 answered with a PDF, both of them `landing_page_url`
+    and both on locations OpenAlex marks `is_oa: false`. So landing pages are tried
+    rather than only scraped, and `is_oa` is not an ordering key — filtering on it
+    would have dropped both hits. Files before pages, and `oa_url` stays first, since
+    that is the one URL the tier used to try.
+
+    Raises DocumentSourceUnavailable when OpenAlex did not answer: the caller turns a
+    tier failure into a fourteen-day retry suppression.
     """
     doi = clean_doi(doi)
     if not doi:
-        return None
+        return []
 
-    cf = OA_CACHE_DIR / f"oa_{cache_key(doi)}.json"
+    # Its own cache file: the old oa_<hash>.json entries hold the narrow `select` and
+    # carry no locations, so reading them would answer a wider question with a
+    # narrower cached answer. They are left on disk unread — the refetch is free.
+    cf = OA_CACHE_DIR / f"oaloc_{cache_key(doi)}.json"
     if cf.exists():
         with cf.open(encoding="utf-8") as fh:
             data = json.load(fh)
+        if data.get("__none__"):
+            return []
     else:
         throttle("openalex", _OPENALEX_RATE_SEC)
         try:
             r = requests.get(
                 f"https://api.openalex.org/works/doi:{doi}",
-                params={"select": "open_access", "mailto": RESEARCHER_EMAIL},
+                params={"select": "open_access,best_oa_location,locations",
+                        "mailto": RESEARCHER_EMAIL},
                 headers={"User-Agent": f"FLoRA-DisambiguationPipeline/1.0 (mailto:{RESEARCHER_EMAIL})"},
                 timeout=15,
             )
+            if r.status_code == 404:
+                write_json(cf, {"__none__": True})
+                return []
             if r.status_code != 200:
-                return None
+                raise DocumentSourceUnavailable(f"OpenAlex HTTP {r.status_code}")
             data = r.json()
+        except DocumentSourceUnavailable:
+            raise
         except Exception as e:
-            log.debug("OpenAlex OA URL error for %s: %s", doi, e)
-            return None
+            raise DocumentSourceUnavailable(
+                f"OpenAlex locations error for {doi}: {e}") from e
         write_json(cf, data)
 
-    oa = data.get("open_access") or {}
-    return oa.get("oa_url") or None
+    seen:    set[str]   = set()
+    results: list[dict] = []
+
+    def _add(url, url_type, loc: dict) -> None:
+        if url and url not in seen:
+            seen.add(url)
+            source = loc.get("source") or {}
+            results.append({"url": url, "type": url_type,
+                            "host": source.get("host_organization_name") or "",
+                            "license": loc.get("license") or ""})
+
+    best = data.get("best_oa_location") or {}
+    locations = [best] + list(data.get("locations") or [])
+    _add((data.get("open_access") or {}).get("oa_url"), "pdf", best)
+    for loc in locations:
+        _add((loc or {}).get("pdf_url"), "pdf", loc or {})
+    for loc in locations:
+        _add((loc or {}).get("landing_page_url"), "landing", loc or {})
+    return results
+
+
+# ── DataCite ──────────────────────────────────────────────────────────────────
+#
+# Unpaywall indexes Crossref only, so for the institutional-repository share of this
+# corpus — 10.23668 PsychArchives, 10.15456 ZBW, 10.18718, 10.26686, 10.4121, most
+# university repositories — every DOI-keyed tier above asks an index that has never
+# heard of the registrant. DataCite is that registrant's own metadata, keyless and
+# free: attributes.url is the landing page, attributes.contentUrl is sometimes the
+# file itself.
+
+def get_datacite_urls(doi: str) -> list[dict]:
+    """Acquisition candidates from DataCite metadata, in get_openalex_locations' shape.
+
+    contentUrl is a file when it is there at all, so it is offered first; the landing
+    page follows, for the same reason OpenAlex's are tried and then scraped.
+
+    Raises DocumentSourceUnavailable when the API did not answer. A 404 is DataCite
+    saying the DOI is not one of its own — a permanent answer, cached as absence.
+    """
+    doi = clean_doi(doi)
+    if not doi:
+        return []
+
+    cf = OA_CACHE_DIR / f"datacite_{cache_key(doi)}.json"
+    if cf.exists():
+        with cf.open(encoding="utf-8") as fh:
+            data = json.load(fh)
+        if data.get("__none__"):
+            return []
+    else:
+        throttle("datacite", _DATACITE_RATE_SEC)
+        try:
+            r = requests.get(
+                f"https://api.datacite.org/dois/{requests.utils.quote(doi, safe='')}",
+                headers={"User-Agent": f"FLoRA-DisambiguationPipeline/1.0 (mailto:{RESEARCHER_EMAIL})"},
+                timeout=15,
+            )
+            if r.status_code == 404:
+                write_json(cf, {"__none__": True})
+                return []
+            if r.status_code != 200:
+                raise DocumentSourceUnavailable(f"DataCite HTTP {r.status_code}")
+            data = r.json()
+        except DocumentSourceUnavailable:
+            raise
+        except Exception as e:
+            raise DocumentSourceUnavailable(f"DataCite error for {doi}: {e}") from e
+        write_json(cf, data)
+
+    attrs = ((data.get("data") or {}).get("attributes") or {})
+    content = attrs.get("contentUrl")
+    if isinstance(content, str):
+        content = [content]
+    results: list[dict] = []
+    seen: set[str] = set()
+    for url, kind in ([(u, "pdf") for u in (content or [])]
+                      + [(attrs.get("url"), "landing")]):
+        if isinstance(url, str) and url.startswith("http") and url not in seen:
+            seen.add(url)
+            results.append({"url": url, "type": kind,
+                            "host": str(attrs.get("publisher") or ""), "license": ""})
+    return results
 
 
 # ── OpenAlex GROBID XML (Tier 0) ──────────────────────────────────────────────
@@ -1179,7 +1386,7 @@ _PDF_SELECTORS = [
 ]
 
 
-def get_pdf_via_playwright(doi: str, min_bytes: int = 5_000) -> dict:
+def get_pdf_via_playwright(doi: str, min_bytes: int = 5_000, title: str = "") -> dict:
     """
     Launch a headless Chromium browser, navigate to the DOI landing page,
     and attempt to download a PDF by:
@@ -1222,6 +1429,21 @@ def get_pdf_via_playwright(doi: str, min_bytes: int = 5_000) -> dict:
                 "reason": "playwright_not_installed"}
 
     captured: dict = {"bytes": None, "url": ""}
+
+    def _save(content: bytes) -> "dict | None":
+        """The tier's four write sites, each of which must pass the title check.
+
+        A browser reaches the same servers requests does and is handed the same wrong
+        documents; the difference is only how the bytes arrive.
+        """
+        verdict, coverage = _title_check(content, ".pdf", title)
+        if verdict == "mismatch":
+            log.warning("  Playwright document for %s is not %r (title coverage "
+                        "%.2f) — refused", doi, title[:80], coverage)
+            return None
+        pdf_path.write_bytes(content)
+        return {"success": True, "path": pdf_path, "source": "playwright",
+                "reason": "", "title_check": verdict, "title_coverage": coverage}
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(
@@ -1275,10 +1497,12 @@ def get_pdf_via_playwright(doi: str, min_bytes: int = 5_000) -> dict:
 
         # ── If inline PDF was served directly, we already have bytes ──────────
         if captured["bytes"] and captured["bytes"][:4] == b"%PDF":
-            pdf_path.write_bytes(captured["bytes"])
+            saved = _save(captured["bytes"])
             ctx.close(); browser.close()
-            return {"success": True, "path": pdf_path,
-                    "source": "playwright", "reason": ""}
+            if saved:
+                return saved
+            return {"success": False, "path": None, "source": "",
+                    "reason": "wrong_document"}
 
         # ── Try clicking a download link / button ─────────────────────────────
         for selector in _PDF_SELECTORS:
@@ -1310,10 +1534,10 @@ def get_pdf_via_playwright(doi: str, min_bytes: int = 5_000) -> dict:
                             )
                             content = b"".join(raw.iter_content(65_536))
                             if content[:4] == b"%PDF" and len(content) >= min_bytes:
-                                pdf_path.write_bytes(content)
-                                ctx.close(); browser.close()
-                                return {"success": True, "path": pdf_path,
-                                        "source": "playwright", "reason": ""}
+                                saved = _save(content)
+                                if saved:
+                                    ctx.close(); browser.close()
+                                    return saved
                         except Exception:
                             pass
 
@@ -1325,10 +1549,10 @@ def get_pdf_via_playwright(doi: str, min_bytes: int = 5_000) -> dict:
                 if tmp:
                     content = Path(tmp).read_bytes()
                     if content[:4] == b"%PDF" and len(content) >= min_bytes:
-                        pdf_path.write_bytes(content)
-                        ctx.close(); browser.close()
-                        return {"success": True, "path": pdf_path,
-                                "source": "playwright", "reason": ""}
+                        saved = _save(content)
+                        if saved:
+                            ctx.close(); browser.close()
+                            return saved
 
             except PWTimeout:
                 log.debug("Playwright: download timeout for selector '%s'", selector)
@@ -1340,9 +1564,11 @@ def get_pdf_via_playwright(doi: str, min_bytes: int = 5_000) -> dict:
 
     # Check once more — the response interceptor may have fired after a click
     if captured["bytes"] and captured["bytes"][:4] == b"%PDF":
-        pdf_path.write_bytes(captured["bytes"])
-        return {"success": True, "path": pdf_path,
-                "source": "playwright", "reason": ""}
+        saved = _save(captured["bytes"])
+        if saved:
+            return saved
+        return {"success": False, "path": None, "source": "",
+                "reason": "wrong_document"}
 
     return {"success": False, "path": None, "source": "",
             "reason": "playwright_no_pdf_found"}
@@ -1430,23 +1656,74 @@ def _document_format(content: bytes, url: str) -> tuple[str, str]:
     return "", "not_a_pdf"
 
 
-def download_pdf(url: str, doi: str = "", min_bytes: int = _MIN_PDF_BYTES) -> dict:
+def _front_matter_text(content: bytes, suffix: str) -> str:
+    """The opening text of a document — where a paper prints its title, or nothing.
+
+    Three pages, not one: the two supplements in the measured sample and several
+    journal PDFs put a cover sheet, a badge disclosure or a running head ahead of the
+    title block, and page 1 alone scored them 0.06–0.15 lower for no reason to do with
+    identity.
+    """
+    if suffix == ".docx":
+        from .pdf_parsing import docx_text   # lazy: pdf_parsing pulls in grobid
+        return docx_text(content)[:_TITLE_CHECK_DOCX_CHARS]
+    try:
+        import io
+        from pdfminer.high_level import extract_text
+        return extract_text(io.BytesIO(content), maxpages=_TITLE_CHECK_PAGES) or ""
+    except Exception as exc:
+        # Unreadable front matter is no evidence either way, and _title_check reads it
+        # as such. A PDF pdfminer cannot open is still a PDF the parsers may manage.
+        log.debug("Front matter unreadable (%s): %s", suffix, exc)
+        return ""
+
+
+def _title_check(content: bytes, suffix: str, title: str) -> tuple[str, float]:
+    """Is this document the paper that was asked for? (verdict, coverage).
+
+    Verdicts: "match" · "low" · "mismatch" · "no_text" (nothing to check against).
+    """
+    if not title.strip():
+        return "no_text", 0.0
+    text = _front_matter_text(content, suffix)
+    if len(text.strip()) < _MIN_TITLE_EVIDENCE_CHARS:
+        return "no_text", 0.0
+    # Titles come off OpenAlex doubly escaped ("&amp;amp;"), and an "amp" token in the
+    # title that no PDF can carry lowers every score it appears in.
+    coverage = token_coverage(html.unescape(html.unescape(title)), text)
+    if coverage < _TITLE_MATCH_MIN:
+        return "mismatch", coverage
+    return ("match" if coverage >= _TITLE_MATCH_CLEAR else "low"), coverage
+
+
+def download_pdf(url: str, doi: str = "", min_bytes: int = _MIN_PDF_BYTES,
+                 title: str = "") -> dict:
     """
     Download a document and save it to PDF_CACHE_DIR.
 
     Cache key = MD5 of doi (or url if doi missing), so repeat calls skip download.
     A PDF and a Word file are both documents; anything else is refused, and a Word
     file with too little text in it is refused as well, so nothing that failed its
-    content check is ever saved.
+    content check is ever saved. A document whose opening pages are some other paper
+    than *title* is refused the same way, and never saved.
 
-    Returns: {"success", "path", "source", "reason"}
+    Returns: {"success", "path", "source", "reason", "title_check", "title_coverage"}
     """
     if not url:
         return {"success": False, "path": None, "source": "", "reason": "no_url"}
 
     have = cached_pdf(doi or url, min_bytes)
     if have is not None:
-        return {"success": True, "path": have, "source": "cache", "reason": ""}
+        verdict, coverage = _title_check(have.read_bytes(), have.suffix, title)
+        if verdict != "mismatch":
+            return {"success": True, "path": have, "source": "cache", "reason": "",
+                    "title_check": verdict, "title_coverage": coverage}
+        # The wrong document has to GO, not merely be refused: every tier below asks
+        # download_pdf, which would hit this same cache entry before fetching, so a
+        # stored mismatch left in place closes the row to every tier for good.
+        log.warning("  Cached document is not %r (title coverage %.2f) — discarding "
+                    "it and re-fetching: %s", title[:80], coverage, have)
+        _discard_document(doi or url, have)
 
     if _url_is_gone(url):
         log.debug("  URL answered gone less than %d days ago — not re-fetching: %s",
@@ -1481,13 +1758,27 @@ def download_pdf(url: str, doi: str = "", min_bytes: int = _MIN_PDF_BYTES) -> di
         if len(content) < min_bytes:
             return {"success": False, "path": None, "source": "", "reason": "file_too_small"}
 
+        verdict, coverage = _title_check(content, suffix, title)
+        if verdict == "mismatch":
+            # Not written to disk and not recorded against the URL: the observed
+            # mis-serve was transient — the same URL answered correctly on another
+            # fetch — so a 404-style suppression would block the fetch that works.
+            # Nor is the second identity asked: these bytes were a real document, and
+            # the two-identity retry exists for servers that answer with HTML.
+            log.warning("  Document served for %s is not %r (title coverage %.2f) — "
+                        "refused: %s", doi or url, title[:80], coverage, url)
+            return {"success": False, "path": None, "source": "",
+                    "reason": "wrong_document", "title_check": verdict,
+                    "title_coverage": coverage}
+
         pdf_path = document_cache_path(doi or url, suffix)
         pdf_path.write_bytes(content)
         try:                     # the URL serves a document after all
             _url_failure_path(url).unlink(missing_ok=True)
         except Exception as e:
             log.debug("URL failure record delete failed (%s): %s", url, e)
-        return {"success": True, "path": pdf_path, "source": "download", "reason": ""}
+        return {"success": True, "path": pdf_path, "source": "download", "reason": "",
+                "title_check": verdict, "title_coverage": coverage}
 
     return {"success": False, "path": None, "source": "", "reason": "not_a_pdf"}
 
@@ -1539,12 +1830,13 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
     def _try(url: str, label: str) -> bool:
         nonlocal dl, pdf_url, pdf_src
         all_tried.append(url)
-        dl = download_pdf(url, doi=doi_r)
+        dl = download_pdf(url, doi=doi_r, title=title)
         if dl["success"]:
             pdf_url, pdf_src = url, label
             # Also written on a download_pdf cache hit, which is how a PDF saved
             # before this record existed acquires one.
-            _write_provenance(doi_r, label, url)
+            _write_provenance(doi_r, label, url, dl.get("title_check", ""),
+                              dl.get("title_coverage"))
             return True
         log.debug("  %s failed (%s): %s", label, dl.get("reason"), url)
         return False
@@ -1613,6 +1905,16 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
     # that record existed has none and falls through to the waterfall as before — where
     # the first cache hit writes the record for next time.
     on_disk = cached_pdf(doi_r) if doi_r else None
+    if on_disk is not None and title.strip():
+        # This shortcut does not go through download_pdf, so it carries the title
+        # check itself — a mis-served file saved by an earlier run would otherwise be
+        # replayed here for ever, without any tier ever seeing it.
+        verdict, coverage = _title_check(on_disk.read_bytes(), on_disk.suffix, title)
+        if verdict == "mismatch":
+            log.warning("  [%s] document on disk is not %r (title coverage %.2f) — "
+                        "discarding it: %s", doi_r, title[:80], coverage, on_disk)
+            _discard_document(doi_r, on_disk)
+            on_disk = None
     if on_disk is not None:
         prov = _read_provenance(doi_r)
         if prov.get("source"):
@@ -1669,11 +1971,32 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
         if osf and not _try(osf, "osf"):
             _failed("osf")
 
-    # Tier 3 — OpenAlex OA URL
+    # Tier 3 — every copy OpenAlex knows of, not only best_oa_location's one URL.
+    # Landing pages included: two of the 88 measured location URLs answered with a
+    # PDF, and both were landing pages. The ones that answer with HTML are refused as
+    # "not_a_pdf" and go on to Tier 8's scraper.
+    oa_locations: list[dict] = []
     if not dl["success"] and not _held("openalex_oa"):
-        oa_url = get_openalex_oa_url(doi_r)
-        if not (oa_url and _try(oa_url, "openalex_oa")):
-            _failed("openalex_oa")
+        try:
+            oa_locations = get_openalex_locations(doi_r)
+        except DocumentSourceUnavailable as exc:
+            log.info("  [%s] OpenAlex locations unavailable: %s", doi_r, exc)
+        else:
+            if not any(_try(cand["url"], "openalex_oa") for cand in oa_locations):
+                _failed("openalex_oa")
+
+    # Tier 3b — DataCite, the registrant's own metadata. Every index above is
+    # Crossref-shaped, so a repository DOI reaches this tier having been asked about
+    # nowhere it is registered.
+    datacite: list[dict] = []
+    if not dl["success"] and not _held("datacite"):
+        try:
+            datacite = get_datacite_urls(doi_r)
+        except DocumentSourceUnavailable as exc:
+            log.info("  [%s] DataCite unavailable: %s", doi_r, exc)
+        else:
+            if not any(_try(cand["url"], "datacite") for cand in datacite):
+                _failed("datacite")
 
     # Tier 4 — Unpaywall direct PDFs
     # Every other tier is guarded by `if not dl["success"]`; this one was not, so a
@@ -1682,11 +2005,19 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
     # an `if not dl["success"]` block, so the empty list is never reached.
     need_unpaywall = (not dl["success"]
                       and not (_held("unpaywall_pdf") and _held("landing")))
-    uw_all     = get_all_unpaywall_pdf_urls(doi_r) if need_unpaywall else []
+    uw_all: list[dict] = []
+    if need_unpaywall:
+        try:
+            uw_all = get_all_unpaywall_pdf_urls(doi_r)
+        except DocumentSourceUnavailable as exc:
+            # Unpaywall did not answer. Recording that would hold both tiers it feeds
+            # for fourteen days on a minute of API trouble.
+            log.info("  [%s] Unpaywall unavailable: %s", doi_r, exc)
+            need_unpaywall = False
     uw_direct  = [u for u in uw_all if u["type"] == "pdf"]
     uw_landing = [u for u in uw_all if u["type"] == "landing"]
 
-    if not dl["success"] and not _held("unpaywall_pdf"):
+    if need_unpaywall and not dl["success"] and not _held("unpaywall_pdf"):
         if not any(_try(cand["url"], "unpaywall_pdf") for cand in uw_direct):
             _failed("unpaywall_pdf")
 
@@ -1709,14 +2040,23 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
             _failed("europepmc")
 
     # Tier 8 — Scrape Unpaywall landing pages
+    # The landing pages of every index that named one, not Unpaywall's alone: an
+    # OpenAlex or DataCite landing page that answered this run with HTML may still be
+    # a page with a download link on it, which is what the scraper is for.
+    landing_all = uw_landing + [c for c in oa_locations + datacite
+                                if c["type"] == "landing"]
     if not dl["success"] and not _held("landing"):
         won = False
-        for cand in uw_landing:
+        for cand in landing_all:
             scraped = scrape_pdf_from_landing_page(cand["url"])
             if scraped and _try(scraped, f"landing_{cand['host'] or 'repo'}"):
                 won = True
                 break
-        if not won:
+        # need_unpaywall is False here only after an Unpaywall outage: the
+        # both-tiers-held case cannot enter this block and the success case fails its
+        # own guard. Recording a failure then would suppress the tier for fourteen
+        # days having never seen the landing pages Unpaywall would have named.
+        if not won and need_unpaywall:
             _failed("landing")
 
     # Tier 9 — SerpAPI (quota-limited, last HTTP resort before browser)
@@ -1732,13 +2072,15 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
     # Tier 10 — Playwright headless Chromium
     if not dl["success"] and not _held("playwright"):
         log.info("  [%s] All HTTP tiers failed — trying Playwright headless", doi_r)
-        pw_result = get_pdf_via_playwright(doi_r)
+        pw_result = get_pdf_via_playwright(doi_r, title=title)
         if pw_result["success"]:
             pdf_url = f"https://doi.org/{doi_r}"
             pdf_src = "playwright"
             dl      = pw_result
             all_tried.append(pdf_url)
-            _write_provenance(doi_r, "playwright", pdf_url)
+            _write_provenance(doi_r, "playwright", pdf_url,
+                              pw_result.get("title_check", ""),
+                              pw_result.get("title_coverage"))
         elif pw_result.get("reason") not in _PLAYWRIGHT_SKIP_REASONS:
             _failed("playwright")
 
