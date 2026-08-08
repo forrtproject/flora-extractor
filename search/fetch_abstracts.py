@@ -647,9 +647,21 @@ def _fetch_osf_registration(doi: str) -> tuple[Optional[str], str]:
 
     Same (abstract, status) contract as the other per-item sources. A 404 is a
     definitive `empty`: the DOI is an OSF project or component rather than a
-    registration, and no later run should re-buy that answer. A 401/403 is not —
-    an absent or expired OSF_TOKEN makes a private registration answer exactly like
-    a non-existent one, so it stops the phase instead of writing a miss per DOI.
+    registration, and no later run should re-buy that answer.
+
+    A CREDENTIAL failure stops the phase: with no token every private registration
+    answers exactly like a non-existent one, so writing a miss per DOI would record
+    "no such registration" for a whole corpus on one missing setting. That is 401,
+    and 403 when no token was sent.
+
+    A 403 with a token sent is a different fact — OSF accepted the credential and
+    refused this ONE record, which is private or embargoed to us. Stopping there
+    ends the phase on its first private registration: measured 2026-08-08, the run
+    covered 10 of 878 rows before one 403 (`10.17605/osf.io/tg6sp`) halted it, and
+    the 868 rows behind it kept the routing rule that reads their template line
+    inert. It is reported as transient rather than empty because the answer is
+    about our access, not about the record: a later token with more scope should
+    ask again rather than read a checkpointed miss.
     """
     guid = _osf_guid(doi)
     if not guid:
@@ -660,10 +672,14 @@ def _fetch_osf_registration(doi: str) -> tuple[Optional[str], str]:
         lambda: _SESSION.get(_OSF_API.format(guid=guid), timeout=30, headers=headers))
     if status == "transient":
         return None, "transient"
-    if resp.status_code in (401, 403):
-        log.warning("OSF refused the request for %s (HTTP %d) — stopping the phase; "
-                    "check OSF_TOKEN.", doi, resp.status_code)
+    if resp.status_code == 401 or (resp.status_code == 403 and not OSF_TOKEN):
+        log.warning("OSF refused the credential for %s (HTTP %d) — stopping the "
+                    "phase; check OSF_TOKEN.", doi, resp.status_code)
         return None, "stop"
+    if resp.status_code == 403:
+        log.info("OSF registration %s is private or embargoed to this token — "
+                 "skipped, not checkpointed", doi)
+        return None, "transient"
     if resp.status_code == 410 or resp.status_code == 404:
         return None, "empty"
     if resp.status_code >= 400:

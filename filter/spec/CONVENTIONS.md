@@ -87,6 +87,48 @@ two things: a "text" rule reads the title too, so a phrase in a title alone fire
 it; and a `text_regex` rule is an abstract-reading rule for the guard above, even
 on a row where only the title could ever have matched.
 
+## `domain` — the population a rule claims to govern
+
+**Optional.** A match object, same shape and same evaluator as `match`, naming the
+rows the rule is *about*. It changes no routing: a domain never narrows or widens
+what the rule matches, because the whole point is to compare the two after a
+route. `python -m filter.engine route` reports, per live domain-declaring spec:
+how many works are in the domain, how many the rule matched, and how many were in
+the domain, NOT matched, and admitted to a paying pile by some other rule.
+
+That third number is the one to read. It was written on 2026-08-08, after a
+campaign paid for the failure it now names.
+
+`osf-registration-protocol` is a live discard over OSF registrations. Its match
+reads `^OSF registration template: `, a line that exists only in the text overlay
+this project writes. On release `bc38ddd787e0` it matched 1,308 works, so it was
+not inert and nothing looked wrong — but the overlay backfill's worklist held only
+rows with no text at all, so the 878 registrations that carried a one-line
+description of their own never got a template line and the rule never saw them.
+They were admitted by a generic text rule instead. About 450 preregistrations
+bought a two-voter screen and a full Stage 3 extraction each, and settled as
+`cannot_be_determined`, because a preregistration reports no outcome.
+
+The bug class is not "the rule matched nothing" — the route report already names
+that, and this rule was never inert. It is "the rule's precondition held for only
+part of the population it governs, and the rest was admitted and paid for".
+
+Two rules for writing one:
+
+- **Cheap and data-only.** A domain is evaluated over every pool row of every
+  route, so it reads columns the pool always carries — the DOI registrant, the
+  work type, the year. `{"doi_prefix": ["10.17605"]}` is the OSF registration
+  domain; `doi_prefix` matches after `clean_doi()`, so the pool's `doi.org` URL
+  form needs nothing special.
+- **It must not depend on what the rule reads.** A domain written over the same
+  overlay text as the match would go missing exactly when the match does, and
+  would have reported the 2026-08-08 failure as full coverage.
+
+Declare one on a rule whose match depends on text some other process has to
+supply. A rule that reads only what the pool already holds cannot have the gap,
+and declaring nothing is the right answer for it — the report prints nothing for a
+spec with no domain.
+
 ## Measurement levels
 
 A `measured` entry says how the rule's precision is known. Four levels permit a

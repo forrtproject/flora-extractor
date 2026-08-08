@@ -314,6 +314,54 @@ def test_a_current_generation_row_beats_a_stale_one_for_the_same_work():
 
 
 # ---------------------------------------------------------------------------
+# The routing filter (--release)
+# ---------------------------------------------------------------------------
+
+
+def test_a_work_the_release_no_longer_admits_is_dropped_and_counted():
+    """A verdict outlives the routing that bought it — and must not outlive it here.
+
+    The ~450 OSF preregistrations of release bc38ddd787e0 have settled verdicts and a
+    discard rule that now reaches them; without this they would keep shipping.
+    """
+    report = export_mod.render(
+        _client([_verdict(41, row_id="v-in"), _verdict(42, row_id="v-out")]),
+        admitted={41})
+    assert report["works"] == 1 and report["not_admitted"] == 1
+    assert [r["pair_id"] for r in report["main"]] == [_SINGLE["pair_id"]]
+
+
+def test_without_a_release_every_stored_verdict_still_renders():
+    """The default is unchanged: the export answers "what has this pipeline
+    concluded", and that question does not consult the rule book."""
+    report = export_mod.render(
+        _client([_verdict(41, row_id="v-in"), _verdict(42, row_id="v-out")]))
+    assert report["works"] == 2 and report["not_admitted"] == 0
+
+
+def test_only_the_admitted_piles_of_the_named_release_come_back(tmp_path):
+    """The pile vocabulary, read off a real store: `discard` and `pending` spend
+    nothing and admit nothing, and another release's rows are another question."""
+    from filter.engine.store import open_store
+
+    con = open_store(tmp_path / "engine.duckdb")
+    for work, pile, release in [(1, "screen_expensive", "rel-aaaa0000"),
+                                (2, "needs_human", "rel-aaaa0000"),
+                                (3, "screen_cheap", "rel-aaaa0000"),
+                                (4, "discard", "rel-aaaa0000"),
+                                (5, "pending", "rel-aaaa0000"),
+                                (6, "screen_expensive", "rel-bbbb1111")]:
+        con.execute("INSERT INTO routing VALUES (?, ?, '', '', 0, [], '', ?)",
+                    [work, pile, release])
+    con.close()
+
+    release_id, admitted = export_mod.admitted_work_ids(
+        "rel-aaaa", store_path=tmp_path / "engine.duckdb")
+    assert release_id == "rel-aaaa0000"
+    assert admitted == {1, 2, 3}
+
+
+# ---------------------------------------------------------------------------
 # Partitioning and writing
 # ---------------------------------------------------------------------------
 
@@ -451,3 +499,29 @@ def test_a_failing_dashboard_refresh_does_not_fail_the_export(tmp_path, monkeypa
 
     monkeypatch.setattr("shared.dashboard_cache.refresh", _boom)
     mod._refresh_dashboard(out)   # no raise
+
+
+def test_a_store_with_several_releases_refuses_rather_than_choosing(tmp_path,
+                                                                    monkeypatch):
+    """Which rule book the file reflects decides which papers reach validation, so
+    an ambiguous store is an error — the same refusal `extract.tier` and
+    `filter.engine` make, rather than a silent pick of the newest routing."""
+    import duckdb
+    store = tmp_path / "engine.duckdb"
+    con = duckdb.connect(str(store))
+    con.execute("CREATE TABLE routing (work_id BIGINT, pile VARCHAR, "
+                "pending_reason VARCHAR, rule_id VARCHAR, precedence INTEGER, "
+                "matched_rules VARCHAR[], evidence VARCHAR, release_id VARCHAR)")
+    con.execute("INSERT INTO routing VALUES (1, 'screen_expensive', NULL, NULL, "
+                "NULL, NULL, NULL, 'aaa'), (2, 'screen_expensive', NULL, NULL, "
+                "NULL, NULL, NULL, 'bbb')")
+    con.close()
+
+    with pytest.raises(SystemExit) as exc:
+        export_mod.admitted_work_ids(None, store_path=store)
+    assert "name one with --release" in str(exc.value)
+    assert "--all-releases" in str(exc.value)
+
+    # Named, it answers: the refusal is about ambiguity, not about the store.
+    release_id, admitted = export_mod.admitted_work_ids("aaa", store_path=store)
+    assert (release_id, admitted) == ("aaa", {1})

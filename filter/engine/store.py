@@ -30,7 +30,8 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from filter.engine.route import eval_all, route_batch
+from filter.engine.backends import BatchContext
+from filter.engine.route import ADMITTED_PILES, eval_all, eval_domains, route_batch
 from filter.engine.spec import FilterSpec
 from shared.config import ENGINE_CACHE_DIR
 
@@ -59,6 +60,17 @@ _SCHEMA_SQL = (
         release_id TEXT
     )
     """,
+    # One row per (work, spec) where the work is in the spec's declared domain.
+    # Same shape as `evaluations` and for the same reason: absence IS "outside the
+    # domain", and the interesting join — domain rows this spec did NOT match —
+    # needs the membership per work rather than a count.
+    """
+    CREATE TABLE IF NOT EXISTS domains (
+        work_id BIGINT,
+        spec_id TEXT,
+        release_id TEXT
+    )
+    """,
 )
 
 _EVAL_SCHEMA = pa.schema([
@@ -66,6 +78,11 @@ _EVAL_SCHEMA = pa.schema([
     ("spec_id", pa.string()),
     ("spec_hash", pa.string()),
     ("matched", pa.bool_()),
+])
+
+_DOMAIN_SCHEMA = pa.schema([
+    ("work_id", pa.int64()),
+    ("spec_id", pa.string()),
 ])
 
 
@@ -144,13 +161,17 @@ def build_routing(con: duckdb.DuckDBPyConnection, pool_dir: Path,
     try:
         con.execute("DELETE FROM routing WHERE release_id = ?", [release_id])
         con.execute("DELETE FROM evaluations WHERE release_id = ?", [release_id])
+        con.execute("DELETE FROM domains WHERE release_id = ?", [release_id])
         hashes = {spec.id: spec_hash(spec) for spec in specs}
         for batch in stream:
-            evals = eval_all(specs, batch)
+            ctx = BatchContext(batch)
+            evals = eval_all(specs, batch, ctx)
             routed = route_batch(specs, batch, aliases=aliases, evals=evals)
             _insert_routing(con, routed, release_id)
             _insert_evaluations(con, routed.column("work_id"), evals, hashes,
                                 release_id)
+            _insert_domains(con, routed.column("work_id"),
+                            eval_domains(specs, batch, ctx), release_id)
             pool_rows += routed.num_rows
         con.execute("COMMIT")
     except Exception:
@@ -174,6 +195,7 @@ def drop_release(con: duckdb.DuckDBPyConnection, release_id: str) -> None:
     try:
         con.execute("DELETE FROM routing WHERE release_id = ?", [release_id])
         con.execute("DELETE FROM evaluations WHERE release_id = ?", [release_id])
+        con.execute("DELETE FROM domains WHERE release_id = ?", [release_id])
         con.execute("COMMIT")
     except Exception:
         con.execute("ROLLBACK")
@@ -219,6 +241,72 @@ def _insert_evaluations(con: duckdb.DuckDBPyConnection, work_ids: pa.ChunkedArra
     con.unregister("_evals")
 
 
+def _insert_domains(con: duckdb.DuckDBPyConnection, work_ids: pa.ChunkedArray,
+                    domains: dict[str, pa.Array], release_id: str) -> None:
+    if not domains:
+        return
+    ids = np.asarray(work_ids.to_numpy(zero_copy_only=False), dtype=np.int64)
+    member_ids: list[np.ndarray] = []
+    member_specs: list[str] = []
+    for spec_id, mask in domains.items():
+        members = ids[np.asarray(mask.to_numpy(zero_copy_only=False), dtype=bool)]
+        if len(members):
+            member_ids.append(members)
+            member_specs.extend([spec_id] * len(members))
+    if not member_ids:
+        return
+    table = pa.Table.from_pydict({
+        "work_id": pa.array(np.concatenate(member_ids)),
+        "spec_id": pa.array(member_specs),
+    }, schema=_DOMAIN_SCHEMA)
+    con.register("_domains", table)
+    con.execute("INSERT INTO domains SELECT *, ? FROM _domains", [release_id])
+    con.unregister("_domains")
+
+
+def domain_coverage(con: duckdb.DuckDBPyConnection, release_id: str,
+                    specs: list[FilterSpec]) -> list[dict]:
+    """Per domain-declaring live spec: its population, its matches, and the gap.
+
+    `uncovered_admitted` is the number that matters — works INSIDE the rule's
+    declared domain that the rule did not match and that another rule sent to a
+    paying pile. A rule can be perfectly non-inert and still govern only part of
+    its population: `osf-registration-protocol` matched 1,308 works on release
+    bc38ddd787e0 and never reached the 878 OSF registrations whose overlay text
+    the backfill's worklist had skipped, so ~450 preregistrations were admitted by
+    a generic text rule and bought a two-voter screen and a Stage 3 extraction
+    each.
+
+    Counted DISTINCT by work, like `rule_hits()`, and reported for live specs
+    only: a shadow rule leaves every row to another rule by design, so its whole
+    domain would read as uncovered.
+    """
+    wanted = [spec for spec in specs if spec.domain is not None and not spec.shadow]
+    if not wanted:
+        return []
+    rows = con.execute(
+        """
+        SELECT d.spec_id,
+               count(DISTINCT d.work_id) AS in_domain,
+               count(DISTINCT CASE WHEN e.work_id IS NOT NULL THEN d.work_id END)
+                   AS matched,
+               count(DISTINCT CASE WHEN e.work_id IS NULL AND r.pile IN ?
+                                   THEN d.work_id END) AS uncovered_admitted
+        FROM domains d
+        JOIN routing r ON r.release_id = d.release_id AND r.work_id = d.work_id
+        LEFT JOIN evaluations e ON e.release_id = d.release_id
+                               AND e.work_id = d.work_id AND e.spec_id = d.spec_id
+        WHERE d.release_id = ?
+        GROUP BY d.spec_id
+        """, [sorted(ADMITTED_PILES), release_id]).fetchall()
+    counts = {row[0]: row[1:] for row in rows}
+    return [{"spec_id": spec.id, "pile": spec.pile,
+             "in_domain": counts.get(spec.id, (0, 0, 0))[0],
+             "matched": counts.get(spec.id, (0, 0, 0))[1],
+             "uncovered_admitted": counts.get(spec.id, (0, 0, 0))[2]}
+            for spec in wanted]
+
+
 def pile_counts(con: duckdb.DuckDBPyConnection, release_id: str) -> dict[str, int]:
     """Rows per pile for *release_id*."""
     return dict(con.execute(
@@ -249,6 +337,32 @@ def rule_hits(con: duckdb.DuckDBPyConnection, release_id: str) -> dict[str, int]
         "SELECT spec_id, count(DISTINCT work_id) FROM evaluations "
         "WHERE release_id = ? GROUP BY spec_id ORDER BY spec_id",
         [release_id]).fetchall())
+
+
+def inert_rules(con: duckdb.DuckDBPyConnection, release_id: str,
+                specs: list[FilterSpec]) -> dict:
+    """Which specs matched NO work at all under *release_id*, live ones apart.
+
+    Inert means matched nothing, not won nothing: a live rule that matches rows
+    and is always outranked still says something, while one that matches zero
+    rows decides nothing whatever it is ordered against. The question is asked
+    over *specs* rather than over `rule_hits()`, because `evaluations` stores only
+    matches — a spec that matched nothing has no row there, so counting the table
+    alone can never see it.
+
+    A live rule went inert on release bc38ddd787e0 (`osf-registration-protocol`,
+    whose pattern reads a line only the text overlay writes) and nothing said so;
+    ~450 preregistrations were admitted by a generic rule instead and bought a
+    two-voter screen and a Stage 3 extraction each.
+    """
+    hits = rule_hits(con, release_id)
+    live = [spec for spec in specs if not spec.shadow]
+    return {
+        "live": len(live),
+        "inert": [(spec.id, spec.pile) for spec in live if not hits.get(spec.id)],
+        "shadow_inert": [spec.id for spec in specs
+                         if spec.shadow and not hits.get(spec.id)],
+    }
 
 
 def releases(con: duckdb.DuckDBPyConnection) -> list[str]:

@@ -2,13 +2,35 @@
 
 The tier writes one result row per work into `engine_verdicts`, payload and all
 (`extract/tier.py`). This turns those payloads back into the CSV Stage 3 has always
-produced. It is a pure render — no network, no cache, no routing store, no pool —
+produced. It is a pure render of the VERDICTS — no network, no cache, no pool —
 which is the property the payload shape exists to guarantee: a payload that needed
-any of those would make the permanent verdict a bookmark rather than evidence.
+any of those would make the permanent verdict a bookmark rather than evidence. The
+routing store is read, for one question only: which works the release admits.
+`--all-releases` skips even that.
 
-    python -m extract.export                       # → data/extracted.csv
-    python -m extract.export --check               # diff against the file on disk
-    python -m extract.export --current-generation-only
+    python -m extract.export --release bc38ddd787e0          # → data/extracted.csv
+    python -m extract.export --release bc38ddd787e0 --check  # diff against disk
+    python -m extract.export --release bc38ddd787e0 --current-generation-only
+    python -m extract.export --all-releases        # every stored verdict, unfiltered
+
+The release may be omitted where the store holds exactly one; holding several, the
+export refuses rather than choosing, as `extract/tier.py` and `filter/engine/cli.py`
+already do. "The newest" is deliberately not the default: the store holds seven
+routings of one pool, one of them a retired rule book that admitted 89,113 works
+against today's 4,650, so a newest-wins default would make this file's contents
+depend on whichever routing anyone last ran, unstated in its own output.
+
+**A verdict outlives the routing that bought it, and `--release` is how that is
+undone.** A stored result row is selected by kind, mode and generation, by nothing
+about routing — so a work the rule book no longer admits keeps rendering forever
+because its verdict exists. That is not hypothetical: a live discard rule for OSF
+preregistrations could not reach ~450 registrations on release bc38ddd787e0, and each
+was screened, extracted and settled as `cannot_be_determined`. Re-routing puts them in
+the `discard` pile; without `--release` the export would still ship them to the
+validation import. With it, a verdict renders only if its work sits in an ADMITTED pile
+of the named release (`ADMITTED_PILES` in `filter/engine/route.py`), and the count
+dropped is printed whether or not it is zero. The default is unchanged, because most
+renders are not asking a routing question.
 
 **Two generations, and why the older one still counts.** A verdict belongs to a
 generation — the ladder, the prompts and the models it was produced by
@@ -114,6 +136,43 @@ def latest_results(client: ClaimsClient, *, mode: str = "live",
     return {**stale, **current}, len(stale)
 
 
+def admitted_work_ids(release: "str | None",
+                      store_path: Optional[Path] = None) -> tuple[str, set[int]]:
+    """`(the full release id, the works it routed into an admitted pile)`.
+
+    The one place this module touches the routing store, and it is skipped entirely
+    under `--all-releases`: the imports are local so that render still costs no
+    duckdb, no pyarrow and no store lock. A work the release never routed at all is
+    absent from the set exactly as a discarded one is — neither is admitted.
+
+    *release* None means "the store's only release", and a store holding several
+    refuses rather than choosing — the same refusal, in the same words, as
+    `extract/tier.py` and `filter/engine/cli.py`.
+    """
+    from filter.engine.route import ADMITTED_PILES
+    from filter.engine.store import (DEFAULT_STORE_PATH, open_store, releases,
+                                     resolve_release)
+
+    con = open_store(store_path or DEFAULT_STORE_PATH, read_only=True)
+    try:
+        if release:
+            release_id = resolve_release(con, release)
+        else:
+            present = releases(con)
+            if len(present) != 1:
+                raise SystemExit(
+                    f"the store holds {len(present)} releases — name one with "
+                    "--release, or pass --all-releases to render every stored "
+                    "verdict whatever routing says about it")
+            release_id = present[0]
+        rows = con.execute(
+            "SELECT work_id FROM routing WHERE release_id = ? AND pile IN ?",
+            [release_id, sorted(ADMITTED_PILES)]).fetchall()
+    finally:
+        con.close()
+    return release_id, {int(row[0]) for row in rows}
+
+
 def rows_from_results(results: dict[int, dict]) -> list[dict]:
     """Every stored result row rendered as its `EXTRACTED_COLS` rows, in a stable order.
 
@@ -170,14 +229,29 @@ def partition(rows: list[dict]) -> tuple[list[dict], dict[str, list[dict]]]:
 
 
 def render(client: ClaimsClient, *, mode: str = "live",
-           current_generation_only: bool = False) -> dict:
-    """The whole export, in memory: the main rows, the set-asides, and the counts."""
+           current_generation_only: bool = False,
+           admitted: Optional[set[int]] = None) -> dict:
+    """The whole export, in memory: the main rows, the set-asides, and the counts.
+
+    *admitted* — when given, the works some routing release admits. It is applied
+    before anything is counted or rendered, so every number below it, `--check`
+    included, describes the same filtered set. The superseded-generation count is
+    recomputed over what survived, or it would report rows this render did not carry.
+    """
     results, stale = latest_results(
         client, mode=mode, current_generation_only=current_generation_only)
+    not_admitted = 0
+    if admitted is not None:
+        kept = {work: row for work, row in results.items() if work in admitted}
+        not_admitted = len(results) - len(kept)
+        results = kept
+        generation = extract_generation()
+        stale = sum(1 for row in results.values()
+                    if str(row.get("prompt_hash") or "") != generation)
     rows = rows_from_results(results)
     main, aside = partition(rows)
     return {"works": len(results), "rows": len(rows), "main": main, "aside": aside,
-            "superseded_generation": stale,
+            "superseded_generation": stale, "not_admitted": not_admitted,
             "endings": Counter(str(r.get("verdict") or "") for r in results.values())}
 
 
@@ -257,7 +331,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m extract.export",
         description="Rebuild data/extracted.csv from the extract tier's stored "
-                    "verdicts. A pure render: no network, no cache, no pool.")
+                    "verdicts. A pure render: no network, no cache, no pool — and no "
+                    "routing store unless --release is given.")
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--mode", choices=("live", "validation"), default="live",
                         help="Which runs' verdicts to render (claim meta.mode).")
@@ -267,7 +342,37 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--current-generation-only", action="store_true",
                         help="Drop works whose only result row is from a superseded "
                              "generation, instead of carrying it forward.")
+    parser.add_argument("--release", default="",
+                        help="Render only works this routing release put in an "
+                             "admitted pile (screen_expensive, screen_cheap, "
+                             "needs_human). Works it discarded, left pending or never "
+                             "routed are dropped. A release id or a unique prefix.")
+    parser.add_argument("--all-releases", action="store_true",
+                        help="Render every stored verdict, whatever routing now says "
+                             "about its work. The pre-2026-08-08 behaviour, kept for "
+                             "reading the record whole; not what the validation "
+                             "import wants.")
     args = parser.parse_args(argv)
+
+    if args.release and args.all_releases:
+        raise SystemExit("--release names one rule book and --all-releases asks for "
+                         "every one; pass one or the other.")
+
+    release_id, admitted = "", None
+    if args.release or not args.all_releases:
+        # No default release, deliberately, and no "the newest one" either. Which
+        # rule book the file reflects decides which papers reach validation, and the
+        # store holds seven routings of the same pool — one of them the retired book
+        # that admitted 89,113 works against today's 4,650. Picking the most recent
+        # would make the file's contents depend on whichever routing anyone last ran,
+        # unstated in the output. `extract.tier` and `filter.engine` already refuse
+        # the same ambiguity in the same words (tier.py, cli.py); this is that rule
+        # applied to the file the validation import reads.
+        from filter.engine.store import StoreUnavailable
+        try:
+            release_id, admitted = admitted_work_ids(args.release or None)
+        except StoreUnavailable as exc:
+            raise SystemExit(str(exc))
 
     try:
         client = ClaimsClient()
@@ -276,11 +381,21 @@ def main(argv: Optional[list[str]] = None) -> int:
                          "authority, so there is nothing to render without it.")
 
     report = render(client, mode=args.mode,
-                    current_generation_only=args.current_generation_only)
+                    current_generation_only=args.current_generation_only,
+                    admitted=admitted)
     print(f"generation {extract_generation()}  mode {args.mode}")
     print(f"  {report['works']:,} work(s) → {report['rows']:,} row(s)")
     for ending, count in sorted(report["endings"].items()):
         print(f"    {ending:<20} {count:,}")
+    if admitted is not None:
+        # Printed at zero too: a render that filtered by a release should say what it
+        # excluded rather than look like an unfiltered one.
+        print(f"  works not admitted by release {release_id[:12]}: "
+              f"{report['not_admitted']:,}  (dropped from the render; "
+              f"{len(admitted):,} work(s) admitted)")
+    else:
+        print("  --all-releases: every stored verdict rendered, whatever routing "
+              "says about its work")
     if report["superseded_generation"]:
         print(f"  rows from a superseded generation: "
               f"{report['superseded_generation']:,}  (carried forward; "

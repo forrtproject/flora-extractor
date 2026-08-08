@@ -20,12 +20,19 @@ from typing import Optional
 import numpy as np
 import pyarrow as pa
 
-from filter.engine.backends import BatchContext, eval_spec_batch, match_evidence
+from filter.engine.backends import (
+    BatchContext, eval_block_batch, eval_spec_batch, match_evidence,
+)
 from filter.engine.spec import FilterSpec
 from filter.engine.workids import resolve, work_id
 
 # The piles the no-text downgrade applies to: only an LLM tier needs text.
 _TEXT_PILES = frozenset({"screen_expensive", "screen_cheap"})
+
+# The piles a row costs money from: a screen call, or someone's reading time.
+# `discard` and `pending` spend nothing, which is what makes an unintended
+# admission the expensive direction of a routing mistake.
+ADMITTED_PILES = frozenset({"screen_expensive", "screen_cheap", "needs_human"})
 
 ROUTING_SCHEMA = pa.schema([
     ("work_id", pa.int64()),
@@ -43,6 +50,19 @@ def eval_all(specs: list[FilterSpec], batch: pa.RecordBatch,
     """Every spec's mask over *batch*, shadow specs included, one scan of the batch."""
     ctx = ctx or BatchContext(batch)
     return {spec.id: eval_spec_batch(spec, batch, ctx) for spec in specs}
+
+
+def eval_domains(specs: list[FilterSpec], batch: pa.RecordBatch,
+                 ctx: Optional[BatchContext] = None) -> dict[str, pa.Array]:
+    """Each domain-declaring spec's DOMAIN mask over *batch*, by spec id.
+
+    The population a rule claims to govern, not what it matched — the two are
+    compared after routing (`store.domain_coverage()`). Specs that declare no
+    domain are absent, so a bundle declaring none costs nothing.
+    """
+    ctx = ctx or BatchContext(batch)
+    return {spec.id: eval_block_batch(spec.domain, batch, ctx)
+            for spec in specs if spec.domain is not None}
 
 
 def route_batch(specs: list[FilterSpec], batch: pa.RecordBatch,

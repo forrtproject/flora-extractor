@@ -26,7 +26,7 @@ python -m filter.engine route       # Stage 2 → routing release in the DuckDB 
 python -m filter.engine screen --tier screen_expensive --run   # the claimed LLM tier
 python -m filter.engine handoff --out data/filtered.csv        # → Stage 3's input
 python -m extract.tier --run        # Stage 3 → claimed extraction, verdicts in Postgres
-python -m extract.export            # the verdicts → data/extracted.csv
+python -m extract.export --release <id>   # the verdicts → data/extracted.csv
 python -m validate.app              # Stage 4 dashboard → http://localhost:5001
 ```
 
@@ -50,8 +50,13 @@ explaining what would make it correct; do not revive it.
 **Stage 3 runs as a claimed engine tier, and the export is the only writer of
 `data/extracted.csv`.** `python -m extract.tier --run` claims works, runs the ladder
 and stores one permanent RESULT verdict per work whose payload rebuilds every
-`EXTRACTED_COLS` row offline; `python -m extract.export` renders those payloads into
-the CSV, whole, sorted and atomically. Resume is the verdict row, not the file: the
+`EXTRACTED_COLS` row offline; `python -m extract.export --release <id>` renders those
+payloads into the CSV, whole, sorted and atomically. It renders only the works that
+release put in an admitted pile, because a verdict outlives the routing that bought it
+— a work today's rule book discards would otherwise keep reaching the validation
+import forever. Omitted, the release is the store's when it holds exactly one, and a
+store holding several refuses; `--all-releases` renders every stored verdict whatever
+routing says. Resume is the verdict row, not the file: the
 worklist subtracts every work whose latest current-generation result SETTLES it, and
 `target_pending`/`api_error` do not settle. `--redo W1,W2` re-extracts named works and
 supersedes their previous result rows; editing a prompt or a model mints a new
@@ -64,8 +69,8 @@ would have to satisfy; do not revive it as a second writer.
 
 **Test sandbox:** `python -m extract.tier --run --mode validation` records real
 verdicts the live export ignores (the mode lives in `claim.meta.mode`), and
-`python -m extract.export --mode validation --out data/extracted-test.csv` renders
-them. There is no promotion step: re-running the work live is the promotion, and it
+`python -m extract.export --release <id> --mode validation --out data/extracted-test.csv`
+renders them. There is no promotion step: re-running the work live is the promotion, and it
 is near-free on cached calls. Set-asides belong to the CSV they came out of
 (`set_aside_dir()` in `shared/schema.py`): production's sit in `data/`, the sandbox's
 in `data/extracted-test-set-aside/`.
@@ -592,8 +597,8 @@ render — it renders what the verdict already holds. Retroactive audit:
 `python -m extract.audit_dois [--apply|--doi …|--status api_error|--mode validation]` —
 the only thing that re-verifies a settled row. It reads the exported CSV and, under
 `--apply`, writes a corrected result verdict that supersedes the old one
-(`supersede_targets()` in `extract/tier.py`); `python -m extract.export` then renders
-the correction. `extract/backfill_authors.py` takes the same route for
+(`supersede_targets()` in `extract/tier.py`); `python -m extract.export --release <id>`
+then renders the correction. `extract/backfill_authors.py` takes the same route for
 `authors_o`/`ref_o`. Thresholds are constants in
 `shared/doi_verify.py`. The searches go through `_oa_get`, so they are throttled,
 key-rotated, counted (`search_query_count()`, printed at the end of a run) and a quota

@@ -1,7 +1,7 @@
 # Stage 3: Extract — Code Flow
 
 **Entry points:** `python -m extract.tier --run` (decide and record), then
-`python -m extract.export` (render `data/extracted.csv`).
+`python -m extract.export --release <id>` (render `data/extracted.csv`).
 
 ## What it does
 
@@ -18,8 +18,10 @@ per-service reservation queue in `shared/rate_limit.py` bounds the request rate.
 row passes DOI verification and `oa_work_id_*` stamping inside the judge, once, so the
 answer is stored rather than recomputed per render.
 
-`python -m extract.export` then renders the stored payloads into `data/extracted.csv`,
-whole and sorted, partitioning set-aside rows on the way out. It is that file's only
+`python -m extract.export --release <id>` then renders the stored payloads into
+`data/extracted.csv`, whole and sorted, partitioning set-aside rows on the way out.
+Only the works that release admits are rendered: a verdict outlives the routing that
+bought it, and `--all-releases` is the explicit ask for every stored verdict. It is that file's only
 writer; `extract/sanity_check.py` reports on it and moves nothing.
 
 The whole stage is organised around spending the cheap calls first. The classification
@@ -474,7 +476,7 @@ worklist.
 
 ```bash
 python -m extract.tier --run --mode validation --limit 20
-python -m extract.export --mode validation --out data/extracted-test.csv
+python -m extract.export --release <id> --mode validation --out data/extracted-test.csv
 ```
 
 There is no promotion step: re-running the work live is the promotion, and it is

@@ -202,7 +202,16 @@ def _match_batch(block: MatchBlock, ctx: BatchContext) -> pa.Array:
 def eval_spec_batch(spec: FilterSpec, batch: pa.RecordBatch,
                     ctx: Optional[BatchContext] = None) -> pa.Array:
     """Whether each row of *batch* matches *spec*, evaluated with pyarrow compute."""
-    return _match_batch(spec.match, ctx or BatchContext(batch))
+    return eval_block_batch(spec.match, batch, ctx)
+
+
+def eval_block_batch(block: MatchBlock, batch: pa.RecordBatch,
+                     ctx: Optional[BatchContext] = None) -> pa.Array:
+    """Whether each row of *batch* matches *block* — any match object, not just a
+    spec's own `match`. A spec's `domain` is the same shape and must be read by the
+    same evaluator, or a rule's declared population and its matches would be decided
+    by two different engines."""
+    return _match_batch(block, ctx or BatchContext(batch))
 
 
 def rows_to_batch(rows: list[dict]) -> pa.RecordBatch:

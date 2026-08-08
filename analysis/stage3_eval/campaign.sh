@@ -7,6 +7,9 @@ set -u
 cd /Users/lukaswallrich/Documents/Coding/flora-extractor || exit 1
 
 TARGET_EPOCH=$1        # unix timestamp to start at
+# The tier and the export read the same release: the tier buys the works it admits,
+# the export renders only those works' verdicts.
+RELEASE=bc38ddd787e0
 LOG=logs/stage3-campaign-2026-08-07.log
 
 {
@@ -20,7 +23,7 @@ done
 {
   echo "=== tier start $(date -u '+%F %T UTC') ==="
   if .venv/bin/python -m extract.tier --run \
-        --release bc38ddd787e0 \
+        --release "$RELEASE" \
         --batch-label stage3-2026-08-07; then
     echo "=== tier done $(date -u '+%F %T UTC') ==="
     # Only a COMPLETE tier run may re-render the CSV. The export writes whole,
@@ -28,7 +31,7 @@ done
     # every row with the handful the crashed run had settled — which is how
     # extracted.csv went from 285 rows to 6 on 2026-08-07.
     echo "=== export start $(date -u '+%F %T UTC') ==="
-    .venv/bin/python -m extract.export
+    .venv/bin/python -m extract.export --release "$RELEASE"
     echo "=== export exit $? at $(date -u '+%F %T UTC') ==="
   else
     echo "=== tier FAILED ($?) at $(date -u '+%F %T UTC') — export skipped ==="

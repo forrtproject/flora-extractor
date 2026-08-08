@@ -33,6 +33,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from filter.engine.workids import resolve, work_id
+from search.fetch_abstracts import OSF_REGISTRANT
 
 OVERLAY_SCHEMA = pa.schema([
     ("work_id", pa.int64()),
@@ -72,10 +73,32 @@ def worklist(con, release_id: str, pool_dir: Path, out_path: Path,
     for the identifiers a fetcher needs (doi, title, year). The join lives here
     rather than in `store.py`: the store knows routing, the pool knows metadata,
     and the overlay is the only thing that needs both.
+
+    PLUS every ADMITTED OSF-registrant row in the release, text or no text. The OSF phase
+    does not fetch an abstract — it fetches the registration TEMPLATE line that
+    the two `osf-registration-*` specs match on, and no abstract substitutes for
+    it (`backfill._osf_targets` says so, and skips `done` rather than `found` for
+    exactly that reason). A `no_text`-only worklist defeated that invariant one
+    level up: a registration carrying any description at all — "Stage 1 IPA at
+    PCI RR" — never entered the worklist, never got its template line, and so
+    could never be matched by the LIVE `osf-registration-protocol` discard. It
+    was admitted by `replication-claim-text` instead and bought a two-voter
+    screen and the whole Stage 3 ladder to end at `cannot_be_determined`.
+    Measured 2026-08-08 on release bc38ddd787e0: 0 of its 1,325 admitted works
+    were in the overlay, and 225 of them settled with no codeable outcome.
     """
     pending = {row[0] for row in con.execute(
         "SELECT work_id FROM routing WHERE release_id = ? AND pending_reason = ?",
         [release_id, NO_TEXT]).fetchall()}
+    # Only the ADMITTED piles: the protocol discard sits at precedence 935, above
+    # the admission band, so the template line changes an outcome exactly where a
+    # rule admitted the row. Asking OSF about the 27k registrant rows the rule
+    # book already discarded or left pending buys nothing and costs one API call
+    # each.
+    admitted = {row[0] for row in con.execute(
+        "SELECT work_id FROM routing WHERE release_id = ? AND pile IN "
+        "('screen_expensive', 'screen_cheap', 'needs_human')",
+        [release_id]).fetchall()}
 
     rows: list[dict] = []
     seen: set[int] = set()
@@ -85,7 +108,12 @@ def worklist(con, release_id: str, pool_dir: Path, out_path: Path,
                 columns=["id", "doi", "title", "display_name", "publication_year"]):
             for record in batch.to_pylist():
                 resolved = resolve(work_id(record["id"]), aliases or {})
-                if resolved not in pending or resolved in seen:
+                # The pool stores a DOI as a doi.org URL, so the registrant is
+                # matched inside the string rather than as its first segment.
+                wanted = resolved in pending or (
+                    resolved in admitted
+                    and f"/{OSF_REGISTRANT}/" in str(record.get("doi") or ""))
+                if not wanted or resolved in seen:
                     continue
                 seen.add(resolved)
                 rows.append({

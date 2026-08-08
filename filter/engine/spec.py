@@ -47,8 +47,8 @@ VOCABULARIES = ("replication", "reproduction")
 # `llm:<model>` counts as autonomous too, which `_is_autonomous()` adds.
 AUTONOMOUS_LEVELS = ("human", "downstream", "trusted")
 
-_SPEC_KEYS = frozenset({"id", "description", "match", "pile", "vocabulary",
-                        "precedence", "shadow", "measured"})
+_SPEC_KEYS = frozenset({"id", "description", "match", "domain", "pile",
+                        "vocabulary", "precedence", "shadow", "measured"})
 _MATCH_KEYS = frozenset({"doi_prefix", "doi_regex", "title_regex",
                          "abstract_regex", "text_regex", "fields",
                          "abstract_missing", "any_of", "all_of", "none_of"})
@@ -103,6 +103,9 @@ class FilterSpec:
     vocabulary: Optional[str] = None
     shadow: bool = False
     measured: tuple[dict, ...] = field(default_factory=tuple)
+    # The population the rule claims to govern, when it declares one. Optional,
+    # diagnostic, and it never gates the match — see `_validate_domain()`.
+    domain: Optional[MatchBlock] = None
 
     @classmethod
     def from_dict(cls, raw: dict) -> "FilterSpec":
@@ -110,6 +113,8 @@ class FilterSpec:
             id=raw["id"],
             description=raw.get("description", ""),
             match=MatchBlock.from_dict(raw.get("match") or {}),
+            domain=(MatchBlock.from_dict(raw["domain"])
+                    if raw.get("domain") else None),
             pile=raw["pile"],
             precedence=int(raw["precedence"]),
             vocabulary=raw.get("vocabulary"),
@@ -202,6 +207,28 @@ def _validate_match(raw: Any, path: str, errors: list[str]) -> None:
             _validate_match(block, f"{path}.{key}[{idx}]", errors)
 
 
+def _validate_domain(raw: Any, label: str, errors: list[str]) -> None:
+    """`domain` is a match object naming the population the rule claims to govern.
+
+    Optional, and it does not gate the match: a domain that narrowed what the rule
+    matched would change routing, and the field exists precisely to be compared
+    AGAINST the match rather than merged into it. It is a cheap, data-only
+    predicate over columns the pool always carries, so the comparison stays true
+    when the text a rule reads is missing — which is the failure it was added for
+    (2026-08-08, `osf-registration-protocol`).
+
+    An empty object is refused: a domain of everything is not a claim, and it
+    would report the whole pool as one rule's uncovered population.
+    """
+    if raw is None:
+        return
+    if not isinstance(raw, dict) or not raw:
+        errors.append(f"{label}.domain: must be a non-empty match object naming the "
+                      "population this rule claims to govern")
+        return
+    _validate_match(raw, f"{label}.domain", errors)
+
+
 def _validate_measured(entries: Any, path: str, errors: list[str]) -> None:
     if not isinstance(entries, list):
         errors.append(f"{path}: measured must be a list")
@@ -274,6 +301,7 @@ def validate_spec(raw: dict) -> list[str]:
         errors.append(f"{label}.shadow: must be a boolean, got {shadow!r}")
 
     _validate_match(raw.get("match"), f"{label}.match", errors)
+    _validate_domain(raw.get("domain"), label, errors)
 
     measured = raw.get("measured", [])
     _validate_measured(measured, label, errors)

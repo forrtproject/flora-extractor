@@ -1117,7 +1117,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(f"  superseded {report['superseded']:,} previous result row(s)")
     if report.get("stopped"):
         print(f"  STOPPED: {report['stopped']}")
-    print("  Render the CSV with: python -m extract.export")
+    # Naming the release this run extracted under, because the export renders only
+    # what a release admits and a bare invocation refuses in a multi-release store.
+    # This line is what a maintainer copies at the end of a paid run.
+    print(f"  Render the CSV with: python -m extract.export "
+          f"--release {release_id[:12]}")
     return 0
 
 

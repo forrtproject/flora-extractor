@@ -144,8 +144,8 @@ and nothing depends on it.
 ## Extract-Test Tab (Stage 3 sandbox)
 
 Same layout as the Extract tab but reads `extracted-test.csv`, which is what
-`python -m extract.export --mode validation --out data/extracted-test.csv` renders
-from a validation-mode run's verdicts.
+`python -m extract.export --release <id> --mode validation --out data/extracted-test.csv`
+renders from a validation-mode run's verdicts, for the works that release admits.
 
 **There is no Promote button, and no promotion step.** The dashboard is read-only,
 and a validation-mode verdict is promoted by re-running the work live — near-free,
@@ -153,7 +153,7 @@ because every LLM answer it needs is already cached:
 
 ```bash
 python -m extract.tier --run --only <work id>   # live is the default mode
-python -m extract.export
+python -m extract.export --release <id>
 ```
 
 ---

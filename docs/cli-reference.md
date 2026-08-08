@@ -460,17 +460,20 @@ python -m extract.tier --run --mode validation
 python -m extract.tier --run --only 2741809807,2884670852
 python -m extract.tier --run --redo 2741809807
 
-# Render data/extracted.csv from the stored verdicts
-python -m extract.export
+# Render data/extracted.csv from the verdicts of the works this release admits
+python -m extract.export --release <id>
+
+# Every stored verdict, whatever routing now says about its work
+python -m extract.export --all-releases
 
 # Render the sandbox's verdicts to their own CSV (set-asides go beside it)
-python -m extract.export --mode validation --out data/extracted-test.csv
+python -m extract.export --release <id> --mode validation --out data/extracted-test.csv
 
 # Does the file on disk match the verdicts? Writes nothing; non-zero if it differs
-python -m extract.export --check
+python -m extract.export --release <id> --check
 
 # Drop works whose only result row is from a superseded generation
-python -m extract.export --current-generation-only
+python -m extract.export --release <id> --current-generation-only
 ```
 
 **Input:** the routing release and the survivor pool, read in process — the tier
@@ -529,7 +532,28 @@ midnight UTC.
 and settled works before the limit applies, so `--limit 50` extracts 50 fresh works.
 Use it to bound spend.
 
-**`extract.export` is a pure render**: no network, no cache, no store, no pool. It
+**`extract.export` renders the works one routing release admits.** A verdict outlives
+the routing that bought it: a stored result row is selected by kind, mode and
+generation, by nothing about routing, so a work the rule book no longer admits would
+keep rendering forever. On 2026-08-08 a text-overlay coverage gap let ~450 OSF
+preregistrations be admitted, screened and extracted; once the rule book discards them
+their verdicts stay on record, and an unfiltered export would keep shipping them to the
+validation import. `--release <id>` renders only the works that release put in an
+admitted pile (`screen_expensive`, `screen_cheap`, `needs_human`) and prints the count
+it dropped, even when that count is zero. Omitted, the store's release is used when it
+holds exactly one and the command refuses when it holds several — the same refusal, in
+the same words, as `extract.tier` and the `filter.engine` subcommands. There is no
+"newest release" default: the store holds seven routings of the same pool, one of them
+a retired rule book that admitted 89,113 works against today's 4,650, so newest-wins
+would make the file's contents depend on whichever routing anyone last ran, unstated in
+the output.
+
+**`--all-releases` renders every stored verdict**, whatever routing now says about its
+work, and is the only invocation that opens no routing store. It is the pre-2026-08-08
+behaviour, kept for reading the record whole; it is not what the validation import
+wants. It cannot be combined with `--release`.
+
+**Otherwise the render is pure**: no network, no cache, no pool. It
 partitions rows into the set-aside CSVs on the way out, through the same
 `classify_row()` `extract.sanity_check` reports with, and the set-asides belong to the
 CSV being written (`--out data/extracted-test.csv` quarantines into
@@ -553,8 +577,11 @@ settle the live worklist.
 
 ```bash
 python -m extract.tier --run --mode validation --limit 20 --batch-label shakedown
-python -m extract.export --mode validation --out data/extracted-test.csv
+python -m extract.export --release <id> --mode validation --out data/extracted-test.csv
 ```
+
+The sandbox render is filtered by a release like any other: `--mode` says which runs'
+verdicts to read, not which works routing admits.
 
 There is no promotion step. Re-running the same work live is the promotion, and it is
 near-free because every LLM answer is already cached under a content-complete key.
@@ -684,7 +711,7 @@ CORRECTS THE VERDICTS it is rendered from; render the result afterwards.
 ```bash
 python -m extract.backfill_authors                   # dry run
 python -m extract.backfill_authors --apply
-python -m extract.export                             # render the correction
+python -m extract.export --release <id>              # render the correction
 python -m extract.backfill_authors --mode validation
 python -m extract.backfill_authors --doi 10.1234/example
 ```
@@ -704,7 +731,7 @@ python -m extract.audit_dois
 python -m extract.audit_dois --apply
 
 # Render the corrected CSV
-python -m extract.export
+python -m extract.export --release <id>
 
 # Audit a single DOI
 python -m extract.audit_dois --doi 10.1234/example

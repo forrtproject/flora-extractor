@@ -73,7 +73,9 @@ python -m filter.engine handoff --out data/filtered.csv
 
 # Stage 3 — extract original study + outcome, then render the CSV
 python -m extract.tier --run    # dry run without --run; --run needs the same keys
-python -m extract.export        # the verdicts → data/extracted.csv
+# The export renders the works the named release admits; with one release in the
+# store the id may be omitted, and a store holding several refuses without it.
+python -m extract.export --release <id>   # the verdicts → data/extracted.csv
 
 # Stage 4 — monitoring web app
 python -m validate.app        # → http://localhost:5001

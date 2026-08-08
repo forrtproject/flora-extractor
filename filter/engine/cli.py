@@ -42,8 +42,9 @@ from filter.engine.pool_reader import iter_pool_batches, overlay_manifest_hash
 from filter.engine.release import read_release, releases_dir, routing_release, write_release
 from filter.engine.spec import bundle_hash, load_specs
 from filter.engine.store import (
-    DEFAULT_STORE_PATH, StoreUnavailable, build_routing, drop_release, open_store,
-    pile_counts, releases, resolve_release, sample_pile,
+    DEFAULT_STORE_PATH, StoreUnavailable, build_routing, domain_coverage,
+    drop_release, inert_rules, open_store, pile_counts, releases, resolve_release,
+    sample_pile,
 )
 from filter.engine.workids import alias_release, load_aliases
 from shared.config import OVERLAY_DIR, SNAPSHOT_POOL_DIR
@@ -256,8 +257,53 @@ def cmd_route(args) -> int:
     _print_overlay(overlay_dir, indent="  ")
     for pile, count in sorted(pile_counts(con, release_id).items()):
         print(f"  {pile:<18} {count:,}")
+    _print_inert(inert_rules(con, release_id, specs))
+    _print_domains(domain_coverage(con, release_id, specs))
     con.close()
     return 0
+
+
+def _print_inert(report: dict) -> None:
+    """What every live rule did, as one count plus a line per rule that did nothing.
+
+    The count prints whether or not anything is inert, so "0 inert" is a statement
+    the release makes rather than a silence that could equally mean the check did
+    not run. A zero-match live rule is not always an error — a rule can be ahead of
+    the data — so this is loud and does not refuse the release.
+    """
+    inert = report["inert"]
+    print(f"  live rules: {report['live']}, {len(inert)} INERT "
+          "(matched zero works)")
+    for rule_id, pile in inert:
+        print(f"    INERT  {rule_id:<30} pile {pile}")
+    if inert:
+        print("    An inert live rule decides nothing at any precedence. Check its "
+              "match block against\n    the text this run actually read — the "
+              "overlay line above — before trusting this release.")
+    if report["shadow_inert"]:
+        print("  shadow rules that matched nothing: "
+              + ", ".join(report["shadow_inert"]))
+
+
+def _print_domains(coverage: list[dict]) -> None:
+    """How far each rule that declares a population actually reached inside it.
+
+    A rule can match plenty and still govern only part of what it claims: the
+    third number is the works inside the domain that this rule did not match and
+    another rule sent to a paying pile. Nothing is printed for a bundle where no
+    spec declares a domain — the field is opt-in.
+    """
+    if not coverage:
+        return
+    print("  domains (the population a rule declares it governs):")
+    for row in coverage:
+        print(f"    {row['spec_id']:<30} in domain {row['in_domain']:>9,}   "
+              f"matched {row['matched']:>9,}   "
+              f"UNCOVERED-ADMITTED {row['uncovered_admitted']:>9,}")
+    if any(row["uncovered_admitted"] for row in coverage):
+        print("    An uncovered-admitted work is inside the rule's own population, "
+              "was not matched by it,\n    and another rule sent it to a paying "
+              "pile. Whatever the rule reads did not reach it.")
 
 
 def _register_release(release_id: str, cache_dir: Path) -> bool:

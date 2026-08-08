@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-08-08T17:31:45",
+  "updated_at": "2026-08-08T20:04:43",
   "filtered": {
     "total": 2582749,
     "by_filter_status": {
@@ -155,11 +155,11 @@
     "rep_repro_no_abstract": 3408
   },
   "extracted": {
-    "total": 954,
+    "total": 717,
     "target_pending_count": 0,
     "by_match_type": {
-      "single_original": 905,
-      "multiple_original": 49
+      "single_original": 678,
+      "multiple_original": 39
     },
     "by_link_method": {
       "citation_context_match": 1,
@@ -174,39 +174,39 @@
       "no_original_found": 0,
       "target_pending": 0,
       "api_error": 0,
-      "_other": 861
+      "_other": 624
     },
     "by_model": {
-      "gpt": 924,
+      "gpt": 688,
       "gemini": 24,
-      "none": 6
+      "none": 5
     },
     "by_outcome": {
-      "success": 190,
-      "failure": 143,
-      "mixed": 88,
+      "success": 166,
+      "failure": 141,
+      "mixed": 87,
       "descriptive": 5,
       "statistically_successful_but_flawed": 1,
       "uninformative": 1,
-      "cannot_be_determined": 510,
+      "cannot_be_determined": 300,
       "not_a_replication": 0,
       "pending": 0,
       "api_error": 0,
       "_other": 16
     },
     "by_doi_verification": {
-      "verified": 951,
+      "verified": 714,
       "corrected": 3
     },
     "by_type": {
-      "replication": 934,
+      "replication": 697,
       "reproduction": 20
     },
     "by_outcome_replication": {
-      "cannot_be_determined": 506,
-      "success": 190,
-      "failure": 143,
-      "mixed": 88,
+      "cannot_be_determined": 296,
+      "success": 166,
+      "failure": 141,
+      "mixed": 87,
       "descriptive": 5,
       "uninformative": 1,
       "statistically_successful_but_flawed": 1
@@ -222,20 +222,20 @@
       "computational issues, robust": 1
     },
     "by_year": {
-      "2020": 124,
-      "2025": 119,
-      "2024": 102,
-      "2021": 98,
-      "2023": 96,
-      "2022": 94,
-      "2018": 80,
-      "2026": 57,
-      "2019": 45,
-      "2017": 42,
-      "2016": 24,
+      "2025": 85,
+      "2020": 79,
+      "2023": 73,
+      "2024": 73,
+      "2018": 70,
+      "2022": 67,
+      "2021": 55,
+      "2026": 47,
+      "2019": 39,
+      "2017": 36,
+      "2016": 23,
       "2014": 13,
-      "2015": 10,
-      "2013": 7,
+      "2015": 9,
+      "2013": 5,
       "2004": 3,
       "2001": 3,
       "2003": 3,

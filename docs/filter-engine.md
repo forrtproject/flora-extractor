@@ -188,6 +188,7 @@ version. Verbatim shape:
     "all_of": [],
     "none_of": []
   },
+  "domain": null,
   "pile": "discard",
   "vocabulary": null,
   "precedence": 960,
@@ -219,6 +220,13 @@ Match semantics:
   [`rule_ideas.md`](../filter/spec/rule_ideas.md) beside the arms that replaced it.
 - `pile` must be one of the four routable piles; `pending` is never a spec target.
 - `vocabulary` (`"replication"` / `"reproduction"` / null) feeds the status mapping.
+- `domain` (optional) is a match object naming the population the rule claims to
+  govern. It decides no routing. After a route, every live spec that declares one
+  is reported with its domain size, its match count, and the works in its domain
+  it did not match that another rule admitted to a paying pile — the count that
+  would have caught the 2026-08-08 campaign, where a live discard over OSF
+  registrations reached only the ones the text overlay had written text for.
+  Policy and how to write one: `filter/spec/CONVENTIONS.md`, "`domain`".
 
 A LIVE (`shadow: false`) `discard` spec has three extra validation rules, all in
 `validate_spec()`:
@@ -234,7 +242,8 @@ A LIVE (`shadow: false`) `discard` spec has three extra validation rules, all in
 `shadow: true` lifts all three.
 
 The full accepted key sets, from `spec.py`: top level `id, description, match,
-pile, vocabulary, precedence, shadow, measured`; inside a match `doi_prefix,
+domain, pile, vocabulary, precedence, shadow, measured`; inside a match or a
+domain `doi_prefix,
 doi_regex, title_regex, abstract_regex, text_regex, fields, abstract_missing,
 any_of, all_of, none_of`; inside
 `fields` `type, publication_year, concept_ids`; inside a `measured` entry
@@ -771,7 +780,7 @@ sandbox it promoted from; the sandbox is `--mode validation` plus a render.
 | Module | Contract |
 | --- | --- |
 | `extract/tier.py` | `extract_generation()` / `generation_inputs()` (the ladder version, four prompt versions and three model ids at their call sites' efforts); `extract_works(con, client, pool_dir, release_id, *, only, limit, redo, …) -> list[ExtractWork]` (the worklist); `run_extract_tier(con, client, release_id, *, mode, limit, run, batch_size, …)` (the batched claims loop); `estimate(works)` / `render_estimate(est)` (the per-rung dry run); `result_payload(source_row, doi_r, rows, observed)` and `render_payload(payload)` (the two halves of the round trip); `settled_work_ids(client)` (the checkpoint). CLI: `python -m extract.tier [--run] [--limit N] [--batch-label …] [--mode live\|validation] [--only ids] [--redo ids]`. |
-| `extract/export.py` | `latest_results(client, *, mode, current_generation_only) -> (work → result row, superseded count)`; `rows_from_results(results)`; `partition(rows) -> (main, {set-aside file: rows})`; `render(client, …)`; `write(report, out_csv)`; `check(report, out_csv)`. CLI: `python -m extract.export [--out …] [--mode …] [--check] [--current-generation-only]`. |
+| `extract/export.py` | `latest_results(client, *, mode, current_generation_only) -> (work → result row, superseded count)`; `rows_from_results(results)`; `partition(rows) -> (main, {set-aside file: rows})`; `render(client, …)`; `write(report, out_csv)`; `check(report, out_csv)`. CLI: `python -m extract.export [--out …] [--mode …] [--check] [--current-generation-only] [--release <id>\|--all-releases]`. |
 
 ### Two verdict-row kinds
 
@@ -899,8 +908,11 @@ would answer a question nobody is asked at the point of spending.
 
 ### The export
 
-`python -m extract.export` renders `data/extracted.csv` from the stored verdicts. A
-pure render.
+`python -m extract.export --release <id>` renders `data/extracted.csv` from the stored
+verdicts of the works that release admits — a verdict outlives the routing that bought
+it, so an unfiltered render keeps shipping works the rule book now discards
+(`--all-releases` asks for exactly that, and is the only invocation that reads no
+routing store). Otherwise a pure render.
 
 **Two generations, and why the older one still counts.** `--current-generation-only`
 gives the strict view: a verdict from a superseded ladder, prompt or model says

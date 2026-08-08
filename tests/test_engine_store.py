@@ -28,7 +28,7 @@ from filter.engine.store import (
 from filter.engine.workids import alias_release
 from search.snapshot_scan import _POOL_SCHEMA
 from shared.schema import ENGINE_EXPORTED_COLS, validate_csv_columns
-from tests.engine_bundle import POOL_ROWS, REAL_SPEC_DIR, write_bundle
+from tests.engine_bundle import POOL_ROWS, REAL_SPEC_DIR, pool_row, write_bundle
 
 SPEC_DIR = REAL_SPEC_DIR
 
@@ -266,6 +266,84 @@ def test_the_specs_command_lists_the_bundle(capsys):
     assert cli.main(["specs"]) == 0
     out = capsys.readouterr().out
     assert "not-a-report-type" in out and "bundle " in out
+
+
+def test_a_route_names_every_live_rule_that_matched_nothing(pool, tmp_path, capsys):
+    """A live rule matching zero rows is reported INERT; a shadow one is not.
+
+    The rule that went inert in production read a line only the text overlay
+    writes, so it matched nothing and nobody was told. The count prints on every
+    route, which is what makes "0 inert" a statement rather than a silence.
+    """
+    quiet = [
+        {"id": "syn-inert", "description": "a live rule ahead of its data",
+         "match": {"text_regex": r"(?i)quokka registration template"},
+         "pile": "screen_cheap", "precedence": 210},
+        {"id": "syn-shadow-quiet", "description": "a draft that matches nothing yet",
+         "match": {"text_regex": r"(?i)quokka deposit"},
+         "pile": "discard", "precedence": 805, "shadow": True,
+         "measured": [{"level": "heuristic", "rationale": "synthetic fixture"}]},
+    ]
+    route = ["route", "--pool", str(pool), "--pool-manifest-hash", "test-pool"]
+
+    assert cli.main(["--spec-dir", str(write_bundle(tmp_path / "clean"))] + route
+                    + ["--store", str(tmp_path / "clean.duckdb")]) == 0
+    assert "0 INERT" in capsys.readouterr().out
+
+    assert cli.main(["--spec-dir", str(write_bundle(tmp_path / "quiet", quiet))] + route
+                    + ["--store", str(tmp_path / "quiet.duckdb")]) == 0
+    out = capsys.readouterr().out
+    assert "1 INERT" in out
+    assert "INERT  syn-inert" in out and "pile screen_cheap" in out
+    assert "INERT  syn-shadow-quiet" not in out
+    assert "shadow rules that matched nothing: syn-shadow-quiet" in out
+
+
+def test_a_route_counts_the_domain_rows_a_rule_never_reached(pool, tmp_path, capsys):
+    """A rule that governs a population but matches only part of it is reported.
+
+    `syn-registrant` claims every 10.5555 row and only reaches the one whose title
+    it recognises; the other 10.5555 row is admitted to screen_expensive by
+    `syn-cite`. That is the shape that cost the 2026-08-08 campaign — the rule was
+    live, matched plenty, and never reached the rest of its own population.
+    """
+    governed = [
+        {"id": "syn-registrant", "description": "the registration registrant",
+         "match": {"all_of": [{"doi_prefix": ["10.5555"]},
+                              {"title_regex": r"(?i)\bwasps\b"}]},
+         "domain": {"doi_prefix": ["10.5555"]},
+         "pile": "screen_cheap", "precedence": 208},
+    ]
+    rows = POOL_ROWS + [
+        pool_row(9, doi="https://doi.org/10.5555/reg.wasps", year=2021,
+                 title="Registration: wasps", abstract="A registered wasp study."),
+        pool_row(10, doi="https://doi.org/10.5555/reg.smith", year=2021,
+                 title="A direct replication of the Smith effect",
+                 abstract="We report a direct replication of the anchoring effect, "
+                          "as reported by Smith et al. (2019)."),
+    ]
+    pool_dir = tmp_path / "governed-pool"
+    pool_dir.mkdir()
+    pq.write_table(pa.Table.from_pylist(rows, schema=_POOL_SCHEMA),
+                   pool_dir / "2024.parquet")
+
+    assert cli.main(["--spec-dir", str(write_bundle(tmp_path / "governed", governed)),
+                     "route", "--pool", str(pool_dir), "--pool-manifest-hash",
+                     "test-pool", "--store", str(tmp_path / "governed.duckdb")]) == 0
+    out = capsys.readouterr().out
+    assert "domains (the population a rule declares it governs):" in out
+    assert "syn-registrant" in out
+    assert "in domain         2" in out and "matched         1" in out
+    assert "UNCOVERED-ADMITTED         1" in out
+
+
+def test_a_bundle_declaring_no_domain_prints_no_domain_report(pool, spec_dir, tmp_path,
+                                                              capsys):
+    """The field is opt-in: a spec that declares no population adds no output."""
+    assert cli.main(["--spec-dir", str(spec_dir), "route", "--pool", str(pool),
+                     "--pool-manifest-hash", "test-pool",
+                     "--store", str(tmp_path / "plain.duckdb")]) == 0
+    assert "domains (" not in capsys.readouterr().out
 
 
 def test_route_then_export_runs_end_to_end_and_then_refuses_a_touched_bundle(
