@@ -52,6 +52,7 @@ the `cache/token_usage.json` delta, taken by `python -m analysis.stage3_eval.spe
 | 13 | the shortlist asked of CrossRef first — REPLACING OpenAlex's | **1** | 73 | 23 | 3 | **73** | $0.06 |
 | 14 | CrossRef ends the search only when it identified the paper; otherwise it leads a pool | **1** | 79 | 17 | 3 | **79** | $0.02 |
 | 15 | a title hit is accepted on containment, not only Jaccard | **1** | 79 | 17 | 3 | **79** | $0.01 |
+| 16 | the four faults holdout 3 and the maintainer found, plus six from a final review | **1** | 80 | 16 | 3 | **80** | $0.01 |
 
 Per-work labels and the reason for each: `labels-dev-<n>.json`, one per iteration.
 
@@ -579,11 +580,53 @@ fixing before the campaign:
 The third, 7028210935, is a Civile-2019 face-inversion paper standing in for another
 Civile 2019: right author, right topic area, probably the wrong paper.
 
+## Iteration 16 — where a no-identifier original actually comes from
+
+The maintainer's question after holdout 3 — *"OpenAlex and CrossRef are unlikely to
+ever return no identifier. Are we not saving the OpenAlex ids?"* — was the right one,
+and the answer was no on both counts.
+
+Such an original is not a CrossRef or OpenAlex record at all. It is a reference GROBID
+parsed out of the PDF, whose title the OCR mangled: "Report of an jnternship c:gndyctp1
+lithe MemQrial Unjvmj'Y", `authors_o` = "B.". And separately **we were discarding the
+identifier we had**: `_merge_multi_row` used the record's `openalex_id` to build the
+`pair_id` and then dropped it, so a DOI-less OpenAlex reference record reached the guard
+carrying nothing and spent a title search re-finding what it had been handed.
+`_fill_work_ids` only ever derives that column FROM `doi_o`, so nothing else filled it.
+
+Four changes:
+
+1. The record's own work id reaches the row.
+2. A DOI-less record is also searched by **author and year**. `resolve_doi_by_metadata`
+   scores candidates by title similarity, so on a mangled title it cannot succeed
+   however well the paper is indexed; the author and the year survive OCR better.
+3. What is still unidentified is **kept and flagged**, not written `resolved`: link
+   method `unidentified_original`, its own set-aside file. This is deliberately not a
+   similarity test. Measured over 277 correct links, title Jaccard between an original
+   and its replication reaches **0.73** ("Rurality in England and Wales 1981" against
+   "…1991: A Replication"), while the two real self-links scored **0.50 and 0.17** —
+   one because OCR had mangled the title it copied. Similarity does not separate the
+   classes at any threshold; identifiability does.
+4. Before `no_original_found` closes a work whose own text cites somebody, that
+   citation is looked up and the model is **asked** about it. The maintainer's
+   correction to my first proposal: a veto would hold open every paper that says "we
+   replicate X because Smith (2010) argued replications matter". If the model
+   recognises the cited work the paper has a link; if it declines, the verdict stands
+   and the row records the question rather than one reader's silence.
+
+**A final codex review found six more, three of them campaign blockers**, all fixed in
+`2591c20`. The one worth repeating: the title-search cache key named the response shape
+but not the rule deciding which hit is returned — so every miss cached under Jaccard
+0.7 would have replayed as a miss under the containment rule. **That is why iteration
+15 measured as a no-op**; it was never actually exercised.
+
+**Dev finishes at 80 correct settles and 1 wrong.**
+
 ### Where the exercise finishes
 
 | | baseline | final |
 | - | -------: | ----: |
-| dev correct settles | 24 | **79** |
+| dev correct settles | 24 | **80** |
 | dev wrong settles | 25 | **1** |
 | holdout wrong settles | — | **3** (holdout 1: 2, holdout 2: 1) |
 
