@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-08-08T20:04:43",
+  "updated_at": "2026-08-08T22:33:19",
   "filtered": {
     "total": 2582749,
     "by_filter_status": {
@@ -155,11 +155,11 @@
     "rep_repro_no_abstract": 3408
   },
   "extracted": {
-    "total": 717,
+    "total": 684,
     "target_pending_count": 0,
     "by_match_type": {
-      "single_original": 678,
-      "multiple_original": 39
+      "single_original": 643,
+      "multiple_original": 41
     },
     "by_link_method": {
       "citation_context_match": 1,
@@ -174,38 +174,38 @@
       "no_original_found": 0,
       "target_pending": 0,
       "api_error": 0,
-      "_other": 624
+      "_other": 591
     },
     "by_model": {
-      "gpt": 688,
-      "gemini": 24,
+      "gpt": 656,
+      "gemini": 23,
       "none": 5
     },
     "by_outcome": {
-      "success": 166,
-      "failure": 141,
+      "success": 158,
+      "failure": 144,
       "mixed": 87,
       "descriptive": 5,
       "statistically_successful_but_flawed": 1,
       "uninformative": 1,
-      "cannot_be_determined": 300,
+      "cannot_be_determined": 273,
       "not_a_replication": 0,
       "pending": 0,
       "api_error": 0,
-      "_other": 16
+      "_other": 15
     },
     "by_doi_verification": {
-      "verified": 714,
-      "corrected": 3
+      "verified": 680,
+      "corrected": 4
     },
     "by_type": {
-      "replication": 697,
-      "reproduction": 20
+      "replication": 665,
+      "reproduction": 19
     },
     "by_outcome_replication": {
-      "cannot_be_determined": 296,
-      "success": 166,
-      "failure": 141,
+      "cannot_be_determined": 269,
+      "success": 158,
+      "failure": 144,
       "mixed": 87,
       "descriptive": 5,
       "uninformative": 1,
@@ -213,27 +213,27 @@
     },
     "by_outcome_reproduction": {
       "cannot_be_determined": 4,
-      "computationally reproducible, robustness challenges": 4,
       "not checked, robust": 3,
       "computational issues, robustness challenges": 3,
+      "computationally reproducible, robustness challenges": 3,
       "computationally reproducible, not checked": 2,
       "computationally reproducible, robust": 2,
       "not checked, robustness challenges": 1,
       "computational issues, robust": 1
     },
     "by_year": {
-      "2025": 85,
-      "2020": 79,
-      "2023": 73,
-      "2024": 73,
-      "2018": 70,
-      "2022": 67,
+      "2025": 83,
+      "2023": 74,
+      "2020": 73,
+      "2024": 72,
+      "2022": 65,
+      "2018": 57,
       "2021": 55,
-      "2026": 47,
-      "2019": 39,
-      "2017": 36,
+      "2026": 43,
+      "2019": 37,
+      "2017": 33,
       "2016": 23,
-      "2014": 13,
+      "2014": 12,
       "2015": 9,
       "2013": 5,
       "2004": 3,
