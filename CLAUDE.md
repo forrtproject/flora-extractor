@@ -370,7 +370,7 @@ Every mistake came from acting before one of those checks.
 
 Every LLM call records input/output tokens per day/provider/model in
 `cache/token_usage.json` (`shared/token_usage.py`). OpenAI spend is hard-capped by
-`OPENAI_DAILY_TOKEN_BUDGET` (default 8,000,000/day; `0` disables): when exhausted,
+`OPENAI_DAILY_TOKEN_BUDGET` (default 9,500,000/day — the free allocation, resetting midnight UTC; `0` disables): when exhausted,
 `TokenBudgetExhausted` stops the run cleanly (rows written so far stay, sanity_check
 runs). Dashboard display of usage: issue #115.
 
@@ -553,7 +553,7 @@ RESEARCHER_EMAIL=...            # required: OpenAlex/CrossRef politeness headers
 GEMINI_API_KEY=...              # required
 OPENAI_API_KEY=...              # required for Stage 3 (default screen voter 2)
 OPENROUTER_API_KEY=...          # only if SCREENING_MODEL_2 contains "/"
-OPENAI_DAILY_TOKEN_BUDGET=8000000   # 0 disables the cap
+OPENAI_DAILY_TOKEN_BUDGET=9500000   # 0 disables the cap (default = the free daily allocation, resets midnight UTC)
 GEMINI_USE_FLEX=true            # 50% discount on paid keys; flex uses GEMINI_FLEX_TIMEOUT
 OPENAI_USE_FLEX=true            # same trade on OpenAI; refused flex falls back to standard
 GEMINI_PAID_KEY_SLOTS=1         # which key SLOTS are billing-enabled, not key values

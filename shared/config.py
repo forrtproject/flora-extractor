@@ -356,7 +356,9 @@ OPENAI_FLEX_TIMEOUT = int(os.getenv("OPENAI_FLEX_TIMEOUT", "900"))
 # a call that would be made past the ceiling is refused rather than billed. Gemini
 # and OpenRouter usage is recorded but never capped. Set OPENAI_DAILY_TOKEN_BUDGET=0
 # to lift the cap — that is the explicit override, and nothing else disables it.
-OPENAI_DAILY_TOKEN_BUDGET = int(os.getenv("OPENAI_DAILY_TOKEN_BUDGET", "8000000"))
+# The default is OpenAI's free daily token allocation (9.5M, resets midnight UTC —
+# the day _today() in shared/token_usage.py keys on).
+OPENAI_DAILY_TOKEN_BUDGET = int(os.getenv("OPENAI_DAILY_TOKEN_BUDGET", "9500000"))
 
 # ── Rate limits (seconds between calls) ──────────────────────────────────────
 OPENALEX_RATE_SEC  = float(os.getenv("OPENALEX_RATE_SEC", "0.3"))

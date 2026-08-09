@@ -26,7 +26,7 @@ from __future__ import annotations
 import json
 import os
 import threading
-from datetime import date
+from datetime import datetime, timezone
 
 from .config import CACHE_DIR, OPENAI_DAILY_TOKEN_BUDGET, log
 from .utils import csv_lock
@@ -50,7 +50,10 @@ class TokenBudgetExhausted(RuntimeError):
 
 
 def _today() -> str:
-    return date.today().isoformat()
+    # The UTC date, because the day this budget models is OpenAI's: the free daily
+    # token allocation resets at midnight UTC, and a local-date key opened the
+    # budget two hours before the allocation it stands for (observed 2026-08-09).
+    return datetime.now(timezone.utc).date().isoformat()
 
 
 def _read_all() -> dict:
