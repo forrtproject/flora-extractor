@@ -484,7 +484,10 @@ OUTCOME_DESCENT = True
 #      "Replication of X" / "X" wrong-paper pair); landing scrapes send a Referer
 #      and try every candidate; playwright reaches DOI-less rows and retries once
 #      under the declared bot identity (2026-08-09)
-EXTRACT_LADDER_VERSION: int = 20
+#  21  OSF requests carry the OSF_TOKEN when set: 20 of the no-document rows are
+#      api.osf.io nodes that answer 401 anonymously but list their files to the
+#      project's own token (2026-08-09)
+EXTRACT_LADDER_VERSION: int = 21
 
 
 # Columns to pass through from the input row (no renaming). Only columns

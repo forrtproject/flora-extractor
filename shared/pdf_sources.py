@@ -62,7 +62,7 @@ import requests
 
 from .config import (
     CROSSREF_RATE_SEC, OA_CACHE_DIR, OA_XML_CACHE_DIR, OPENALEX_API_KEYS,
-    PDF_CACHE_DIR, RESEARCHER_EMAIL, SERPAPI_KEY, SERPAPI_KEYS, log,
+    OSF_TOKEN, PDF_CACHE_DIR, RESEARCHER_EMAIL, SERPAPI_KEY, SERPAPI_KEYS, log,
 )
 
 from .openalex_keys import (current_index, headers as oa_headers,
@@ -664,8 +664,7 @@ def get_osf_registration(guid: str) -> "dict | None":
     try:
         throttle("osf", _OSF_RATE_SEC)
         resp = requests.get(_OSF_REGISTRATION_API.format(guid=guid),
-                            headers={"User-Agent": f"flora-extractor ({RESEARCHER_EMAIL})"},
-                            timeout=30)
+                            headers=_osf_headers(), timeout=30)
     except Exception as e:
         raise DocumentSourceUnavailable(f"OSF fetch failed for {guid}: {e}") from e
     if resp.status_code == 404:
@@ -765,8 +764,14 @@ _OSF_TITLE_OVERLAP_MIN = 0.5
 
 
 def _osf_headers() -> dict:
-    return {"User-Agent": f"flora-extractor ({RESEARCHER_EMAIL})",
-            "Accept": "application/json"}
+    # The token turns "not yours" into a listing for embargoed-but-shared projects
+    # (the abstract backfill already sends it; 20 of the current no-document rows
+    # are api.osf.io nodes that answer 401 anonymously).
+    headers = {"User-Agent": f"flora-extractor ({RESEARCHER_EMAIL})",
+               "Accept": "application/json"}
+    if OSF_TOKEN:
+        headers["Authorization"] = f"Bearer {OSF_TOKEN}"
+    return headers
 
 
 def _osf_get_json(url: str, params: "dict | None" = None) -> "dict | None":
