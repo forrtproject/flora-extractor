@@ -2,7 +2,10 @@
 pdf_sources.py — Multi-tier PDF acquisition.
 
 Acquisition order:
+  0a. The manuscript in an OSF project's file storage (above the registration form,
+      because an uploaded file IS the paper and the form describes one)
   0c. The row's own URL, downloaded directly (no index, no DOI needed)
+  0d. The paper this DOI is a REVIEW of (Crossref `is-review-of`, e.g. PCI → preprint)
   1. OSF preprint direct download  (DOI-pattern based, no API)
   1b. OpenAlex locations[] — every copy it knows of, files then landing pages
   1c. DataCite — the registrant's own metadata, for the DOIs Unpaywall never indexed
@@ -11,6 +14,8 @@ Acquisition order:
   3. SemanticScholar open-access PDF
   4. CORE.ac.uk aggregator
   5. Europe PMC
+  5b. Crossref bibliographic title search — the only route for a row with NO DOI;
+      gated on a two-way title match before anything is fetched
   6. Unpaywall landing-page scraper (HTML scraping for repo pages)
   7. SerpAPI / Google Scholar      (consumes quota, last resort)
   8. Playwright headless Chromium  (bypasses JS-rendered paywalls)
@@ -56,8 +61,8 @@ from typing import Optional
 import requests
 
 from .config import (
-    OA_CACHE_DIR, OA_XML_CACHE_DIR, OPENALEX_API_KEYS, PDF_CACHE_DIR,
-    RESEARCHER_EMAIL, SERPAPI_KEY, SERPAPI_KEYS, log,
+    CROSSREF_RATE_SEC, OA_CACHE_DIR, OA_XML_CACHE_DIR, OPENALEX_API_KEYS,
+    PDF_CACHE_DIR, RESEARCHER_EMAIL, SERPAPI_KEY, SERPAPI_KEYS, log,
 )
 
 from .openalex_keys import (current_index, headers as oa_headers,
@@ -706,6 +711,241 @@ def get_osf_registration(guid: str) -> "dict | None":
     return registration
 
 
+# ── OSF file storage ──────────────────────────────────────────────────────────
+# A registration or project is a container, and the registration FORM is only one of
+# the things in it: authors routinely upload the manuscript itself to the project's
+# file storage. That file is the paper; the form is a description of it. So the
+# storage is asked first and the form is the fallback.
+#
+# The listing is a JSON:API tree. Two things make it more than one request: the
+# response pages (links.next), and a registration wraps everything in an "Archive of
+# OSF Storage" folder whose children are reached through
+# relationships.files.links.related.href.
+
+_OSF_FILES_API = "https://api.osf.io/v2/{node_type}/{guid}/files/osfstorage/"
+
+# Both node types are asked because the guid alone does not say which it is: a
+# registration answers under /registrations/ and 404s under /nodes/, and vice versa.
+_OSF_NODE_TYPES = ("nodes", "registrations")
+
+# The listing walk's budget. A deep project with many folders could otherwise cost
+# dozens of requests for a document that is almost always in the first page.
+_OSF_MAX_LIST_REQUESTS = 15
+
+# How many of the ranked candidates are downloaded before the tier gives up. Each one
+# is a real download and a title check, so the ranking has to be right for the top
+# few and the cap is what stops a project of forty files from costing forty fetches.
+_OSF_MAX_DOWNLOADS = 5
+
+_OSF_FILE_SUFFIXES = (".pdf", ".docx")
+
+# What a filename says about whether it is the paper. Both lists are read against the
+# whole filename, lowercased. The exclusions are the file kinds an OSF project carries
+# BESIDE the manuscript — measured on campaign projects: supplements, measures,
+# instruction scripts, Qualtrics exports, data-wrangling logs, author correspondence.
+_OSF_NAME_POSITIVE = re.compile(
+    r"(?i)manuscript|preprint|report|paper|final|\bmain\b|thesis"
+    r"|stage\s*2|\brrr\b|article|\bprint\b")
+_OSF_NAME_EXCLUDE = re.compile(
+    r"(?i)supplement|material|measure|instruction|question|transcript|codebook"
+    r"|wrangl|correspondence|ethic|qualtrics|survey|analys|appendix|syntax"
+    r"|\bdata\b|dataset|_data|\blog\b")
+# A Stage-1 Registered Report or a preregistration snapshot is the manuscript
+# BEFORE the study ran — its "results" are simulated placeholders (measured
+# 2026-08-09: the 10.17605/osf.io/4jykd pick opens with "Abstract, method, and
+# results were written using a randomized dataset"). Such files are ranked
+# behind every other candidate, not dropped: for a project that never deposited
+# a final report they are still the best available statement of the target.
+_OSF_NAME_PREREG = re.compile(
+    r"(?i)prereg|pre-reg|stage\s*-?\s*1|snapshot|protocol|registration")
+
+# Filename tokens covering this much of the row title make the file the paper's own
+# name, whatever else the name says.
+_OSF_TITLE_OVERLAP_MIN = 0.5
+
+
+def _osf_headers() -> dict:
+    return {"User-Agent": f"flora-extractor ({RESEARCHER_EMAIL})",
+            "Accept": "application/json"}
+
+
+def _osf_get_json(url: str, params: "dict | None" = None) -> "dict | None":
+    """One OSF API GET. None when OSF answered "not here / not yours" (401/403/404).
+
+    Raises DocumentSourceUnavailable for everything else, because the caller records a
+    fourteen-day suppression and only a real absence may buy one.
+    """
+    throttle("osf", _OSF_RATE_SEC)
+    try:
+        resp = requests.get(url, headers=_osf_headers(), params=params or {},
+                            timeout=30)
+    except Exception as e:
+        raise DocumentSourceUnavailable(f"OSF files fetch failed for {url}: {e}") from e
+    if resp.status_code in (401, 403, 404):
+        return None
+    if resp.status_code != 200:
+        raise DocumentSourceUnavailable(f"OSF files {url} → HTTP {resp.status_code}")
+    try:
+        return resp.json()
+    except Exception as e:
+        raise DocumentSourceUnavailable(f"OSF files {url} unreadable: {e}") from e
+
+
+def _walk_osf_storage(url: str, budget: list[int], incomplete: list[bool],
+                      params: "dict | None" = None) -> "list[dict] | None":
+    """Every file under *url*, following pagination and one level into each folder.
+
+    Returns None when OSF answered 401/403/404 for the first request — the caller
+    reads that as "this node type is not the one", not as "there are no files".
+    *budget* is a one-element list so the recursion shares one request count, and
+    *incomplete* is one more: it is set whenever any request after the first failed to
+    answer, so the caller knows the listing it got is a part of the tree rather than
+    the whole of it. Only a whole one may be cached — a truncated listing cached as
+    definitive makes the files it missed permanently invisible.
+    """
+    files: list[dict] = []
+    next_url: "str | None" = url
+    next_params = params
+    first = True
+    while next_url and budget[0] > 0:
+        budget[0] -= 1
+        try:
+            data = _osf_get_json(next_url, next_params)
+        except DocumentSourceUnavailable:
+            if first:
+                raise       # the node type never answered at all — the caller's call
+            incomplete[0] = True
+            return files
+        if data is None:
+            if first:
+                return None
+            incomplete[0] = True    # a page of a walk that had already started
+            return files
+        first = False
+        next_params = None          # links.next already carries the page parameters
+        for entry in (data.get("data") or []):
+            attrs = entry.get("attributes") or {}
+            kind = str(attrs.get("kind") or "")
+            name = str(attrs.get("name") or "")
+            if kind == "file":
+                links = entry.get("links") or {}
+                guid = str(attrs.get("guid") or "").strip()
+                download = str(links.get("download") or "")
+                if not download and guid:
+                    download = f"https://osf.io/download/{guid}/"
+                if download:
+                    files.append({"name": name,
+                                  "size": int(attrs.get("size") or 0),
+                                  "download": download})
+            elif kind == "folder" and budget[0] > 0:
+                related = (((entry.get("relationships") or {}).get("files") or {})
+                           .get("links") or {}).get("related") or {}
+                href = str(related.get("href") or "")
+                if href:
+                    # The page size goes down with it: a folder listed at OSF's
+                    # default of ten pages through the request budget.
+                    try:
+                        inner = _walk_osf_storage(href, budget, incomplete,
+                                                  {"page[size]": 100})
+                    except DocumentSourceUnavailable:
+                        inner = None
+                    if inner is None:
+                        # A folder that refused or never answered is a part of the
+                        # tree we did not see, not an empty one.
+                        incomplete[0] = True
+                    files.extend(inner or [])
+        next_url = ((data.get("links") or {}).get("next") or None)
+    return files
+
+
+def list_osf_files(guid: str) -> list[dict]:
+    """Every .pdf/.docx in *guid*'s OSF storage: [{"name", "size", "download"}].
+
+    Cached per guid, including a definitive empty listing — but only a COMPLETE
+    listing, and only for PDF_RETRY_AFTER_DAYS. OSF storage is mutable by design (the
+    manuscript is uploaded after the registration this tier reads), so an immortal
+    cache would answer the 14-day re-probe with the listing that made it fail. Raises
+    DocumentSourceUnavailable when neither node type answered at all — an empty list
+    means OSF said there is nothing, never that it failed to say.
+    """
+    if not guid:
+        return []
+    cf = OA_CACHE_DIR / f"osffiles_{cache_key(guid)}.json"
+    if cf.exists():
+        try:
+            cached = json.loads(cf.read_text(encoding="utf-8"))
+        except Exception:
+            cached = None
+        # No fetched_at at all is an entry written before the expiry existed: stale.
+        if isinstance(cached, dict) and _retry_suppressed(
+                {"listing": str(cached.get("fetched_at") or "")}, "listing",
+                PDF_RETRY_AFTER_DAYS):
+            return list(cached.get("files") or [])
+
+    budget = [_OSF_MAX_LIST_REQUESTS]
+    incomplete = [False]
+    files: "list[dict] | None" = None
+    outages: list[str] = []
+    for node_type in _OSF_NODE_TYPES:
+        url = _OSF_FILES_API.format(node_type=node_type, guid=guid)
+        try:
+            found = _walk_osf_storage(url, budget, incomplete,
+                                      params={"page[size]": 100})
+        except DocumentSourceUnavailable as exc:
+            outages.append(str(exc))
+            continue
+        if found is not None:
+            files = found
+            break
+    if files is None:
+        if outages:
+            raise DocumentSourceUnavailable("; ".join(outages))
+        files = []      # both node types answered "not here" — a real absence
+
+    documents = [f for f in files
+                 if f["name"].lower().endswith(_OSF_FILE_SUFFIXES)]
+    if budget[0] > 0 and not incomplete[0]:
+        # A walk that ran out of requests, or that lost a page or a folder to a
+        # failure, saw part of the tree; caching a partial listing would make the
+        # unseen part invisible until the entry expired.
+        write_json(cf, {"files": documents, "fetched_at": _now_iso()})
+    return documents
+
+
+def rank_osf_files(files: list[dict], title: str = "") -> list[dict]:
+    """*files*, best manuscript candidate first, with the non-manuscripts dropped.
+
+    A name that hits an exclusion and carries fewer than two positive signals is not
+    offered at all: the title check downstream is the backstop, and a supplement to the
+    right paper passes it. Ties break to PDF over Word, then to the larger file.
+    """
+    scored: list[tuple] = []
+    for entry in files:
+        name = str(entry.get("name") or "")
+        stem = re.sub(r"[_\-.,&]+", " ", name.rsplit(".", 1)[0])
+        score = len(set(m.group(0).lower()
+                        for m in _OSF_NAME_POSITIVE.finditer(name)))
+        if _OSF_NAME_EXCLUDE.search(name):
+            # One positive word does not survive an exclusion: "final test
+            # questions.pdf" carries "final" and is a questionnaire. Two positive
+            # signals do — that is a manuscript whose name happens to mention its
+            # analyses. The row's title is deliberately NOT one of them:
+            # "Supplementary materials for <row title>.pdf" carries the whole title
+            # and is the supplement, so the bonus below ranks non-excluded names and
+            # rescues nothing.
+            if score < 2:
+                continue
+            score -= 1
+        elif title.strip() and token_coverage(title, stem) >= _OSF_TITLE_OVERLAP_MIN:
+            score += 2
+        is_pdf = name.lower().endswith(".pdf")
+        prereg = 1 if _OSF_NAME_PREREG.search(name) else 0
+        scored.append((prereg, -score, 0 if is_pdf else 1,
+                       -int(entry.get("size") or 0), name, entry))
+    scored.sort(key=lambda row: row[:5])
+    return [row[5] for row in scored]
+
+
 # ── HTML as a document ────────────────────────────────────────────────────────
 # 30% of the 2026-08-06 worklist carries no DOI, only a repository URL, and
 # `acquire_pdf` was never told that URL — of 22 probed on 2026-08-07, 17 answered
@@ -1029,6 +1269,187 @@ def get_datacite_urls(doi: str) -> list[dict]:
     return results
 
 
+# ── Crossref: the reviewed paper, and the paper behind a bare title ────────────
+#
+# Two rows the DOI-keyed tiers cannot serve at all:
+#
+#   * a Peer Community In recommendation (10.24072/pci.rr.*). Its own DOI has no
+#     document worth reading — the paper is the preprint it reviews, named in the
+#     Crossref record's `relation["is-review-of"]` (measured: a PCI RR DOI points at a
+#     10.31234 PsyArXiv preprint).
+#   * a row with no DOI at all — 223 of the 2026-08-07 no-document rows. Nothing above
+#     the HTML tier can be asked about them, because every index above is keyed on a
+#     DOI the row does not have. A bibliographic title search is the only route to one.
+#
+# Both then acquire ANOTHER paper's document, which is the wrong-paper risk this module
+# already spends a title check on. The search route therefore gates twice: the metadata
+# titles must match before a byte is fetched, and the bytes must pass _title_check.
+
+_CROSSREF_UA = "FLoRA-DisambiguationPipeline/1.0 (mailto:{email})"
+
+# Shorter than this, a title is too generic for a bibliographic search to be evidence
+# of anything ("Replication", "Study 2").
+_MIN_SEARCH_TITLE_CHARS = 30
+
+# The two-way coverage a Crossref title hit must clear before its document is fetched.
+# Higher than the download-time _TITLE_MATCH_CLEAR, and separate from it: that one
+# grades bytes that were already fetched for a KNOWN DOI, while this one decides which
+# other paper's DOI to fetch at all, and the near-miss it must refuse — the original
+# under the replication's title — is this corpus's most common pair.
+_SEARCH_TITLE_MATCH_MIN = 0.80
+
+# The vocabulary that makes a title a replication's rather than the original's.
+_REPLICATION_STEM = re.compile(r"(?i)replicat|reproduc|re-?examin|revisit")
+
+# The one registrant whose `is-review-of` relation means "this record has no text of
+# its own; the reviewed paper is the paper": Peer Community In. Crossref carries the
+# same relation on book reviews, published commentaries and review reports, and each
+# of those IS a publication with its own full text — redirecting such a row to the
+# work it discusses would code it from the wrong paper.
+_REVIEW_RELATION_REGISTRANTS = ("10.24072",)
+
+
+def _crossref_get(url: str, params: dict, cache_file: Path,
+                  none_on_404: bool = True) -> "dict | None":
+    """A cached Crossref GET. None when Crossref has no such record (404).
+
+    Raises DocumentSourceUnavailable when the API did not answer — the shape
+    `_fetch_unpaywall_data` uses, and for the same reason.
+
+    *none_on_404* is what /works/{doi} and the search endpoint disagree about: for a
+    record lookup a 404 IS the answer "no such DOI", while a search answers "nothing
+    found" with 200 and an empty items list, so a 404 there is the service
+    misbehaving. Caching that would disable the title search for the title forever.
+    """
+    if cache_file.exists():
+        try:
+            data = json.loads(cache_file.read_text(encoding="utf-8"))
+        except Exception:
+            data = None
+        if isinstance(data, dict):
+            return None if data.get("__none__") else data
+
+    throttle("crossref", CROSSREF_RATE_SEC)
+    try:
+        r = requests.get(url, params=params, timeout=20,
+                         headers={"User-Agent": _CROSSREF_UA.format(email=RESEARCHER_EMAIL)})
+        if r.status_code == 404:
+            if not none_on_404:
+                raise DocumentSourceUnavailable(f"Crossref HTTP 404 for {url}")
+            write_json(cache_file, {"__none__": True})
+            return None
+        if r.status_code != 200:
+            raise DocumentSourceUnavailable(f"Crossref HTTP {r.status_code} for {url}")
+        data = r.json()
+    except DocumentSourceUnavailable:
+        raise
+    except Exception as e:
+        raise DocumentSourceUnavailable(f"Crossref error for {url}: {e}") from e
+
+    write_json(cache_file, data)
+    return data
+
+
+def crossref_reviewed_doi(doi: str) -> str:
+    """The DOI this review/recommendation is OF, or "" when it reviews nothing."""
+    doi = clean_doi(doi)
+    if not doi:
+        return ""
+    data = _crossref_get(f"https://api.crossref.org/works/{doi}", {},
+                         OA_CACHE_DIR / f"crmeta_{cache_key(doi)}.json")
+    relation = ((data or {}).get("message") or {}).get("relation") or {}
+    for item in (relation.get("is-review-of") or []):
+        if str((item or {}).get("id-type") or "").lower() == "doi":
+            reviewed = clean_doi(str(item.get("id") or ""))
+            if reviewed and reviewed != doi:
+                return reviewed
+    return ""
+
+
+def crossref_title_matches(title: str) -> list[str]:
+    """DOIs of Crossref works whose own title is *title*, strictest match only.
+
+    Coverage is asymmetric, so both directions are required: one direction alone
+    accepts a subset title, and "Replication of X" against the original "X" is exactly
+    the pair this route must not follow. Both directions at 0.60 do not stop that pair
+    either — measured, "A direct replication of Ego depletion and moral judgment"
+    against "Ego depletion and moral judgment" scores 0.71/1.00, because the added
+    words are a minority of the tokens. Hence two gates: a coverage cut high enough
+    that a handful of added words fails it, and the vocabulary the added words are
+    drawn from. In this corpus the row IS the replication, so a row title that says so
+    against a hit title that does not is the modal wrong pair, not an edge case.
+    """
+    title = str(title or "").strip()
+    if len(title) < _MIN_SEARCH_TITLE_CHARS:
+        return []
+    data = _crossref_get("https://api.crossref.org/works",
+                         {"rows": 5, "query.bibliographic": title},
+                         OA_CACHE_DIR / f"crsearch_{cache_key(title)}.json",
+                         none_on_404=False)
+    row_is_replication = bool(_REPLICATION_STEM.search(title))
+    matches: list[str] = []
+    for item in (((data or {}).get("message") or {}).get("items") or []):
+        hit_title = " ".join(str(t) for t in (item.get("title") or []))
+        hit_doi = clean_doi(str(item.get("DOI") or ""))
+        if not (hit_doi and hit_title):
+            continue
+        if row_is_replication and not _REPLICATION_STEM.search(hit_title):
+            continue
+        if (token_coverage(title, hit_title) >= _SEARCH_TITLE_MATCH_MIN
+                and token_coverage(hit_title, title) >= _SEARCH_TITLE_MATCH_MIN):
+            matches.append(hit_doi)
+    return matches
+
+
+def crossref_title(doi: str) -> str:
+    """The title Crossref holds for *doi*, or "" when it holds none."""
+    doi = clean_doi(doi)
+    if not doi:
+        return ""
+    data = _crossref_get(f"https://api.crossref.org/works/{doi}", {},
+                         OA_CACHE_DIR / f"crmeta_{cache_key(doi)}.json")
+    titles = ((data or {}).get("message") or {}).get("title") or []
+    return " ".join(str(t) for t in titles).strip()
+
+
+def document_urls_for_doi(doi: str) -> tuple[list[str], bool]:
+    """(candidate document URLs for *doi*, did any source fail to answer).
+
+    The cheap DOI-keyed lookups of the waterfall, over ANOTHER paper's DOI: the two
+    tiers that follow a relation or a title search need a document for a DOI that is
+    not the row's, and re-entering acquire_pdf would cache it under that other DOI,
+    write it a retry log and label it with that run's tier instead of the tier that
+    really found it.
+
+    The outage flag is what keeps a provider's bad minute out of the retry log.
+    """
+    doi = clean_doi(doi)
+    if not doi:
+        return [], False
+
+    urls: list[str] = []
+    outage = False
+    osf = get_osf_pdf_url(doi)
+    if osf:
+        urls.append(osf)
+    try:
+        urls += [u["url"] for u in get_all_unpaywall_pdf_urls(doi) if u["type"] == "pdf"]
+    except DocumentSourceUnavailable as exc:
+        outage = True
+        log.info("  Unpaywall unavailable for related %s: %s", doi, exc)
+    try:
+        # Files only. The row's own landing pages are scraped one tier down; these
+        # DOIs have no such tier, so a landing page here can only be fetched raw,
+        # refused as not_a_pdf, and counted as the tier having tried something.
+        urls += [u["url"] for u in get_openalex_locations(doi) if u["type"] == "pdf"]
+    except DocumentSourceUnavailable as exc:
+        outage = True
+        log.info("  OpenAlex unavailable for related %s: %s", doi, exc)
+
+    seen: set[str] = set()
+    return [u for u in urls if not (u in seen or seen.add(u))], outage
+
+
 # ── OpenAlex GROBID XML (Tier 0) ──────────────────────────────────────────────
 
 def openalex_xml_has_content(oa_xml: "dict | None") -> bool:
@@ -1244,13 +1665,21 @@ def get_openalex_fulltext(openalex_id: str) -> "dict | None":
 
 # ── Landing-page HTML scraper ─────────────────────────────────────────────────
 
-def scrape_pdf_from_landing_page(landing_url: str) -> Optional[str]:
-    """
-    Scrape an institutional repository landing page for a direct PDF link.
-    Covers HAL, DSpace, Pure, and generic repos.
+# How many of a landing page's PDF links are downloaded before the tier gives up.
+# Each is a real fetch, and beyond the first few the hrefs are cited-by links and
+# journal front matter rather than this paper.
+_MAX_LANDING_CANDIDATES = 4
+
+def scrape_pdf_from_landing_page(landing_url: str) -> list[str]:
+    """Direct PDF links found on a repository landing page, best candidate first.
+
+    Covers HAL, DSpace, Pure, and generic repos. Every resolved candidate is returned
+    rather than only the first: a page routinely offers the publisher's paywalled copy,
+    a mirror and the accepted manuscript, and the first href is as often the one that
+    403s as the one that serves. The caller tries them in turn.
     """
     if not landing_url:
-        return None
+        return []
     try:
         r = requests.get(
             landing_url,
@@ -1260,7 +1689,7 @@ def scrape_pdf_from_landing_page(landing_url: str) -> Optional[str]:
             allow_redirects=True,
         )
         if r.status_code != 200:
-            return None
+            return []
         html     = r.text
         base     = re.match(r"https?://[^/]+", landing_url)
         base_url = base.group(0) if base else ""
@@ -1287,11 +1716,11 @@ def scrape_pdf_from_landing_page(landing_url: str) -> Optional[str]:
 
         main = [u for u in resolved
                 if not re.search(r"(?i)supplement|appendix|supp_|_s\d", u)]
-        return (main or resolved)[0] if (main or resolved) else None
+        return (main or resolved)[:_MAX_LANDING_CANDIDATES]
 
     except Exception as e:
         log.debug("Landing-page scrape failed (%s): %s", landing_url, e)
-        return None
+        return []
 
 
 # ── SerpAPI ───────────────────────────────────────────────────────────────────
@@ -1386,12 +1815,31 @@ _PDF_SELECTORS = [
 ]
 
 
-def get_pdf_via_playwright(doi: str, min_bytes: int = 5_000, title: str = "") -> dict:
+# The two identities the browser tier asks under, for the same reason download_pdf
+# has two: a host that answers one with a challenge page answers the other with the
+# file. Anubis-style proof-of-work walls are the measured case — they wave a declared
+# bot through and put a JavaScript challenge in front of a claimed Chrome.
+_PW_CHROME_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                 "AppleWebKit/537.36 (KHTML, like Gecko) "
+                 "Chrome/124.0.0.0 Safari/537.36")
+
+
+def _pw_bot_ua() -> str:
+    return f"flora-extractor ({RESEARCHER_EMAIL})"
+
+
+def get_pdf_via_playwright(doi: str, min_bytes: int = 5_000, title: str = "",
+                           url_r: str = "") -> dict:
     """
-    Launch a headless Chromium browser, navigate to the DOI landing page,
+    Launch a headless Chromium browser, navigate to the paper's landing page,
     and attempt to download a PDF by:
       1. Intercepting any network response whose Content-Type is application/pdf
       2. Clicking the first matching PDF download link/button
+
+    The landing page is `doi.org/<doi>`, or the ROW'S OWN URL when there is no DOI.
+    Without that fallback the tier refused 223 of the 2026-08-07 no-document rows
+    up front — the rows with nothing but a URL, which are exactly the ones every
+    DOI-keyed tier above has already failed on.
 
     Returns the same dict shape as download_pdf():
         {"success", "path", "source": "playwright", "reason"}
@@ -1399,12 +1847,18 @@ def get_pdf_via_playwright(doi: str, min_bytes: int = 5_000, title: str = "") ->
     Requires:  pip install playwright && playwright install chromium
     """
     doi = clean_doi(doi)
-    if not doi:
+    url_r = str(url_r or "").strip()
+    landing = (f"https://doi.org/{doi}" if doi
+               else (url_r if url_r.lower().startswith(("http://", "https://")) else ""))
+    if not landing:
         return {"success": False, "path": None, "source": "", "reason": "no_doi"}
 
-    # Check cache first — if a PDF was already saved for this DOI, skip browser
-    pdf_path = pdf_cache_path(doi)
-    have     = cached_pdf(doi, min_bytes)
+    # The saved file is keyed the way every other tier keys it: the DOI when there is
+    # one, the row's URL otherwise. A rebuilt pdf_cache_path(doi) would be a path
+    # under an empty key for a DOI-less row.
+    cache_id = doi or url_r
+    pdf_path = pdf_cache_path(cache_id)
+    have     = cached_pdf(cache_id, min_bytes)
     if have is not None:
         return {"success": True, "path": have, "source": "cache", "reason": ""}
 
@@ -1428,8 +1882,6 @@ def get_pdf_via_playwright(doi: str, min_bytes: int = 5_000, title: str = "") ->
         return {"success": False, "path": None, "source": "",
                 "reason": "playwright_not_installed"}
 
-    captured: dict = {"bytes": None, "url": ""}
-
     def _save(content: bytes) -> "dict | None":
         """The tier's four write sites, each of which must pass the title check.
 
@@ -1439,139 +1891,146 @@ def get_pdf_via_playwright(doi: str, min_bytes: int = 5_000, title: str = "") ->
         verdict, coverage = _title_check(content, ".pdf", title)
         if verdict == "mismatch":
             log.warning("  Playwright document for %s is not %r (title coverage "
-                        "%.2f) — refused", doi, title[:80], coverage)
+                        "%.2f) — refused", cache_id, title[:80], coverage)
             return None
         pdf_path.write_bytes(content)
         return {"success": True, "path": pdf_path, "source": "playwright",
                 "reason": "", "title_check": verdict, "title_coverage": coverage}
 
-    with sync_playwright() as pw:
-        browser = pw.chromium.launch(
-            headless=True,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-            ],
-        )
-        ctx = browser.new_context(
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
-            viewport={"width": 1280, "height": 900},
-            accept_downloads=True,
-        )
-        page = ctx.new_page()
+    def _attempt(user_agent: str) -> dict:
+        captured: dict = {"bytes": None, "url": ""}
 
-        # ── Intercept PDF responses sent inline (Content-Type: application/pdf) ─
-        def _on_response(response):
-            if captured["bytes"]:
-                return
-            ct = response.headers.get("content-type", "")
-            if "application/pdf" in ct:
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(
+                headless=True,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                ],
+            )
+            ctx = browser.new_context(
+                user_agent=user_agent,
+                viewport={"width": 1280, "height": 900},
+                accept_downloads=True,
+            )
+            page = ctx.new_page()
+
+            # ── Intercept PDF responses sent inline (Content-Type: application/pdf) ─
+            def _on_response(response):
+                if captured["bytes"]:
+                    return
+                ct = response.headers.get("content-type", "")
+                if "application/pdf" in ct:
+                    try:
+                        captured["bytes"] = response.body()
+                        captured["url"]   = response.url
+                        log.debug("Playwright intercepted inline PDF: %s", response.url)
+                    except Exception:
+                        pass
+
+            page.on("response", _on_response)
+
+            # ── Navigate to the landing page ─────────────────────────────────
+            try:
+                page.goto(landing, wait_until="domcontentloaded", timeout=30_000)
+                page.wait_for_timeout(3_000)   # let JS render
+            except PWTimeout:
+                log.debug("Playwright: page load timeout for %s", cache_id)
+            except PWError as exc:
+                # Any other navigation failure — a bad certificate, a refused
+                # connection, a DNS miss. Only PWTimeout was caught, so these escaped
+                # the tier and aborted the whole ROW: two works on the frozen dev
+                # sample were written api_error by ERR_CERT_COMMON_NAME_INVALID on
+                # doi.org, having never reached the abstract rung that would have
+                # named their original. One acquisition tier failing is that tier
+                # failing.
+                log.debug("Playwright: navigation failed for %s: %s", cache_id, exc)
+
+            # ── If inline PDF was served directly, we already have bytes ──────────
+            if captured["bytes"] and captured["bytes"][:4] == b"%PDF":
+                saved = _save(captured["bytes"])
+                ctx.close(); browser.close()
+                if saved:
+                    return saved
+                return {"success": False, "path": None, "source": "",
+                        "reason": "wrong_document"}
+
+            # ── Try clicking a download link / button ─────────────────────────────
+            for selector in _PDF_SELECTORS:
                 try:
-                    captured["bytes"] = response.body()
-                    captured["url"]   = response.url
-                    log.debug("Playwright intercepted inline PDF: %s", response.url)
-                except Exception:
-                    pass
+                    el = page.query_selector(selector)
+                    if el is None:
+                        continue
 
-        page.on("response", _on_response)
+                    href = el.get_attribute("href") or ""
 
-        # ── Navigate to the DOI landing page ─────────────────────────────────
-        landing = f"https://doi.org/{doi}"
-        try:
-            page.goto(landing, wait_until="domcontentloaded", timeout=30_000)
-            page.wait_for_timeout(3_000)   # let JS render
-        except PWTimeout:
-            log.debug("Playwright: page load timeout for %s", doi)
-        except PWError as exc:
-            # Any other navigation failure — a bad certificate, a refused
-            # connection, a DNS miss. Only PWTimeout was caught, so these escaped the
-            # tier and aborted the whole ROW: two works on the frozen dev sample were
-            # written api_error by ERR_CERT_COMMON_NAME_INVALID on doi.org, having
-            # never reached the abstract rung that would have named their original.
-            # One acquisition tier failing is that tier failing.
-            log.debug("Playwright: navigation failed for %s: %s", doi, exc)
+                    # If href points directly to a PDF URL, download it with requests
+                    if href and (".pdf" in href.lower() or "/pdf/" in href.lower()
+                                 or "=pdf" in href.lower()):
+                        if href.startswith("/"):
+                            # Resolve relative URL against current page origin
+                            origin = re.match(r"https?://[^/]+", page.url)
+                            href   = (origin.group(0) if origin else "") + href
+                        if href.startswith("http"):
+                            # Download via normal requests (has cookies from ctx if needed)
+                            try:
+                                raw = requests.get(
+                                    href,
+                                    headers={"User-Agent": user_agent},
+                                    timeout=60,
+                                    stream=True,
+                                )
+                                content = b"".join(raw.iter_content(65_536))
+                                if content[:4] == b"%PDF" and len(content) >= min_bytes:
+                                    saved = _save(content)
+                                    if saved:
+                                        ctx.close(); browser.close()
+                                        return saved
+                            except Exception:
+                                pass
 
-        # ── If inline PDF was served directly, we already have bytes ──────────
+                    # Otherwise click and wait for a download event
+                    with ctx.expect_download(timeout=20_000) as dl_info:
+                        el.click()
+                    download = dl_info.value
+                    tmp      = download.path()
+                    if tmp:
+                        content = Path(tmp).read_bytes()
+                        if content[:4] == b"%PDF" and len(content) >= min_bytes:
+                            saved = _save(content)
+                            if saved:
+                                ctx.close(); browser.close()
+                                return saved
+
+                except PWTimeout:
+                    log.debug("Playwright: download timeout for selector '%s'", selector)
+                except Exception as e:
+                    log.debug("Playwright: selector '%s' failed: %s", selector, e)
+
+            ctx.close()
+            browser.close()
+
+        # Check once more — the response interceptor may have fired after a click
         if captured["bytes"] and captured["bytes"][:4] == b"%PDF":
             saved = _save(captured["bytes"])
-            ctx.close(); browser.close()
             if saved:
                 return saved
             return {"success": False, "path": None, "source": "",
                     "reason": "wrong_document"}
 
-        # ── Try clicking a download link / button ─────────────────────────────
-        for selector in _PDF_SELECTORS:
-            try:
-                el = page.query_selector(selector)
-                if el is None:
-                    continue
-
-                href = el.get_attribute("href") or ""
-
-                # If href points directly to a PDF URL, download it with requests
-                if href and (".pdf" in href.lower() or "/pdf/" in href.lower()
-                             or "=pdf" in href.lower()):
-                    if href.startswith("/"):
-                        # Resolve relative URL against current page origin
-                        origin = re.match(r"https?://[^/]+", page.url)
-                        href   = (origin.group(0) if origin else "") + href
-                    if href.startswith("http"):
-                        # Download via normal requests (has cookies from ctx if needed)
-                        try:
-                            raw = requests.get(
-                                href,
-                                headers={"User-Agent": (
-                                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                                    "AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36"
-                                )},
-                                timeout=60,
-                                stream=True,
-                            )
-                            content = b"".join(raw.iter_content(65_536))
-                            if content[:4] == b"%PDF" and len(content) >= min_bytes:
-                                saved = _save(content)
-                                if saved:
-                                    ctx.close(); browser.close()
-                                    return saved
-                        except Exception:
-                            pass
-
-                # Otherwise click and wait for a download event
-                with ctx.expect_download(timeout=20_000) as dl_info:
-                    el.click()
-                download = dl_info.value
-                tmp      = download.path()
-                if tmp:
-                    content = Path(tmp).read_bytes()
-                    if content[:4] == b"%PDF" and len(content) >= min_bytes:
-                        saved = _save(content)
-                        if saved:
-                            ctx.close(); browser.close()
-                            return saved
-
-            except PWTimeout:
-                log.debug("Playwright: download timeout for selector '%s'", selector)
-            except Exception as e:
-                log.debug("Playwright: selector '%s' failed: %s", selector, e)
-
-        ctx.close()
-        browser.close()
-
-    # Check once more — the response interceptor may have fired after a click
-    if captured["bytes"] and captured["bytes"][:4] == b"%PDF":
-        saved = _save(captured["bytes"])
-        if saved:
-            return saved
         return {"success": False, "path": None, "source": "",
-                "reason": "wrong_document"}
+                "reason": "playwright_no_pdf_found"}
 
-    return {"success": False, "path": None, "source": "",
-            "reason": "playwright_no_pdf_found"}
+    result = _attempt(_PW_CHROME_UA)
+    if result["reason"] == "playwright_no_pdf_found":
+        # The page had no document for a browser. That can be the page's answer, or an
+        # answer to who asked — a challenge wall serves one to a claimed Chrome and the
+        # real page to a bot that says what it is. Only this reason is retried: a wrong
+        # document was a real document, and a missing browser is a missing browser.
+        log.debug("  No document as Chrome — asking %s again as flora-extractor",
+                  landing)
+        result = _attempt(_pw_bot_ua())
+    return result
 
 
 # ── Download helper ───────────────────────────────────────────────────────────
@@ -1697,9 +2156,14 @@ def _title_check(content: bytes, suffix: str, title: str) -> tuple[str, float]:
 
 
 def download_pdf(url: str, doi: str = "", min_bytes: int = _MIN_PDF_BYTES,
-                 title: str = "") -> dict:
+                 title: str = "", referer: str = "") -> dict:
     """
     Download a document and save it to PDF_CACHE_DIR.
+
+    *referer* is the page a scraped link was found on. Repository and publisher
+    servers routinely serve a file to a request that came from their own page and a
+    challenge to one that arrived from nowhere, so the scraper passes the landing URL
+    and the header overrides the default in either identity.
 
     Cache key = MD5 of doi (or url if doi missing), so repeat calls skip download.
     A PDF and a Word file are both documents; anything else is refused, and a Word
@@ -1730,7 +2194,10 @@ def download_pdf(url: str, doi: str = "", min_bytes: int = _MIN_PDF_BYTES,
                   PDF_RETRY_AFTER_DAYS, url)
         return {"success": False, "path": None, "source": "", "reason": "url_gone"}
 
-    for headers in (_BROWSER_HEADERS, _polite_headers()):
+    identities = (_BROWSER_HEADERS, _polite_headers())
+    for attempt, headers in enumerate(identities):
+        if referer:
+            headers = {**headers, "Referer": referer}
         try:
             r = requests.get(url, headers=headers, timeout=60, stream=True)
             if r.status_code in _PERMANENT_HTTP_STATUS:
@@ -1749,7 +2216,7 @@ def download_pdf(url: str, doi: str = "", min_bytes: int = _MIN_PDF_BYTES,
             # The server answered, and what it sent is not a document. That can be the
             # URL's answer — or it can be an answer to WHO ASKED, which is why the
             # second identity exists. Only the last one's reason is reported.
-            if headers is _BROWSER_HEADERS:
+            if attempt == 0:
                 log.debug("  %s to the browser identity: %s — asking again as "
                           "FLoRA", reason, url)
                 continue
@@ -1820,6 +2287,7 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
     retry_path = _retry_log_path(PDF_CACHE_DIR, retry_key) if retry_key else None
     retries    = _read_retry_log(retry_path) if retry_path is not None else {}
     failures: dict[str, str] = {}
+    attempts: dict[str, list[str]] = {}
 
     def _held(tier: str) -> bool:
         return _retry_suppressed(retries, tier, PDF_RETRY_AFTER_DAYS)
@@ -1827,17 +2295,32 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
     def _failed(tier: str) -> None:
         failures[tier] = _now_iso()
 
-    def _try(url: str, label: str) -> bool:
+    def _only_transient(tier: str) -> bool:
+        """True when *tier* fetched something and every fetch failed to be answered.
+
+        A fourteen-day suppression is for a source that HAS nothing; a connection
+        timeout or a 5xx says nothing at all, and download_pdf reports both as
+        download_error. Every other reason — 404/410, not a document, too small, the
+        wrong paper — is an answer. A tier that fetched nothing has no attempts here,
+        and its emptiness is a real absence.
+        """
+        tried = attempts.get(tier) or []
+        return bool(tried) and all(r.startswith("download_error") for r in tried)
+
+    def _try(url: str, label: str, referer: str = "", want_title: str = "") -> bool:
         nonlocal dl, pdf_url, pdf_src
         all_tried.append(url)
-        dl = download_pdf(url, doi=doi_r, title=title)
+        # A tier fetching ANOTHER paper's document checks the bytes against that
+        # paper's title, not the row's; everything else asks for the row's own.
+        dl = download_pdf(url, doi=doi_r, title=want_title or title, referer=referer)
         if dl["success"]:
             pdf_url, pdf_src = url, label
             # Also written on a download_pdf cache hit, which is how a PDF saved
             # before this record existed acquires one.
-            _write_provenance(doi_r, label, url, dl.get("title_check", ""),
+            _write_provenance(doi_r or url_r, label, url, dl.get("title_check", ""),
                               dl.get("title_coverage"))
             return True
+        attempts.setdefault(label, []).append(str(dl.get("reason") or ""))
         log.debug("  %s failed (%s): %s", label, dl.get("reason"), url)
         return False
 
@@ -1876,11 +2359,74 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
             return _result()
         oa_xml = None
 
+    # The PDF is already on disk — no tier can add anything to a file we have.
+    # This used to happen by accident, inside the download_pdf() cache hit of whichever
+    # tier first re-derived a URL for the DOI, so which tier "supplied" the document
+    # depended on the tier order and on every URL lookup above it. The tier that really
+    # supplied it is recorded next to the file, and replayed here. A PDF saved before
+    # that record existed has none and falls through to the waterfall as before — where
+    # the first cache hit writes the record for next time.
+    # Keyed the way the file itself is keyed — the DOI when there is one, the row's URL
+    # otherwise — so a DOI-less row's playwright or row_url document replays its own
+    # tier instead of being relabelled by whichever tier re-derives its URL first.
+    prov_key = doi_r or url_r
+    on_disk = cached_pdf(prov_key) if prov_key else None
+    if on_disk is not None and title.strip():
+        # This shortcut does not go through download_pdf, so it carries the title
+        # check itself — a mis-served file saved by an earlier run would otherwise be
+        # replayed here for ever, without any tier ever seeing it. A related_doi
+        # document is the REVIEWED work and matches that work's title, not the row's
+        # — its acquisition-time verdict (checked against the reviewed title) stands,
+        # or the correct preprint would be discarded and re-fetched on every run.
+        replay_prov = _read_provenance(prov_key)
+        if (replay_prov.get("source") == "related_doi"
+                and replay_prov.get("title_check") in ("match", "low")):
+            verdict, coverage = replay_prov["title_check"], float(
+                replay_prov.get("title_coverage") or 0.0)
+        else:
+            verdict, coverage = _title_check(on_disk.read_bytes(), on_disk.suffix,
+                                             title)
+        if verdict == "mismatch":
+            log.warning("  [%s] document on disk is not %r (title coverage %.2f) — "
+                        "discarding it: %s", prov_key, title[:80], coverage, on_disk)
+            _discard_document(prov_key, on_disk)
+            on_disk = None
+    if on_disk is not None:
+        prov = _read_provenance(prov_key)
+        if prov.get("source"):
+            # The path cached_pdf found, not a rebuilt one: a Word file is saved under
+            # .docx, and a rebuilt .pdf path would name a file that is not there.
+            dl      = {"success": True, "path": on_disk,
+                       "source": "cache", "reason": ""}
+            pdf_url = prov["url"]
+            pdf_src = prov["source"]
+            if pdf_url:
+                all_tried.append(pdf_url)
+            log.debug("  [%s] PDF already on disk (source=%s)", doi_r, pdf_src)
+            return _result()
+
     # Tier 0b — the OSF registration form. Same deal as Tier 0: it IS the document,
     # so nothing below it can add anything. Stage 2 has already dropped the
     # preregistration templates, so what reaches here states results or may state them.
     osf_guid = osf_registration_guid(doi_r) or osf_registration_guid(url_r)
-    if osf_guid and not _held("osf_registration"):
+
+    # Tier 0a — the manuscript in the OSF project's own file storage, which beats the
+    # registration form below: the form describes the study, the uploaded file IS the
+    # paper. A project whose storage holds no manuscript falls through to the form.
+    if osf_guid and not dl["success"] and not _held("osf_files"):
+        try:
+            osf_files = list_osf_files(osf_guid)
+        except DocumentSourceUnavailable as exc:
+            # Never recorded: a source that did not answer has said nothing.
+            log.info("  [%s] OSF file listing unavailable: %s", doi_r or url_r, exc)
+        else:
+            ranked = rank_osf_files(osf_files, title)[:_OSF_MAX_DOWNLOADS]
+            if any(_try(entry["download"], "osf_files") for entry in ranked):
+                return _result()
+            if not _only_transient("osf_files"):
+                _failed("osf_files")
+
+    if osf_guid and not dl["success"] and not _held("osf_registration"):
         try:
             registration = get_osf_registration(osf_guid)
         except DocumentSourceUnavailable as exc:
@@ -1896,38 +2442,6 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
                 pdf_src = "osf_registration"
                 return _result()
             _failed("osf_registration")
-
-    # The PDF is already on disk — no tier can add anything to a file we have.
-    # This used to happen by accident, inside the download_pdf() cache hit of whichever
-    # tier first re-derived a URL for the DOI, so which tier "supplied" the document
-    # depended on the tier order and on every URL lookup above it. The tier that really
-    # supplied it is recorded next to the file, and replayed here. A PDF saved before
-    # that record existed has none and falls through to the waterfall as before — where
-    # the first cache hit writes the record for next time.
-    on_disk = cached_pdf(doi_r) if doi_r else None
-    if on_disk is not None and title.strip():
-        # This shortcut does not go through download_pdf, so it carries the title
-        # check itself — a mis-served file saved by an earlier run would otherwise be
-        # replayed here for ever, without any tier ever seeing it.
-        verdict, coverage = _title_check(on_disk.read_bytes(), on_disk.suffix, title)
-        if verdict == "mismatch":
-            log.warning("  [%s] document on disk is not %r (title coverage %.2f) — "
-                        "discarding it: %s", doi_r, title[:80], coverage, on_disk)
-            _discard_document(doi_r, on_disk)
-            on_disk = None
-    if on_disk is not None:
-        prov = _read_provenance(doi_r)
-        if prov.get("source"):
-            # The path cached_pdf found, not a rebuilt one: a Word file is saved under
-            # .docx, and a rebuilt .pdf path would name a file that is not there.
-            dl      = {"success": True, "path": on_disk,
-                       "source": "cache", "reason": ""}
-            pdf_url = prov["url"]
-            pdf_src = prov["source"]
-            if pdf_url:
-                all_tried.append(pdf_url)
-            log.debug("  [%s] PDF already on disk (source=%s)", doi_r, pdf_src)
-            return _result()
 
     # Tier 0c — the row's own URL, downloaded directly.
     #
@@ -1955,6 +2469,36 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
     if url_r.lower().startswith(("http://", "https://")) and not _held("row_url"):
         if not _try(url_r, "row_url"):
             _failed("row_url")
+
+    # Tier 0d — the paper this DOI is a REVIEW OF. A Peer Community In recommendation
+    # (10.24072/pci.rr.*) has no full text of its own worth coding; its Crossref record
+    # names the preprint it reviewed, and that preprint is the paper. The registrant
+    # gate is what keeps the tier to that shape, and it also keeps the Crossref lookup
+    # off every other DOI'd row's path.
+    if (not dl["success"] and doi_r and not _held("related_doi")
+            and doi_r.startswith(_REVIEW_RELATION_REGISTRANTS)):
+        try:
+            reviewed = crossref_reviewed_doi(doi_r)
+        except DocumentSourceUnavailable as exc:
+            log.info("  [%s] Crossref unavailable: %s", doi_r, exc)
+        else:
+            if reviewed:
+                urls, outage = document_urls_for_doi(reviewed)
+                # The bytes are checked against the REVIEWED paper's title: a
+                # recommendation is titled in the recommender's own words, and
+                # checking the preprint against those refuses the right document.
+                try:
+                    reviewed_title = crossref_title(reviewed)
+                except DocumentSourceUnavailable as exc:
+                    log.info("  [%s] reviewed title unavailable: %s", reviewed, exc)
+                    reviewed_title = ""
+                log.info("  [%s] is a review of %s — trying its %d document URLs",
+                         doi_r, reviewed, len(urls))
+                if any(_try(url, "related_doi", want_title=reviewed_title)
+                       for url in urls):
+                    return _result()
+                if not (outage or _only_transient("related_doi")):
+                    _failed("related_doi")
 
     # Tier 1 — arXiv direct (before any API calls; the URL is a DOI pattern, so a
     # non-arXiv DOI is not a tier failure — there was nothing to ask.)
@@ -2039,6 +2583,39 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
         if not (epmc and _try(epmc, "europepmc")):
             _failed("europepmc")
 
+    # Tier 7b — the paper found by its own title in Crossref. The ONLY route for a row
+    # with no DOI: every tier above is keyed on one, and 223 of the 2026-08-07
+    # no-document rows have none. It also reaches the rows whose DOI is dead in every
+    # index above but whose paper is indexed under another one.
+    #
+    # Two gates, because acquiring some other paper's document is the failure this
+    # module already spends a title check on: the Crossref record's title must match
+    # the row's in both directions before anything is fetched, and the bytes must then
+    # pass _title_check like any other download.
+    # A title too short to search is a SKIP, not a failure: the tier was never asked,
+    # and a row whose title is filled in tomorrow must reach it tomorrow.
+    if (not dl["success"] and len(title.strip()) >= _MIN_SEARCH_TITLE_CHARS
+            and not _held("crossref_search")):
+        try:
+            hits = crossref_title_matches(title)
+        except DocumentSourceUnavailable as exc:
+            log.info("  [%s] Crossref search unavailable: %s", doi_r or url_r, exc)
+        else:
+            outage = False
+            won = False
+            for hit_doi in hits:
+                if hit_doi == doi_r:
+                    continue        # the DOI-keyed tiers above already asked
+                urls, hit_outage = document_urls_for_doi(hit_doi)
+                outage = outage or hit_outage
+                if any(_try(url, "crossref_search") for url in urls):
+                    won = True
+                    break
+            if won:
+                return _result()
+            if not (outage or _only_transient("crossref_search")):
+                _failed("crossref_search")
+
     # Tier 8 — Scrape Unpaywall landing pages
     # The landing pages of every index that named one, not Unpaywall's alone: an
     # OpenAlex or DataCite landing page that answered this run with HTML may still be
@@ -2048,9 +2625,15 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
     if not dl["success"] and not _held("landing"):
         won = False
         for cand in landing_all:
-            scraped = scrape_pdf_from_landing_page(cand["url"])
-            if scraped and _try(scraped, f"landing_{cand['host'] or 'repo'}"):
-                won = True
+            # Every link the page offers, in turn, and each fetched as if the click had
+            # come from that page: a repository that 403s the first href often serves
+            # the second, and several 403 a request with no Referer at all.
+            for scraped in scrape_pdf_from_landing_page(cand["url"]):
+                if _try(scraped, f"landing_{cand['host'] or 'repo'}",
+                        referer=cand["url"]):
+                    won = True
+                    break
+            if won:
                 break
         # need_unpaywall is False here only after an Unpaywall outage: the
         # both-tiers-held case cannot enter this block and the success case fails its
@@ -2072,13 +2655,13 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
     # Tier 10 — Playwright headless Chromium
     if not dl["success"] and not _held("playwright"):
         log.info("  [%s] All HTTP tiers failed — trying Playwright headless", doi_r)
-        pw_result = get_pdf_via_playwright(doi_r, title=title)
+        pw_result = get_pdf_via_playwright(doi_r, title=title, url_r=url_r)
         if pw_result["success"]:
-            pdf_url = f"https://doi.org/{doi_r}"
+            pdf_url = f"https://doi.org/{doi_r}" if doi_r else url_r
             pdf_src = "playwright"
             dl      = pw_result
             all_tried.append(pdf_url)
-            _write_provenance(doi_r, "playwright", pdf_url,
+            _write_provenance(doi_r or url_r, "playwright", pdf_url,
                               pw_result.get("title_check", ""),
                               pw_result.get("title_coverage"))
         elif pw_result.get("reason") not in _PLAYWRIGHT_SKIP_REASONS:

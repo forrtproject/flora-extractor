@@ -46,20 +46,27 @@ _ALL_TIERS = [
     "get_openalex_locations", "get_datacite_urls", "get_all_unpaywall_pdf_urls",
     "get_semanticscholar_pdf_url", "get_core_pdf_url", "get_europepmc_pdf_url",
     "scrape_pdf_from_landing_page", "get_serpapi_pdf_url",
+    "list_osf_files", "crossref_reviewed_doi", "crossref_title_matches",
+    "crossref_title",
 ]
+
+# The tier lookups that answer with a list; everything else answers with a scalar or
+# None. A default of None where a list is expected would raise rather than miss.
+_LIST_TIERS = {"get_all_unpaywall_pdf_urls", "get_openalex_locations",
+               "get_datacite_urls", "scrape_pdf_from_landing_page",
+               "list_osf_files", "crossref_title_matches"}
 
 
 def _mock_all_tiers(**overrides):
     """Patch every tier lookup to a no-hit default, then apply *overrides*.
 
     Returns the list of active context managers' mocks keyed by name, so a test
-    can assert on call counts without hand-patching eleven functions each time.
+    can assert on call counts without hand-patching every tier lookup each time.
     """
     patchers = {}
     for name in _ALL_TIERS:
-        default = [] if name in ("get_all_unpaywall_pdf_urls",
-                                 "get_openalex_locations",
-                                 "get_datacite_urls") else None
+        default = [] if name in _LIST_TIERS else (
+            "" if name in ("crossref_reviewed_doi", "crossref_title") else None)
         patchers[name] = patch.object(ps, name, return_value=overrides.get(name, default))
     return patchers
 
@@ -737,7 +744,7 @@ def test_an_unpaywall_outage_does_not_hold_the_tier_for_a_fortnight(_oa_cache_in
     started = {name: p.start() for name, p in patchers.items()}
     try:
         with patch.object(ps, "download_pdf", return_value=_NO_PDF), \
-             patch.object(ps, "scrape_pdf_from_landing_page", return_value=None), \
+             patch.object(ps, "scrape_pdf_from_landing_page", return_value=[]), \
              patch.object(ps, "get_pdf_via_playwright", return_value=_NO_PDF), \
              patch.object(ps, "get_html_document", return_value=None):
             ps.acquire_pdf("10.1/outage", title="A paper")
@@ -765,3 +772,357 @@ def test_a_stale_mis_served_document_is_not_parsed(tmp_path):
 
     assert found is None
     assert not path.exists()
+
+
+# ── OSF file storage ──────────────────────────────────────────────────────────
+
+_OSF_FILE_PAGE = {
+    "data": [
+        {"attributes": {"kind": "file", "name": "Data Wrangling Log (2417959).docx",
+                        "size": 40_000},
+         "links": {"download": "https://osf.io/download/wrangle/"}},
+        {"attributes": {"kind": "folder", "name": "Archive of OSF Storage"},
+         "relationships": {"files": {"links": {"related": {
+             "href": "https://api.osf.io/v2/files/archive/"}}}}},
+    ],
+    "links": {"next": None},
+}
+
+_OSF_FOLDER_PAGE = {
+    "data": [
+        {"attributes": {"kind": "file", "name": "final test questions.pdf",
+                        "size": 90_000},
+         "links": {"download": "https://osf.io/download/questions/"}},
+        {"attributes": {"kind": "file", "name": "Breakthrough_final.pdf",
+                        "size": 300_000},
+         "links": {"download": "https://osf.io/download/manuscript/"}},
+    ],
+    "links": {"next": None},
+}
+
+
+def _osf_listing_response(url, **kwargs):
+    if "/nodes/" in url:
+        return _Resp(404, b"{}")
+    if "/registrations/" in url:
+        return _Resp(200, json.dumps(_OSF_FILE_PAGE).encode())
+    return _Resp(200, json.dumps(_OSF_FOLDER_PAGE).encode())
+
+
+def test_osf_files_recurses_the_archive_folder_and_ranks_the_manuscript_first(
+        _oa_cache_in_tmp):
+    """A registration wraps its files in an "Archive of OSF Storage" folder, and the
+    manuscript sits beside a wrangling log and a questionnaire."""
+    with patch.object(ps.requests, "get", side_effect=_osf_listing_response):
+        files = ps.list_osf_files("abc12")
+
+    assert [f["name"] for f in files] == ["Data Wrangling Log (2417959).docx",
+                                          "final test questions.pdf",
+                                          "Breakthrough_final.pdf"]
+
+    ranked = ps.rank_osf_files(files, title="A Breakthrough In Something")
+    # The log and the questionnaire hit an exclusion and carry no positive signal, so
+    # they are not offered at all — the title check downstream would pass a supplement
+    # to the right paper.
+    assert [f["name"] for f in ranked] == ["Breakthrough_final.pdf"]
+
+
+@pytest.mark.parametrize("names, first", [
+    (["Correspondence_with_Authors.docx", "Replication_report.docx"],
+     "Replication_report.docx"),
+    (["supplementary_materials.pdf",
+      "PCIRR-S1-RNR-Arkes-etal-1994-RR-main-manuscript.docx"],
+     "PCIRR-S1-RNR-Arkes-etal-1994-RR-main-manuscript.docx"),
+    (["Weinstein1980-replication-qualtrics_survey.docx",
+      "Xiao, Zeng, & Feldman-2021-CRSP-revisiting-decoy-effect-final-preprint.pdf"],
+     "Xiao, Zeng, & Feldman-2021-CRSP-revisiting-decoy-effect-final-preprint.pdf"),
+])
+def test_the_ranking_picks_the_real_manuscripts(names, first):
+    files = [{"name": n, "size": 100_000, "download": f"https://osf.io/download/{i}/"}
+             for i, n in enumerate(names)]
+    assert ps.rank_osf_files(files)[0]["name"] == first
+
+
+def test_a_supplement_named_after_the_paper_is_not_the_paper():
+    """The title bonus ranks candidates; it never rescues one from the exclusions.
+    A supplement carries the paper's whole title and is still the supplement."""
+    files = [{"name": "Supplementary materials for A Breakthrough In Something.pdf",
+              "size": 900_000, "download": "https://osf.io/download/supp/"},
+             {"name": "manuscript.docx", "size": 200_000,
+              "download": "https://osf.io/download/ms/"}]
+    ranked = ps.rank_osf_files(files, title="A Breakthrough In Something")
+    assert [f["name"] for f in ranked] == ["manuscript.docx"]
+
+
+def test_a_partial_osf_listing_is_used_but_never_cached(_oa_cache_in_tmp):
+    """A folder that failed transiently is part of the tree we did not see; caching
+    the listing without it would hide the manuscript in it until the entry expired."""
+    def _flaky(url, **kwargs):
+        if "/nodes/" in url:
+            return _Resp(404, b"{}")
+        if "/registrations/" in url:
+            return _Resp(200, json.dumps(_OSF_FILE_PAGE).encode())
+        return _Resp(503, b"")
+
+    with patch.object(ps.requests, "get", side_effect=_flaky):
+        files = ps.list_osf_files("abc12")
+
+    assert [f["name"] for f in files] == ["Data Wrangling Log (2417959).docx"]
+    assert list(_oa_cache_in_tmp.glob("osffiles_*.json")) == []
+
+
+def test_a_stale_osf_listing_is_re_fetched(_oa_cache_in_tmp):
+    """OSF storage is mutable by design — the manuscript is uploaded after the
+    registration — so the listing expires with the tier's own retry delay."""
+    with patch.object(ps.requests, "get", side_effect=_osf_listing_response):
+        assert len(ps.list_osf_files("abc12")) == 3
+    cf = next(iter(_oa_cache_in_tmp.glob("osffiles_*.json")))
+    cf.write_text(json.dumps({"files": [],
+                              "fetched_at": _ago(ps.PDF_RETRY_AFTER_DAYS + 1)}),
+                  encoding="utf-8")
+
+    with patch.object(ps.requests, "get", side_effect=_osf_listing_response) as get:
+        assert len(ps.list_osf_files("abc12")) == 3
+    assert get.called
+
+
+def test_osf_files_falls_through_to_the_registration_form_when_no_file_qualifies():
+    """The form is the fallback, not the competitor: a project whose storage holds
+    only supplements still gets read through its registration."""
+    registration = {"sections": {"abstract": "x" * 2_000, "raw_text": ""}}
+    patchers = _mock_all_tiers(list_osf_files=[
+        {"name": "supplementary_materials.pdf", "size": 90_000,
+         "download": "https://osf.io/download/supp/"}])
+    started = {name: p.start() for name, p in patchers.items()}
+    try:
+        with patch.object(ps, "get_osf_registration",
+                          return_value=registration) as reg, \
+             patch.object(ps, "download_pdf", return_value=_NO_PDF) as dl:
+            out = ps.acquire_pdf("10.17605/osf.io/abc12", "A Title")
+    finally:
+        for p in patchers.values():
+            p.stop()
+
+    assert out["pdf_source"] == "osf_registration"
+    assert out["openalex_xml"] is registration
+    reg.assert_called_once()
+    dl.assert_not_called()      # the one candidate was ranked out, not downloaded
+
+
+def test_a_manuscript_in_osf_storage_beats_the_registration_form():
+    patchers = _mock_all_tiers(list_osf_files=[
+        {"name": "Replication_report.docx", "size": 300_000,
+         "download": "https://osf.io/download/ms/"}])
+    started = {name: p.start() for name, p in patchers.items()}
+    try:
+        with patch.object(ps, "get_osf_registration") as reg, \
+             patch.object(ps, "download_pdf",
+                          return_value={"success": True, "path": "/tmp/ms.docx",
+                                        "source": "download", "reason": ""}):
+            out = ps.acquire_pdf("10.17605/osf.io/abc12", "A Title")
+    finally:
+        for p in patchers.values():
+            p.stop()
+
+    assert out["pdf_source"] == "osf_files"
+    assert out["pdf_url"] == "https://osf.io/download/ms/"
+    reg.assert_not_called()
+
+
+def test_an_osf_listing_outage_is_not_recorded_as_a_failure(_oa_cache_in_tmp):
+    patchers = _mock_all_tiers()
+    patchers["list_osf_files"] = patch.object(
+        ps, "list_osf_files",
+        side_effect=ps.DocumentSourceUnavailable("OSF files HTTP 503"))
+    started = {name: p.start() for name, p in patchers.items()}
+    try:
+        with patch.object(ps, "get_osf_registration", return_value=None), \
+             patch.object(ps, "download_pdf", return_value=_NO_PDF), \
+             patch.object(ps, "get_pdf_via_playwright", return_value=_NO_PLAYWRIGHT), \
+             patch.object(ps, "get_html_document", return_value=None):
+            ps.acquire_pdf("10.17605/osf.io/abc12", "A Title")
+    finally:
+        for p in patchers.values():
+            p.stop()
+
+    assert "osf_files" not in _retry_log("10.17605/osf.io/abc12")
+
+
+# ── The reviewed paper, and the paper behind a title ──────────────────────────
+
+def test_a_review_doi_acquires_the_paper_it_reviews():
+    """A PCI recommendation has no full text of its own; the preprint it reviewed does.
+    """
+    patchers = _mock_all_tiers(crossref_reviewed_doi="10.31234/osf.io/abc12")
+    started = {name: p.start() for name, p in patchers.items()}
+    try:
+        with patch.object(ps, "document_urls_for_doi",
+                          return_value=(["https://osf.io/download/abc12/"], False)) as urls, \
+             patch.object(ps, "download_pdf",
+                          return_value={"success": True, "path": "/tmp/p.pdf",
+                                        "source": "download", "reason": ""}):
+            out = ps.acquire_pdf("10.24072/pci.rr.100123", "A Title")
+    finally:
+        for p in patchers.values():
+            p.stop()
+
+    assert out["pdf_source"] == "related_doi"
+    assert out["pdf_url"] == "https://osf.io/download/abc12/"
+    urls.assert_called_once_with("10.31234/osf.io/abc12")
+
+
+_CR_SEARCH = {"message": {"items": [
+    {"DOI": "10.1/original",
+     "title": ["Do infants prefer prosocial others?"]},
+]}}
+
+
+def test_crossref_search_refuses_a_title_that_only_matches_one_way(_oa_cache_in_tmp):
+    """The wrong-paper shape: the ORIGINAL's title is a subset of the replication's,
+    so a one-directional coverage check would follow it and code the wrong paper."""
+    with patch.object(ps.requests, "get",
+                      return_value=_Resp(200, json.dumps(_CR_SEARCH).encode())):
+        assert ps.crossref_title_matches(_TITLE) == []
+
+
+@pytest.mark.parametrize("row_title, hit_title", [
+    # Measured 0.71/1.00 — clears a 0.60 gate in both directions, fails the 0.80 one.
+    ("A direct replication of Ego depletion and moral judgment",
+     "Ego depletion and moral judgment"),
+    # Measured 0.88/1.00 — clears the coverage gate both ways, so only the
+    # replication vocabulary separates the replication from the paper it replicates.
+    ("Revisiting the effect of ego depletion on moral judgment in adults",
+     "The effect of ego depletion on moral judgment in adults"),
+])
+def test_crossref_search_refuses_the_original_under_the_replications_title(
+        row_title, hit_title, _oa_cache_in_tmp):
+    hit = {"message": {"items": [{"DOI": "10.1/original", "title": [hit_title]}]}}
+    with patch.object(ps.requests, "get",
+                      return_value=_Resp(200, json.dumps(hit).encode())):
+        assert ps.crossref_title_matches(row_title) == []
+
+
+def test_a_crossref_search_404_is_an_outage_and_a_record_404_is_an_answer(
+        _oa_cache_in_tmp):
+    """The search endpoint answers "nothing found" with 200 and no items, so a 404
+    there is the service misbehaving — and caching it would disable the only
+    acquisition route a DOI-less row has, for that title, for ever."""
+    with patch.object(ps.requests, "get", return_value=_Resp(404, b"{}")):
+        with pytest.raises(ps.DocumentSourceUnavailable):
+            ps.crossref_title_matches(_TITLE)
+    assert list(_oa_cache_in_tmp.glob("crsearch_*.json")) == []
+
+    with patch.object(ps.requests, "get", return_value=_Resp(404, b"{}")):
+        assert ps.crossref_reviewed_doi("10.24072/pci.rr.missing") == ""
+    assert list(_oa_cache_in_tmp.glob("crmeta_*.json")) != []
+
+
+def test_crossref_search_accepts_the_same_paper_under_another_doi(_oa_cache_in_tmp):
+    same = {"message": {"items": [{"DOI": "10.1/mirror", "title": [_TITLE]}]}}
+    with patch.object(ps.requests, "get",
+                      return_value=_Resp(200, json.dumps(same).encode())):
+        assert ps.crossref_title_matches(_TITLE) == ["10.1/mirror"]
+
+
+def test_a_short_title_never_reaches_the_crossref_search(_oa_cache_in_tmp):
+    with patch.object(ps.requests, "get") as get:
+        assert ps.crossref_title_matches("Study 2") == []
+    get.assert_not_called()
+
+
+def test_a_row_with_no_doi_reaches_the_crossref_search():
+    patchers = _mock_all_tiers(crossref_title_matches=["10.1/mirror"])
+    started = {name: p.start() for name, p in patchers.items()}
+    try:
+        def _download(url, doi="", min_bytes=0, title="", referer=""):
+            if url.endswith(".pdf"):
+                return {"success": True, "path": "/tmp/p.pdf", "source": "download",
+                        "reason": ""}
+            return dict(_NO_PDF)     # the row's own URL is a record page
+
+        with patch.object(ps, "document_urls_for_doi",
+                          return_value=(["https://repo.example/full.pdf"], False)), \
+             patch.object(ps, "download_pdf", side_effect=_download):
+            out = ps.acquire_pdf("", _TITLE, url_r="https://repo.example/record")
+    finally:
+        for p in patchers.values():
+            p.stop()
+
+    assert out["pdf_source"] == "crossref_search"
+
+
+# ── The landing-page scraper ──────────────────────────────────────────────────
+
+_LANDING_HTML = b"""
+<html><body>
+  <a href="/bitstream/1/blocked.pdf">Publisher copy</a>
+  <a href="/bitstream/2/accepted.pdf">Accepted manuscript</a>
+</body></html>
+"""
+
+
+def test_the_scraper_returns_every_candidate_not_only_the_first():
+    resp = _Resp(200, b"")
+    resp.text = _LANDING_HTML.decode()
+    with patch.object(ps.requests, "get", return_value=resp):
+        found = ps.scrape_pdf_from_landing_page("https://repo.example/record/1")
+    assert found == ["https://repo.example/bitstream/1/blocked.pdf",
+                     "https://repo.example/bitstream/2/accepted.pdf"]
+
+
+def test_the_landing_tier_sends_a_referer_and_tries_the_second_candidate():
+    """The first href is as often the one that 403s as the one that serves, and a
+    repository that serves its own page's links refuses a request from nowhere."""
+    calls: list[dict] = []
+
+    def _download(url, doi="", min_bytes=0, title="", referer=""):
+        calls.append({"url": url, "referer": referer})
+        if url.endswith("blocked.pdf"):
+            return dict(_NO_PDF)
+        return {"success": True, "path": "/tmp/p.pdf", "source": "download",
+                "reason": ""}
+
+    patchers = _mock_all_tiers(get_all_unpaywall_pdf_urls=[
+        {"url": "https://repo.example/record/1", "type": "landing",
+         "host": "Repo", "license": ""}])
+    patchers["scrape_pdf_from_landing_page"] = patch.object(
+        ps, "scrape_pdf_from_landing_page",
+        return_value=["https://repo.example/bitstream/1/blocked.pdf",
+                      "https://repo.example/bitstream/2/accepted.pdf"])
+    started = {name: p.start() for name, p in patchers.items()}
+    try:
+        with patch.object(ps, "download_pdf", side_effect=_download):
+            out = ps.acquire_pdf("10.1/landing", "A Title")
+    finally:
+        for p in patchers.values():
+            p.stop()
+
+    assert out["pdf_ok"] is True
+    assert out["pdf_source"] == "landing_Repo"
+    assert calls[-1]["url"] == "https://repo.example/bitstream/2/accepted.pdf"
+    assert all(c["referer"] == "https://repo.example/record/1" for c in calls[-2:])
+
+
+def test_a_document_on_disk_keeps_the_tier_that_really_supplied_it():
+    """The OSF tiers sit below the on-disk replay for the reason the replay exists: a
+    cache hit inside osf_files would relabel a serpapi document as osf_files and report
+    a URL nothing was ever fetched from."""
+    doi = "10.17605/osf.io/abc12"
+    path = ps.document_cache_path(doi, ".pdf")
+    path.write_bytes(b"%PDF-1.4" + b"x" * 10_000)
+    ps._write_provenance(doi, "serpapi", "https://scholar.example/paper.pdf")
+
+    patchers = _mock_all_tiers()
+    started = {name: p.start() for name, p in patchers.items()}
+    try:
+        with patch.object(ps, "get_osf_registration") as reg, \
+             patch.object(ps, "_title_check", return_value=("match", 0.95)):
+            out = ps.acquire_pdf(doi, _TITLE)
+    finally:
+        for p in patchers.values():
+            p.stop()
+
+    assert out["pdf_source"] == "serpapi"
+    assert out["pdf_url"] == "https://scholar.example/paper.pdf"
+    started["list_osf_files"].assert_not_called()
+    reg.assert_not_called()

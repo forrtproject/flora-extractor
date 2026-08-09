@@ -477,7 +477,14 @@ OUTCOME_DESCENT = True
 #      a wall, accepts a Word document as a document, asks OSF for versioned and
 #      10.31219 preprints, walks every OpenAlex location, asks DataCite at all, and
 #      refuses a document whose title does not match the row (2026-08-08)
-EXTRACT_LADDER_VERSION: int = 19
+#  20  three acquisition routes issue #188 measured: the manuscript in an OSF
+#      project's or registration's own file storage (final versions ranked above
+#      prereg snapshots), the preprint a PCI recommendation is a review OF, and a
+#      Crossref title search for rows with no DOI (double title gate against the
+#      "Replication of X" / "X" wrong-paper pair); landing scrapes send a Referer
+#      and try every candidate; playwright reaches DOI-less rows and retries once
+#      under the declared bot identity (2026-08-09)
+EXTRACT_LADDER_VERSION: int = 20
 
 
 # Columns to pass through from the input row (no renaming). Only columns
