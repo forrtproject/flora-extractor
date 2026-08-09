@@ -731,13 +731,13 @@ def test_thinking_level_comes_from_the_caller(monkeypatch):
     llm.call_gemini("prompt", model="gemini-3-flash-preview", reasoning_effort="minimal")
     llm.call_gemini("prompt", model="gemini-3-flash-preview")
 
-    assert posts[0]["generationConfig"]["thinkingLevel"] == "minimal"
-    assert "thinkingLevel" not in posts[1]["generationConfig"]
+    assert posts[0]["generationConfig"]["thinkingConfig"]["thinkingLevel"] == "minimal"
+    assert "thinkingConfig" not in posts[1]["generationConfig"]
 
     # call_model passes the caller's value straight through to the Gemini leg.
     posts.clear()
     llm.call_model("prompt", "gemini-3-flash-preview", reasoning_effort="high")
-    assert posts[0]["generationConfig"]["thinkingLevel"] == "high"
+    assert posts[0]["generationConfig"]["thinkingConfig"]["thinkingLevel"] == "high"
 
 
 def test_cache_model_id_names_the_effort_it_is_given(monkeypatch):
@@ -791,7 +791,7 @@ def test_the_gemini_voter_is_sent_minimal_rather_than_left_to_the_default(monkey
 
     _p, model, _e, effort = llm.screen_voters()[0]
     llm._classify_once("prompt", model, effort)
-    assert posts[0]["generationConfig"]["thinkingLevel"] == "minimal"
+    assert posts[0]["generationConfig"]["thinkingConfig"]["thinkingLevel"] == "minimal"
 
 
 # ── Declared cache equivalences (issue #171) ─────────────────────────────────

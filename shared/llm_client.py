@@ -371,9 +371,16 @@ def call_gemini(prompt: str, model: str, *,
     }
 
     if reasoning_effort:
-        # thinkingLevel (gemini-3): "minimal" buys back most of the output bill on
-        # the heavy model. Safe alongside responseMimeType, unlike thinkingBudget:0.
-        payload["generationConfig"]["thinkingLevel"] = reasoning_effort
+        # thinkingConfig.thinkingLevel (gemini-3): "minimal" buys back most of the
+        # output bill on the heavy model. Safe alongside responseMimeType, unlike
+        # thinkingBudget:0. The API stopped accepting the flat
+        # generationConfig.thinkingLevel between 2026-08-08 and -09 ("Unknown
+        # name"), which failed every voter-1 screen call; the nested shape is what
+        # both gemini-3 models answer today (probed 2026-08-09). The cache key
+        # carries the VALUE through cache_model_id, so moving the field is
+        # transport, not identity.
+        payload["generationConfig"]["thinkingConfig"] = {
+            "thinkingLevel": reasoning_effort}
 
     body, err = _gemini_call(payload, model, 90, "call")
     if body is None:
