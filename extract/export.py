@@ -80,9 +80,12 @@ from filter.engine.claims import ClaimsClient, ClaimsNotConfigured
 from extract.sanity_check import classify_row, demote_malformed
 from extract.tier import (RESULT_VERDICTS, TIER_EXTRACT, extract_generation,
                           render_payload)
-from shared.config import DATA_DIR
+from shared.config import DATA_DIR, log
+from shared.flora_skip import (VALIDATED_SKIP_NAME, default_flora_skip_dois,
+                               load_validated_skip)
 from shared.schema import (EXTRACTED_COLS, SET_ASIDE_DESTINATIONS, YEAR_COLS,
                            set_aside_dir, year_str)
+from shared.utils import clean_doi
 
 DEFAULT_OUT = DATA_DIR / "extracted.csv"
 
@@ -230,7 +233,8 @@ def partition(rows: list[dict]) -> tuple[list[dict], dict[str, list[dict]]]:
 
 def render(client: ClaimsClient, *, mode: str = "live",
            current_generation_only: bool = False,
-           admitted: Optional[set[int]] = None) -> dict:
+           admitted: Optional[set[int]] = None,
+           data_dir: Path = DATA_DIR) -> dict:
     """The whole export, in memory: the main rows, the set-asides, and the counts.
 
     *admitted* — when given, the works some routing release admits. It is applied
@@ -248,9 +252,29 @@ def render(client: ClaimsClient, *, mode: str = "live",
         generation = extract_generation()
         stale = sum(1 for row in results.values()
                     if str(row.get("prompt_hash") or "") != generation)
-    rows = rows_from_results(results)
+    # The skip lists the worklist reads, applied at render too: a work that entered
+    # FLoRA or the validation tables AFTER it was extracted keeps its verdict as
+    # evidence, but its rows must not keep reaching the validation import. Measured
+    # need 2026-08-10: repairing the alt_identifier_r split put 10 already-extracted
+    # works onto the list retroactively.
+    skip_dois = default_flora_skip_dois(data_dir)
+    validated_ids, validated_dois = load_validated_skip(
+        Path(data_dir) / VALIDATED_SKIP_NAME)
+    skip_dois |= validated_dois
+    results = {work: row for work, row in results.items()
+               if work not in validated_ids}
+    rows, suppressed = [], 0
+    for row in rows_from_results(results):
+        if clean_doi(str(row.get("doi_r") or "")) in skip_dois:
+            suppressed += 1
+            continue
+        rows.append(row)
+    if suppressed:
+        log.info("%d row(s) suppressed at render: their DOI is already in "
+                 "FLoRA or the validation tables", suppressed)
     main, aside = partition(rows)
     return {"works": len(results), "rows": len(rows), "main": main, "aside": aside,
+            "already_in_flora": suppressed,
             "superseded_generation": stale, "not_admitted": not_admitted,
             "endings": Counter(str(r.get("verdict") or "") for r in results.values())}
 

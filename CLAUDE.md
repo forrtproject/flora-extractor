@@ -57,8 +57,13 @@ release put in an admitted pile, because a verdict outlives the routing that bou
 import forever. Omitted, the release is the store's when it holds exactly one, and a
 store holding several refuses; `--all-releases` renders every stored verdict whatever
 routing says. Resume is the verdict row, not the file: the
-worklist subtracts every work whose latest current-generation result SETTLES it, and
-`target_pending`/`api_error` do not settle. `--redo W1,W2` re-extracts named works and
+worklist subtracts every work whose latest current-generation result SETTLES it.
+`target_pending` and `api_error` do not settle — but a `target_pending` younger
+than `EXTRACT_PENDING_RETRY_DAYS` (14) RESTS: it is subtracted like a settled work
+until the delay lapses, a new generation reopens it, or `--redo` names it, because
+five runs of one campaign otherwise re-bought ~830 unresolvable works' queries
+each. `api_error` retries immediately. The export applies the FLoRA/validated skip
+lists at render too, so a work that enters FLoRA after extraction stops shipping. `--redo W1,W2` re-extracts named works and
 supersedes their previous result rows; editing a prompt or a model mints a new
 extract GENERATION, which reopens every work at once.
 

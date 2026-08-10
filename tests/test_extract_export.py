@@ -27,6 +27,17 @@ from extract.tier import (RESOLVED, TARGET_PENDING, TIER_EXTRACT,
                           extract_generation, render_payload, result_payload)
 from shared.schema import EXTRACTED_COLS, FILTERED_COLS, SCREEN_COLS
 
+
+@pytest.fixture(autouse=True)
+def _empty_skip_lists(monkeypatch):
+    """render() consults the real data/ skip lists; a unit test must not — the
+    fixture row's DOI is in the live corpus and would be silently suppressed."""
+    monkeypatch.setattr(export_mod, "default_flora_skip_dois",
+                        lambda *a, **k: set())
+    monkeypatch.setattr(export_mod, "load_validated_skip",
+                        lambda *a, **k: (set(), set()))
+
+
 # ── The fixture, lifted from data/extracted.csv on 2026-08-06 ────────────────
 # Trimmed to the columns that carry a value; every other EXTRACTED_COLS column is
 # filled with "" by `_row()` below, which is what the CSV holds for them.
@@ -525,3 +536,14 @@ def test_a_store_with_several_releases_refuses_rather_than_choosing(tmp_path,
     # Named, it answers: the refusal is about ambiguity, not about the store.
     release_id, admitted = export_mod.admitted_work_ids("aaa", store_path=store)
     assert (release_id, admitted) == ("aaa", {1})
+
+
+def test_a_row_on_the_skip_list_is_suppressed_at_render(monkeypatch):
+    """Repairing the alt_identifier_r split (2026-08-10) put 10 already-extracted
+    works onto the skip list retroactively; the render must drop them or they
+    keep reaching the validation import as duplicates of FLoRA entries."""
+    monkeypatch.setattr(export_mod, "default_flora_skip_dois",
+                        lambda *a, **k: {_SINGLE["doi_r"]})
+    report = export_mod.render(_client([_verdict(61, row_id="v-61")]))
+    assert report["main"] == []
+    assert report["already_in_flora"] == 1

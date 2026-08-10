@@ -492,3 +492,26 @@ def test_a_work_whose_targets_all_answered_still_settles():
     verdict = tier_mod._verdict_for(
         [{"link_method": "llm_references"}, {"link_method": "target_pending"}], {})
     assert verdict == RESOLVED
+
+
+def test_a_fresh_target_pending_rests_and_a_stale_one_reopens():
+    """Five runs of the 2026-08-09/10 campaign each re-bought ~830 unresolvable
+    works' queries. A target_pending younger than EXTRACT_PENDING_RETRY_DAYS is
+    subtracted from the worklist like a settled work; older, it re-offers."""
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    fresh = {"outcome": TARGET_PENDING, "settles": False,
+             "row": {"created_at": (now - timedelta(days=1)).isoformat()}}
+    stale = {"outcome": TARGET_PENDING, "settles": False,
+             "row": {"created_at":
+                     (now - timedelta(days=tier_mod.EXTRACT_PENDING_RETRY_DAYS + 1)
+                      ).isoformat()}}
+    resolved = {"outcome": RESOLVED, "settles": True, "row": {"created_at": ""}}
+    api_err = {"outcome": API_ERROR, "settles": False,
+               "row": {"created_at": (now - timedelta(days=1)).isoformat()}}
+    assert tier_mod._resting(fresh) is True
+    assert tier_mod._resting(stale) is False
+    assert tier_mod._resting(resolved) is False   # settled rows never need the rest
+    assert tier_mod._resting(api_err) is False    # api_error retries immediately
+    assert tier_mod._resting({"outcome": TARGET_PENDING, "settles": False,
+                              "row": {"created_at": "not-a-date"}}) is False

@@ -77,6 +77,7 @@ import json
 import sys
 import threading
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -128,6 +129,17 @@ RESULT_VERDICTS = (RESOLVED, PROVISIONAL, NOT_A_REPLICATION, NO_ORIGINAL_FOUND,
 # by construction, and `api_error` records a transient provider failure. Neither
 # settles the work, so neither takes it out of the worklist. Every other ending does.
 UNSETTLING_VERDICTS = frozenset({TARGET_PENDING, API_ERROR})
+
+# How long a target_pending verdict rests before a run re-offers the work. Without
+# it, every run re-bought each unresolvable work's OpenAlex queries and stray fresh
+# calls — the 2026-08-09/10 campaign re-attempted ~830 such works on all five of its
+# runs. The delay mirrors the acquisition tiers' PDF_RETRY_AFTER_DAYS: what usually
+# unsticks these rows is the world changing (a deposited file, a registered DOI),
+# which is a weeks scale, while a CODE change reopens them immediately anyway — the
+# generation gate ignores old-generation rows, delay or no delay. `api_error` is
+# deliberately not rested: it marks a provider's bad minute, and the retry is cheap
+# and usually different.
+EXTRACT_PENDING_RETRY_DAYS = 14
 
 # ── Claims and the lease ─────────────────────────────────────────────────────
 # Works per claim. Small compared with a screen batch (which claims a whole pile)
@@ -513,11 +525,36 @@ def _decide(rows: list[dict]) -> dict:
             "row": latest, "record_type": "", "votes": []}
 
 
-def settled_work_ids(client: ClaimsClient, mode: str = "live") -> set[int]:
-    """Works whose latest current-generation *mode* result row SETTLES them.
+def _resting(decision: dict) -> bool:
+    """True when a target_pending verdict is younger than its retry delay.
 
-    `target_pending` and `api_error` are excluded on purpose: they are the two
-    endings a re-run is meant to redo (`UNSETTLING_VERDICTS`).
+    A rested work is subtracted from the worklist exactly as a settled one is,
+    but only for EXTRACT_PENDING_RETRY_DAYS: the row itself still does not
+    settle, so nothing else about its meaning changes — `--redo` reopens it, a
+    new generation reopens it (old-generation rows never reach this check), and
+    once the delay lapses the ordinary re-run semantics resume.
+    """
+    if decision.get("outcome") != TARGET_PENDING:
+        return False
+    row = decision.get("row") or {}
+    stamp = str(row.get("created_at") or "")
+    try:
+        recorded = datetime.fromisoformat(stamp)
+    except ValueError:
+        return False
+    if recorded.tzinfo is None:
+        recorded = recorded.replace(tzinfo=timezone.utc)
+    age = datetime.now(timezone.utc) - recorded
+    return age < timedelta(days=EXTRACT_PENDING_RETRY_DAYS)
+
+
+def settled_work_ids(client: ClaimsClient, mode: str = "live") -> set[int]:
+    """Works whose latest current-generation *mode* result row SETTLES them —
+    plus the target_pending works still inside EXTRACT_PENDING_RETRY_DAYS.
+
+    `api_error` is excluded on purpose: it is the ending a re-run is meant to
+    redo immediately (`UNSETTLING_VERDICTS`); `target_pending` re-runs too, but
+    only after its rest (`_resting`).
 
     The mode filter is what makes the sandbox promotable: a validation-mode
     shadow verdict must NOT settle the live worklist, or the work never gets the
@@ -532,8 +569,12 @@ def settled_work_ids(client: ClaimsClient, mode: str = "live") -> set[int]:
     in_mode = {c["id"] for c in claims
                if ((c.get("meta") or {}).get("mode") or "live") == mode}
     rows = [r for r in client.verdicts(TIER_EXTRACT) if r.get("claim_id") in in_mode]
-    return {work for work, rows_ in _by_work(TIER_EXTRACT, rows, generations).items()
-            if _decide(rows_).get("settles")}
+    out: set[int] = set()
+    for work, rows_ in _by_work(TIER_EXTRACT, rows, generations).items():
+        decision = _decide(rows_)
+        if decision.get("settles") or _resting(decision):
+            out.add(work)
+    return out
 
 
 # ---------------------------------------------------------------------------
