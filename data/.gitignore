@@ -1,7 +1,10 @@
 /candidates.zip
 /filtered.zip
-# Unzipped working copies (temp; regenerate from the DVC-tracked zips)
+# Unzipped working copy of the retired pre-engine corpus; regenerate from candidates.zip
 /candidates.csv
+# The Stage 2 → Stage 3 handoff, written whole by `python -m filter.engine handoff`.
+# Regenerate it rather than restore it; the tracked filtered.csv.manifest.json names
+# the release and the exact row count the file on disk should have.
 /filtered.csv
 
 # The examples/ demo's output directory (examples/README.md: OUT_DIR). It exists so

@@ -33,7 +33,7 @@ Detailed code flows for each pipeline stage:
 | [code-flow/stage3-extract.md](code-flow/stage3-extract.md) | Stage 3: Original study linking + outcome extraction |
 | [code-flow/stage4-validate.md](code-flow/stage4-validate.md) | Stage 4: Monitoring web app + Supabase integration |
 | [code-flow/pdf-pipeline.md](code-flow/pdf-pipeline.md) | PDF acquisition waterfall + parse scoring |
-| [code-flow/analysis.md](code-flow/analysis.md) | Analysis scripts: rule analysis, APA resolver (the gap/overlap analysis is retired) |
+| [code-flow/analysis.md](code-flow/analysis.md) | Analysis scripts: the APA resolver's flow, plus a pointer to `analysis/README.md` (the gap/overlap analysis is retired) |
 
 Not indexed above, because they are records rather than references:
 `docs/archive/` (superseded design docs), `docs/tasks/` (dated handover notes) and

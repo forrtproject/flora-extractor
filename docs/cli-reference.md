@@ -781,22 +781,11 @@ corpus it read: it compared `all_replications.csv` against `data/candidates.csv`
 Stage 1's corpus is the survivor pool now. The per-release recall monitor that
 replaces it is specified in `analysis/gold/README.md` and not yet implemented.
 
-```bash
-# Rule analysis — audit filter rules and extraction link methods
-# (writes analysis/rule_improvement_opportunities.csv)
-python -m analysis.rule_analysis
-```
-
 `analysis/apa_resolver.py` is a library, not a command — it defines `resolve_all()`
 and `run_apa_resolution()` and has no `__main__` block, so `python -m
 analysis.apa_resolver` does nothing. Import it.
 
 **Outputs:** CSV and Markdown files in `analysis/` (see [code-flow/analysis.md](code-flow/analysis.md) for what each file means)
-
-Key output files:
-
-- `analysis/rule_improvement_opportunities.csv` — ranked filter/extract improvement suggestions
-- `analysis/extraction_audit.md` — link method and confidence breakdown
 
 The `gap_summary.md` / `gap_analysis_*.csv` outputs belonged to the retired overlap
 analysis and are no longer produced.

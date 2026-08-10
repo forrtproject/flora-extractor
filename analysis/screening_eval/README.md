@@ -4,6 +4,14 @@ This directory holds the hand-coding and model-evaluation evidence behind Stage 
 front-door screen (`classify_replication()` in `shared/llm_client.py`): the two-model
 voter pair, the prompt wording, and the discard rule.
 
+> **2026-08-10:** the superseded generations (v2–v3.2 prompts, their reports and
+> scripts, `screening_prompt_proposal.md`) and all raw `voter_*.json` run records
+> moved to `archive/analysis/screening_eval/`. Rows below describing those files are
+> kept as the record of what they were; production evidence is `report_v33.md`,
+> `prompt_v33.txt` and `gate_sweep_v32.{md,py}`, which remain here. Re-running
+> `score_v33.py` or `gate_sweep_v32.py` needs the `voter_*.json` files copied back
+> from `archive/analysis/screening_eval/` — they read them from this directory.
+
 **These cases are derivation data.** Every case here was used while choosing the prompt
 and the voter pair, so a number computed on them is an in-sample number. Any future
 evaluation of a screening prompt or voter pair must hold these cases out or

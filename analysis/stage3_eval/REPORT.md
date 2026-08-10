@@ -1,8 +1,13 @@
 # Stage 3 resolution quality — iteration log
 
-The exercise specified in [`docs/stage3-quality-handover.md`](../../docs/stage3-quality-handover.md):
-iterate on a frozen 100-work development sample until three consecutive changes fail
-to improve it, then confirm once on a disjoint 100-work holdout.
+The exercise specified in `docs/stage3-quality-handover.md` (since deleted — see "The
+goal this file was written for" below): iterate on a frozen 100-work development
+sample until three consecutive changes fail to improve it, then confirm once on a
+disjoint 100-work holdout.
+
+> The `payloads-*.md` files and `campaign.sh` referred to below are no longer beside
+> this report: they moved to `archive/analysis/stage3_eval/`. The payloads are
+> regenerable with `analysis/stage3_eval/read_batch.py`.
 
 **Samples.** `samples.json`, drawn once from release `bc38ddd787e0` (1,298 works) with
 seed 20260807. Dev 36/34/30 and holdout 34/35/30 (ordinary journal DOI / OSF

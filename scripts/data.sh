@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 #
-# Sync the large Stage 2 data file (filtered.csv ~4.3GB), the Stage 3 input.
-#
-# candidates.csv is NOT here any more: Stage 1's output is the survivor pool, shared
-# via Hugging Face (`python -m search.pool_sync --pull`), not via DVC. The
-# candidates.zip DVC pointer is kept only so historical revisions stay resolvable.
+# Sync the RETIRED pre-engine data files, kept on R2 so historical revisions stay
+# resolvable. filtered.zip holds the multi-GB pre-engine filtered.csv — it is NOT
+# Stage 3's input any more (the engine handoff writes today's small data/filtered.csv,
+# and the tier reads the pool directly). candidates.zip likewise holds the retired
+# Stage 1 corpus; Stage 1's output is now the survivor pool, shared via Hugging Face
+# (`python -m search.pool_sync --pull`), not via DVC. Neither zip needs to sit in a
+# working checkout — pull them only to inspect a historical revision.
 #
 # These are too big for git / GitHub LFS free tier, so they are stored — zipped —
 # in a Cloudflare R2 bucket and versioned with DVC. Only the small *.dvc pointer
