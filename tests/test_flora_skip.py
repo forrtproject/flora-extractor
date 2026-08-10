@@ -144,3 +144,21 @@ def test_default_skip_list_reads_the_two_standard_names(tmp_path):
     _sheet_at(tmp_path / FLORA_CSV_NAME,
               [{"doi_r": "10.2/a", "alt_identifier_r": ""}])
     assert default_flora_skip_dois(tmp_path) == {"10.1/chosen", "10.2/a"}
+
+
+def test_a_multi_doi_alt_identifier_cell_contributes_every_doi(tmp_path):
+    """31 flora.csv alt_identifier_r cells hold comma-separated DOI pairs; unsplit,
+    the pair made one key that matched no row (2026-08-10)."""
+    flora = tmp_path / "flora.csv"
+    flora.write_text(
+        "doi_r,alt_identifier_r\n"
+        "10.1000/base,\"10.17605/OSF.IO/RNE5U, 10.17605/OSF.IO/3M7QW\"\n"
+        # an old Wiley DOI with an internal semicolon must survive unsplit
+        "10.1002/1099-0879(200007)7:3<220::aid-cpp243>3.0.co;2-f,\n",
+        encoding="utf-8")
+    from shared.flora_skip import load_flora_skip_dois
+    skip = load_flora_skip_dois(sheet_path=None, flora_path=flora)
+    assert "10.17605/osf.io/rne5u" in skip
+    assert "10.17605/osf.io/3m7qw" in skip
+    assert "10.1002/1099-0879(200007)7:3<220::aid-cpp243>3.0.co;2-f" in skip
+    assert not any("," in d for d in skip)

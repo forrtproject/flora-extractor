@@ -44,6 +44,25 @@ _OSF_URL_COLUMNS = ("url_r", "url_o", "oa_url_r", "oa_url_o")
 _OSF_GUID_RE = re.compile(r"osf\.io/([a-z0-9]{5})(?:[/?#]|$)", re.IGNORECASE)
 
 
+def _split_identifiers(cell: object) -> list[str]:
+    """The identifiers in one skip-list cell — usually one, sometimes several.
+
+    31 of flora.csv's 2,504 `alt_identifier_r` cells hold comma-separated DOI
+    pairs (measured 2026-08-10), and an unsplit pair makes one key that matches
+    no row — those works were re-extractable. The cell is split on commas ONLY
+    when every fragment is its own `10.`-prefixed identifier: a comma may
+    legally occur inside a single DOI, and old Wiley DOIs carry internal
+    semicolons, so any blunter split corrupts real identifiers.
+    """
+    text = str(cell or "").strip()
+    if not text:
+        return []
+    parts = [p.strip() for p in text.split(",")]
+    if len(parts) > 1 and all(p.startswith("10.") for p in parts if p):
+        return [p for p in parts if p]
+    return [text]
+
+
 def _osf_doi_keys(df: pd.DataFrame) -> set:
     """`10.17605/osf.io/<guid>` for every OSF page *df* names in a URL column."""
     keys = set()
@@ -193,8 +212,10 @@ def load_flora_skip_dois(sheet_path=None, flora_path=None) -> set:
             found = set()
             for col in ("doi_r", "alt_identifier_r"):
                 if col in df.columns:
-                    found |= {clean_doi(d) for d in df[col] if str(d).strip()}
+                    for cell in df[col]:
+                        found |= {clean_doi(d) for d in _split_identifiers(cell)}
             found |= _osf_doi_keys(df)
+            found.discard("")
             skip |= found
             log.info("flora.csv: %d already-in-FLoRA DOIs will be skipped", len(found))
 
