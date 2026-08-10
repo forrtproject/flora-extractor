@@ -41,7 +41,8 @@ docs/superpowers/
 docs/GITHUB_ISSUES.md
 docs/ARCHITECTURE.md
 .env.example
-/Logs
+/logs/
+.ruff_cache/
 load_doi_list.py
 /lookup
 issue.md

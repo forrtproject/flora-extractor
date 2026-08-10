@@ -215,7 +215,8 @@ schema: `classification` ∈ {replication, reproduction, both, none, unclear}, b
 `confident`, `categories` (11-value enum), `evidence_quote`, `reasoning`. Prompt:
 `_CLASSIFY_PROMPT` in `shared/prompts.py`, now at v3.3 — v3.2 plus the
 partial-overlap rule (evaluated copy: `analysis/screening_eval/prompt_v33.txt`;
-evidence: `analysis/screening_eval/report_v33.md`, with `report_v32.md` behind it).
+evidence: `analysis/screening_eval/report_v33.md`; earlier generations are under
+`archive/analysis/screening_eval/`).
 
 **The gate is `screen_gate()`, defined once** (G-softqual, 89% hard-negative discard,
 zero settled misses):

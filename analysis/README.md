@@ -13,8 +13,8 @@ things to read first; the rest are one-off diagnostics kept for their findings.
 | --- | --- |
 | `arm_evidence.py` | The free scorer for a candidate filter pattern — see below. |
 | `rule_report.py` | The applied-rules overview for the whole live bundle — see below. |
-| `prescreen_eval/` | The issue #130 evaluation of the optional cheap pre-screen (`shared/prescreen.py`). `REPORT.md` is the finding and is cited from CLAUDE.md; `CASESETS.md` and `README.md` describe the gold sets; `build_casesets.py` / `enrich_casesets.py` / `eval_prescreen.py` rebuild them; the `pre_p*_*.json` files are per-prompt, per-model run records. |
-| `screening_eval/` | The derivation of Stage 3's front-door voter pair and its prompt. `report_v33.md` scores the shipped v3.3 prompt (`prompt_v33.txt` is the evaluated copy of `_CLASSIFY_PROMPT`); `report_v32.md` is the version behind it. `gate_sweep*.md` derive `screen_gate()`; `human_truth*.json` / `heldout_truth*.json` are the hand-coded labels; `voter_*.json` are per-prompt, per-model run records. |
+| `prescreen_eval/` | The issue #130 evaluation of the optional cheap pre-screen (`shared/prescreen.py`). `REPORT.md` is the finding and is cited from CLAUDE.md; `CASESETS.md` and `README.md` describe the gold sets; `build_casesets.py` / `enrich_casesets.py` / `eval_prescreen.py` rebuild them. The per-prompt, per-model run records (`pre_p*_*.json`) are under `archive/analysis/prescreen_eval/`. |
+| `screening_eval/` | The derivation of Stage 3's front-door voter pair and its prompt. `report_v33.md` scores the shipped v3.3 prompt (`prompt_v33.txt` is the evaluated copy of `_CLASSIFY_PROMPT`); `gate_sweep_v32.{md,py}` derive `screen_gate()`; `human_truth*.json` / `heldout_truth*.json` are the hand-coded labels. Superseded generations (v2–v3.2 prompts and reports) and the raw `voter_*.json` run records are under `archive/analysis/screening_eval/`. |
 
 ## `arm_evidence.py` — should this rule or this arm go live?
 
@@ -89,7 +89,6 @@ maintainer's call, not this script's.
 | File | What it did |
 | --- | --- |
 | `apa_resolver.py` | Resolves replications that have no DOI via CrossRef (title + authors + year), with a manual `apa_reference_fallback.csv` tier, and formats APA references. Reads `all_replications.csv`. |
-| `rule_analysis.py` | Audits `extracted.csv` by link method, confidence and missing `doi_o` → `extraction_audit.md`. |
 | `citation_gate_analysis.py` | A pre-#152 measurement of the retired Stage 2 rule filter's author-year cite gate. Kept for its numbers; the code path it measured no longer exists. |
 
 ## What was removed, and why
@@ -115,12 +114,29 @@ gap:
 - **`rescan_impact_report.py`** (2026-08-06). It measured the journal-hint branch
   of Stage 3's citation scoring, which was deleted in the cleanup round after zero
   observed firings in production — the script's mock target went with it.
+- **`rule_analysis.py`** and its `extraction_audit.md` output. It broke
+  `extracted.csv` down by link method, confidence and missing `doi_o`. The
+  read-only audit over the current export is `extract/audit_extracted.py`, which
+  flags the same fields per row.
+- **`purge_offpile.py`** (2026-08). It moved the pre-engine corpus out of
+  `extracted.csv` and its set-aside CSVs into `data/legacy_pre_engine/`, once, after
+  the #146 handoff replaced Stage 3's input. The move is done.
+- **`rescan_stage3_relink_impact.csv`** — a before/after `doi_o` relink table
+  (`old_doi_o` / `new_doi_o` / `resolution_method` per `doi_r`) from the 2026-08
+  rescan. Its sibling `rescan_filter_gate_impact.csv` is in `archive/`.
+
+The **superseded eval run records** are not deleted but moved: the per-prompt,
+per-model `voter_*.json` and `pre_p*.json` files, the pre-v3.3 screening prompts
+and their scoring scripts, and the Stage 3 rendered payloads now live under
+`archive/`, paths mirrored. What each one is and why it moved is in
+[`archive/README.md`](../archive/README.md); the reports that cite their numbers
+stay here.
 
 ## Running one
 
-```bash
-python -m analysis.rule_analysis          # → extraction_audit.md
-```
+Every script that has a CLI is a module: `python -m analysis.<name>`, with `--help`
+on each. `apa_resolver.py` is the exception — it has no `__main__` block and is
+imported rather than run.
 
 Inputs come from `shared.config.DATA_DIR`, logging from `shared.config.log`.
 Requires `pandas` and `requests` (plus `fuzzywuzzy` for `apa_resolver`'s optional
