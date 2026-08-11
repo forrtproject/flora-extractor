@@ -70,7 +70,7 @@ from shared.schema import (
     make_pair_id,
     year_str,
 )
-from shared.utils import (bare_work_id, cache_key, citation_fragment,
+from shared.utils import (author_surname, bare_work_id, cache_key, citation_fragment,
                           clean_citation_title, clean_doi, non_article_doi,
                           psyctests_doi, usable_title)
 from extract.link_original import run_for_doi
@@ -169,7 +169,7 @@ def _build_ref_o(doi_o: str, fallback_author: str = "",
             log.debug("[ref_o] title search failed for %r: %s", title_o[:60], exc)
 
     if not meta:
-        surname = str(fallback_author or "").split()[-1] if fallback_author else ""
+        surname = author_surname(fallback_author)
         year    = str(fallback_year or "")
         ref     = " · ".join(s for s in [surname, year] if s)
         return ref, surname, ""
@@ -385,7 +385,7 @@ def _record_type(filter_row: pd.Series, screen: "dict | None") -> str:
     on the computation/robustness grid, not success/failure (see shared/schema.py).
 
     The front-door screen decides it — that is the call that read the abstract and
-    said what the paper is. Stage 2's filter_status stands in when the screen
+    said what the paper is. Stage 2's paper_type stands in when the screen
     proceeded without a qualifying vote, and is the whole answer on a --no-llm run
     where no screen ran at all.
 
@@ -397,7 +397,7 @@ def _record_type(filter_row: pd.Series, screen: "dict | None") -> str:
     """
     if screen and screen.get("record_type"):
         return str(screen["record_type"])
-    status = str(filter_row.get("filter_status", "")).strip().lower()
+    status = str(filter_row.get("paper_type", "")).strip().lower()
     if status in {"replication", "reproduction"}:
         return status
     return "" if screen else "replication"
@@ -1401,6 +1401,14 @@ def _guard_original_link(row: dict) -> dict:
             meta = None
             log.debug("[%s] doi_o title-recovery failed: %s", doi_r, exc)
         found = clean_doi(str((meta or {}).get("doi", "") or ""))
+        # A recovered DOI is written with no model in the loop, so it gets the same
+        # record-class check the pooled candidates get: a data/registration/PsycEXTRA
+        # DOI is not an original paper, and accepting one here would expose it as
+        # doi_o. The row keeps its title-only link instead (steps 3/4 below).
+        if found and non_article_doi(found):
+            log.info("[%s] recovered DOI %s is a non-article record — not used",
+                     doi_r, found)
+            found = ""
         if found:
             # The work id has to be compared too: OpenAlex can return the replication's
             # own work under a DOI that differs textually from doi_r (alternate or
@@ -1424,7 +1432,13 @@ def _guard_original_link(row: dict) -> dict:
         if not usable_title(title_o):
             return _reject("no doi_o and no usable title_o")
         row["doi_o_verification"] = "no_doi"
-        work_id_o = bare_work_id(str((meta or {}).get("openalex_id", "") or ""))
+        # The title search's hit first, then the id the row ARRIVED with. A per-target
+        # row built from an OpenAlex reference record carries that record's own work id
+        # (`_merge_multi_row`), and reading only `meta` here threw it away: a DOI-less
+        # record whose title the search could not match was demoted to
+        # unidentified_original while its identity sat in the row's own column.
+        work_id_o = (bare_work_id(str((meta or {}).get("openalex_id", "") or ""))
+                     or bare_work_id(str(row.get("oa_work_id_o", "") or "")))
         if work_id_o:
             reason = _is_self("", work_id_o)
             if reason:
@@ -1564,8 +1578,14 @@ def _sanitise_row(result_row: dict) -> dict:
 # picks were already adjudicated cold by pick_author_year_original — a second
 # same-model pass over them was measured at zero value (0 flags on 200 fresh rows,
 # both real wrongs passed; analysis/stage3_eval/model_triage_2026-08-08.md), so they
-# are deliberately not re-checked here.
+# are deliberately not re-checked here. They are GRADED, deciding nothing, by
+# _confirm_search_row below — the graded form of the question the binary one could not
+# answer over this class.
 _KEYED_CONFIRM_METHODS = {"llm_fulltext", "llm_references", "llm_cited_candidates"}
+
+# The link methods the search-confirm grading covers: a record a search returned,
+# picked by pick_author_year_original. These are the low-confidence resolved class.
+_SEARCH_CONFIRM_METHODS = {"llm_title_search", "llm_author_year_search"}
 
 # What llm_evidence appends after the quote itself, on "; " — see
 # resolve_targets_and_outcomes' evidence_notes. Later run notes join on " | ".
@@ -1662,15 +1682,73 @@ def _confirm_keyed_row(row: dict) -> dict:
     return row
 
 
+def _confirm_search_row(row: dict) -> dict:
+    """Issue #183 / #186's second shape: grade a search-based link, and act on
+    nothing.
+
+    `llm_title_search` and `llm_author_year_search` link a study to a record its own
+    reference list never supplied — a search hit adjudicated by
+    `pick_author_year_original`. Two cross-vendor triages measured that class at 98–99%
+    precision (`analysis/stage3_eval/model_triage_2026-08-08.md`), which is why it
+    resolves at all; the same measurement showed a BINARY re-check of it flagging
+    nothing, so this asks for a four-value grade instead.
+
+    OBSERVE-ONLY, deliberately. The grade is appended to `link_evidence` as a labelled
+    segment and changes no link, no confidence and no method — which grade should gate
+    what is a calibration to make from collected grades, not a threshold to guess
+    (`analysis/stage3_eval/search_confirm_plan.md`). Because it concludes nothing, the
+    prompt is deliberately OUT of the extract generation fingerprint: editing it must
+    not reopen every settled work for an annotation.
+
+    A provider failure records `search_confirm: api_error` and leaves the row settled —
+    unlike the keyed check, where an unchecked link may not settle, here an ungraded
+    link is exactly as good as the ladder made it. An unreadable answer records
+    nothing at all.
+    """
+    if str(row.get("link_method") or "") not in _SEARCH_CONFIRM_METHODS:
+        return row
+    doi_o = clean_doi(str(row.get("doi_o") or ""))
+    if not doi_o and not row.get("oa_work_id_o"):
+        return row
+
+    from shared.llm_client import confirm_search_original
+    graded = confirm_search_original(
+        clean_doi(str(row.get("doi_r") or "")),
+        str(row.get("title_r") or ""), str(row.get("abstract_r") or ""),
+        evidence_quote(str(row.get("link_evidence") or "")),
+        {"doi": doi_o, "title": str(row.get("title_o") or ""),
+         "authors": str(row.get("authors_o") or ""),
+         "year": str(row.get("year_o") or ""),
+         "citation": str(row.get("ref_o") or ""),
+         "openalex_id": str(row.get("oa_work_id_o") or "")})
+
+    if graded["verdict"] is None:
+        if not graded["provider_failure"]:
+            log.warning("[%s] search-link grading unreadable: %s",
+                        row.get("doi_r"), graded["llm_error"])
+            return row
+        log.warning("[%s] search-link grading got no answer: %s",
+                    row.get("doi_r"), graded["llm_error"])
+        note = "search_confirm: api_error"
+    else:
+        note = (f"search_confirm: {graded['verdict']}"
+                + (f" — {graded['reasoning']}" if graded["reasoning"] else ""))
+    prior = str(row.get("link_evidence", "") or "")
+    row["link_evidence"] = f"{prior} | {note}" if prior else note
+    return row
+
+
 def _finalise_row(result_row: dict) -> dict:
-    """Verify doi_o, check an LLM-accepted keyed link, fill the work ids, and make
-    the row's text safe to write.
+    """Verify doi_o, check an LLM-accepted keyed link, grade a search-based one, fill
+    the work ids, and make the row's text safe to write.
 
     Split out of the write because it is the part that calls APIs: two lookups plus
     one short confirm call per row, which the workers must make on their own time
-    rather than while holding the write lock the whole pool queues on.
+    rather than while holding the write lock the whole pool queues on. The two confirm
+    calls never both fire — their method sets are disjoint.
     """
-    return _sanitise_row(_fill_work_ids(_confirm_keyed_row(_verify_row(result_row))))
+    return _sanitise_row(_fill_work_ids(
+        _confirm_search_row(_confirm_keyed_row(_verify_row(result_row)))))
 
 
 
@@ -1987,6 +2065,59 @@ def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
                     f"named no target; the paper cites {cited[0]['raw']}, looked up and "
                     f"not accepted ({attempt.get('outcome', 'no answer')})"]))}
 
+    # A single accepted link whose record carries a title but NO identifier. It is
+    # resolved, so the per-target adapter above never sees it — and the guard's own
+    # recovery is a strict title match, which a registry's subtitle-stripped or an
+    # OCR-mangled title does not survive. The row then settles `unidentified_original`
+    # with an original nothing downstream can key on. Measured on the 105
+    # unidentified-original rows of 2026-08-10: 83 of them never reached the pooled
+    # search at all, because `resolved` is True whenever the record has a title
+    # (shared/llm_client, `resolved = bool(record) and bool(resolved_doi or title)`).
+    #
+    # So the same recovery `_target_entry` performs on the not-resolved branch runs
+    # here: the record's author, year and title become the named target, the pooled
+    # searches fill a candidate list, and the linking model picks or declines. A
+    # decline or an empty pool leaves the row exactly where it was.
+    targets = link.get("targets") or []
+    accepted = targets[0] if link.get("resolved") and len(targets) == 1 else None
+    accepted_record = (accepted or {}).get("record") or {}
+    if (accepted and not clean_doi(str(link.get("resolved_doi_o", "") or ""))
+            and not accepted_record.get("openalex_id")):
+        context = {"title_r": str(row.get("title_r", "") or ""),
+                   "abstract_r": str(row.get("abstract_r", "") or "")}
+        raw_title = str(accepted_record.get("title") or "")
+        cleaned   = clean_citation_title(raw_title)
+        title     = raw_title if citation_fragment(cleaned) else cleaned
+        named = " ".join(str(x) for x in (
+            accepted_record.get("first_author"),
+            f"({accepted_record.get('year')})" if accepted_record.get("year") else "",
+            title) if x).strip()
+        probe = {**accepted, "target_as_named": named, "record": None}
+        entry = _title_searched_entry(probe, doi_r, context)
+        attempt = probe.get("_search_attempt") or {}
+        # `search_unavailable` is carried through too, not treated as a miss: the
+        # adapter writes it api_error, which does not settle, so a provider outage
+        # under this link is retried rather than closed as an unidentified original.
+        if entry and (entry.get("doi") or entry.get("search_unavailable")):
+            log.info("[%s] the accepted record has no identifier; %r was looked up "
+                     "(%s)", doi_r, named, attempt.get("outcome", "no answer"))
+            recovered_link = {**link, "resolved": False, "targets": [probe],
+                              "n_targets": 1, "multi_target": False,
+                              "_recovered_entry": entry}
+            rows = _per_target_rows(row, doi_r, recovered_link, screen, no_llm, no_pdf,
+                                    resolved_only)
+            _observe_link(observed, recovered_link)
+            if rows:
+                return rows
+        else:
+            # The question was asked. The row ends where it ended before, and now says
+            # what was tried — the only way to tell later whether a better resolver
+            # would have identified it.
+            link = {**link, "llm_evidence": " | ".join(filter(None, [
+                str(link.get("llm_evidence", "") or ""),
+                f"the record carries no identifier; {named!r} looked up and not "
+                f"accepted ({attempt.get('outcome', 'no answer')})"]))}
+
     # original_match_confidence is an observation about the answer, not a prediction
     # made before it, and it is settled AFTER the guard by the same `_match_confidence`
     # rule the per-target path uses — the value passed into _merge_row here is only a
@@ -2172,7 +2303,7 @@ def _process_row(row: pd.Series, doi_r: str, no_llm: bool, no_pdf: bool,
     # Ahead of the front door: a run that is not coding reproductions should not pay
     # to screen them either. The type this reads is Stage 2's, the only one there is
     # before the screen speaks.
-    if no_reproductions and str(row.get("filter_status", "")) == "reproduction":
+    if no_reproductions and str(row.get("paper_type", "")) == "reproduction":
         log.info("[%s] --no-reproductions: writing target_pending", doi_r)
         return [_empty_row(row, "single_original", "low",
                            link_method="target_pending")]
@@ -2211,14 +2342,14 @@ def _process_row(row: pd.Series, doi_r: str, no_llm: bool, no_pdf: bool,
         if done is not None:
             log.info("[%s] front-door screen: %s", doi_r, done["link_method"])
             return [done]
-        # filter_status is the paper-type field (issue #93), so a screen that
+        # paper_type is the paper-type field (issue #93), so a screen that
         # said what the paper is overwrites it. A gate that proceeded without a
         # qualifying vote (unclear/unclear, or an unconfident none against an
         # unconfident qualifying answer) said nothing, and the row keeps whatever
         # Stage 2 left — a needs_review row stays needs_review, waits for a human
         # on the check page, and is not pushed for validation.
         if screen.get("record_type"):
-            row["filter_status"] = screen["record_type"]
+            row["paper_type"] = screen["record_type"]
             row["filter_method"] = "screen"   # the screen decided the type
 
     try:

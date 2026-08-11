@@ -713,7 +713,7 @@ class TestTheRowPipeline:
 
     _ONE_ROW = (
         "doi_r,title_r,abstract_r,year_r,authors_r,journal_r,url_r,"
-        "openalex_id_r,source,filter_status,filter_method,filter_evidence,filter_confidence\n"
+        "openalex_id_r,source,paper_type,filter_method,filter_evidence,filter_confidence\n"
         "10.1000/test,Test Paper,Abstract text,2020,Smith,J. Psych,,W999,openalex,"
         "replication,rule_based,direct replication,high\n"
     )
@@ -726,7 +726,7 @@ class TestTheRowPipeline:
     def test_two_targets_expand_to_two_rows(self):
         csv = (
             "doi_r,title_r,abstract_r,year_r,authors_r,journal_r,url_r,"
-            "openalex_id_r,source,filter_status,filter_method,filter_evidence,filter_confidence\n"
+            "openalex_id_r,source,paper_type,filter_method,filter_evidence,filter_confidence\n"
             "10.1000/multi,Multi-target,Abstract,2020,Smith,J. Psych,,W1,openalex,"
             "replication,rule_based,direct replication,high\n"
         )
@@ -739,16 +739,16 @@ class TestTheRowPipeline:
 
     _TYPE_CSV = (
         "doi_r,title_r,abstract_r,year_r,authors_r,journal_r,url_r,"
-        "openalex_id_r,source,filter_status,filter_method,filter_evidence,filter_confidence\n"
+        "openalex_id_r,source,paper_type,filter_method,filter_evidence,filter_confidence\n"
         "10.1000/rep,Rep Paper,Abstract,2020,Smith,J. Psych,,W1,openalex,"
         "replication,rule_based,direct replication,high\n"
         "10.1000/repro,Repro Paper,Abstract,2020,Jones,J. Psych,,W2,openalex,"
         "reproduction,rule_based,reproduction study,high\n"
     )
 
-    def test_type_column_falls_back_to_filter_status_without_an_llm(self):
+    def test_type_column_falls_back_to_paper_type_without_an_llm(self):
         """--no-llm calls no voter, and these rows carry no Stage 2 verdict either,
-        so Stage 2's filter_status is all there is."""
+        so Stage 2's paper_type is all there is."""
         result, _, _ = _run_pipeline(self._TYPE_CSV, screen_row=None, no_llm=True)
         types = dict(zip(result["doi_r"], result["type"]))
         assert types["10.1000/rep"] == "replication"
@@ -763,7 +763,7 @@ class TestTheRowPipeline:
         what had failed."""
         csv = (
             "doi_r,title_r,abstract_r,year_r,authors_r,journal_r,url_r,"
-            "openalex_id_r,source,filter_status,filter_method,filter_evidence,filter_confidence\n"
+            "openalex_id_r,source,paper_type,filter_method,filter_evidence,filter_confidence\n"
             "10.1000/fail,Fail Paper,Abstract,2020,Smith,J. Psych,,W1,openalex,"
             "replication,rule_based,direct replication,high\n"
         )
@@ -785,7 +785,7 @@ class TestTheRowPipeline:
         """_get_outcome must pass resolved_title_o/author_o/year_o to extract_outcome."""
         csv = (
             "doi_r,title_r,abstract_r,year_r,authors_r,journal_r,url_r,"
-            "openalex_id_r,source,filter_status,filter_method,filter_evidence,filter_confidence\n"
+            "openalex_id_r,source,paper_type,filter_method,filter_evidence,filter_confidence\n"
             "10.1000/rep,Rep Paper,Abstract,2020,Jones,J. Psych,,W2,openalex,"
             "replication,rule_based,direct replication,high\n"
         )
@@ -819,7 +819,7 @@ class TestGranularLinkMethods:
             "resolution_score": 1.0, "llm_confidence": "high",
         }
         filter_row = pd.Series({"doi_r": "10.1/rep", "title_r": "Rep",
-                                "filter_status": "replication"})
+                                "paper_type": "replication"})
         with patch("extract.run_extract._build_ref_o", return_value=("ref", "auth")):
             row = _merge_row(filter_row, link, _MOCK_OUTCOME,
                              "single_original", "high", 1, 1)
@@ -833,7 +833,7 @@ class TestGranularLinkMethods:
                 "resolved_author_o": "Smith", "resolved_study_o": "1, 2",
                 "resolution_score": 1.0, "llm_confidence": "high"}
         filter_row = pd.Series({"doi_r": "10.1/rep", "title_r": "Rep",
-                                "filter_status": "replication"})
+                                "paper_type": "replication"})
         with patch("extract.run_extract._build_ref_o", return_value=("ref", "auth")):
             row = _merge_row(filter_row, link, _MOCK_OUTCOME,
                              "single_original", "high", 1, 1)
@@ -1222,12 +1222,35 @@ class TestGuardOriginalLink:
         assert out["doi_o"] == "10.9/found"
         assert out["link_method"] == "llm_fulltext"
 
+    def test_the_records_own_work_id_survives_a_title_search_that_found_nothing(self):
+        """`_merge_multi_row` fills oa_work_id_o from the reference record, and steps
+        3/4 read the id only off the title search's own hit. A DOI-less record whose
+        title the search could not match was then demoted to unidentified_original
+        while its identity sat in the row's own column."""
+        with patch("extract.run_extract._search_crossref_by_title", return_value=None), \
+             patch("extract.run_extract._search_openalex_by_title", return_value=None):
+            out = run_extract._guard_original_link(
+                self._row(doi_o="", oa_work_id_o="W123"))
+        assert out["link_method"] == "llm_fulltext"
+        assert out["oa_work_id_o"] == "W123"
+        assert out["doi_o_verification"] == "no_doi"
+
     def test_recovered_doi_that_is_a_self_link_is_rejected(self):
         """Recovery must not resurrect the replication itself as its own original."""
         with patch("extract.run_extract._search_crossref_by_title",
                    return_value={"doi": "10.1/repl"}):
             out = run_extract._guard_original_link(self._row(doi_o=""))
         assert out["link_method"] == "target_pending"
+
+    def test_recovered_non_article_doi_is_not_used(self):
+        """A recovered DOI is written with no model in the loop, so a
+        data/registration/PsycEXTRA record must not become doi_o; the row keeps its
+        title-only link instead."""
+        with patch("extract.run_extract._search_crossref_by_title",
+                   return_value={"doi": "10.1037/e473812008-001"}):
+            out = run_extract._guard_original_link(self._row(doi_o=""))
+        assert out["doi_o"] == ""
+        assert out["link_method"] == "unidentified_original"
 
     @pytest.mark.parametrize("openalex_hit", [
         None,                              # nothing came back at all
@@ -1369,7 +1392,7 @@ class TestReferenceStringTargets:
                 "target_stage": "llm_fulltext", "unidentified_count": 0,
                 "llm_model": "m", "pdf_source": "", "parse_method": "", "pdf_ok": False}
         row = pd.Series({"doi_r": "10.1/repl", "title_r": "R",
-                         "filter_status": "replication"})
+                         "paper_type": "replication"})
         with patch("extract.run_extract._build_ref_o", return_value=("", "", "")), \
              patch.object(run_extract, "_has_document", return_value=False), \
              patch.object(run_extract, "_get_outcome", return_value={}), \
@@ -1583,7 +1606,7 @@ class TestClassifyModelAttribution:
     classifier's model was computed and thrown away."""
 
     _FILTER_ROW = pd.Series({"doi_r": "10.1/rep", "title_r": "Rep",
-                             "filter_status": "replication"})
+                             "paper_type": "replication"})
 
     _LINK = {"resolution_method": "llm_fulltext", "resolved_doi_o": "10.1/orig",
              "resolved_title_o": "Original", "resolved_year_o": 2000,
@@ -1639,26 +1662,26 @@ class TestMultiRowRecordType:
     _ORIG = {"rank": 1, "doi": "10.1/o", "title": "O", "first_author": "A",
              "year": 2001, "confidence": "high"}
 
-    def _row(self, filter_status: str) -> dict:
+    def _row(self, paper_type: str) -> dict:
         with patch("extract.run_extract._build_ref_o", return_value=("", "", "")):
             return _merge_multi_row(
                 pd.Series({"doi_r": "10.1/rep", "title_r": "Rep",
-                           "filter_status": filter_status}),
+                           "paper_type": paper_type}),
                 self._ORIG, _MOCK_OUTCOME, "multiple_original", "high", 2)
 
-    @pytest.mark.parametrize("filter_status", ["replication", "reproduction"])
-    def test_both_paths_carry_stage_2s_type(self, filter_status):
-        """_merge_row already honours filter_status; the multi path must not disagree."""
+    @pytest.mark.parametrize("paper_type", ["replication", "reproduction"])
+    def test_both_paths_carry_stage_2s_type(self, paper_type):
+        """_merge_row already honours paper_type; the multi path must not disagree."""
         link = {"resolution_method": "llm_fulltext", "resolved_doi_o": "10.1/orig",
                 "resolved_title_o": "Original", "resolved_year_o": 2000,
                 "resolved_author_o": "Smith", "resolution_score": 1.0,
                 "llm_confidence": "high"}
         with patch("extract.run_extract._build_ref_o", return_value=("r", "a", "b")):
             single = _merge_row(pd.Series({"doi_r": "10.1/rep", "title_r": "Rep",
-                                           "filter_status": filter_status}),
+                                           "paper_type": paper_type}),
                                 link, _MOCK_OUTCOME, "single_original", "high", 1, 1)
-        assert self._row(filter_status)["type"] == filter_status
-        assert single["type"] == filter_status
+        assert self._row(paper_type)["type"] == paper_type
+        assert single["type"] == paper_type
 
 
 # ── One match-confidence rule for both writing paths ─────────────────────────
@@ -1672,7 +1695,7 @@ class TestMatchConfidenceIsOneRule:
 
     def _row(self, link: dict) -> dict:
         row = pd.Series({"doi_r": "10.1/repl", "title_r": "R",
-                         "filter_status": "replication"})
+                         "paper_type": "replication"})
         with patch.object(run_extract, "run_for_doi", return_value=link), \
              patch.object(run_extract, "_build_ref_o", return_value=("", "", "")), \
              patch.object(run_extract, "_has_document", return_value=False), \
@@ -1736,7 +1759,7 @@ class TestTitleSearchIsProvisional:
 
 _FILTERED_CSV = (
     "doi_r,title_r,abstract_r,year_r,authors_r,journal_r,url_r,"
-    "openalex_id_r,source,filter_status,filter_method,filter_evidence,filter_confidence\n"
+    "openalex_id_r,source,paper_type,filter_method,filter_evidence,filter_confidence\n"
     "10.1000/rep,Rep Paper,Abstract text,2020,Jones,J. Psych,,W2,openalex,"
     "replication,rule_based,direct replication,high\n"
 )
@@ -1886,13 +1909,13 @@ class TestFrontDoorScreen:
         m_link.assert_called_once()
         assert row["link_method"] == "same_author_year_title_overlap"
         assert row["type"] == ""
-        assert row["filter_status"] == "needs_review"
+        assert row["paper_type"] == "needs_review"
         assert row["filter_method"] == "rule_based"
         # Coded on the replication vocabulary, the more general of the two grids.
         assert m_out.call_args[1]["record_type"] == ""
         # It waits for a human rather than being pushed for validation — the
         # validation import takes replication/reproduction rows only.
-        assert row["filter_status"] not in {"replication", "reproduction"}
+        assert row["paper_type"] not in {"replication", "reproduction"}
 
     def test_a_proceed_without_a_qualifying_vote_keeps_stage_2s_type(
             self, tmp_path, monkeypatch):
@@ -1908,20 +1931,20 @@ class TestFrontDoorScreen:
                            _vote("openai", "none", confident=False)]),
             tmp_path, monkeypatch, filtered_csv=repro_csv)
 
-        assert result.iloc[0]["filter_status"] == "reproduction"
+        assert result.iloc[0]["paper_type"] == "reproduction"
         assert result.iloc[0]["type"] == "reproduction"
         assert m_out.call_args[1]["record_type"] == "reproduction"
 
     def test_the_screen_decides_record_type_and_categories(self, tmp_path, monkeypatch):
         """The screen read the abstract and said what the paper is, so its verdict
-        reaches the outcome call, the `type` column and filter_status."""
+        reaches the outcome call, the `type` column and paper_type."""
         result, _, m_out = self._run(
             _screen(record_type="reproduction", screen_classification="reproduction"),
             tmp_path, monkeypatch)
 
         assert m_out.call_args[1]["record_type"] == "reproduction"
         assert result.iloc[0]["type"] == "reproduction"
-        assert result.iloc[0]["filter_status"] == "reproduction"
+        assert result.iloc[0]["paper_type"] == "reproduction"
         assert result.iloc[0]["filter_method"] == "screen"
         assert result.iloc[0]["screen_categories"] == "clearly_declared|context_transfer"
 
@@ -1965,7 +1988,7 @@ class TestOutcomeGate:
         """The guard rejects a self-link AFTER the ladder ran but BEFORE the outcome
         call — so the row must be demoted first and never reach extract_outcome."""
         row = pd.Series({"doi_r": "10.1/rep", "title_r": "T", "abstract_r": "a",
-                         "filter_status": "replication"})
+                         "paper_type": "replication"})
         self_link = dict(_MOCK_LINK, resolved_doi_o="10.1/rep")
         with patch.object(run_extract, "run_for_doi", return_value=self_link), \
              patch.object(run_extract, "extract_outcome",
@@ -1980,7 +2003,7 @@ class TestOutcomeGate:
 
     def test_resolved_only_drops_the_row_before_the_outcome_call(self):
         row = pd.Series({"doi_r": "10.1/rep", "title_r": "T", "abstract_r": "a",
-                         "filter_status": "replication"})
+                         "paper_type": "replication"})
         pending = {"resolution_method": "no_fulltext_available", "resolved_doi_o": "",
                    "resolved_title_o": "", "resolved_year_o": None,
                    "resolved_author_o": "", "resolution_score": 0.0}
@@ -2367,7 +2390,7 @@ class TestSamePaperStudiesCollapse:
 
 class TestPerTargetAdapter:
     _ROW = pd.Series({"doi_r": "10.1/rep", "title_r": "T", "abstract_r": "a",
-                      "filter_status": "replication"})
+                      "paper_type": "replication"})
 
     _SCREEN = {"screen_verdict": "proceed", "screen_classification": "reproduction",
                "record_type": "reproduction",
@@ -2595,7 +2618,7 @@ class TestAdapterRowsSettleAfterTheDrops:
     confidence — is only knowable once the guard and --resolved-only have run."""
 
     _ROW = pd.Series({"doi_r": "10.1/rep", "title_r": "T", "abstract_r": "a",
-                      "filter_status": "replication"})
+                      "paper_type": "replication"})
 
     def _run(self, targets, resolved_only=False, **over):
         link = dict(_MOCK_LINK, resolved=False, resolution_method="llm_multi_target",
@@ -2719,7 +2742,7 @@ def test_study_r_is_not_written_onto_an_unresolved_link():
                   "resolved_author_o": "", "resolved_study_o": "", "resolved_study_r": "2"}
     with patch("extract.run_extract._build_ref_o", return_value=("", "", "")):
         row = _merge_row(pd.Series({"doi_r": "10.1/rep", "title_r": "T",
-                                    "filter_status": "replication"}),
+                                    "paper_type": "replication"}),
                          unresolved, {}, "single_original", "low", 1, 1)
     assert row["study_r"] == ""
 
@@ -2730,7 +2753,7 @@ class TestFulltextProvenanceReachesTheRow:
     waterfall's word for a failed attempt and is blank on the row."""
 
     _ROW = pd.Series({"doi_r": "10.1/rep", "title_r": "T",
-                      "filter_status": "replication"})
+                      "paper_type": "replication"})
 
     def test_the_single_link_path_records_the_tier_and_the_parser(self):
         link = {"resolution_method": "llm_fulltext", "resolved": True,
@@ -2794,7 +2817,7 @@ def test_no_live_reference_to_the_deleted_builders():
     # medium reached the CSV through the multi writer's confidence pass-through.
     with patch("extract.run_extract._build_ref_o", return_value=("", "", "")):
         row = _merge_multi_row(
-            pd.Series({"doi_r": "10.1/r", "title_r": "R", "filter_status": "replication"}),
+            pd.Series({"doi_r": "10.1/r", "title_r": "R", "paper_type": "replication"}),
             {"rank": 1, "doi": "10.1/o", "title": "O", "confidence": "medium"},
             {}, "single_original", "high", 1)
     assert row["link_confidence"] == "low"
@@ -2833,6 +2856,15 @@ class TestDeliberateSignalsAreNotSwallowed:
              patch.object(run_extract, "_search_openalex_by_title", return_value=None):
             assert run_extract._build_ref_o("10.2/orig", "Jane Smith", "2009",
                                             "A title") == ("Smith · 2009", "Smith", "")
+
+    def test_the_fallback_reads_the_surname_off_an_inverted_name(self):
+        """`.split()[-1]` shipped "L." as authors_o — an initial no author list
+        carries, which author_matches() can never pass."""
+        with patch.object(run_extract, "_oa_full_meta", return_value=None), \
+             patch.object(run_extract, "_search_crossref_by_title", return_value=None), \
+             patch.object(run_extract, "_search_openalex_by_title", return_value=None):
+            assert run_extract._build_ref_o("", "Balter, L.", "2019", "") == \
+                ("Balter · 2019", "Balter", "")
 
     def test_the_link_guard_propagates_a_drained_quota(self):
         from shared.openalex_client import OpenAlexQuotaExhausted
@@ -2904,7 +2936,7 @@ class TestYearNormalisation:
 
 class TestCarriedOutcomeReachesTheRow:
     _ROW = pd.Series({"doi_r": "10.1/rep", "title_r": "T", "abstract_r": "a",
-                      "filter_status": "replication"})
+                      "paper_type": "replication"})
 
     @staticmethod
     def _link(targets, **over):
@@ -3229,6 +3261,119 @@ class TestNamedButUnmatchedTargets:
         assert not called
 
 
+class TestAResolvedLinkWithNoIdentifier:
+    """`resolved` is True whenever the accepted record carries a title, DOI or not
+    (shared/llm_client: `resolved = bool(record) and bool(resolved_doi or title)`).
+
+    A single accepted link therefore took the merge path, where the only recovery is
+    the guard's strict title search — so a record with a title and no identifier
+    settled `unidentified_original` without the pooled, model-adjudicated search ever
+    being asked. 83 of the 105 unidentified-original rows on 2026-08-10 were that
+    class. The recovery here is the one `_target_entry` already performs on the
+    not-resolved branch, and it adds a chance without removing one: a decline, an
+    empty pool or a record that already has an identifier ends the row where it ended.
+    """
+
+    _ROW = pd.Series({"doi_r": "10.1/rep", "title_r": "T", "abstract_r": "a",
+                      "paper_type": "replication"})
+
+    _HIT = {"doi": "10.5/found", "title": "Interviewing in social research",
+            "year": 1950, "first_author": "Hyman", "openalex_id": "",
+            "source": "crossref", "flags": []}
+
+    @staticmethod
+    def _target(**record_over) -> dict:
+        record = {"doi": "", "title": "Interviewing in social research",
+                  "first_author": "Hyman", "year": 1950, "openalex_id": ""}
+        record.update(record_over)
+        return {"key": "@hyman1950", "match_certain": True,
+                "target_as_named": "Hyman and Sheatsley (1950)",
+                "study_numbers": "", "replication_study_numbers": "",
+                "evidence_quote": "a direct replication of Hyman (1950)",
+                "record": record}
+
+    def _run(self, target=None, hits=(), unavailable=False, pick=None):
+        target = target or self._target()
+        record = target["record"]
+        link = dict(_MOCK_LINK, resolved=True, resolution_method="llm_gemini",
+                    target_stage="llm_gemini", multi_target=False, n_targets=1,
+                    unidentified_count=0, targets=[target], llm_model="gemini-heavy",
+                    llm_evidence="a direct replication of Hyman (1950)",
+                    resolved_doi_o=record["doi"], resolved_title_o=record["title"],
+                    resolved_year_o=record["year"],
+                    resolved_author_o=record["first_author"])
+        declined = {"pick": None, "confident": False, "reasoning": "",
+                    "llm_model": "gpt-5.4-mini", "llm_error": ""}
+        searched: list = []
+        with patch.object(run_extract, "run_for_doi", return_value=link), \
+             patch.object(run_extract, "_has_document", return_value=False), \
+             patch("extract.link_original.title_search_candidates",
+                   side_effect=lambda *a, **k: (searched.append(a),
+                                                (list(hits), unavailable))[1]), \
+             patch("shared.openalex_client.author_year_candidates",
+                   return_value=([], 0, False)), \
+             patch("shared.llm_client.pick_author_year_original",
+                   return_value=pick or declined), \
+             patch("extract.run_extract._search_crossref_by_title", return_value=None), \
+             patch("extract.run_extract._search_openalex_by_title", return_value=None), \
+             patch.object(run_extract, "extract_outcome", return_value=_MOCK_OUTCOME):
+            rows = run_extract._resolve_and_code(
+                "10.1/rep", self._ROW, screen=None, no_llm=False, no_pdf=True,
+                resolved_only=False)
+        return rows, searched
+
+    _ACCEPT = {"pick": _HIT, "confident": True, "reasoning": "same subject",
+               "llm_model": "gpt-5.4-mini", "llm_error": ""}
+
+    def test_the_pooled_search_recovers_an_identifier_for_the_accepted_record(self):
+        rows, searched = self._run(hits=[self._HIT], pick=self._ACCEPT)
+
+        assert searched, "the pooled search was never asked"
+        assert len(rows) == 1
+        assert rows[0]["doi_o"] == "10.5/found"
+        assert rows[0]["link_method"] == "llm_title_search"
+        # The pooled picks import at low confidence, and the row keeps the reading the
+        # rung that named the target already coded.
+        assert rows[0]["link_confidence"] == "low"
+        assert rows[0]["outcome"] == "successful"
+
+    def test_a_declined_pick_ends_the_row_where_it_ended_before(self):
+        rows, searched = self._run(hits=[self._HIT])
+
+        assert searched
+        assert rows[0]["link_method"] == "unidentified_original"
+        assert rows[0]["doi_o"] == ""
+        assert rows[0]["title_o"] == "Interviewing in social research"
+        assert "not accepted (declined)" in rows[0]["link_evidence"]
+
+    def test_an_empty_pool_ends_the_row_where_it_ended_before(self):
+        rows, _ = self._run()
+
+        assert rows[0]["link_method"] == "unidentified_original"
+        assert "not accepted (no_candidates)" in rows[0]["link_evidence"]
+
+    def test_a_record_that_already_has_a_doi_is_not_searched(self):
+        rows, searched = self._run(target=self._target(doi="10.7/orig"))
+
+        assert not searched
+        assert rows[0]["doi_o"] == "10.7/orig"
+        assert rows[0]["link_method"] == "llm_fulltext"
+
+    def test_a_record_that_already_has_a_work_id_is_not_searched(self):
+        """The record's OpenAlex id IS an identity, so there is nothing to recover and
+        no free-text query to spend at 10x a filter query."""
+        _, searched = self._run(target=self._target(openalex_id="W7"))
+
+        assert not searched
+
+    def test_an_unreachable_provider_does_not_settle_the_row(self):
+        """A silent provider is not evidence that nothing could be found: the row is
+        written api_error, which a re-run reopens."""
+        rows, _ = self._run(hits=[self._HIT], unavailable=True)
+
+        assert rows[0]["link_method"] == "api_error"
+
+
 class TestASearchThatFoundNothingIsRecorded:
     """What was searched for has to survive onto a work that resolved nothing.
 
@@ -3240,7 +3385,7 @@ class TestASearchThatFoundNothingIsRecorded:
     """
 
     _ROW = pd.Series({"doi_r": "10.1/rep", "title_r": "T", "abstract_r": "a",
-                      "filter_status": "replication"})
+                      "paper_type": "replication"})
 
     @staticmethod
     def _unmatched(named: str) -> dict:
@@ -3413,7 +3558,7 @@ class TestTheRecordsOwnWorkIdReachesTheRow:
     derives this column from doi_o, so for a DOI-less original nothing else filled it."""
 
     _ROW = pd.Series({"doi_r": "10.1/rep", "title_r": "A replication",
-                      "abstract_r": "a", "filter_status": "replication"})
+                      "abstract_r": "a", "paper_type": "replication"})
 
     def test_a_doi_less_original_keeps_its_openalex_id(self):
         entry = {"rank": 1, "doi": "", "title": "The original, unregistered",
@@ -3452,7 +3597,7 @@ class TestWhatThePaperCitesIsLookedUpBeforeTheWorkIsClosed:
     @staticmethod
     def _run(title_r, abstract_r, hits=(), pick=None, author_year=None):
         row = pd.Series({"doi_r": "10.1/rep", "title_r": title_r,
-                         "abstract_r": abstract_r, "filter_status": "replication"})
+                         "abstract_r": abstract_r, "paper_type": "replication"})
         link = dict(_MOCK_LINK, resolved=False, resolution_method="llm_no_target",
                     resolved_doi_o="", resolved_title_o="", targets=[], n_targets=0,
                     multi_target=False, target_stage="llm_openai", llm_evidence="")
@@ -3587,5 +3732,67 @@ class TestConfirmKeyedRow:
     def test_out_of_scope_rows_never_call(self, row_change):
         with patch("shared.llm_client.confirm_keyed_original") as check:
             out = run_extract._confirm_keyed_row({**self._ROW, **row_change})
+        check.assert_not_called()
+        assert out == {**self._ROW, **row_change}
+
+
+class TestConfirmSearchRow:
+    """Issues #183 and #186's second shape: a search-based link is GRADED on four
+    values and the grade acts on nothing — it is recorded on link_evidence so a
+    calibration can decide what any grade should gate."""
+
+    _ROW = {"doi_r": "10.1/rep", "title_r": "A replication of Smith",
+            "abstract_r": "We replicate Smith (2010).",
+            "doi_o": "10.9/orig", "title_o": "The original", "year_o": "2010",
+            "authors_o": "Smith, J.", "ref_o": "Smith, J. (2010). The original.",
+            "oa_work_id_o": "",
+            "link_method": "llm_title_search", "link_confidence": "low",
+            "link_evidence": "we replicate Smith (2010); unidentified=1"}
+
+    @staticmethod
+    def _graded(verdict, reasoning="subject and author match", *,
+                error="", provider_failure=False):
+        return {"verdict": verdict, "reasoning": reasoning,
+                "llm_model": "m", "llm_error": error,
+                "provider_failure": provider_failure}
+
+    @pytest.mark.parametrize("verdict", ["clearly_target", "clearly_not_target"])
+    def test_the_grade_is_recorded_and_nothing_is_re_routed(self, verdict):
+        with patch("shared.llm_client.confirm_search_original",
+                   return_value=self._graded(verdict)) as check:
+            out = run_extract._confirm_search_row(dict(self._ROW))
+        assert f"search_confirm: {verdict} — subject and author match" \
+            in out["link_evidence"]
+        # Observe-only: even the worst grade leaves the link exactly as the ladder
+        # made it.
+        assert out["link_method"] == "llm_title_search"
+        assert out["link_confidence"] == "low"
+        assert out["doi_o"] == "10.9/orig"
+        # The quote reaches the call with the run notes stripped.
+        assert check.call_args.args[3] == "we replicate Smith (2010)"
+
+    def test_a_provider_failure_marks_the_row_and_leaves_it_settled(self):
+        with patch("shared.llm_client.confirm_search_original",
+                   return_value=self._graded(None, "", error="503",
+                                             provider_failure=True)):
+            out = run_extract._confirm_search_row(dict(self._ROW))
+        assert out["link_evidence"].endswith("| search_confirm: api_error")
+        assert out["link_method"] == "llm_title_search", \
+            "an ungraded link must still settle — the grade concludes nothing"
+
+    def test_an_unreadable_answer_records_nothing(self):
+        with patch("shared.llm_client.confirm_search_original",
+                   return_value=self._graded(None, "", error="no grade")):
+            out = run_extract._confirm_search_row(dict(self._ROW))
+        assert out == self._ROW
+
+    @pytest.mark.parametrize("row_change", [
+        {"link_method": "llm_fulltext"},          # the keyed check's class
+        {"link_method": "title_pattern_match"},   # a rule's link
+        {"doi_o": "", "oa_work_id_o": ""},        # no record to grade
+    ])
+    def test_other_link_methods_are_never_graded(self, row_change):
+        with patch("shared.llm_client.confirm_search_original") as check:
+            out = run_extract._confirm_search_row({**self._ROW, **row_change})
         check.assert_not_called()
         assert out == {**self._ROW, **row_change}
