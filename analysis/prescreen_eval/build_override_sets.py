@@ -83,7 +83,7 @@ def collect_positives() -> dict[str, dict]:
         if (r.get("validation_status") or "").strip() == "validated - discarded":
             continue
         add(doi_of(r), "entry_sheet", title_from_ref(r.get("ref_r") or ""), r.get("abstract_r") or "")
-    for r in read_csv(DATA / "reproductions.csv", "cp1252"):
+    for r in read_csv(DATA / "archive" / "reproductions.csv", "cp1252"):
         add(doi_of(r), "reproductions", title_from_ref(r.get("ref_r") or ""), r.get("abstract_r") or "")
     for r in read_csv(DATA / "all_replications.csv"):
         status, kind = r.get("validation_status") or "", r.get("type") or ""

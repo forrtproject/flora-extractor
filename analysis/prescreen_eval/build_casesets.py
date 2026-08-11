@@ -73,7 +73,7 @@ def main() -> None:
             d = doi(r)
             if d:
                 pos_repro.setdefault(d, r)
-    for extra, enc in ((DATA / "reproductions.csv", "cp1252"), (DATA / "flora.csv", "utf-8-sig")):
+    for extra, enc in ((DATA / "archive" / "reproductions.csv", "cp1252"), (DATA / "flora.csv", "utf-8-sig")):
         for r in read_csv(extra, enc):
             if extra.name == "flora.csv" and r.get("type") != "reproduction":
                 continue
