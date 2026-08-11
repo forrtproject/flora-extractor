@@ -219,8 +219,8 @@ caller with no verdict — the batch tools — lets the screen vote there).
 | 3 | Rule-based resolver | the abstract carries an author-year citation matching a candidate, or exactly one candidate came back | `citation_context_match`; `same_author_year_title_overlap` and `single_candidate_after_requery` **held only** — never terminal, see above |
 | 4 | Abstract LLM | the abstract carries author-year patterns and there are candidates to choose from | `llm_cited_candidates` |
 | 4.5 | Reference-list target pick | there are referenced works (OpenAlex, or OpenCitations as fallback) | `llm_references` |
-| 4.6 | Pre-PDF title search | the screen agreed at high confidence that this is a replication and named a target it could not match to any reference | `llm_title_search` (**provisional**) |
-| 5 | PDF acquisition + full-text LLM | everything above declined | `llm_fulltext`, `llm_title_search` (**provisional**) |
+| 4.6 | Pre-PDF title search | the screen agreed at high confidence that this is a replication and named a target it could not match to any reference | `llm_title_search` (resolved, `link_confidence` low) |
+| 5 | PDF acquisition + full-text LLM | everything above declined | `llm_fulltext`, `llm_title_search` (resolved, `link_confidence` low) |
 
 Rungs 2.5–4 all depend on `find_all_candidates()`, which returns `[]` unless the title
 or abstract contains a parseable `(Author, Year)` citation. Many abstracts — clinical
@@ -273,14 +273,16 @@ still map the same key to a different record, and replaying the first answer wou
 write the stale original.
 
 **Rungs 4.6 and 5** can both resolve a DOI by searching CrossRef/OpenAlex for a title
-the model named, and both record `llm_title_search`. This is the one link method whose
-answer is not chosen from a bounded candidate set — a paper that is not a replication
-can be confidently linked to a landmark it merely cites — and a hand-check measured it
-near 50% precision. It is therefore **not** in `RESOLVED_LINK_METHODS`:
-`link_confidence` is forced to `low`, no outcome is coded, the validation import does
-not take the row, and `sanity_check` moves it to `data/provisional_title_search.csv` for human
-confirmation. Rung 4.6 is additionally gated on both voters having called the paper a
-replication at high confidence.
+the model named, and both record `llm_title_search`. The answer is chosen from a
+POOLED candidate list — CrossRef and OpenAlex title hits plus the author-and-year
+shortlist — adjudicated by the linking model with decline offered first-class. Two
+cross-vendor triages put the class at 98–99%
+(`analysis/stage3_eval/model_triage_2026-08-08.md`), so on 2026-08-08 it was promoted
+into `RESOLVED_LINK_METHODS` alongside `llm_author_year_search`: the row is
+outcome-coded and imported, at `link_confidence` `low`, and no set-aside bucket
+claims it. The historical ~50% precision belonged to the pre-pooling resolver, which
+took the first title hit unadjudicated. Rung 4.6 is additionally gated on both voters
+having called the paper a replication at high confidence.
 
 If no PDF and no OpenAlex XML can be acquired, the row is written `target_pending`
 rather than sent to the LLM with nothing to read — that is exactly how a confident,
@@ -315,8 +317,7 @@ outcome against, so no outcome LLM runs:
 | `not_a_replication` | `not_a_replication` — the screen's verdict *is* the outcome |
 | `prescreen_discard` | `not_a_replication` at `low` confidence — the cheap tier's verdict, kept out of the validated screen's file |
 | `api_error` | `api_error` |
-| `llm_title_search` | `cannot_be_determined` (provisional link, outcome deferred) |
-| `target_pending`, `no_original_found`, and the historical `screen_disagreement` | `pending`, with the reason in `outcome_reasoning` |
+| `unidentified_original`, `target_pending`, `no_original_found`, and the historical `screen_disagreement` | `pending`, with the reason in `outcome_reasoning` |
 
 The order per row is resolve → merge → guard → `--resolved-only` → outcome, so a row
 the guard demotes or `--resolved-only` discards never reaches the outcome call.
@@ -436,7 +437,8 @@ file and reports; it moves nothing. **First match wins**, in this order:
 | ------ | ----------- | ---- |
 | `screen_disagreement` | `screen_disagreement.csv` | `link_method == screen_disagreement` — **historical rows only**; the front door no longer emits it |
 | `non_article` | `not_a_replication.csv` | `doi_r` is a figshare data record / peer-review object |
-| `title_search_provisional` | `provisional_title_search.csv` | `link_method == llm_title_search` |
+| `unidentified_original` | `unidentified_original.csv` | `link_method == unidentified_original` — the paper names an original nothing can identify |
+| `keyed_link_disputed` | `keyed_link_disputed.csv` | `link_method == keyed_link_disputed` — the issue #186 check disputed an LLM-accepted keyed link |
 | `target_pending` | `target_pending.csv` | `link_method == target_pending` |
 | `prescreen_discard` | `prescreen_discard.csv` | `link_method == prescreen_discard` — the cheap pre-screen's own discards, kept out of `not_a_replication.csv` |
 | `not_a_replication` | `not_a_replication.csv` | `outcome == not_a_replication` |
@@ -451,7 +453,7 @@ file and reports; it moves nothing. **First match wins**, in this order:
 
 Two further buckets exist only in the sanity REPORT, because each needs a network
 lookup per row and so cannot be decided as a row is written: `non_article_type` (the
-registry types `doi_r` as a non-study object) and `fabricated_doi_o` (`doi_o` present
+registry types `doi_r` as a non-study object) and `unregistered_doi_o` (`doi_o` present
 but registered nowhere). Both name rows that are in `extracted.csv` and should not be;
 `--deep` is what asks.
 

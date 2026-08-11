@@ -76,7 +76,7 @@ copy, not generated from the code — where it disagrees with
 
 **Status KPI cards** (each is a download link):
 
-| Card | `filter_status` value |
+| Card | `paper_type` value |
 | ---- | --------------------- |
 | Total Filtered ↓ | all rows |
 | Replications ↓ | `replication` |

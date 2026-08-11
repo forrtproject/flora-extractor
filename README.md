@@ -9,7 +9,7 @@ A Python pipeline that discovers, extracts, and monitors replication and reprodu
 ## What It Does
 
 Starting from keyword searches of academic databases, FLoRA Extractor:
-1. **Discovers** candidate replication/reproduction papers from OpenAlex and curated lists
+1. **Discovers** candidate replication/reproduction papers by scanning the OpenAlex snapshot
 2. **Filters** false positives with a declarative filter engine: rules route and discard, LLM screening tiers admit
 3. **Extracts** the target study and replication outcome from each paper
 4. **Monitors** extraction progress through a web dashboard; validation happens in a separate Supabase-backed repo
@@ -44,11 +44,12 @@ pip install -r requirements.txt
 cp .env.example .env   # fill in your API keys
 
 # Run the pipeline
-python -m search.run_search
+python -m search.run_search --scan
 python -m filter.engine route
 python -m filter.engine screen --tier screen_expensive --run
 python -m filter.engine handoff --out data/filtered.csv
-python -m extract.run_extract
+python -m extract.tier --run
+python -m extract.export --release <id>
 
 # Start the monitoring web app
 python -m validate.app   # → http://localhost:5001
@@ -66,7 +67,7 @@ See [docs/setup.md](docs/setup.md) for full setup instructions.
 ```
 RESEARCHER_EMAIL=you@example.com   # for OpenAlex/Crossref API politeness
 GEMINI_API_KEY=...                 # primary LLM (free at aistudio.google.com)
-OPENAI_API_KEY=...                 # Stage 3's second screen voter (default SCREENING_MODEL_2)
+OPENAI_API_KEY=...                 # Stage 2's second screen voter (default SCREENING_MODEL_2) and Stage 3's linking/outcome models
 ```
 
 `OPENROUTER_API_KEY` is needed only when a model id contains a `/` (e.g. a
@@ -89,12 +90,15 @@ reference and code-flow walkthrough is listed there.
 
 ## Data Sources
 
-| Source | Coverage |
-| ------ | -------- |
-| [OpenAlex](https://openalex.org) | Broad academic literature, free API |
-| [Semantic Scholar](https://www.semanticscholar.org) | Supplementary coverage |
-| [Bob Reed's Replication Network](https://replicationnetwork.com) | Economics replications |
-| [I4R](https://i4replication.org/reports/) | Institute for Replication reports |
+| Source | Role |
+| ------ | ---- |
+| [OpenAlex](https://openalex.org) snapshot | **Discovery** — the whole corpus is scanned locally by Stage 1's search gate; this is the only discovery source |
+
+The API-harvest discovery sources (Semantic Scholar search, Bob Reed's Replication
+Network, I4R) are retired — nothing downstream read their output, so they were parked
+on `wip/api-harvest-sources` (PR #158). Semantic Scholar survives only as one of the
+abstract-backfill sources in `search/fetch_abstracts.py`. Wiring curated harvesters
+back in is issue #150.
 
 Full-text: Unpaywall, CORE, arXiv, OSF. DOI resolution: Crossref.
 Abstract backfill: Europe PMC, Semantic Scholar, Crossref, Scopus.

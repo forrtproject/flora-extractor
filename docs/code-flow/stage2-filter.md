@@ -59,7 +59,7 @@ python -m filter.engine handoff --out data/filtered.csv
     │
     ├── handoff.py reads both screen piles, expensive first
     ├── drops works a LIVE tier run discarded
-    ├── writes a live screen_expensive record type into filter_status
+    ├── writes a live screen_expensive record type into paper_type
     └── → data/filtered.csv + data/filtered.csv.manifest.json
 ```
 
@@ -88,10 +88,10 @@ output can *be* the handoff rather than a second opinion on it.
 derived data — the next `route` recomputes it from pool and specs — so a verdict
 written into it would be erased.
 
-## `filter_status` and `filter_confidence`
+## `paper_type` and `filter_confidence`
 
 The engine routes a work into a pile; `filter/spec/conventions.json` maps the pile
-to the `filter_status` / `filter_confidence` an exported row carries (`discard` →
+to the `paper_type` / `filter_confidence` an exported row carries (`discard` →
 `false_positive` high; `screen_expensive` → high; `screen_cheap` → medium;
 `needs_human` → `needs_review` low; `pending` is not exported). Both screen piles set
 `vocabulary_names_status`, so a row there takes the winning rule's `vocabulary` as its
@@ -109,7 +109,7 @@ row a live `screen_expensive` run typed, where `filter_method` is `screen`.
 `filter_confidence` is `high | medium | low` — categorical, not a float. A 3-level
 label is more actionable than a continuous probability from a single LLM call.
 
-Stage 3 still overwrites `filter_status` with its own screen's paper type when it
+Stage 3 still overwrites `paper_type` with its own screen's paper type when it
 screens a row itself, and sets `filter_method = "screen"`.
 
 ## Key modules

@@ -52,7 +52,7 @@ only, so an exported row's `pending_reason` is always empty.
 | `release.py` | `routing_release(pool_manifest_hash, overlay_hash, bundle_hash, engine_version, alias_release, schema_version) -> str` (sha256 of the canonical JSON); `write_release(...)`/`read_release(...)` under `cache/engine/releases/<id>.json`. Overlay hash is `None` until M3 (text overlays); pool manifest hash comes from `--pool-manifest-hash`, else `search.snapshot_scan.pool_fingerprint(pool_dir)` — a hash over the search gate the pool's rows were admitted under (read from the pool's `_pool_provenance.json`, never from the local checkout, so a shared pool fingerprints identically on every machine) plus every pool parquet as `(filename, size_bytes, num_rows)`, read from the footer. It names the POOL, which is what routing consumes, rather than one machine's scan ledger, which a pulled pool does not have; a directory with no parquet in it, or one holding fewer files than its sidecar says complete it, gives `unmanifested:<12 hex>` (a genuine anomaly — you cannot route a pool you do not have whole), never a hash of nothing; the suffix hashes the parquet names and sizes so two different unfingerprintable pools do not mint one release id and share its claims and verdicts, and the visible prefix keeps it from reading as provenance. `route` re-computes it after the routing pass and rolls the build back if it moved. |
 | `store.py` | Local DuckDB acceleration cache (gitignored, disposable): `open_store(path)`, `build_routing(con, pool_dir, specs, release_id, aliases=None, batch_size=50_000, batches=None)` (streams pool parquet through `route_batch`, persists `routing` and `evaluations(release_id, work_id, spec_id, spec_hash, matched)` incl. shadow specs; `batches` is the M3 overlay seam — `pool_reader.iter_pool_batches()` is passed in through it), `pile_counts(store, release_id)`, `sample_pile(con, release_id, pile, n=20, seed=17)`, `drop_release(con, release_id)` (the one thing that deletes a release, for the caller that learns only after the build that it must not exist — the pool moved under it). `routing` is keyed `PRIMARY KEY (release_id, work_id)` and inserts `ON CONFLICT DO NOTHING`: a pool holding both a merged id and its canonical id holds two rows for ONE work, and first-writer-wins is what keeps that one routed work and one exported row. A build is one transaction — the delete and every insert commit together — so an interrupted run leaves the release absent or as its previous complete build, never half-replaced. Deleting the DB loses nothing: everything rebuilds from pool + specs. |
 | `diagnostics.py` | `diagnose(pool_dir, spec_dir, spec_id, *, baseline_dir=None, sample_n=20, seed=17) -> dict` — routes the pool twice, with and without the spec (the baseline bundle defaults to the same directory minus the spec). The §3 rule-diagnostics function: rows moved per (source pile → destination pile); overlap/agreement matrix vs every other rule (exclusive hits vs covered); a readable random sample (n≈20, seeded) of moved rows; holdout effect (reads `filter/spec/holdout.json`; reports `"holdout": "not_constructed"` until decision #146-2 lands); for discard specs, whether a `measured` entry exists (else the spec must be shadow). Renders JSON + a human-readable text block. |
-| `export.py` | `export_pile(con, pool_dir, pile, out_csv, release_id, from_year=None, to_year=None, conventions=None, specs=None, aliases=None, spec_dir=SPEC_DIR, expect_bundle_hash=None, expect_alias_release=None, overlay_dir=None, expect_overlay_hash=UNCHECKED, created_at="")` — writes the Stage 3 contract: `ENGINE_EXPORTED_COLS` = `FILTERED_COLS` + `ENGINE_EXPORT_COLS` (see below) + `SCREEN_COLS`, the last six blank because `export` applies no tier verdicts; writing them blank rather than omitting them is what lets Stage 3 accept an exported pile at all. Written through `write_rows_tmp()`, the one atomic CSV writer this module shares with `handoff.py`, so an interrupted export leaves the previous file rather than half of a new one. `utf-8-sig`, `filter_status`/`filter_method`/`filter_evidence`/`filter_confidence` derived via the conventions mapping. Also `export_manifest(...)`: a JSON naming release id, pile, row count, and content hash next to the CSV (immutable once written). |
+| `export.py` | `export_pile(con, pool_dir, pile, out_csv, release_id, from_year=None, to_year=None, conventions=None, specs=None, aliases=None, spec_dir=SPEC_DIR, expect_bundle_hash=None, expect_alias_release=None, overlay_dir=None, expect_overlay_hash=UNCHECKED, created_at="")` — writes the Stage 3 contract: `ENGINE_EXPORTED_COLS` = `FILTERED_COLS` + `ENGINE_EXPORT_COLS` (see below) + `SCREEN_COLS`, the last six blank because `export` applies no tier verdicts; writing them blank rather than omitting them is what lets Stage 3 accept an exported pile at all. Written through `write_rows_tmp()`, the one atomic CSV writer this module shares with `handoff.py`, so an interrupted export leaves the previous file rather than half of a new one. `utf-8-sig`, `paper_type`/`filter_method`/`filter_evidence`/`filter_confidence` derived via the conventions mapping. Also `export_manifest(...)`: a JSON naming release id, pile, row count, and content hash next to the CSV (immutable once written). |
 | `cli.py` / `__main__.py` | `python -m filter.engine specs\|route\|diagnose\|export\|screen\|reconcile\|handoff\|worklist\|release-claim\|status`. The subcommand list is `cli.py`'s `add_parser` calls; `--help` is authoritative, `docs/cli-reference.md` is the prose. Two flags cut across the subcommands: `--release <id>` (on `export`, `screen`, `handoff`, `worklist` and `release-claim`) names which release to read, defaulting to the store's only one and refusing when the store holds several — a re-route must never be resolved silently; `diagnose --sample N` (default 20) sets how many seeded example rows the diagnosis prints. |
 
 `ENGINE_VERSION` lives in `filter/engine/__init__.py` and is bumped whenever routing
@@ -66,7 +66,7 @@ spec or reordering its keys is not a new bundle, while a change to any value —
 including one character of a regex, which the reserialisation reproduces exactly —
 still is. `alias_release` is canonical over JSON in the same way. The engine routes
 a row into a pile; the conventions decide what that pile is *called* in an export
-(`filter_status`, `filter_confidence`, whether the winning rule's `vocabulary`
+(`paper_type`, `filter_confidence`, whether the winning rule's `vocabulary`
 names the status). A release that bound only the specs could be exported under a
 different status mapping than it was routed under, so the policy file is part of
 the bundle. `aliases.json` is not — it has its own release input,
@@ -143,12 +143,12 @@ and every routing column is recoverable by joining that against the `routing` ta
 for a release — the same join `filter/engine/supersede.py` already uses. Widening
 the CSV schema would create a second copy that can drift from the store.
 
-### Pile → `filter_status` mapping
+### Pile → `paper_type` mapping
 
 Lives in `filter/spec/conventions.json` (machine-read by `export.py`), explained in
 `CONVENTIONS.md` — read the JSON, not this table, when the answer has to be right:
 
-| pile | filter_status | filter_confidence |
+| pile | paper_type | filter_confidence |
 | --- | --- | --- |
 | discard | `false_positive` | high |
 | screen_expensive | the winning rule's `vocabulary`, else `needs_review` | high |
@@ -399,6 +399,23 @@ not silently run unclaimed. A conflict raises `ClaimConflict` naming the tier, a
 database without the claim lease raises `ClaimExpiryUnsupported` naming
 `db/migrations/0004_claim_expiry.sql`.
 
+**Every call goes through one transport seam, and a blip is retried** (#189). A tier
+run makes one claims call per verdict, so an hours-long run meets a connection error
+or a read timeout eventually — two overnight extract campaigns died on exactly that.
+`ClaimsClient._request` retries a connection error, a timeout, an HTTP 5xx and a 429
+three times at 1s/2s/4s, and then raises `ClaimsError`: nothing is ever swallowed, and
+a 4xx that is not 429 is not retried at all, so an auth or config failure still fails
+at once. What each write does about a retry follows from whether the database can
+absorb the same write twice:
+
+| call | on a retry |
+| --- | --- |
+| reads, `mark_uploaded`, `supersede_verdict`, `register_release`, `renew_claim` | idempotent already (filtered PATCHes, `resolution=ignore-duplicates`, a lease that never shortens) |
+| `record_verdict` | the row carries an id minted client-side, once, and the insert upserts on it, so a replay updates the row to the values it already holds rather than adding a second verdict for the work |
+| `release_claim` | a `claim_not_active` refusal is forgiven **after a retry only** — an earlier attempt reached the server and ended the claim, which is what the call wanted |
+| `claim` | the RPC is one transaction and cannot be replayed. A `ClaimConflict` met after a retry says so, because the claim holding the works may be the run's own; nothing here can tell it from a second runner. The orphan lapses with its lease either way |
+| `record_supersession` | not retried. `engine_supersessions` is append-only, so there is no upsert to replay into, and its callers are operator commands re-run whole |
+
 **Sizing** (`python -m filter.engine.sizing --rows 5146160 --verdict-rate 0.1`,
 #146 §8 decision 1): 130 B per claim_item, 543 B per verdict, measured over
 synthetic rows of the migration's exact shape (analytic model, or against a real
@@ -627,7 +644,8 @@ so a live discard takes effect at the handoff, where the rows leave the engine.
   first voter. `ClaimConflict` ends the run with a refusal and no calls.
 - **Dry run by default.** Without `--run`, nothing is claimed, fetched or spent;
   the row count, the abstract token-length distribution and "N rows → tier X ≈ $Y"
-  are printed from the rough per-1k prices in `shared/config.py`.
+  are printed from the rough per-1k prices in `filter/engine/tiers.py`
+  (`TIER_PRICE_PER_1K_IN`, `TIER_PRICE_PER_1K_OUT`, `TIER_OUTPUT_TOKENS`).
 - **Evidence before the verdict naming it.** The raw response is written to
   `cache/engine/responses/<hash>.json` *before* `record_verdict`, which inserts the
   row `response_pending_upload`. Blobs go to Hugging Face in **multi-file commits**
@@ -649,7 +667,7 @@ so a live discard takes effect at the handoff, where the rows leave the engine.
 
 `python -m filter.engine handoff --out data/filtered.csv` writes the file Stage 3
 reads: both screen piles, `screen_expensive` first, in `ENGINE_EXPORTED_COLS`
-order, with a live `screen_expensive` record type written into `filter_status`
+order, with a live `screen_expensive` record type written into `paper_type`
 (`filter_method = screen`).
 
 A row travels on a verdict, not on a routing decision, and only on the EXPENSIVE
@@ -690,9 +708,9 @@ qualifying answer AND stood behind it, and that cannot be recovered from a recor
 type. `screen_evidence` carries BOTH voters' quotes, as `<model>: <quote>` segments
 joined by ` || ` (a quote may contain a single `|`), because the gate is the pair's
 decision. An `--as-routed` row can carry them blank; Stage 3 writes such a row
-`target_pending` rather than screening it, and refuses an input file whose header
-lacks the columns entirely (`--screen-here` is the explicit way to screen in
-Stage 3 anyway).
+`target_pending` rather than screening it. Stage 3 takes no input CSV at all —
+`extract/tier.py` builds each work's row in process from the routing release and the
+pool — and there is no way to run the screen there.
 
 It reuses `export_pile()`'s row logic
 via `iter_export_rows()` and keeps its release-binding refusal — but its manifest
@@ -790,7 +808,7 @@ sandbox it promoted from; the sandbox is `--mode validation` plus a render.
 
 | Module | Contract |
 | --- | --- |
-| `extract/tier.py` | `extract_generation()` / `generation_inputs()` (the ladder version, four prompt versions and three model ids at their call sites' efforts); `extract_works(con, client, pool_dir, release_id, *, only, limit, redo, …) -> list[ExtractWork]` (the worklist); `run_extract_tier(con, client, release_id, *, mode, limit, run, batch_size, …)` (the batched claims loop); `estimate(works)` / `render_estimate(est)` (the per-rung dry run); `result_payload(source_row, doi_r, rows, observed)` and `render_payload(payload)` (the two halves of the round trip); `settled_work_ids(client)` (the checkpoint). CLI: `python -m extract.tier [--run] [--limit N] [--batch-label …] [--mode live\|validation] [--only ids] [--redo ids]`. |
+| `extract/tier.py` | `extract_generation()` / `generation_inputs()` (the ladder version, the six `_GENERATION_PROMPTS` versions and three model ids at their call sites' efforts); `extract_works(con, client, pool_dir, release_id, *, only, limit, redo, …) -> list[ExtractWork]` (the worklist); `run_extract_tier(con, client, release_id, *, mode, limit, run, batch_size, …)` (the batched claims loop); `estimate(works)` / `render_estimate(est)` (the per-rung dry run); `result_payload(source_row, doi_r, rows, observed)` and `render_payload(payload)` (the two halves of the round trip); `settled_work_ids(client)` (the checkpoint). CLI: `python -m extract.tier [--run] [--limit N] [--batch-size N] [--batch-label …] [--mode live\|validation] [--only ids] [--redo ids] [--release <id>] [--overlay path\|--no-overlay] [--store …] [--pool …] [--spec-dir …]`. `--release` is not optional in practice: the tier refuses when the store holds several releases, exactly as `extract.export` and the `filter.engine` subcommands do. |
 | `extract/export.py` | `latest_results(client, *, mode, current_generation_only) -> (work → result row, superseded count)`; `rows_from_results(results)`; `partition(rows) -> (main, {set-aside file: rows})`; `render(client, …)`; `write(report, out_csv)`; `check(report, out_csv)`. CLI: `python -m extract.export [--out …] [--mode …] [--check] [--current-generation-only] [--release <id>\|--all-releases]`. |
 
 ### Two verdict-row kinds
@@ -850,6 +868,13 @@ settles". Those two endings are the ones a re-run is meant to redo — the same 
 the worklist. Counting either as decided turns a five-minute provider outage into a
 permanent hole in the corpus.
 
+A `target_pending` result nevertheless RESTS while it is fresh. One younger than
+`EXTRACT_PENDING_RETRY_DAYS` (14, in `extract/tier.py`) is subtracted from the
+worklist exactly as a settled work is, and comes back when the delay lapses, when a
+new generation reopens everything, or when `--redo` names it. Without the rest, five
+runs of one campaign each re-bought the same ~830 unresolvable works' queries.
+`api_error` gets no rest — it retries on the next run.
+
 That is why the tier reads its own checkpoint (`_decide`, `settled_work_ids`) rather
 than the screens' `decided_work_ids`, whose semantics is wrong here twice over: it
 calls a work decided when ANY row adds up to a decision, so a work with two evidence
@@ -865,7 +890,8 @@ commit that adds it, so a claim with no generation is unattributable, not legacy
 
 Works admitted by a live, current-generation `screen_expensive` PROCEED verdict
 (`handoff.decisions()`), minus its discards, minus works this tier has settled,
-minus works held by another runner's unexpired extract claim, minus the two skip
+minus works resting on a `target_pending` younger than `EXTRACT_PENDING_RETRY_DAYS`
+(14), minus works held by another runner's unexpired extract claim, minus the two skip
 lists Stage 3 has always honoured (already in published FLoRA; already in the
 Supabase validation tables). Routing says "this deserves an LLM's attention"; only
 the validated pair says "this reaches Stage 3".
@@ -946,11 +972,19 @@ module does with it, since the pass reports and moves nothing. One definition of
 a row belongs, and one writer. The set-asides go to `set_aside_dir(out_csv)`, so a
 render to a sandbox path partitions into that sandbox's own directory.
 
+**The skip lists apply at render too.** The same two lists the worklist honours —
+already in published FLoRA, already in the Supabase validation tables — are applied
+as rows are written, and the count is reported as `already_in_flora`. A work that
+entered either AFTER it was extracted keeps its verdict as evidence, but its rows
+stop shipping; otherwise a paper added to FLoRA between two campaigns would keep
+reaching the validation import forever.
+
 **One writer, one whole file.** Each render writes `data/extracted.csv` complete,
 sorted by `(work_id, original_rank)`, through a temp file and one rename. Nothing
-appends. The file currently tracked in git is the old pipeline's 285 rows in append
-order, so the first live export will replace it whole, in one large diff — expected,
-and visible in advance through `--check`.
+appends. Several campaigns have shipped through it since: the file tracked in git
+now holds 1,899 data rows, all of them rendered by this command. Any change to what
+the verdicts say therefore arrives as one whole-file diff — expected, and visible in
+advance through `--check`.
 
 `--check` rebuilds in memory, diffs against the file on disk by whole-row content,
 prints the counts and exits non-zero on any difference. It writes nothing.

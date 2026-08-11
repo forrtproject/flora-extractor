@@ -335,7 +335,7 @@ python -m filter.engine release-claim --claim <id> --status failed --yes
 | `screen` | Runs one LLM tier (`--tier screen_cheap\|screen_expensive`) over that pile. **Dry run by default**: it prints the row count, the token-length distribution of the abstracts it would send and `N rows → tier X ≈ $Y`, and claims, fetches and spends nothing. `--run` claims the batch through the Supabase claims RPC *before* the first voter is asked, records one permanent verdict row per vote, and completes the claim; a claim conflict refuses without spending anything, and an exhausted token budget fails the claim and stops with the verdicts already written intact. |
 | `reconcile` | Sweeps verdict rows an EARLIER run left `response_pending_upload` — the flag off, no token, a commit that 429'd — matches them to the blobs in `cache/engine/responses/` by response hash, commits those in `FLORA_HF_COMMIT_BATCH`-sized commits and marks only what a commit accepted. **Dry run by default**; `--run` acts. A pending row whose blob has been deleted is reported, not fatal. Refuses outright when Hugging Face is unconfigured (`ENGINE_TIER_HF_UPLOAD` off, no `FLORA_POOL_REPO`, no `HF_TOKEN`) rather than sweeping nothing. |
 | `worklist` | Exports the release's `pending/no_text` rows (joined back to the pool for doi/title/year) as the worklist `filter.engine.backfill` reads. |
-| `handoff` | Writes the two screen piles — `screen_expensive` first, then `screen_cheap` — as the file Stage 3 reads, in `ENGINE_EXPORTED_COLS` order, with a live `screen_expensive` record type written into `filter_status` and its full verdict into `SCREEN_COLS` (Stage 3 reads that instead of screening). **Only rows a live `screen_expensive` run reached a verdict on travel** — a cheap-tier verdict can drop a row but never admit one: a discarded work is left out and counted as `dropped_by_tier_verdict`, a work no live run decided (never screened, or still short of a second vote) is left out and counted as `skipped_unscreened`. `--as-routed` exports the piles as routed instead, applying whatever verdicts exist, and writes `data/filtered-unscreened.csv` rather than the screened contract's `data/filtered.csv` (`--out` overrides either). Unlike `export`, its manifest is rewritable: the handoff is a materialized view Stage 3 re-reads, not an immutable artifact. |
+| `handoff` | Writes the two screen piles — `screen_expensive` first, then `screen_cheap` — as the file Stage 3 reads, in `ENGINE_EXPORTED_COLS` order, with a live `screen_expensive` record type written into `paper_type` and its full verdict into `SCREEN_COLS` (Stage 3 reads that instead of screening). **Only rows a live `screen_expensive` run reached a verdict on travel** — a cheap-tier verdict can drop a row but never admit one: a discarded work is left out and counted as `dropped_by_tier_verdict`, a work no live run decided (never screened, or still short of a second vote) is left out and counted as `skipped_unscreened`. `--as-routed` exports the piles as routed instead, applying whatever verdicts exist, and writes `data/filtered-unscreened.csv` rather than the screened contract's `data/filtered.csv` (`--out` overrides either). Unlike `export`, its manifest is rewritable: the handoff is a materialized view Stage 3 re-reads, not an immutable artifact. |
 | `release-claim` | With no arguments, lists every claim still `active` — id, tier, item count, when it was taken, when its lease runs out, and whether it has already expired. `--claim <id> --yes` ends one through the same `engine_release_claim` RPC a finishing run calls (`--status failed` by default; `cancelled` / `complete` also accepted), which frees its works. Verdicts are untouched. Rarely needed: a claim expires by itself `CLAIM_TTL_HOURS` (6) after it is taken, so this is for freeing works sooner than that. |
 | `status` | Every release found beside the store, with its creation time and pile counts. |
 
@@ -372,9 +372,16 @@ same release id and share each other's claims and verdicts — it is not provena
 which is why the `unmanifested` prefix stays visible.
 
 **`--release` and `--sample`.** `export`, `screen`, `handoff` and `worklist` each
-take `--release <id>`: the release to read. Omitted, the store's release is used
+take `--release <id>`: the release to read. A 12-character prefix is enough, as
+long as it is unambiguous. Omitted, the store's release is used
 when it holds exactly one and the command refuses when it holds several, so a
-store with a re-route in it never picks one silently. `diagnose --sample N`
+store with a re-route in it never picks one silently. `--release latest` is the
+one way to ask for the newest: the release with the newest `created_at` among
+those the store holds routing for, read off the release records beside the store.
+A release with no record on disk has no timestamp and is not a candidate; when
+none of them has one, `latest` refuses and lists what the store holds. Naming
+`latest` is a choice the command line records — it is deliberately not the
+default, see `extract.export` below. `diagnose --sample N`
 (default 20) is how many seeded example rows the report prints for the rule under
 diagnosis.
 
@@ -492,9 +499,11 @@ library the tier's judge calls.
 
 **`extract.tier` needs the routing store and the pool**, because the worklist is
 built from the routing release and the pool text — `--store`, `--pool`,
-`--spec-dir` and `--release` all default the same way the `filter.engine`
-subcommands do. A dry run runs without Supabase and estimates over the whole
-admitted pile, saying so; `--run` without it refuses before anything is claimed.
+`--spec-dir`, `--release` and `--overlay` / `--no-overlay` all default the same way
+the `filter.engine` subcommands do. `--batch-size N` sets how many works are claimed
+per batch (default `EXTRACT_CLAIM_BATCH`). A dry run runs without Supabase and
+estimates over the whole admitted pile, saying so; `--run` without it refuses before
+anything is claimed.
 
 **The worklist is what the screen admitted, minus what is done or held.** Works with
 a live current-generation `screen_expensive` PROCEED verdict, minus its discards,
@@ -508,8 +517,15 @@ resumes by asking the same question again. Interrupting it costs at most the bat
 in flight.
 
 **`target_pending` and `api_error` do not settle a work.** They are the two endings
-a re-run is meant to redo, so a work that ended in either is back in the next run's
+a re-run is meant to redo, so a work that ended in either comes back into the
 worklist with no flag to remember. Every other ending takes it out.
+
+**But a fresh `target_pending` RESTS.** A `target_pending` result younger than
+`EXTRACT_PENDING_RETRY_DAYS` (14, in `extract/tier.py`) is subtracted from the
+worklist exactly like a settled work: it reopens when the delay lapses, when a new
+generation reopens everything, or when `--redo` names it. Without the delay, five
+runs of one campaign re-bought the same ~830 unresolvable works' queries each time.
+`api_error` has no such rest — it retries on the very next run.
 
 **`--redo` is for a work that DID settle.** It re-admits the work despite the
 checkpoint and points the previous result row at the new one
@@ -546,12 +562,20 @@ the same words, as `extract.tier` and the `filter.engine` subcommands. There is 
 "newest release" default: the store holds seven routings of the same pool, one of them
 a retired rule book that admitted 89,113 works against today's 4,650, so newest-wins
 would make the file's contents depend on whichever routing anyone last ran, unstated in
-the output.
+the output. `--release latest` asks for it explicitly — the newest `created_at` among
+the releases the store holds records for — which puts the choice in the command that
+was run rather than in a default nobody typed.
 
 **`--all-releases` renders every stored verdict**, whatever routing now says about its
 work, and is the only invocation that opens no routing store. It is the pre-2026-08-08
 behaviour, kept for reading the record whole; it is not what the validation import
 wants. It cannot be combined with `--release`.
+
+**The two skip lists are applied at render, not only in the worklist.** A work whose
+DOI or work id entered FLoRA or the validation tables AFTER it was extracted keeps
+its verdict as evidence, but its rows are dropped from the shipped CSV — the count is
+reported as `already_in_flora`. Without that, a paper added to FLoRA between two
+campaigns would keep reaching the validation import forever.
 
 **Otherwise the render is pure**: no network, no cache, no pool. It
 partitions rows into the set-aside CSVs on the way out, through the same
@@ -565,9 +589,9 @@ because a prompt was edited would delete a real finding — and
 **It is the only writer of `data/extracted.csv`.** Each render writes the whole file,
 sorted by `(work_id, original_rank)`, through a temp file and one rename. Nothing
 appends to it, `sanity_check` reports rather than moves, and the two retroactive tools
-correct the verdicts instead of the file. The first live export will therefore replace
-the tracked file whole, in one large diff — that is expected, and `--check` shows the
-difference before anything is written.
+correct the verdicts instead of the file. Every export therefore replaces the tracked
+file whole — a re-render after a campaign is one large diff, and that is expected;
+`--check` shows the difference before anything is written.
 
 ### The sandbox
 
@@ -662,21 +686,24 @@ below is `classify_row()` in `extract/sanity_check.py`, in order:
 | - | --------- | ----------- |
 | 1 | `link_method == screen_disagreement` | `screen_disagreement.csv` (historical rows only — the front door no longer emits the value) |
 | 2 | non-article `doi_r` (figshare data record, peer-review object) | `not_a_replication.csv` |
-| 3 | `link_method == llm_title_search` | `provisional_title_search.csv` |
-| 4 | `link_method == target_pending` | `target_pending.csv` |
-| 5 | `link_method == prescreen_discard` | `prescreen_discard.csv` — ahead of the outcome rule, so the cheap pre-screen's discards never mix into the validated screen's file |
-| 6 | `outcome == not_a_replication` | `not_a_replication.csv` |
-| 7 | `link_method == api_error` | `api_error.csv` |
-| 8 | `link_method == no_original_found` | `no_original_found.csv` |
-| 9 | `doi_o` non-blank and equal to `doi_r` | `unresolved_self_links.csv` |
-| 10 | `doi_o_verification == mismatch` | `unresolved_doi_mismatch.csv` |
+| 3 | `link_method == unidentified_original` | `unidentified_original.csv` |
+| 4 | `link_method == keyed_link_disputed` | `keyed_link_disputed.csv` |
+| 5 | `link_method == target_pending` | `target_pending.csv` |
+| 6 | `link_method == prescreen_discard` | `prescreen_discard.csv` — ahead of the outcome rule, so the cheap pre-screen's discards never mix into the validated screen's file |
+| 7 | `outcome == not_a_replication` | `not_a_replication.csv` |
+| 8 | `link_method == api_error` | `api_error.csv` |
+| 9 | `link_method == no_original_found` | `no_original_found.csv` |
+| 10 | `doi_o` non-blank and equal to `doi_r` | `unresolved_self_links.csv` |
+| 11 | `doi_o_verification == mismatch` | `unresolved_doi_mismatch.csv` |
 
-With `--deep`, a fabricated `doi_o` additionally goes to
-`fabricated_original_doi.csv`. `cannot_be_determined` rows stay in `extracted.csv`.
+With `--deep`, a `doi_o` that is registered nowhere additionally goes to
+`unregistered_original_doi.csv`. `cannot_be_determined` rows stay in `extracted.csv`.
 
-The order matters in cases that are easy to get backwards: a `llm_title_search` row
-whose `doi_o_verification` is `mismatch` lands in `provisional_title_search.csv`
-(rule 3), not in `unresolved_doi_mismatch.csv`.
+The order matters in cases that are easy to get backwards: a `keyed_link_disputed`
+row whose `doi_o_verification` is `mismatch` lands in `keyed_link_disputed.csv`
+(rule 4), not in `unresolved_doi_mismatch.csv`. A `llm_title_search` row with the
+same mismatch does land in `unresolved_doi_mismatch.csv` — that method is resolved
+now, so no earlier rule claims it.
 
 ### Parse-cache cleanup
 

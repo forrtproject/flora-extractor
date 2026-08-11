@@ -26,7 +26,7 @@ discovered paper.
 | `journal_r` | string | Journal or venue name |
 | `url_r` | string | Canonical URL |
 | `openalex_id_r` | string | OpenAlex work ID (e.g. W1234567890) |
-| `source` | string | Where this paper was discovered. The enum is `schema.SOURCE_VALUES`; the set `run_search` can actually emit is `_ALL_SOURCES` in `search/run_search.py` (currently including `openalex_snapshot`, the bulk-parquet scanner). `bob_reed` / `i4r` are in the enum but **not** produced — their scrapers in `search/external_lists.py` are not wired into `run_search` (issue #46) |
+| `source` | string | Where this paper was discovered. The enum is `SOURCE_VALUES` in `shared/schema.py`: `openalex`, `openalex_concept`, `openalex_snapshot`, `semantic_scholar`, `backfill_old_pipeline`. Today's Stage 1 emits `openalex_snapshot` — the bulk-parquet scan is the only discovery source; the others are historical or backfilled |
 | `ref_r` | string | Formatted reference string for the replication paper |
 
 ---
@@ -48,7 +48,7 @@ is a decision rather than a record.
 
 | Column | Type | Description |
 | ------ | ---- | ----------- |
-| `filter_status` | string | `replication` \| `reproduction` \| `needs_review` — the paper-type field; see below. `false_positive` is in the enum but never appears in `filtered.csv`: it is the `discard` pile's status, and `HANDOFF_PILES` (`filter/engine/handoff.py`) is the two screen piles only. Discarded rows are reachable through `filter.engine export --pile discard` |
+| `paper_type` | string | `replication` \| `reproduction` \| `needs_review` — the paper-type field; see below. `false_positive` is in the enum but never appears in `filtered.csv`: it is the `discard` pile's status, and `HANDOFF_PILES` (`filter/engine/handoff.py`) is the two screen piles only. Discarded rows are reachable through `filter.engine export --pile discard` |
 | `filter_method` | string | `engine:<release id prefix>`, or `screen` on a row a live `screen_expensive` run typed. `rule_based` is historical |
 | `filter_evidence` | string | `rule:<spec id>` plus the evidence the backend matched (phrase, prefix, type…) |
 | `filter_confidence` | string | `high` \| `medium` \| `low` — categorical, not a float |
@@ -77,10 +77,10 @@ The screen verdict (`SCREEN_COLS` in `shared/schema.py`):
 | `screen_reasoning` | string | `<provider>: <reasoning>` per voter, ` \| `-joined. From the same cache as `screen_categories`, and blank on the same terms |
 
 The screen runs **once**, in Stage 2's `screen_expensive` tier, and Stage 3 reads
-these columns instead of voting again. An input CSV with no `screen_verdict` column
-at all is refused at startup; a row whose value is blank is written
-`target_pending`. `--screen-here` is the explicit opt-out that runs the screen in
-Stage 3 for rows with no verdict.
+these columns instead of voting again. Stage 3 reads no input CSV — `extract/tier.py`
+builds each work's row in process from the routing release and the pool — and a row
+whose `screen_verdict` is blank is written `target_pending`. There is no opt-out that
+runs the screen in Stage 3: `--screen-here` was retired with the CSV runner.
 
 **`pending` is a pile; `pending_reason` is why that pile has no decision in it.**
 The two are not the same statement and neither is redundant. A row is in the
@@ -97,7 +97,7 @@ ways that happened:
   row has a rule behind it and is waiting only on text, which the M3 overlay path
   (`worklist` → `backfill` → `freeze` → `route`) exists to supply.
 
-These are the only two values `build_routing()` in `filter/engine/route.py` emits,
+These are the only two values `route_batch()` in `filter/engine/route.py` emits,
 and `conventions.json` declares them. `filter/engine/handoff.py` exports the two
 screen piles only, so an exported row's `pending_reason` is always empty.
 
@@ -121,7 +121,14 @@ screen piles only, so an exported row's `pending_reason` is always empty.
 
 `filter_confidence` is a three-level label because a single LLM call cannot produce calibrated probabilities.
 
-`filter_status` comes from the pile the engine routed the work into, through the
+`paper_type` was called `filter_status` until issue #93. Two places still carry the
+old name, deliberately: the validation database column
+(`record_metadata.filter_status`, converted back by `csv_to_db.py` in
+`flora-validation`, which reads either name), and result payloads stored before the
+rename, which `render_payload()` in `extract/tier.py` maps at the read. Every CSV in
+`data/` keeps the old header until the export or handoff that wrote it runs again.
+
+`paper_type` comes from the pile the engine routed the work into, through the
 mapping in `filter/spec/conventions.json`, refined by the winning rule's
 `vocabulary` where the pile's policy sets `vocabulary_names_status`. In the current
 bundle that lands as: `screen_expensive` → `needs_review` at **high** confidence
@@ -134,7 +141,7 @@ fields rather than trusting this paragraph.
 
 The front-door screen is the validated decider of "is this a
 replication at all", so when it passes a row, the handoff overwrites
-`filter_status` with the screen's paper type (`replication` / `reproduction`) and
+`paper_type` with the screen's paper type (`replication` / `reproduction`) and
 sets `filter_method` to `screen`, recording which call made the call. When the gate
 proceeds without any qualifying vote (unclear/unclear, or an unconfident `none`
 against an unconfident qualifying answer) no call has said what the paper is, so both
@@ -176,7 +183,7 @@ provenance appended after it — plus:
 | `link_llm_model` | string | Model that decided the link; blank for rule-based rows. On `llm_references` rows this is the model that picked the reference, not the two classifiers that screened the paper. On `not_a_replication` rows it is the pair of front-door classifiers, joined with `+` (`SCREENING_MODEL_1+SCREENING_MODEL_2`) |
 | `screen_categories` | string | **Multi-valued.** The `\|`-joined union of both front-door voters' category labels, in the prompt's enum order: `clearly_declared`, `self_retest`, `measurement_validation`, `context_transfer`, `incidental_finding`, `initial_validation`, `tool_benchmark`, `builds_on_literature`, `terminology_only`, `about_replication`, `other`. Filter it by substring or by splitting on `\|` — never by equality, since most rows carry two or more values. Written on every screened row, discards included; blank on rows that arrived with no Stage 2 screen verdict and on rows written before the v3.2 screen. It is copied from the input row's `screen_categories` (`SCREEN_COLS`), which the handoff filled from the classify cache |
 | `doi_o_verification` | string | DOI verification status — see below |
-| `pdf_source` | string | **Full-text provenance.** The acquisition tier that supplied the document the row was coded from: `row_url` (the row's own URL, downloaded directly — no index, no DOI needed), `arxiv`, `osf`, `openalex_oa`, `unpaywall_pdf`, `semanticscholar`, `core`, `europepmc`, `landing_<host>`, `serpapi`, `playwright`, or `openalex_xml` for the OpenAlex GROBID-XML tier, which needs no PDF file. **Blank** when the ladder resolved before Stage 5 or acquired nothing — a `llm_fulltext` row with a blank `pdf_source` is a contradiction and should be treated as unverified |
+| `pdf_source` | string | **Full-text provenance.** The acquisition tier that supplied the document the row was coded from: `row_url` (the row's own URL, downloaded directly — no index, no DOI needed), `arxiv`, `osf`, `openalex_oa`, `unpaywall_pdf`, `semanticscholar`, `core`, `europepmc`, `landing_<host>`, `serpapi`, `playwright`, or one of the three tiers that hand back a sections dict instead of a file (`_STRUCTURED_SOURCES` in `shared/pdf_sources.py`): `openalex_xml` (the OpenAlex GROBID XML), `osf_registration` (the OSF registration form, from the API) and `html_landing` (the row's own page, parsed with lxml). **Blank** when the ladder resolved before Stage 5 or acquired nothing — a `llm_fulltext` row with a blank `pdf_source` is a contradiction and should be treated as unverified |
 | `parse_method` | string | **Full-text provenance.** The parser whose result won `best_parse_result()` and therefore produced the text the LLM read: `openalex_xml`, `pdfminer`, `grobid`, `docpluck`, `opendataloader` or `markitdown`, or `docx` for a Word file. Blank when nothing was parsed. `docx` is a FORMAT, not a source — a preprint server serves a Word file as readily as a PDF, and `pdf_source` still names the acquisition tier |
 | `outcome` | string | Replication outcome — see below |
 | `outcome_phrase` | string | Verbatim phrase from paper describing outcome |
@@ -184,7 +191,7 @@ provenance appended after it — plus:
 | `out_quote_source` | string | Where the outcome quote came from: `title` \| `abstract` \| `introduction` \| `discussion`, or two of them joined by ` \| ` matching the quote. The blocks are named separately in the prompt, so a quote is attributable to the section it came from. `fulltext` is the legacy value, written while the outcome call was sent one undifferentiated body block; stored rows still carry it. |
 | `outcome_reasoning` | string | LLM chain-of-thought for the outcome decision |
 | `outcome_llm_model` | string | Model that coded the outcome — always `OUTCOME_MODEL`, which is its own call site's constant and can differ from `LINKING_MODEL` even though the two are the same string today. There is **no provider fallback**: `_call_outcome_model()` retries the same model three times and then records the failure, so a value here is never a substitute model an evaluation does not cover. `keyword` on `--no-llm` rule-based rows; blank when no outcome verdict was made (`pending`, `api_error`) |
-| `type` | string | `replication` \| `reproduction` \| empty. Decided by the front-door screen (a `both` classification is recorded as `replication`, since such a paper collects new data), falling back to Stage 2's `filter_status`. **Empty** when a screen ran and neither decided — the screen proceeded without a qualifying vote on a row Stage 2 left at `needs_review`; such a row is coded on the replication vocabulary but carries no type and is not imported. When **no screen ran at all** and Stage 2 named no vocabulary, `_record_type()` in `extract/run_extract.py` falls back to `replication` rather than leaving the field empty. Also selects the outcome vocabulary — a reproduction is coded on the computation/robustness grid |
+| `type` | string | `replication` \| `reproduction` \| empty. Decided by the front-door screen (a `both` classification is recorded as `replication`, since such a paper collects new data), falling back to Stage 2's `paper_type`. **Empty** when a screen ran and neither decided — the screen proceeded without a qualifying vote on a row Stage 2 left at `needs_review`; such a row is coded on the replication vocabulary but carries no type and is not imported. When **no screen ran at all** and Stage 2 named no vocabulary, `_record_type()` in `extract/run_extract.py` falls back to `replication` rather than leaving the field empty. Also selects the outcome vocabulary — a reproduction is coded on the computation/robustness grid |
 | `original_rank` | int | 1 for single-original; 1, 2, 3… for multi-original |
 | `n_originals` | int | Total number of originals for this paper |
 
@@ -199,13 +206,16 @@ sharply, so a consumer has to be able to tell them apart.
 | `same_author_year_title_overlap` | Rule-based: all candidates share one author + year; chosen by title-Jaccard overlap with abstract/title. **Held-only**, like `single_candidate_after_requery` below — it breaks on a ≥0.05 token overlap a tie the citation resolver refused to break |
 | `single_candidate_after_requery` | Rule-based: exactly one OpenAlex candidate remained after re-query, auto-accepted at score 1.0 with **no semantic check** (weakest of the rule-based methods). **Held-only**: it is one of `_HELD_ONLY_METHODS` in `extract/link_original.py`, so it may never END the ladder while a call that can enumerate targets is still available. The pick is parked and the ladder keeps going; it is restored — and only then written as the row's `link_method` — when nothing that could enumerate targets contradicted it, i.e. either nothing enumerating ever spoke (`--no-llm`, `--no-pdf`, no document, no context) or the one call that did named at most one original and that original is the same work (`_agrees_with_held()`). Two named targets, a different work, or a target that cannot be identity-checked all discard the pick. A provider failure is not an answer, so it leaves the pick withheld and the row `target_pending` for a re-run. Under `--no-llm` nothing can enumerate at all and the rule stops immediately |
 | `title_pattern_match` | Rule-based: the replication title (e.g. "A Replication of X") named the original, matched to a candidate by title Jaccard |
-| `grobid_ref_match` | Rule-based: a GROBID-parsed reference matched a candidate by DOI or author+year. The resolver behind it (`shared/disambiguation.resolve_by_grobid_refs`) is not wired into `run_for_doi`, so only stored rows carry this value |
+| `grobid_ref_match` | Rule-based: a GROBID-parsed reference matched a candidate by DOI or author+year. The resolver behind it no longer exists (`shared/disambiguation.py` holds only `is_umbrella_paper`, `jaccard_similarity` and `token_coverage`), so only stored rows carry this value |
 | `llm_cited_candidates` | LLM chose the original from candidates found by matching an author-year citation in the abstract against the paper's references |
 | `llm_references` | LLM picked the original from the paper's full OpenAlex reference list (Stage 4.5), accepted only when the model marked the pick `match_certain` |
 | `not_a_replication` | Stage 3's front-door gate discarded the paper: both voters answered `none`, or one answered `none` confidently and the other gave a qualifying-or-unclear answer it declined to stand behind. No original exists to link and no PDF was fetched |
 | `prescreen_discard` | The cheap discard-only tier (`shared/prescreen.py`, run by Stage 2 over the `screen_cheap` pile) ended the row before the validated screen ever voted: two very small models both answered that the paper is clearly out of scope. Deliberately **not** folded into `not_a_replication` — that value means the validated pair settled the paper, and a precision figure computed over `not_a_replication.csv` must not have to disentangle a weaker instrument's discards from it. `outcome` is `not_a_replication` at `low` confidence, `link_evidence` names both models and what each said, the export partitions the row into `data/prescreen_discard.csv`. Excluded from DB import |
 | `llm_fulltext` | LLM resolved the original from full PDF text (also multi-original rows when a PDF/GROBID fed the prompt) |
-| `llm_title_search` | **Provisional, not resolved.** The LLM named an original that was **not** in the candidate/reference list, so the DOI came from a CrossRef/OpenAlex title search against the whole literature. Two points in the ladder search this way and both record this one value: the pre-PDF search on a target the screen named but could not match to a reference (gated on both voters calling the paper a replication at high confidence), and the search after the full-text LLM names a title that is in no candidate list. A hand-check of the 2026-07-28 batch put precision near 50%, and the errors are invisible to `doi_o_verification` (the DOI does resolve to the named title; the named title is simply not the paper's target). `link_confidence` is forced to `low`, no outcome is coded, and `sanity_check` quarantines the row to `data/provisional_title_search.csv` for human confirmation |
+| `llm_title_search` | **Resolved.** The LLM named an original that was **not** in the candidate/reference list, so the target was chosen from a pooled candidate list — CrossRef and OpenAlex title hits plus the author-and-year shortlist — adjudicated by the linking model with decline offered first-class. Two points in the ladder search this way and both record this one value: the pre-PDF search on a target the screen named but could not match to a reference (gated on both voters calling the paper a replication at high confidence), and the search after the full-text LLM names a title that is in no candidate list. Promoted out of quarantine on 2026-08-08 after two cross-vendor triages put the class at 98–99% (`analysis/stage3_eval/model_triage_2026-08-08.md`); the historical ~50% figure belonged to the pre-pooling resolver, which took the first title hit unadjudicated. The row is outcome-coded and imported, at `link_confidence` `low` |
+| `llm_author_year_search` | **Resolved**, on the same terms as `llm_title_search` and from the same pooled candidate list — the author-and-year shortlist rather than a title hit made the match. Kept as a distinct value so validation keeps measuring each class separately. Imported at `link_confidence` `low` |
+| `unidentified_original` | **Provisional.** The ladder named an original from the paper's own text and nothing could identify it: no DOI on the record, none recoverable, no OpenAlex id — in practice a GROBID-parsed reference whose title the OCR mangled. The link is kept for a human to read, but a validation pair cannot be keyed on a title. Quarantined to `data/unidentified_original.csv`; not imported |
+| `keyed_link_disputed` | **Provisional.** The ladder accepted a keyed record and the issue #186 Shape 1 check — a separate call shown only the study's title/abstract, the quoted evidence and the record — confidently judged the record **not** to be the named target. The link, the outcome and both readings are kept for a human to arbitrate. Quarantined to `data/keyed_link_disputed.csv`; not imported |
 | `screen_disagreement` | **Historical, no longer emitted.** The front door's gate (`screen_gate()` in `shared/llm_client.py`) has no disagreement terminal state: a confident split now proceeds down the ladder. Rows written before the v3.2 screen still carry the value, and the export still partitions them into `data/screen_disagreement.csv` |
 | `author_year_match_legacy` | Legacy row written before the split; the specific rule-based method cannot be recovered retroactively (see `tools/migrate_link_methods.py`) |
 | `no_original_found` | Pipeline could not identify an original study |
@@ -214,12 +224,16 @@ sharply, so a consumer has to be able to tell them apart.
 
 The enum lives in `shared/schema.py` as `LINK_METHOD_VALUES`. The subset that counts
 as a resolved link — the rows the validation repo's import takes into the DB —
-is `RESOLVED_LINK_METHODS`: the five rule-based methods plus `llm_cited_candidates`,
-`llm_references` and `llm_fulltext`. Every other value above marks
-a row that is unresolved, quarantined, or a pipeline-state marker, and is never
-imported. `tests/test_extract.py::test_map_method_outputs_are_in_link_method_enum`
-asserts that every value `_map_method` can emit is in `LINK_METHOD_VALUES`, so a new
-resolution method cannot silently fall outside the enum.
+is `RESOLVED_LINK_METHODS`, ten members: the five rule-based methods plus
+`llm_cited_candidates`, `llm_references`, `llm_fulltext`, `llm_title_search` and
+`llm_author_year_search`. `PROVISIONAL_LINK_METHODS` (`unidentified_original`,
+`keyed_link_disputed`) names the links the pipeline could not stand behind — they
+SETTLE the work but are quarantined and never imported. Every other value above
+marks a row that is unresolved, quarantined, or a pipeline-state marker, and is
+never imported.
+`tests/test_link_method_contract.py::test_every_link_method_is_classified_exactly_once`
+holds `LINK_METHOD_VALUES` against the resolved and quarantined sets, so a new
+resolution method cannot silently fall outside either.
 
 ### `doi_o_verification` values
 
@@ -322,7 +336,7 @@ Human validation runs in a **separate repo backed by Supabase**.
 The push is **not done from this repo**: `csv_to_db.py` in the
 [`flora-validation`](https://github.com/forrtproject/flora-validation/blob/main/csv_to_db.py)
 repo reads resolved `extracted.csv` rows (those with
-`filter_status ∈ {replication, reproduction}` and a resolved `link_method`) into three
+`paper_type ∈ {replication, reproduction}` and a resolved `link_method`) into three
 Supabase tables, in one psycopg2 transaction with `ON CONFLICT (pair_id) DO NOTHING`.
 (An older importer here, `extract/csv_to_db.py`, is parked on the `wip/csv-to-db`
 branch and is not run — see issue #172.)

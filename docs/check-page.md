@@ -27,7 +27,7 @@ All filter controls support selecting one or many values. Multi-select dropdowns
 | Filter | Column(s) searched | Notes |
 | ------ | ----------------- | ----- |
 | Year range (From / To) | `year_r` | Handles float years like `2009.0` correctly |
-| Type / Status | `type` (extracted) or `filter_status` (filtered) | Options change based on which stages are selected |
+| Type / Status | `type` (extracted) or `paper_type` (filtered) | Options change based on which stages are selected |
 | Outcome | `outcome` | Extracted/test stages only |
 | Link Method | `link_method` | Extracted/test stages only |
 | Match Type | `original_match_type` | Extracted/test stages only |
@@ -51,7 +51,7 @@ These are not exposed in the UI but are used by dashboard download links:
 
 The main table shows four fixed columns: `doi_r`, `title_r`, `doi_o`, `title_o`. All other columns are in the expanded view.
 
-Click any row (or the `▶` button) to expand it. The expanded view groups columns into labelled sections (Replication Paper, Filter, Original Study, Link, DOI Verification, Outcome, Meta). Short fields are shown in a two-column grid; long-text fields (abstract, evidence, reasoning) are full-width with a collapsible "Show more" toggle. DOI values are clickable links. Enum values (outcome, filter_status, confidence, doi_o_verification, link_method, match type) render as color-coded badges.
+Click any row (or the `▶` button) to expand it. The expanded view groups columns into labelled sections (Replication Paper, Filter, Original Study, Link, DOI Verification, Outcome, Meta). Short fields are shown in a two-column grid; long-text fields (abstract, evidence, reasoning) are full-width with a collapsible "Show more" toggle. DOI values are clickable links. Enum values (outcome, paper_type, confidence, doi_o_verification, link_method, match type) render as color-coded badges.
 
 ---
 

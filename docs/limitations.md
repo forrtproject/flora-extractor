@@ -14,7 +14,7 @@ denominator or do not quote the figure.
 
 Where an entry is marked **historical** or **superseded**, the number was measured on
 the retired `filtered.csv` of the **2026-07** production run and does not describe the
-current pipeline. Last reviewed against the code on **2026-08-06**.
+current pipeline. Last reviewed against the code on **2026-08-10**.
 
 ---
 
@@ -219,7 +219,9 @@ PDF acquisition, the waterfall in `shared/pdf_sources.py` returned no usable
 document **62%** of the time. That bounds every step behind it: the full-text link
 rung, the full-text outcome pass, and `record_type_check` are all unavailable on
 those rows, which is a large part of why `cannot_be_determined` and `pending` are
-common outcomes rather than rare ones.
+common outcomes rather than rare ones. The figure predates the issue #188 acquisition
+routes (`osf_registration` and `html_landing`, shipped with ladders 20–21), which add
+document sources to the waterfall it measured, so the re-measurement below is due.
 
 The denominator matters here more than the rate. It is *rows that reached
 acquisition*, not rows in the corpus, and the population that reaches acquisition is

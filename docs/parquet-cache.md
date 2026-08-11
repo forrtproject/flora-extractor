@@ -78,19 +78,19 @@ several GB and gitignored.
 | Key | Meaning |
 | --- | ------- |
 | `total` | Row count |
-| `by_filter_status` | `{status: count}` for each `filter_status` value |
+| `by_paper_type` | `{status: count}` for each `paper_type` value |
 | `by_filter_method` | `{method: count}` |
 | `by_filter_confidence` | `{level: count}` |
-| `rep_repro_total` | Rows where `filter_status` is `replication` or `reproduction` |
+| `rep_repro_total` | Rows where `paper_type` is `replication` or `reproduction` |
 | `rep_repro_no_doi` | Rep+repro rows with blank `doi_r` |
 | `rep_repro_no_doi_or_url` | Rep+repro rows with blank `doi_r` AND blank `url_r` |
 | `rep_repro_no_abstract` | Rep+repro rows with blank `abstract_r` |
 | `by_year` | `{year: count}` from `year_r` |
 | rule-exit counts | `{exit: count}` from `classify_rule_exit(filter_evidence)` — `engine_route` is the current path; the `r*` keys are the retired per-row classifier's exits, kept because rows on disk still carry them |
-| rule-exit × status | `{exit: {filter_status: count}}`, so the flowchart can show what happened to each arm |
+| rule-exit × status | `{exit: {paper_type: count}}`, so the flowchart can show what happened to each arm |
 
 Computed in two passes (`_compute_large_stage_stats`): a lightweight chunked pass
-over `filter_status`/`filter_method`/`filter_confidence`/`filter_evidence`/`year_r`,
+over `paper_type`/`filter_method`/`filter_confidence`/`filter_evidence`/`year_r`,
 then a second pass that reads `doi_r`/`url_r`/`abstract_r` for the
 replication+reproduction subset only, via parquet predicate pushdown.
 

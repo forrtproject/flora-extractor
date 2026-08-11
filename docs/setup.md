@@ -21,7 +21,7 @@ Edit `.env` and fill in at minimum:
 ```bash
 RESEARCHER_EMAIL=you@example.com   # for OpenAlex / Crossref politeness headers
 GEMINI_API_KEY=...                 # from https://aistudio.google.com
-OPENAI_API_KEY=...                 # Stage 3's second screen voter (default SCREENING_MODEL_2)
+OPENAI_API_KEY=...                 # Stage 2's second screen voter (default SCREENING_MODEL_2) and Stage 3's linking/outcome models
 ```
 
 **Nothing is validated up front any more.** The key each call needs follows its model
@@ -55,7 +55,9 @@ warning and falls back to abstract-only processing.
 ## Running the pipeline
 
 Run the stages in order. Stage 1 writes the survivor pool (parquet) and Stage 2
-routes it; every stage after that reads the previous stage's CSV output.
+routes it. Stage 3 reads no CSV: it builds its worklist in process from the routing
+store and the pool, and `extract.export` renders `data/extracted.csv` from the stored
+verdicts. Stage 4 reads that file.
 
 ```bash
 # Stage 1 — scan the OpenAlex snapshot into the survivor pool (search only; it
@@ -64,7 +66,7 @@ routes it; every stage after that reads the previous stage's CSV output.
 python -m search.run_search --scan
 
 # Stage 2 — route the survivor pool, screen what the rules could not settle,
-# and write the file Stage 3 reads
+# and write the handoff record (Stage 3 does not read it — see above)
 python -m filter.engine route
 python -m filter.engine screen --tier screen_expensive --run
 python -m filter.engine handoff --out data/filtered.csv
@@ -88,9 +90,9 @@ If the shared-drive CSVs are available, you can skip Stages 1–2:
 | File | Description |
 |------|-------------|
 | the survivor pool (parquet) | Stage 1 output — pull it with `python -m search.pool_sync --pull` and run Stage 2 |
-| `data/filtered.csv` | Stage 2 output — start here to run Stage 3 immediately |
+| `data/filtered.csv` | Stage 2 output — a reviewable record of what the screen admitted. Stage 3 does not read it; running Stage 3 needs the routing store and the pool, not this file |
 | `data/extracted.csv` | Stage 3 output — load into web app for monitoring |
-| `data/FLoRA entry sheet - replication list.csv`, `data/flora.csv` | Rows already in FLoRA — the two files `shared/flora_skip.py` reads for `--skip-flora-validated` |
+| `data/FLoRA entry sheet - replication list.csv`, `data/flora.csv` | Rows already in FLoRA — the two files `shared/flora_skip.py` reads. The skip is unconditional: it applies in the extract tier's worklist and again in the export, with no flag to turn it on |
 
 ### Large data files (DVC + Cloudflare R2)
 
@@ -156,7 +158,7 @@ See `.env.example` for the full list with descriptions. Key variables:
 | `RESEARCHER_EMAIL` | Yes | Politeness header for APIs |
 | `GEMINI_API_KEY` | Yes | Primary LLM |
 | `GEMINI_API_KEY_2..N` | No | Key rotation for higher quota |
-| `OPENAI_API_KEY` | Stage 3 | Second voter of the front-door screen with the default `SCREENING_MODEL_2`; also `OUTCOME_MODEL`, which codes every outcome |
+| `OPENAI_API_KEY` | Stages 2 and 3 | Second voter of Stage 2's front-door screen with the default `SCREENING_MODEL_2`; also Stage 3's `LINKING_MODEL` and `OUTCOME_MODEL`, which codes every outcome |
 | `OPENROUTER_API_KEY` | No | Only reached by a model id that names it: the pre-screen's two voters, and `SCREENING_MODEL_2` when it contains a `/` |
 | `SUPABASE_URL` | No | Validation monitoring tab |
 | `SUPABASE_SERVICE_KEY` | No | Validation monitoring tab |
