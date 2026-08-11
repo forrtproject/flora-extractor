@@ -107,7 +107,7 @@ from shared.flora_skip import (VALIDATED_SKIP_NAME,
                                load_validated_skip as _load_validated_skip,
                                validated_work_id as _validated_work_id)
 from shared.llm_client import cache_model_id
-from shared.schema import (EXTRACTED_COLS, FILTERED_COLS,
+from shared.schema import (EXTRACTED_COLS, FILTERED_COLS, LINK_METHOD_VALUES,
                            PROVISIONAL_LINK_METHODS, RESOLVED_LINK_METHODS,
                            SCREEN_COLS)
 from shared.utils import clean_doi
@@ -161,9 +161,9 @@ def _ttl_seconds() -> int:
 
 
 # ── The generation ───────────────────────────────────────────────────────────
-# What a result row was produced BY, in one hash: the ladder's shape, the prompts the
-# three LLM rungs and the two standalone coders ask, and the models that answer them
-# at the efforts their call sites send. Same contract as `screening_generation()` in
+# What a result row was produced BY, in one hash: the prompts the three LLM rungs and
+# the two standalone coders ask, and the models that answer them at the efforts their
+# call sites send. Same contract as `screening_generation()` in
 # `filter/engine/tiers.py` — a verdict only answers the question the code asks today
 # if the code still asks that question — and read at CALL time so a changed constant
 # is seen without a re-import.
@@ -200,6 +200,27 @@ _GENERATION_PROMPTS = ("build_target_outcome_prompt",
                        # resolved row to keyed_link_disputed, so an edit to it changes
                        # what a row concludes and must reopen the works it decided.
                        "build_keyed_confirm_prompt")
+# `build_search_confirm_prompt` is deliberately NOT in that tuple. Its grade on a
+# search-based link is recorded on link_evidence and changes no conclusion, so an
+# edit to it must not reopen every settled work. It joins the fingerprint on the day
+# a grade can gate a row — see analysis/stage3_eval/search_confirm_plan.md.
+
+
+# ── Declared answer-preserving prompt edits (issue #171) ─────────────────────
+# `prompt: (version_after_the_edit, version_before_it)`. The fingerprint reports the
+# BEFORE version while the prompt hashes to exactly the reviewed AFTER version, so an
+# edit a maintainer reviewed and judged answer-preserving does not reopen every work
+# this tier has already settled. The pair is the guard: a further edit produces a
+# third version, matches nothing here, and moves the generation as it should.
+#
+# The one entry is the FLoRA outcome-label rename (OUTCOME_LABELS in shared/schema.py),
+# which changed how six categories are spelled in the two replication prompts and
+# nothing about what either asks. The 1,899 works settled under the old spellings are
+# re-rendered by the export, not re-extracted — see `canonical_outcome`.
+_GENERATION_PROMPT_EQUIVALENCES = {
+    "build_target_outcome_prompt": ("1d5a31e3a518", "15fc8eee0150"),
+    "build_outcome_prompt":        ("e9ef589b44d1", "88efc83ad293"),
+}
 
 
 def generation_inputs() -> dict:
@@ -447,7 +468,7 @@ def result_payload(source_row: dict, doi_r: str, rows: list[dict],
     of the input's — so `pair_id`, the outcome block, the link columns and the
     verification verdict are all stored, while `authors_r`, `journal_r` and the rest
     of FILTERED_COLS are stored once, in `input`. A FILTERED_COLS value the row DID
-    change (a `filter_status` the screen retyped, a normalised `year_r`) is stored on
+    change (a `paper_type` the screen retyped, a normalised `year_r`) is stored on
     the target, because the difference is the row's and it must survive.
 
     Takes the input row rather than the `ExtractWork` so that the round-trip test can
@@ -489,18 +510,46 @@ def result_payload(source_row: dict, doi_r: str, rows: list[dict],
     }
 
 
+# Column names a stored payload may carry under an older name → today's name.
+# The one declared exception to "no backward-compatibility shims", and it is
+# declared for the same reason `read_cache_migrating` is: a permanent verdict is
+# production data that cannot be re-bought freely — re-extracting every settled
+# work to move a key would cost a campaign's worth of provider and OpenAlex spend
+# — and the answer under the old key is provably the answer under the new one,
+# because only the NAME moved (issue #93). Read-side only: nothing writes an old
+# key, so the map shrinks as generations turn over rather than spreading.
+_PAYLOAD_COLUMN_RENAMES = {"filter_status": "paper_type"}
+
+
+def _renamed_columns(stored: dict) -> dict:
+    """*stored* with any pre-rename column name mapped to today's."""
+    if not any(old in stored for old in _PAYLOAD_COLUMN_RENAMES):
+        return stored
+    row = dict(stored)
+    for old, new in _PAYLOAD_COLUMN_RENAMES.items():
+        value = row.pop(old, None)
+        if value is not None and not row.get(new):
+            row[new] = value
+    return row
+
+
 def render_payload(payload: dict) -> list[dict]:
     """A stored result payload back as its `EXTRACTED_COLS` rows.
 
     The inverse of `_result_payload`, and the only place a stored verdict becomes a
     CSV row. Pure: no network, no cache, no store, no pool — which is the property
     the payload shape exists to make true (see the module docstring).
+
+    Both halves of the payload go through `_renamed_columns`: the input row, and
+    each target — a target carries a FILTERED_COLS value the run CHANGED, so a work
+    the screen retyped holds the paper type there and not in `input`.
     """
-    input_row = payload.get("input") or {}
+    input_row = _renamed_columns(payload.get("input") or {})
     base = {col: str(input_row.get(col, "") or "") for col in INPUT_COLS
             if col in EXTRACTED_COLS}
     rows = []
     for target in payload.get("targets") or []:
+        target = _renamed_columns(target)
         row = {col: "" for col in EXTRACTED_COLS}
         row.update(base)
         row.update({k: v for k, v in target.items() if k in EXTRACTED_COLS})
@@ -736,7 +785,7 @@ def extract_works(con, client: Optional[ClaimsClient], pool_dir: Path,
         if decision:
             row.update(screen_columns(row, decision))
             if decision.get("record_type"):
-                row["filter_status"] = decision["record_type"]
+                row["paper_type"] = decision["record_type"]
                 row["filter_method"] = "screen"
         if _skipped(row, flora, validated_ids, validated_dois):
             continue
@@ -1191,7 +1240,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     except StoreUnavailable as exc:
         raise SystemExit(str(exc))
     if args.release:
-        release_id = resolve_release(con, args.release)
+        release_id = resolve_release(con, args.release, cache_dir=args.store.parent)
     else:
         present = releases(con)
         if len(present) != 1:
@@ -1257,6 +1306,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     # This line is what a maintainer copies at the end of a paid run.
     print(f"  Render the CSV with: python -m extract.export "
           f"--release {release_id[:12]}")
+    # The caches are content-keyed and shareable, so this run's answers are answers
+    # no collaborator has to buy again — but only once they are pushed, and nothing
+    # else in the pipeline prompts for it. A run that decided nothing bought nothing.
+    if report.get("decided"):
+        print("  The LLM/API caches are shared — publish this run's answers with: "
+              "python -m shared.cache_sync --push")
     return 0
 
 

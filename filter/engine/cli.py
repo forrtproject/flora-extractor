@@ -178,9 +178,10 @@ def _print_overlay(overlay_dir: Optional[Path], indent: str = "") -> None:
     print(f"{indent}overlay: {overlay_dir} (hash {digest[:12]})")
 
 
-def _resolve_release(con, given: Optional[str]) -> str:
+def _resolve_release(con, given: Optional[str],
+                     cache_dir: Optional[Path] = None) -> str:
     if given:
-        return resolve_release(con, given)
+        return resolve_release(con, given, cache_dir=cache_dir)
     present = releases(con)
     if len(present) == 1:
         return present[0]
@@ -336,7 +337,7 @@ def cmd_diagnose(args) -> int:
 
 def cmd_export(args) -> int:
     con = open_store(args.store, read_only=True)
-    release_id = _resolve_release(con, args.release)
+    release_id = _resolve_release(con, args.release, cache_dir=args.store.parent)
     try:
         record = read_release(release_id, cache_dir=args.store.parent)
     except FileNotFoundError:
@@ -378,7 +379,7 @@ def cmd_screen(args) -> int:
                                      run_screen_expensive)
 
     con = open_store(args.store, read_only=True)
-    release_id = _resolve_release(con, args.release)
+    release_id = _resolve_release(con, args.release, cache_dir=args.store.parent)
     overlay_dir = _overlay(args)
     _print_overlay(overlay_dir)
     # The tier reads the pool through the overlay and pays per abstract, so a
@@ -436,7 +437,22 @@ def cmd_screen(args) -> int:
             print(f"    {pile:<18} {count:,}")
         print("  Nothing was discarded: validation mode. Re-run with --live once "
               "these numbers have been adjudicated.")
+    _print_cache_push_reminder(report)
     return 0
+
+
+def _print_cache_push_reminder(report: dict, indent: str = "  ") -> None:
+    """Ask for a cache push after a run that bought answers.
+
+    The caches are content-keyed and therefore shareable, so every answer this run
+    paid for is one no collaborator has to buy again — but only if it is pushed,
+    and nothing else in the pipeline ever prompts for it. Gated on work actually
+    decided: a dry run and an empty batch bought nothing to share.
+    """
+    if not report.get("decided"):
+        return
+    print(f"{indent}The LLM/API caches are shared — publish this run's answers with: "
+          "python -m shared.cache_sync --push")
 
 
 def _print_incomplete(client, tier: str, indent: str = "") -> None:
@@ -489,7 +505,7 @@ def cmd_handoff(args) -> int:
     out_csv = Path(args.out) if args.out else Path(
         HANDOFF_UNSCREENED_CSV if args.as_routed else HANDOFF_CSV)
     con = open_store(args.store, read_only=True)
-    release_id = _resolve_release(con, args.release)
+    release_id = _resolve_release(con, args.release, cache_dir=args.store.parent)
     try:
         record = read_release(release_id, cache_dir=args.store.parent)
     except FileNotFoundError:
@@ -559,7 +575,7 @@ def cmd_handoff(args) -> int:
 
 def cmd_worklist(args) -> int:
     con = open_store(args.store, read_only=True)
-    release_id = _resolve_release(con, args.release)
+    release_id = _resolve_release(con, args.release, cache_dir=args.store.parent)
     rows = worklist(con, release_id, args.pool, Path(args.out),
                     aliases=load_aliases(args.spec_dir / ALIASES_FILENAME))
     con.close()

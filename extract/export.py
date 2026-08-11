@@ -156,10 +156,11 @@ def admitted_work_ids(release: "str | None",
     from filter.engine.store import (DEFAULT_STORE_PATH, open_store, releases,
                                      resolve_release)
 
-    con = open_store(store_path or DEFAULT_STORE_PATH, read_only=True)
+    store = store_path or DEFAULT_STORE_PATH
+    con = open_store(store, read_only=True)
     try:
         if release:
-            release_id = resolve_release(con, release)
+            release_id = resolve_release(con, release, cache_dir=store.parent)
         else:
             present = releases(con)
             if len(present) != 1:

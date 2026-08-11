@@ -18,6 +18,7 @@ insert commit together, so an interrupted run leaves the release exactly as it
 was — absent, or the previous complete build — rather than half-replaced.
 """
 
+import datetime
 import hashlib
 import json
 from collections import Counter
@@ -371,7 +372,41 @@ def releases(con: duckdb.DuckDBPyConnection) -> list[str]:
         "SELECT DISTINCT release_id FROM routing ORDER BY release_id").fetchall()]
 
 
-def resolve_release(con: duckdb.DuckDBPyConnection, given: str) -> str:
+def _latest_release(present: list[str], cache_dir: Optional[Path]) -> str:
+    """The release in *present* with the newest `created_at` in its sidecar.
+
+    Only releases the store holds routing for are candidates, so `latest` can
+    never name a release nothing was routed under. A release with no sidecar has
+    no timestamp to compare and is skipped; the tie-break on release id keeps two
+    releases minted in the same second from resolving differently between runs.
+    """
+    from filter.engine.release import read_release
+
+    dated: list[tuple[datetime.datetime, str]] = []
+    for release_id in present:
+        try:
+            record = read_release(release_id, cache_dir=cache_dir)
+        except (FileNotFoundError, OSError):
+            continue
+        created = str(record.get("created_at") or "")
+        try:
+            # Parsed rather than compared as text: two records written under
+            # different UTC spellings ("…Z" and "…+00:00") sort by the spelling.
+            when = datetime.datetime.fromisoformat(created.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=datetime.timezone.utc)
+        dated.append((when, release_id))
+    if not dated:
+        raise SystemExit("no release beside the store has a record to date it, so "
+                         "'latest' cannot be resolved — the store holds: "
+                         + ", ".join(r[:12] for r in present))
+    return max(dated)[1]
+
+
+def resolve_release(con: duckdb.DuckDBPyConnection, given: str,
+                    cache_dir: Optional[Path] = None) -> str:
     """*given*, expanded to the full release id the routing table stores.
 
     `status` displays releases as 12-character prefixes, so a prefix is what an
@@ -379,8 +414,13 @@ def resolve_release(con: duckdb.DuckDBPyConnection, given: str) -> str:
     prefix passed through verbatim matches NOTHING: every pile reads as empty,
     which prices as $0 and is indistinguishable from a genuinely settled pile.
     An unknown or ambiguous value is therefore an error here, never zero rows.
+
+    `latest` is the one reserved value: the most recently created release the
+    store holds, read off the sidecar records in *cache_dir*.
     """
     present = releases(con)
+    if given == "latest":
+        return _latest_release(present, cache_dir)
     if given in present:
         return given
     matches = [r for r in present if r.startswith(given)]

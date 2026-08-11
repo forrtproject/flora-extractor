@@ -82,20 +82,20 @@ def test_the_report_writes_nothing(tmp_path, monkeypatch):
     assert not (tmp_path / "not_a_replication.csv").exists()
 
 
-def test_deep_flags_a_fabricated_doi(tmp_path, monkeypatch):
+def test_deep_flags_an_unregistered_doi(tmp_path, monkeypatch):
     monkeypatch.setattr(sc, "DATA_DIR", tmp_path)
     monkeypatch.setattr(sc.time, "sleep", lambda *_: None)
     # 10.9/fake resolves nowhere (404), 10.2/real resolves (302).
     monkeypatch.setattr(sc, "_doi_is_registered", lambda d: "real" in d)
     ex = tmp_path / "extracted.csv"
     _write(ex, [
-        {"doi_r": "10.1/f", "doi_o": "10.9/fake", "outcome": "success",
+        {"doi_r": "10.1/f", "doi_o": "10.9/fake", "outcome": "successful",
          "doi_o_verification": "no_metadata", "openalex_id_r": "W1", "link_method": "llm_fulltext"},
-        {"doi_r": "10.1/r", "doi_o": "10.2/real", "outcome": "success",
+        {"doi_r": "10.1/r", "doi_o": "10.2/real", "outcome": "successful",
          "doi_o_verification": "no_metadata", "openalex_id_r": "W2", "link_method": "llm_fulltext"},
     ])
     s = sc.run_sanity_check(ex, deep=True)
-    assert s["flagged"]["fabricated_doi_o"] == 1, "only the unresolvable doi_o"
+    assert s["flagged"]["unregistered_doi_o"] == 1, "only the unresolvable doi_o"
     assert s["rows_clean"] == 1
 
 

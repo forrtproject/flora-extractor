@@ -48,8 +48,12 @@ data/extracted-test-set-aside/. Buckets:
                                                    non-study object (dataset, software,
                                                    peer-review, supplementary ...)
                                                    (only with --deep: metadata lookup)
-    fabricated_doi_o   → fabricated_original_doi.csv doi_o present but registered nowhere
+    unregistered_doi_o   → unregistered_original_doi.csv doi_o present but registered nowhere
                                                     (only with --deep: doi.org 404 check)
+                                                    (was fabricated_doi_o /
+                                                    fabricated_original_doi.csv: the check
+                                                    tests REGISTRATION, and doi_o now comes
+                                                    from the matched record, not the model)
 
 What is left in extracted.csv is validation-ready and nothing else: every remaining row
 has a resolved link_method, a doi_o and an outcome. That is the contract the validation
@@ -135,7 +139,7 @@ def classify_row(row: Mapping) -> Optional[str]:
     outcome column happens to say is a fact about that file's contents, not about its
     identity.
 
-    The two `--deep` buckets (`non_article_type`, `fabricated_doi_o`) are not here:
+    The two `--deep` buckets (`non_article_type`, `unregistered_doi_o`) are not here:
     each needs a network lookup, so they are not a property of the row.
     """
     method = str(row.get("link_method", "") or "")
@@ -273,7 +277,7 @@ def run_sanity_check(path: "str | Path" = None, deep: bool = False) -> dict:
         flagged["non_article_type"] = int(by_type.sum())
         claimed |= by_type
 
-        # Fabricated doi_o: registered-looking but resolves nowhere; candidates are the
+        # Unregistered doi_o: registered-looking but resolves nowhere; candidates are the
         # "unregistered" verification outcomes.
         cand = df.index[(doi_o != "") & df["doi_o_verification"].isin(["no_metadata"]) & ~claimed]
         fab = pd.Series(False, index=df.index)
@@ -281,7 +285,7 @@ def run_sanity_check(path: "str | Path" = None, deep: bool = False) -> dict:
             if not _doi_is_registered(df.at[i, "doi_o"]):
                 fab.at[i] = True
             time.sleep(0.2)
-        flagged["fabricated_doi_o"] = int(fab.sum())
+        flagged["unregistered_doi_o"] = int(fab.sum())
         claimed |= fab
 
     kept = df[~claimed]
@@ -314,7 +318,7 @@ def run_sanity_check(path: "str | Path" = None, deep: bool = False) -> dict:
               "from the verdicts.")
         print("     python -m extract.export --check   (then re-run without --check)")
     if not deep:
-        print(f"  fabricated_doi_o     (skipped -- pass --deep to network-check "
+        print(f"  unregistered_doi_o     (skipped -- pass --deep to network-check "
               f"{unregistered} unregistered doi_o)")
         print("  non_article_type     (skipped -- pass --deep to look up the work type "
               "of each doi_r)")
@@ -337,7 +341,8 @@ if __name__ == "__main__":
                    help="CSV to check (default: data/extracted.csv).")
     p.add_argument("--deep", action="store_true",
                    help="Network checks: doi.org-verify unregistered doi_o and flag "
-                        "fabricated ones; look up each doi_r's work type and flag "
-                        "dataset/software/peer-review/supplementary records.")
+                        "the ones registered nowhere; look up each doi_r's work "
+                        "type and flag dataset/software/peer-review/supplementary "
+                        "records.")
     a = p.parse_args()
     run_sanity_check(a.input, deep=a.deep)

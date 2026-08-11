@@ -131,7 +131,7 @@ def test_a_cheap_pile_export_writes_the_engine_columns_in_order_with_a_bom(
     assert set(df["filter_confidence"]) == {"medium"}
     # A rule that names a vocabulary names the row's status; one that does not
     # leaves the pile's own default in place.
-    by_rule = dict(zip(df["route_rule"], df["filter_status"]))
+    by_rule = dict(zip(df["route_rule"], df["paper_type"]))
     assert by_rule["syn-reproduction"] == "reproduction"
     assert by_rule["syn-replication"] == "replication"
     assert by_rule["syn-concept"] == "needs_review"
@@ -150,7 +150,7 @@ def test_a_discard_export_carries_the_false_positive_verdict_and_its_provenance(
     out = tmp_path / "discard.csv"
     export(routed, pool, "discard", out, "rel-a")
     df = _exported(out).set_index("route_rule")
-    assert set(df["filter_status"]) == {"false_positive"}
+    assert set(df["paper_type"]) == {"false_positive"}
     assert set(df["filter_confidence"]) == {"high"}
     assert sorted(df.index) == ["syn-dataset", "syn-deposit"]
     assert df.loc["syn-dataset", "oa_type"] == "dataset"
@@ -366,7 +366,7 @@ def test_route_then_export_runs_end_to_end_and_then_refuses_a_touched_bundle(
     # JSON, so appending a newline is deliberately not a new bundle.
     conventions = spec_dir / "conventions.json"
     policy = json.loads(conventions.read_text())
-    policy["piles"]["discard"]["filter_status"] = "renamed_by_the_test"
+    policy["piles"]["discard"]["paper_type"] = "renamed_by_the_test"
     conventions.write_text(json.dumps(policy))
     with pytest.raises(SystemExit, match="routed under a different bundle"):
         cli.main(common + ["export", "--pile", "discard", "--out",
@@ -429,3 +429,37 @@ def test_resolve_release_expands_prefixes_and_refuses_unknown():
     assert resolve_release(con, "aaaa") == "a" * 64
     with pytest.raises(SystemExit):
         resolve_release(con, "ffff")
+
+
+class _TwoReleaseCon:
+    """A store holding two releases, `a`*64 and `b`*64."""
+
+    def execute(self, sql: str, params=None):
+        class _R:
+            def fetchall(self):
+                return [("a" * 64,), ("b" * 64,)]
+        return _R()
+
+
+def _write_record(cache_dir, release_id: str, created_at: str) -> None:
+    from filter.engine.release import RELEASE_INPUTS, write_release
+
+    write_release({**{k: None for k in RELEASE_INPUTS}, "created_at": created_at},
+                  release_id, cache_dir=cache_dir)
+
+
+def test_resolve_release_latest_picks_the_newest_record(tmp_path):
+    """`latest` is decided by the sidecar timestamps, not by the id ordering."""
+    from filter.engine.store import resolve_release
+
+    _write_record(tmp_path, "a" * 64, "2026-08-01T00:00:00Z")
+    _write_record(tmp_path, "b" * 64, "2026-08-09T00:00:00Z")
+    assert resolve_release(_TwoReleaseCon(), "latest", cache_dir=tmp_path) == "b" * 64
+
+
+def test_resolve_release_latest_refuses_when_nothing_is_dated(tmp_path):
+    import pytest
+    from filter.engine.store import resolve_release
+
+    with pytest.raises(SystemExit, match="cannot be resolved"):
+        resolve_release(_TwoReleaseCon(), "latest", cache_dir=tmp_path)
