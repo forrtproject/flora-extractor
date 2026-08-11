@@ -202,14 +202,17 @@ def _generation_current(tier: str, generation: Optional[str],
                         rows: list[dict]) -> bool:
     """Whether one claim's verdicts still answer the question this tier asks.
 
-    A recorded generation answers it exactly. Its absence means the row predates
+    A recorded generation answers it exactly, and so does one the tier has DECLARED
+    equivalent to it (`TierSpec.equivalent_generations`) — the reviewed escape for a
+    fingerprint that moved without the question moving. Absence means the row predates
     the field, and what to do about that is the tier's own call
     (`TierSpec.accepts_legacy`). Everything else is ignored — the work is claimable
     again and no longer steers the handoff.
     """
     spec = tier_spec(tier)
     if generation:
-        return generation == spec.generation()
+        return (generation == spec.generation()
+                or generation in spec.equivalent_generations())
     return spec.accepts_legacy(rows)
 
 
@@ -250,6 +253,9 @@ class TierSpec:
       so a changed model constant is seen without a re-import.
     * `accepts_legacy` — whether verdict rows that predate `meta.generation` still
       count for this tier.
+    * `equivalent_generations` — older generations this tier declares still current,
+      for a fingerprint that changed shape without the question changing. Read at
+      call time, and empty for a tier that has declared none.
     * `estimate` / `render_estimate` — the dry run (§6). A tier brings its own
       prices; there is no shared price table for a runner to look a tier up in.
     * `workers` / `ttl_seconds` / `batch_size` — `None` means "the deployment-wide
@@ -265,6 +271,7 @@ class TierSpec:
     accepts_legacy: Callable[[list[dict]], bool]
     estimate: Callable[[list[Work]], dict]
     render_estimate: Callable[[dict], str]
+    equivalent_generations: Callable[[], tuple[str, ...]] = tuple
     workers: Optional[int] = None
     ttl_seconds: Optional[int] = None
     batch_size: Optional[int] = None

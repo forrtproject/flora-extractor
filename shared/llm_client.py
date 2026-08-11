@@ -54,15 +54,19 @@ from .utils import clean_doi
 # retried rather than reported; every call site now logs it explicitly.
 #
 # One value for all providers, because the cap decides what the model is ABLE to answer:
-# Gemini sent 8192 here while OpenAI and OpenRouter sent 4096, so the same screening
-# prompt had a different ceiling depending on which voter's id it carried. 4096 is the
-# value both metered providers have always run at, and it is what the answers on disk
-# need: the longest response in 813 cached answers is 1,723 characters, ~430 tokens.
-# The cap is a ceiling, not a spend — a call is billed for the tokens it actually
-# produces — so raising it is cheap if a reasoning budget ever pushes a real call into
-# it. Truncation is loud when it happens: it is logged and returned as an error, and
-# never cached.
-JSON_MAX_OUTPUT_TOKENS = 4096
+# the same screening prompt must not get a different ceiling depending on which voter's
+# id it carried.
+#
+# The visible answer is small — the longest of 813 cached answers is 1,723 characters,
+# ~430 tokens. The cap has to cover the hidden reasoning as well, and that is what sets
+# the value: at 4,096 a sandbox run of 100 works lost 21 calls to `finish_reason =
+# length` (measured 2026-08-11, gpt-5.4-mini at effort=medium). A truncated reply is
+# discarded and never cached, so each one is a rung that got no answer and a work that
+# stayed `target_pending`. 16,384 leaves the reasoning room to finish.
+#
+# The cap is a ceiling, not a spend: a call is billed for the tokens it actually
+# produces, and it is not part of any cache key, so raising it re-buys nothing.
+JSON_MAX_OUTPUT_TOKENS = 16384
 
 # Sampling temperature is deliberately not set on any provider. gpt-5-mini accepts
 # only the default ("Unsupported value: 'temperature' does not support 0.0 with this

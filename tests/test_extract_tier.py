@@ -279,6 +279,38 @@ def test_an_undeclared_prompt_edit_still_moves_the_generation(monkeypatch):
             == prompt_version("build_outcome_prompt"))
 
 
+def test_the_ladder_keyed_generations_are_this_question_with_a_ladder_key():
+    """The declared equivalence for the removal of `EXTRACT_LADDER_VERSION`.
+
+    Each listed generation is rebuilt from TODAY's inputs plus the one key that used
+    to be in the dict, which is the whole claim being declared: ladders 21, 22 and 23
+    asked what this tier asks now. If a prompt or model ever moves, the current digest
+    moves with it, the declaration is keyed to a generation nobody is running, and
+    every work reopens strictly.
+    """
+    import hashlib
+    import json as _json
+
+    declared = tier_mod._GENERATION_EQUIVALENCES[extract_generation()]
+    rebuilt = set()
+    for ladder in (21, 22, 23):
+        payload = dict(generation_inputs())
+        payload["ladder"] = ladder
+        rebuilt.add(hashlib.sha256(
+            _json.dumps(payload, sort_keys=True, separators=(",", ":"))
+            .encode("utf-8")).hexdigest()[:16])
+    assert set(declared) == rebuilt
+
+
+def test_a_declared_generation_still_settles_a_work():
+    """The equivalence has to reach the checkpoint, not just the constant."""
+    from filter.engine.tiers import _generation_current
+
+    older = tier_mod.equivalent_generations()[0]
+    assert _generation_current(tier_mod.TIER_EXTRACT, older, []) is True
+    assert _generation_current(tier_mod.TIER_EXTRACT, "0" * 16, []) is False
+
+
 def test_a_changed_prompt_mints_a_new_generation(monkeypatch):
     before = extract_generation()
     monkeypatch.setattr(tier_mod, "_GENERATION_PROMPTS",

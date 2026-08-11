@@ -78,8 +78,8 @@ from typing import Optional
 
 from filter.engine.claims import ClaimsClient, ClaimsNotConfigured
 from extract.sanity_check import classify_row, demote_malformed
-from extract.tier import (RESULT_VERDICTS, TIER_EXTRACT, extract_generation,
-                          render_payload)
+from extract.tier import (RESULT_VERDICTS, TIER_EXTRACT, equivalent_generations,
+                          extract_generation, render_payload)
 from shared.config import DATA_DIR, log
 from shared.flora_skip import (VALIDATED_SKIP_NAME, default_flora_skip_dois,
                                load_validated_skip)
@@ -110,14 +110,17 @@ def latest_results(client: ClaimsClient, *, mode: str = "live",
       * mode — the claim's `meta.mode` must match. A validation run's verdicts are
         recorded, readable and invisible to the live file, which is what that mode
         means.
-      * generation — a current-generation row wins outright. A work with none falls
-        back to its newest row of any generation and is COUNTED, because the
-        alternative is a file that quietly loses papers when a prompt is edited.
+      * generation — a current-generation row wins outright, and so does one from a
+        generation the tier DECLARES equivalent (`equivalent_generations()`), because
+        a declaration says those verdicts answer today's question. A work with
+        neither falls back to its newest row of any generation and is COUNTED,
+        because the alternative is a file that quietly loses papers when a prompt is
+        edited.
 
     Within each group the latest row wins (`_recorded_at`): a result row is a whole
     answer about one work, so two of them are two runs, not two voters.
     """
-    generation = extract_generation()
+    generations = {extract_generation(), *equivalent_generations()}
     claim_mode = {claim["id"]: (claim.get("meta") or {}).get("mode")
                   for claim in client.claims(tier=TIER_EXTRACT)}
 
@@ -129,7 +132,7 @@ def latest_results(client: ClaimsClient, *, mode: str = "live",
         if claim_mode.get(row.get("claim_id")) != mode:
             continue
         work = int(row["work_id"])
-        bucket = current if str(row.get("prompt_hash") or "") == generation else older
+        bucket = current if str(row.get("prompt_hash") or "") in generations else older
         if work not in bucket or _recorded_at(row) > _recorded_at(bucket[work]):
             bucket[work] = row
 
@@ -258,9 +261,9 @@ def render(client: ClaimsClient, *, mode: str = "live",
         kept = {work: row for work, row in results.items() if work in admitted}
         not_admitted = len(results) - len(kept)
         results = kept
-        generation = extract_generation()
+        generations = {extract_generation(), *equivalent_generations()}
         stale = sum(1 for row in results.values()
-                    if str(row.get("prompt_hash") or "") != generation)
+                    if str(row.get("prompt_hash") or "") not in generations)
     # The skip lists the worklist reads, applied at render too: a work that entered
     # FLoRA or the validation tables AFTER it was extracted keeps its verdict as
     # evidence, but its rows must not keep reaching the validation import. Measured

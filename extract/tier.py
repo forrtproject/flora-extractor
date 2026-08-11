@@ -253,6 +253,35 @@ def extract_generation() -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
+# ── Declared equivalent generations ──────────────────────────────────────────
+# `current: (generations whose verdicts still answer the current question)`. The
+# fingerprint is a hash of a dict, so REMOVING a key from that dict moves it exactly as
+# a prompt edit would — and the removal of `EXTRACT_LADDER_VERSION` did. Every verdict
+# on the server carried `{ladder: N, prompts…, models…}`; the tier now asks
+# `{prompts…, models…}` and matched none of them, so 3,025 settled works reopened at
+# once. That is the opposite of what dropping the key was for.
+#
+# The three listed generations are ladders 21, 22 and 23 over prompts and models
+# identical to today's — verified by rebuilding each digest from the current inputs
+# plus the one ladder key. The ladder is provenance and reaches a population its
+# author names (`--redo-status`), so a verdict produced under any of them still answers
+# what this tier asks.
+#
+# Keyed by the CURRENT generation, which is what makes the declaration self-limiting: a
+# later prompt or model change produces a fourth digest, matches no key here, and every
+# work reopens strictly, as it should.
+_GENERATION_EQUIVALENCES: dict[str, tuple[str, ...]] = {
+    "4e23d2dbb9d39029": ("d7908ff6851d3228",   # ladder 21 — the 2026-08-09 campaign
+                         "4d875363a2410a67",   # ladder 22 — sandbox
+                         "f2bdee845b792dbb"),  # ladder 23 — sandbox
+}
+
+
+def equivalent_generations() -> tuple[str, ...]:
+    """Older generations whose verdicts the current one still accepts."""
+    return _GENERATION_EQUIVALENCES.get(extract_generation(), ())
+
+
 def _accepts_legacy(rows: list[dict]) -> bool:
     """No pre-generation extract rows exist, so there is no legacy to grandfather.
 
@@ -937,6 +966,7 @@ EXTRACT = register_tier(TierSpec(
     accepts_legacy=_accepts_legacy,
     estimate=estimate,
     render_estimate=render_estimate,
+    equivalent_generations=equivalent_generations,
     # Stage 3's own concurrency, not the engine tiers': a work here is a PDF
     # download and a full-text call, and `EXTRACT_WORKERS` is the number that has
     # been tuned against those.
