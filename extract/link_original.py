@@ -812,7 +812,12 @@ def title_search_candidates(doi_r: str, target_desc: str,
     for label, search in (("crossref", _search_crossref_by_title),
                           ("openalex", _search_openalex_by_title)):
         try:
-            hit = search(query, cited_year, True)
+            # symmetric=True: the registry's title may be the SUBSET — it stores the
+            # main title where the paper cited title and subtitle. Only this path may
+            # ask for it: every candidate here is adjudicated by the linking model,
+            # for which declining is first-class, while the callers that write doi_o
+            # off a hit directly keep the forward-only rule.
+            hit = search(query, cited_year, True, True)
         except TitleSearchUnavailable as exc:
             log.info("[%s] %s title search unavailable: %s", doi_r, label, exc)
             unavailable = True

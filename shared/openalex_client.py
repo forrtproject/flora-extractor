@@ -22,13 +22,14 @@ from .config import (
     OA_CACHE_DIR, OPENALEX_RATE_SEC, CROSSREF_RATE_SEC,
     RESEARCHER_EMAIL, log,
 )
-from .cache import content_key, read_cache, write_cache, write_json
+from .cache import (content_key, read_cache, read_cache_migrating, write_cache,
+                    write_json)
 from .openalex_keys import (
     current_index, headers as oa_headers, is_budget_refusal, quota_message,
     rotate_key,
 )
 from .rate_limit import throttle
-from .utils import bare_work_id, clean_doi, cache_key, non_article_doi
+from .utils import bare_work_id, clean_doi, cache_key, clean_search_query, non_article_doi
 
 # ── Unicode ranges (chr() avoids \u in compiled regexes for Python < 3.12) ────
 _UNI_RANGE  = chr(0x00C0) + "-" + chr(0x024F) + chr(0x1E00) + "-" + chr(0x1EFF)
@@ -817,8 +818,33 @@ def _fetch_doi_org_full_meta(doi: str) -> Optional[dict]:
 
 _TITLE_CONTAINMENT_MIN_WORDS = 3
 
+# The ligatures a PDF extractor leaves in a title ("inﬂuences"). NFKC alone does not
+# split them on every Python build, and one of them costs the whole content word.
+_LIGATURES = {"ﬁ": "fi", "ﬂ": "fl", "ﬀ": "ff", "ﬃ": "ffi", "ﬄ": "ffl", "ﬅ": "ft",
+              "ﬆ": "st"}
 
-def title_matches(hit_title: str, query: str) -> bool:
+
+def _normalise_title(text: str) -> str:
+    """*text* reduced to the words it is made of, however it was typeset.
+
+    Three differences are pure typesetting and were each rejecting a correct hit:
+    a ligature the extractor never split, a word broken across a line ("cog- nition"),
+    and a hyphen where the registry has a space ("self-esteem" vs "self esteem").
+    """
+    text = unicodedata.normalize("NFKC", str(text or ""))
+    for ligature, letters in _LIGATURES.items():
+        text = text.replace(ligature, letters)
+    for dash in ("‐", "‑", "–", "—"):
+        text = text.replace(dash, "-")
+    text = re.sub(r"(\w)-\s+(\w)", r"\1\2", text)
+    return text.replace("-", " ").lower()
+
+
+def _content_words(text: str) -> set:
+    return set(re.findall(r"\b\w{3,}\b", _normalise_title(text)))
+
+
+def title_matches(hit_title: str, query: str, *, symmetric: bool = False) -> bool:
     """Whether *hit_title* is the paper *query* names.
 
     Jaccard alone, at 0.7, asks the two titles to be nearly the same STRING. That is
@@ -838,17 +864,29 @@ def title_matches(hit_title: str, query: str) -> bool:
     This is only safe because the hits now go into a pool a model adjudicates. While
     the first hit BECAME the link, a generous retrieval was a generous supply of wrong
     originals; now it is a supply of candidates to reject.
+
+    *symmetric* additionally accepts the hit whose words are all in the QUERY, which is
+    the subtitle case: registries store "A Bad Taste in the Mouth" for a paper the
+    replication cited as "A bad taste in the mouth: Gustatory disgust influences moral
+    judgment", so the hit is the subset and forward containment cannot see it. It is
+    keyword-only and off by default because it may only be asked on the POOLED path
+    (`title_search_candidates`), where the linking model adjudicates and a decline is
+    first-class. Measured over the 105 `unidentified_original` rows (2026-08-10) it
+    recovered 60 of them and got a handful wrong — which is why every auto-accept
+    caller, writing doi_o with no model in the loop, keeps the forward-only rule.
     """
     if _jaccard(hit_title, query) >= 0.7:
         return True
-    q = set(re.findall(r"\b\w{3,}\b", str(query or "").lower()))
-    h = set(re.findall(r"\b\w{3,}\b", str(hit_title or "").lower()))
-    return len(q) >= _TITLE_CONTAINMENT_MIN_WORDS and q <= h
+    q = _content_words(query)
+    h = _content_words(hit_title)
+    if len(q) >= _TITLE_CONTAINMENT_MIN_WORDS and q <= h:
+        return True
+    return symmetric and len(h) >= _TITLE_CONTAINMENT_MIN_WORDS and h <= q
 
 
 def _jaccard(a: str, b: str) -> float:
-    ta = set(re.findall(r"\b\w{3,}\b", a.lower()))
-    tb = set(re.findall(r"\b\w{3,}\b", b.lower()))
+    ta = _content_words(a)
+    tb = _content_words(b)
     if not ta or not tb:
         return 0.0
     return len(ta & tb) / len(ta | tb)
@@ -872,12 +910,59 @@ _TitleSearchUnavailable = TitleSearchUnavailable
 # Bumped whenever the returned dict gains or loses a field — AND whenever the rule
 # that decides which hit is returned changes, because a miss cached under a stricter
 # rule is replayed as a miss under the looser one. The containment rule in
-# `title_matches` would have been a no-op on every previously-searched title.
-_TITLE_SEARCH_SHAPE = "v3-containment"
+# `title_matches` would have been a no-op on every previously-searched title; v4 is
+# the normalised comparison and the query cleanup, which change what is asked as well
+# as what is accepted, so 210 cached misses would otherwise replay unchanged.
+_TITLE_SEARCH_SHAPE = "v4-normalised-query"
+
+# The declared equivalence (issue #171) for the v3 → v4 bump, and it covers the
+# POSITIVE entries only.
+#
+# v3 keyed the RAW query and carried no strict/symmetric component:
+#     content_key(f"titlesearch_{source}", "", <raw title>, year, "v3-containment")
+#
+# The two halves of a cached entry did not move together. A stored HIT is a record
+# the registry returned for this paper; whether today's rule still accepts it is a
+# question that can be ASKED offline, against the stored title and year, and an
+# answer that passes is the answer this checkout would have computed — so it is
+# migrated. A stored MISS is nothing but the old rule's rejection of whatever the
+# old query retrieved, and re-running it under the cleaned query and the normalised
+# comparison is the entire point of the bump — so it is never migrated, and the
+# `{"hit": null}` on disk is left for the older checkouts that still key it.
+#
+# The v3 entry has no symmetric component, so one legacy file can serve both of
+# today's keys. That is safe because the re-validation runs under THIS call's rule:
+# an entry a symmetric caller accepts is migrated onto the symmetric key alone, and
+# the strict key gets it only if forward containment also passes.
+_TITLE_SEARCH_LEGACY_SHAPES = ("v3-containment",)
+
+
+def _legacy_hit_still_matches(hit: Optional[dict], title: str, year: str,
+                              symmetric: bool) -> bool:
+    """Whether a v3-cached HIT is one today's rule would also have returned.
+
+    The same two tests the live searches apply to a candidate — `title_matches`
+    under this call's rule, and the ±2 year window with the same lenient parsing —
+    asked of the stored record instead of a fresh one. A null (the v3 miss) fails
+    here, which is what keeps misses out of the migration.
+    """
+    if not isinstance(hit, dict):
+        return False
+    if not title_matches(hit.get("title") or "", title, symmetric=symmetric):
+        return False
+    if year:
+        hit_year = hit.get("year")
+        try:
+            if hit_year and abs(int(hit_year) - int(float(year))) > 2:
+                return False
+        except (ValueError, TypeError):
+            pass
+    return True
 
 
 def _cached_title_search(source: str, title: str, year: str, search,
-                         raise_on_unavailable: bool = False) -> Optional[dict]:
+                         raise_on_unavailable: bool = False,
+                         symmetric: bool = False) -> Optional[dict]:
     """Disk-cache a title search, misses included.
 
     The title searches fire three to five times for a single row — the pre-PDF
@@ -885,19 +970,40 @@ def _cached_title_search(source: str, title: str, year: str, search,
     the common answer, so caching only the hits would leave most of the traffic
     uncached. A miss is stored as {"hit": null}, which is a result like any other.
     A transport or API failure is not: caching it would pin the outage forever.
+
+    The query is cleaned HERE rather than at each call site: what a caller holds is
+    however the paper wrote its target, and every word of citation chrome in it is a
+    word the title index must also match. Cleaning it here also keeps the string the
+    hits are COMPARED against the string they were retrieved for.
     """
+    raw_title = title           # what v3 keyed: the query before any cleaning
+    title = clean_search_query(title)
     if not title:
         return None
     # _TITLE_SEARCH_SHAPE is part of the key because the cached value is a dict shape,
     # not just an answer: entries written before openalex_id was returned would still
     # be found and would silently strip the work id a DOI-less original is keyed on.
     # Bump it whenever the returned dict gains or loses a field.
-    key = content_key(f"titlesearch_{source}", "", title, year, _TITLE_SEARCH_SHAPE)
-    cached = read_cache(OA_CACHE_DIR, key)
+    #
+    # `symmetric` is in the key because it decides which hit comes back, and the two
+    # rules must not share an answer: a subtitle-stripped hit the pooled path accepted
+    # would otherwise be read back by the link guard, which auto-accepts it into doi_o
+    # with no model in the loop.
+    key = content_key(f"titlesearch_{source}", "", title, year, _TITLE_SEARCH_SHAPE,
+                      "symmetric" if symmetric else "strict")
+    legacy = [content_key(f"titlesearch_{source}", "", raw_title, year, shape)
+              for shape in _TITLE_SEARCH_LEGACY_SHAPES]
+    cached = read_cache_migrating(
+        OA_CACHE_DIR, key, legacy,
+        {"shape": _TITLE_SEARCH_SHAPE, "rule": "symmetric" if symmetric else "strict",
+         "query": title},
+        validate=lambda entry: _legacy_hit_still_matches(entry.get("hit"), title, year,
+                                                         symmetric),
+    )
     if cached is not None:
         return cached.get("hit")
     try:
-        hit = search(title, year)
+        hit = search(title, year, symmetric)
     except TitleSearchUnavailable:
         # Never cached — caching it would pin the outage forever. Whether it is
         # RAISED is the caller's choice: most callers treat a failed search as a
@@ -911,7 +1017,8 @@ def _cached_title_search(source: str, title: str, year: str, search,
 
 
 def _search_crossref_by_title(title: str, year: str = "",
-                            raise_on_unavailable: bool = False) -> Optional[dict]:
+                            raise_on_unavailable: bool = False,
+                            symmetric: bool = False) -> Optional[dict]:
     """Search CrossRef by title and return full metadata if a confident hit is found.
 
     Uses a Jaccard threshold of 0.7 to confirm the top hit matches *title*,
@@ -920,10 +1027,11 @@ def _search_crossref_by_title(title: str, year: str = "",
     — CrossRef has no OpenAlex ids), or None. Cached per (title, year) in OA_CACHE_DIR.
     """
     return _cached_title_search("crossref", title, year, _search_crossref_by_title_live,
-                                raise_on_unavailable)
+                                raise_on_unavailable, symmetric)
 
 
-def _search_crossref_by_title_live(title: str, year: str = "") -> Optional[dict]:
+def _search_crossref_by_title_live(title: str, year: str = "",
+                                   symmetric: bool = False) -> Optional[dict]:
     try:
         # Reserved before the request it spaces — see _fetch_crossref_full_meta.
         throttle("crossref", CROSSREF_RATE_SEC)
@@ -942,7 +1050,7 @@ def _search_crossref_by_title_live(title: str, year: str = "") -> Optional[dict]
     for item in items:
         hit_titles = item.get("title") or []
         hit_title  = hit_titles[0] if hit_titles else ""
-        if not title_matches(hit_title, title):
+        if not title_matches(hit_title, title, symmetric=symmetric):
             continue
 
         # Year check
@@ -991,7 +1099,8 @@ def _search_crossref_by_title_live(title: str, year: str = "") -> Optional[dict]
 
 
 def _search_openalex_by_title(title: str, year: str = "",
-                            raise_on_unavailable: bool = False) -> Optional[dict]:
+                            raise_on_unavailable: bool = False,
+                            symmetric: bool = False) -> Optional[dict]:
     """Search OpenAlex by title and return full metadata if a confident hit is found.
 
     Jaccard threshold 0.7 against *title*; year ±2 when *year* is provided.
@@ -1000,7 +1109,7 @@ def _search_openalex_by_title(title: str, year: str = "",
     (title, year) in OA_CACHE_DIR.
     """
     return _cached_title_search("openalex", title, year, _search_openalex_by_title_live,
-                                raise_on_unavailable)
+                                raise_on_unavailable, symmetric)
 
 
 def _openalex_filter_value(text: str) -> str:
@@ -1032,7 +1141,8 @@ def _openalex_filter_value(text: str) -> str:
     return " ".join(text.split())
 
 
-def _search_openalex_by_title_live(title: str, year: str = "") -> Optional[dict]:
+def _search_openalex_by_title_live(title: str, year: str = "",
+                                   symmetric: bool = False) -> Optional[dict]:
     params: dict = {
         "filter" : f"title.search:{_openalex_filter_value(title)[:200]}",
         "select" : "id,doi,title,publication_year,authorships,primary_location,biblio",
@@ -1047,7 +1157,7 @@ def _search_openalex_by_title_live(title: str, year: str = "") -> Optional[dict]
 
     for work in data["results"]:
         hit_title = work.get("title", "") or ""
-        if not title_matches(hit_title, title):
+        if not title_matches(hit_title, title, symmetric=symmetric):
             continue
 
         if year:

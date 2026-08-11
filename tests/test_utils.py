@@ -3,9 +3,10 @@ only real logic left over from the deleted tests/test_apa_resolver.py."""
 import pytest
 
 from analysis.apa_resolver import format_apa_reference
-from shared.utils import (bare_work_id, citation_fragment, clean_citation_title,
-                          non_article_doi, non_article_title, non_article_type,
-                          sentence_spans, usable_title)
+from shared.utils import (author_surname, bare_work_id, citation_fragment,
+                          clean_citation_title, clean_search_query, non_article_doi,
+                          non_article_title, non_article_type, sentence_spans,
+                          usable_title)
 
 
 class TestNonArticleType:
@@ -186,6 +187,53 @@ class TestCitationTitles:
         assert citation_fragment("M.R"), "what cleaning the fragment leaves behind"
         assert citation_fragment("L.J.T. Balter, et al., Low-grade inflammation")
         assert not usable_title("[3] M. Moieni, M.R")
+
+    def test_a_fragment_that_opens_on_the_last_author_is_recognised(self):
+        """A citation cut before its last author starts on the conjunction."""
+        assert citation_fragment("and D. Tzovaras, Emotion recognition in the wild")
+        assert not citation_fragment("And Then There Were None"), "a title"
+
+
+class TestAuthorSurname:
+    def test_the_inverted_form_gives_the_surname_not_the_initial(self):
+        """`.split()[-1]` shipped "L." as authors_o, which author_matches() can
+        never pass."""
+        assert author_surname("Balter, L.") == "Balter"
+        assert author_surname("Lukas Balter") == "Balter"
+        assert author_surname("Balter") == "Balter"
+        assert author_surname("") == ""
+
+
+class TestCleanSearchQuery:
+    """The query is however the paper wrote its target, and every word of citation
+    chrome in it is a word the title index must also match."""
+
+    def test_a_reference_line_is_reduced_to_its_title(self):
+        assert clean_search_query(
+            "REFERENCES A bad taste in the mouth. "
+            "Psychological Science 22(3), 295-299. doi:10.1177/0956797611398497"
+        ) == "A bad taste in the mouth"
+
+    def test_entry_numbering_goes_only_where_an_author_list_follows(self):
+        """The author list itself is `clean_citation_title`'s job, not this one's."""
+        assert clean_search_query("[3] M. Moieni, Low-grade inflammation") == \
+            "M. Moieni, Low-grade inflammation"
+        assert clean_search_query("12 Angry Men") == "12 Angry Men"
+
+    def test_a_quoted_title_is_taken_out_of_its_quotes(self):
+        assert clean_search_query(
+            '\u201cA New Approach to Estimating the Production Function for Housing.\u201d '
+            'American Economic Review'
+        ) == "A New Approach to Estimating the Production Function for Housing"
+
+    def test_an_article_id_and_a_url_are_dropped(self):
+        assert clean_search_query(
+            "Sleep loss and emotion recognition e77661 https://doi.org/10.1/x"
+        ) == "Sleep loss and emotion recognition"
+
+    def test_a_line_broken_word_is_rejoined(self):
+        assert clean_search_query("Embodied cog- nition") == "Embodied cognition"
+
 class TestFormatApaReference:
     """The one surviving test from tests/test_apa_resolver.py.
 

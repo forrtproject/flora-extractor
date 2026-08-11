@@ -255,6 +255,10 @@ _AUTHOR_CHUNK_RE = re.compile(
 # "et al., " continues an author list; on its own it is no evidence of one, so it
 # is only ever stripped after a real name has been.
 _ET_AL_RE = re.compile(r"^et\.?\s*al\.?\s*(?:[,;&]|\band\b)\s*", re.IGNORECASE)
+# A citation cut mid-list, so it opens on the conjunction before its last author:
+# "and D. Tzovaras, Emotion recognition …". Only stripped when a name follows —
+# "And Then There Were None" is a title.
+_LEADING_CONJUNCTION_RE = re.compile(r"^(?:and|&)\s+", re.IGNORECASE)
 
 # A citation cut off mid-author-list: "… , M.R", "… , J.".
 _TRUNCATED_AUTHORS_RE = re.compile(r",\s*(?:[A-Z]\.){1,3}[A-Z]?\s*$")
@@ -285,6 +289,13 @@ def clean_citation_title(title: str) -> str:
     nothing but authors is returned as-is for `usable_title()` to judge.
     """
     text = _strip_reference_marker(str(title or "").strip())
+    conjunction = _LEADING_CONJUNCTION_RE.match(text)
+    if conjunction and _AUTHOR_CHUNK_RE.match(text[conjunction.end():]):
+        # "and D. Tzovaras, “Is Popularity …”" — a citation cut before its last
+        # author. `citation_fragment` still calls the raw string a fragment, which is
+        # what demotes the row's confidence; stripping it here is what leaves a title
+        # to search on.
+        text = text[conjunction.end():]
     stripped_a_name = False
     while True:
         match = _AUTHOR_CHUNK_RE.match(text) or (
@@ -304,8 +315,65 @@ def citation_fragment(title: str) -> bool:
     text = _strip_reference_marker(str(title or "").strip())
     if not text:
         return True
+    conjunction = _LEADING_CONJUNCTION_RE.match(text)
+    if conjunction and _AUTHOR_CHUNK_RE.match(text[conjunction.end():]):
+        return True
     return bool(_AUTHOR_CHUNK_RE.match(text) or _TRUNCATED_AUTHORS_RE.search(text)
                 or _INITIALS_ONLY_RE.match(text))
+
+
+def author_surname(author: str) -> str:
+    """Best-effort surname from 'Surname', 'Surname, First' or 'First Surname'.
+
+    The comma case is what makes this more than `.split()[-1]`: registries and
+    reference lists write the inverted form, so the last token of "Balter, L." is the
+    INITIAL. Written into `authors_o` that way, it is a name no author list carries
+    and `author_matches()` can never pass.
+    """
+    author = str(author or "").strip()
+    if not author:
+        return ""
+    if "," in author:
+        return author.split(",")[0].strip()
+    parts = author.split()
+    return parts[-1] if parts else ""
+
+
+# A glued article id — PLOS ONE's "e77661", eLife's "e00090" — sits in the citation
+# tail, and a title index has no such token, so it ANDs a word into the query that no
+# record can satisfy.
+_ARTICLE_ID_RE = re.compile(r"\b[eE]\d{4,}\b")
+_QUOTED_TITLE_RE = re.compile(r"[\"“]([^\"”]{15,})[\"”]")
+# ". Journal Name 84(3), 600-621" — the citation tail a reference line carries after
+# the title.
+_JOURNAL_TAIL_RE = re.compile(r"\.\s+[A-Z][^.]{0,60}\s+\d{1,4}\s*\(")
+_VOLUME_PAGES_RE = re.compile(r",?\s*\d{1,4}\s*\(\d+\)\s*,?\s*[\d–\-]+\s*$")
+
+
+def clean_search_query(text: str) -> str:
+    """*text* as a title query a registry can match — the citation chrome removed.
+
+    What is searched for is however the replication wrote its target, which is
+    routinely a whole reference line. Every word of chrome in it is a word the title
+    index must also match, so the journal tail, the URL, the DOI string and the
+    article id each cost the query the paper it names. Returns "" only for an empty
+    input; a string this cannot improve comes back as it went in.
+    """
+    text = str(text or "").replace("\t", " ").replace("’", "'")
+    text = re.sub(r"https?://\S+", " ", text)
+    text = re.sub(r"\bdoi:\s*\S+", " ", text, flags=re.I)
+    text = re.sub(r"(\w)-\s+(\w)", r"\1\2", text)   # "cog- nition" -> "cognition"
+    quoted = _QUOTED_TITLE_RE.search(text)
+    if quoted:
+        text = quoted.group(1)
+    text = _JOURNAL_TAIL_RE.split(text)[0]
+    text = _VOLUME_PAGES_RE.sub("", text)
+    text = _ARTICLE_ID_RE.sub(" ", text)
+    text = re.sub(r"^\s*references\b[:.]?\s*", "", text, flags=re.I)
+    # Entry numbering is stripped only on the same evidence `clean_citation_title`
+    # asks for — a following author list — because "12 Angry Men" is a title.
+    text = _strip_reference_marker(text)
+    return re.sub(r"\s+", " ", text).strip(" .,;“”\"'")
 
 
 def usable_title(title: str) -> bool:

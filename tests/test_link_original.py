@@ -1038,8 +1038,8 @@ class TestTheTitleSearchIsGivenTheCitedYear:
 
     @staticmethod
     def _search(seen):
-        def search(title, year, raise_on_unavailable=False):
-            seen.append((title, year))
+        def search(title, year, raise_on_unavailable=False, symmetric=False):
+            seen.append((title, year, symmetric))
             return None
         return search
 
@@ -1051,7 +1051,9 @@ class TestTheTitleSearchIsGivenTheCitedYear:
                           side_effect=self._search(seen)):
             link_original.title_search_candidates("10.1/rep", "Bem (2011) precognition",
                                                   "", "2011")
-        assert [y for _, y in seen] == ["2011", "2011"]
+        assert [y for _, y, _s in seen] == ["2011", "2011"]
+        # Only this path may ask for the loosened rule.
+        assert [sym for *_, sym in seen] == [True, True]
 
     def test_no_year_in_the_citation_still_searches(self):
         """A target with no year is not a reason to skip the search — it is a reason
@@ -1062,7 +1064,7 @@ class TestTheTitleSearchIsGivenTheCitedYear:
              patch.object(link_original, "_search_openalex_by_title",
                           side_effect=self._search(seen)):
             link_original.title_search_candidates("10.1/rep", "A named study", "")
-        assert [y for _, y in seen] == ["", ""]
+        assert [y for _, y, _s in seen] == ["", ""]
 
 
 class TestATitleHitThatMissesTheCitedAuthorIsFlagged:

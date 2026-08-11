@@ -10,12 +10,13 @@ import pytest
 import requests
 
 import shared.openalex_client as oa
-from shared.cache import content_key, write_cache
+from shared.cache import content_key, read_cache, write_cache
 from shared.openalex_client import (
     author_matches,
     extract_author_year_patterns,
     find_all_candidates,
 )
+from shared.utils import clean_search_query
 
 
 # ── extract_author_year_patterns ──────────────────────────────────────────────
@@ -284,6 +285,81 @@ class TestTitleSearchCaching:
             oa._search_openalex_by_title("A title", "2011")
             oa._search_openalex_by_title("A title", "2010")
         assert live.call_count == 2
+
+    def test_the_two_acceptance_rules_never_share_an_entry(self, tmp_path):
+        """A hit the pooled path took under the loosened rule must not be read back
+        by a caller that writes doi_o off it without a model in the loop."""
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client._search_crossref_by_title_live",
+                   return_value=None) as live:
+            oa._search_crossref_by_title("A title", "2010", False, True)
+            oa._search_crossref_by_title("A title", "2010", False, False)
+        assert live.call_count == 2
+
+    # ── The v3 → v4 declared equivalence (issue #171) ────────────────────────
+    # Positives migrate when today's rule still accepts the stored hit; misses never
+    # do, because re-running them under the cleaned query is the point of the bump.
+
+    @staticmethod
+    def _write_legacy(tmp_path, source, raw_title, year, hit):
+        key = content_key(f"titlesearch_{source}", "", raw_title, year,
+                          "v3-containment")
+        write_cache(tmp_path, key, {"hit": hit})
+        return key
+
+    def test_legacy_positive_is_served_and_restored_with_the_note(self, tmp_path):
+        hit = {"doi": "10.9/orig", "title": "Time flies when you are having fun",
+               "year": 2010}
+        legacy = self._write_legacy(tmp_path, "crossref",
+                                    "Time flies when you are having fun.", "2010", hit)
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client._search_crossref_by_title_live") as live:
+            got = oa._search_crossref_by_title("Time flies when you are having fun.",
+                                               "2010")
+        assert got == hit
+        assert live.call_count == 0
+        current = content_key("titlesearch_crossref", "",
+                              clean_search_query("Time flies when you are having fun."),
+                              "2010", oa._TITLE_SEARCH_SHAPE, "strict")
+        stored = read_cache(tmp_path, current)
+        assert stored["hit"] == hit
+        assert stored["cache_migrated"]["from_key"] == legacy
+        assert stored["cache_migrated"]["rule"] == "strict"
+
+    def test_legacy_miss_is_ignored_and_the_live_query_runs(self, tmp_path):
+        """The v3 null is the old rule's rejection, not an answer about today's."""
+        self._write_legacy(tmp_path, "crossref", "Nothing here at all", "2010", None)
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client._search_crossref_by_title_live",
+                   return_value=None) as live:
+            assert oa._search_crossref_by_title("Nothing here at all", "2010") is None
+        assert live.call_count == 1
+
+    def test_legacy_positive_failing_revalidation_is_ignored(self, tmp_path):
+        """A hit the year gate now rejects is not the answer this call would compute."""
+        hit = {"doi": "10.9/wrong", "title": "Time flies when you are having fun",
+               "year": 1965}
+        self._write_legacy(tmp_path, "crossref",
+                           "Time flies when you are having fun", "2010", hit)
+        fresh = {"doi": "10.9/right", "title": "Time flies when you are having fun",
+                 "year": 2010}
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client._search_crossref_by_title_live",
+                   return_value=fresh) as live:
+            assert oa._search_crossref_by_title(
+                "Time flies when you are having fun", "2010") == fresh
+        assert live.call_count == 1
+
+    def test_current_key_hit_never_consults_the_legacy_entry(self, tmp_path):
+        legacy_hit = {"doi": "10.9/legacy", "title": "Time flies", "year": 2010}
+        self._write_legacy(tmp_path, "crossref", "Time flies", "2010", legacy_hit)
+        current = content_key("titlesearch_crossref", "", clean_search_query("Time flies"),
+                              "2010", oa._TITLE_SEARCH_SHAPE, "strict")
+        write_cache(tmp_path, current, {"hit": None})
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client._search_crossref_by_title_live") as live:
+            assert oa._search_crossref_by_title("Time flies", "2010") is None
+        assert live.call_count == 0
 
     def test_crossref_transport_failure_is_not_cached(self, tmp_path):
         """A provider that never answered has not said "no match" — caching its
@@ -639,3 +715,31 @@ class TestATitleQueryIsUsuallyAFragment:
     def test_a_title_missing_a_query_word_still_fails(self):
         assert not oa.title_matches("A paper on quantum gravity",
                                     "Ambivalence of Neutral Ratings")
+
+    def test_a_subtitle_stripped_hit_is_taken_only_on_the_pooled_rule(self):
+        """Registries store the main title where the paper cited title and subtitle,
+        so the HIT is the subset and forward containment cannot see it. Only the
+        pooled path may accept it — every other caller writes doi_o with no model
+        to reject a wrong one."""
+        hit, query = ("A Bad Taste in the Mouth",
+                      "A bad taste in the mouth: Gustatory disgust influences "
+                      "moral judgment")
+        assert oa.title_matches(hit, query, symmetric=True)
+        assert not oa.title_matches(hit, query)
+
+    def test_a_two_word_registry_title_is_too_short_to_contain(self):
+        assert not oa.title_matches("Moral Judgment",
+                                    "Gustatory disgust influences moral judgment",
+                                    symmetric=True)
+
+    def test_typesetting_is_not_a_difference(self):
+        """A ligature the PDF extractor never split, and a word broken across a
+        line, each cost a whole content word of the comparison."""
+        assert oa.title_matches(
+            "Gustatory disgust influences moral judgment",
+            "Gustatory disgust inﬂuences moral judgment")
+        assert oa.title_matches(
+            "Embodied cognition and the moral self",
+            "Embodied cog- nition and the moral self")
+        assert oa.title_matches("Self esteem and the looking glass",
+                                "Self-esteem and the looking-glass")

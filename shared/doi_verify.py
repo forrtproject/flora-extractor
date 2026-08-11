@@ -27,13 +27,14 @@ from typing import Optional
 
 import requests
 
-from shared.cache import read_cache, write_cache
+from shared.cache import read_cache, read_cache_migrating, write_cache
 from shared.config import (
     CROSSREF_RATE_SEC, DOI_VERIFY_CACHE_DIR, RESEARCHER_EMAIL, log,
 )
 from shared.disambiguation import jaccard_similarity
 from shared.openalex_client import _oa_get, author_matches
-from shared.utils import bare_work_id, cache_key, clean_doi
+from shared.utils import (author_surname, bare_work_id, cache_key, clean_doi,
+                          clean_search_query)
 
 # Tunable thresholds — starting points, not yet empirically validated.
 VERIFY_TITLE_JACCARD  = 0.5   # DOI metadata vs resolved title → "verified"
@@ -127,16 +128,6 @@ def _crossref_year(msg: dict) -> Optional[int]:
     if parts and parts[0] and parts[0][0]:
         return int(parts[0][0])
     return None
-
-
-def _surname(author: str) -> str:
-    """Best-effort surname from 'Surname', 'Surname, First' or 'First Surname'."""
-    author = (author or "").strip()
-    if not author:
-        return ""
-    if "," in author:
-        return author.split(",")[0].strip()
-    return author.split()[-1]
 
 
 def _fetch_via_content_negotiation(doi: str) -> "tuple[Optional[dict], bool]":
@@ -236,7 +227,7 @@ def fetch_doi_metadata(doi: str) -> Optional[dict]:
         meta = {
             "registered": True,
             "title": w.get("title") or "",
-            "first_author_surname": _surname(first),
+            "first_author_surname": author_surname(first),
             "year": w.get("publication_year"),
             "type": str(w.get("type") or ""),
             "source": "openalex",
@@ -294,7 +285,7 @@ def _score_hit(hit_title: str, hit_year, hit_surnames: list[str],
     y_hit, y = _to_year(hit_year), _to_year(year)
     if y_hit and y and abs(y_hit - y) > YEAR_TOLERANCE:
         return False
-    surname = _surname(author)
+    surname = author_surname(author)
     if surname and hit_surnames and not author_matches(surname, hit_surnames):
         return False
     return True
@@ -304,6 +295,41 @@ def _sanitize_search(text: str) -> str:
     """OpenAlex's search param returns HTTP 400 for some punctuation (e.g. '?').
     Keep word characters, spaces and hyphens; collapse whitespace."""
     return re.sub(r"\s+", " ", re.sub(r"[^\w\s\-]", " ", text)).strip()
+
+
+def _legacy_resolution_still_accepted(entry: dict, title: str, year,
+                                      title_only_gap: bool) -> bool:
+    """Whether a v2-cached RESOLUTION is one today's search would also have accepted.
+
+    The declared equivalence (issue #171) for the v2 → v3 bump, and it covers the
+    SUCCESSFUL resolutions only. `{"found": false}` is the old query's failure to
+    find anything, and re-running it under the cleaned query is the point of the
+    bump, so it is never migrated.
+
+    The re-check is deliberately partial, because the stored payload is: it holds
+    the accepted hit's title, year and DOI, but not its author surnames, so
+    `_score_hit`'s author test cannot be replayed and neither can the title-only
+    tier's dominance test, which needs the runner-up. What CAN be replayed is each
+    tier's absolute title threshold (and, outside the title-only tier, the year
+    window), against the CLEANED query — which is the stricter comparison of the
+    two, since cleaning only removes citation chrome the stored title never had.
+
+    The two skipped tests are covered by a superset argument rather than a replay:
+    both v3 changes widen acceptance. The query is cleaned, which can only remove
+    words the title index had to match; and `author_surname` fixes the inverted
+    "Balter, L." form, which previously produced an initial as the surname and
+    could only FAIL an author check the correct surname passes.
+    """
+    if not entry.get("found"):
+        return False
+    threshold = TITLE_ONLY_JACCARD if title_only_gap else RESOLVE_TITLE_JACCARD
+    if jaccard_similarity(entry.get("title") or "", title) < threshold:
+        return False
+    if not title_only_gap:
+        y_hit, y = _to_year(entry.get("year")), _to_year(year)
+        if y_hit and y and abs(y_hit - y) > YEAR_TOLERANCE:
+            return False
+    return True
 
 
 def resolve_doi_by_metadata(title: str, author: str, year,
@@ -338,22 +364,39 @@ def resolve_doi_by_metadata(title: str, author: str, year,
     "no replacement exists", which writes `mismatch`, which DELETES the row's doi_o.
     An outage must never do that.
     """
-    title = (title or "").strip()
+    # The title reaching here is routinely a whole reference line — a GROBID-parsed
+    # citation, complete with journal tail and article id. Cleaned once, so the string
+    # the candidates are SCORED against is the string they were retrieved for.
+    raw_title = (title or "").strip()   # what v2 keyed: the query before any cleaning
+    title = clean_search_query(title)
     if not title:
         return None
     exclude = clean_doi(exclude_doi or "")
     exclude_title = (exclude_title or "").strip()
+    # v3: the query is cleaned before it is sent, so an entry written under v2 answers
+    # a different question — a v2 `{"found": false}` is the UNCLEANED query finding
+    # nothing, which says nothing about the cleaned one. Successful v2 resolutions are
+    # migrated one at a time, under the declared equivalence in
+    # `_legacy_resolution_still_accepted`; v2 misses are not.
+    #
     # v2: the MEANING of a cached `{"found": false}` changed. The pre-UNVERIFIABLE
     # code cached exactly the poisoned case — CrossRef down, OpenAlex answering
     # empty — as a definitive "no match exists", which verify_and_correct turns into
     # `mismatch` and DELETES the row's doi_o. Reading such an entry back would skip
-    # the UNVERIFIABLE path entirely, so the key changes rather than being declared
-    # equivalent: the answer provably may differ. Old entries miss and are recomputed.
+    # the UNVERIFIABLE path entirely — which is a second reason a v2 miss is never
+    # migrated. (v1 entries, under no version suffix at all, are not reachable here.)
     key = cache_key(f"{title}|{author}|{year}|{exclude}|{exclude_title}"
-                    f"|{int(title_only_gap)}_doisearch_v2")
-    cached = read_cache(DOI_VERIFY_CACHE_DIR, key)
+                    f"|{int(title_only_gap)}_doisearch_v3")
+    legacy = [cache_key(f"{raw_title}|{author}|{year}|{exclude}|{exclude_title}"
+                        f"|{int(title_only_gap)}_doisearch_v2")]
+    cached = read_cache_migrating(
+        DOI_VERIFY_CACHE_DIR, key, legacy,
+        {"shape": "doisearch_v3", "query": title},
+        validate=lambda entry: _legacy_resolution_still_accepted(entry, title, year,
+                                                                 title_only_gap),
+    )
     if cached is not None:
-        # Under the v2 key a `found: false` was written only when BOTH sources
+        # Under the v2 key and later a `found: false` was written only when BOTH sources
         # answered, so it is a real absence.
         return cached if cached.get("found") else None
 
@@ -379,7 +422,7 @@ def resolve_doi_by_metadata(title: str, author: str, year,
             "openalex_id": "", "source": "crossref",
         })
     for w in (oa_data or {}).get("results", []):
-        surnames = [_surname(((a.get("author") or {}).get("display_name", "")))
+        surnames = [author_surname(((a.get("author") or {}).get("display_name", "")))
                     for a in (w.get("authorships") or [])]
         hits.append({
             "doi": clean_doi(w.get("doi") or ""),
@@ -514,7 +557,7 @@ def verify_and_correct(doi_o, title_o, author_o, year_o,
                                        exclude_doi=exclude_doi,
                                        exclude_title=exclude_title)
         unverifiable |= repl is UNVERIFIABLE
-        if not repl and _to_year(year_o) and _surname(author_o or ""):
+        if not repl and _to_year(year_o) and author_surname(author_o or ""):
             # year_o is often inherited from the wrong DOI's metadata, so a
             # year-constrained search can miss the true original. Retry without
             # the year — but only when an author surname can anchor the match.

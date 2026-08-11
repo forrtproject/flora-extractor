@@ -12,7 +12,7 @@ purged with a glob; it is never the whole key.
 
 Public API:
     read_cache(cache_dir, key, suffix=".json") → dict | None
-    read_cache_migrating(cache_dir, key, legacy_keys, migrate_note) → dict | None
+    read_cache_migrating(cache_dir, key, legacy_keys, migrate_note, validate=None) → dict | None
     write_cache(cache_dir, key, data, suffix=".json") → None
     content_key(prefix, doi, *parts) → str
     clear_cache(cache_dir, key, suffixes=None) → list[str]
@@ -22,7 +22,7 @@ import json
 import os
 import threading
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Callable, Optional, Sequence
 
 from .utils import cache_key
 
@@ -40,7 +40,8 @@ def read_cache(cache_dir: Path, key: str, suffix: str = ".json") -> Optional[dic
 
 
 def read_cache_migrating(cache_dir: Path, key: str, legacy_keys: Sequence[str],
-                         migrate_note: dict) -> Optional[dict]:
+                         migrate_note: dict,
+                         validate: "Callable[[dict], bool] | None" = None) -> Optional[dict]:
     """read_cache(*key*), falling back to keys a maintainer declared equivalent.
 
     Keys stay strict and automatic: a changed prompt or model still writes a new key
@@ -54,12 +55,22 @@ def read_cache_migrating(cache_dir: Path, key: str, legacy_keys: Sequence[str],
     call site declares, plus the key it came from), so any response on disk stays
     traceable to the prompt version and models that produced it. The legacy file is
     left untouched: other checkouts and the shared HF cache still hit it.
+
+    *validate*, when given, decides per legacy entry whether the equivalence actually
+    holds for THAT entry — an equivalence that covers only part of a key's answers.
+    The search caches are that case: a key bump that widens the matching rule may
+    keep the POSITIVE answers (the stored hit still passes today's rule) while every
+    stored MISS embeds the old rule's rejection and must be re-run, which is the
+    point of the bump. An entry `validate` rejects is skipped, not migrated and not
+    returned; the call falls through to a normal miss and the live query runs.
     """
     entry = read_cache(cache_dir, key)
     if entry is not None:
         return entry
     for legacy in legacy_keys:
         entry = read_cache(cache_dir, legacy)
+        if entry is not None and validate is not None and not validate(entry):
+            continue
         if entry is not None:
             migrated = {**entry, "cache_migrated": {**migrate_note, "from_key": legacy}}
             write_cache(cache_dir, key, migrated)

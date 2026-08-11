@@ -419,6 +419,78 @@ class TestResolveDoiByMetadata:
         assert g.call_count == n_first  # second call fully served from cache
 
 
+class TestLegacyDoiSearchEquivalence:
+    """The v2 → v3 declared equivalence (issue #171).
+
+    A v2 RESOLUTION is migrated when the stored hit still clears the tier's title
+    threshold and year window; a v2 `{"found": false}` never is, because it is the
+    uncleaned query finding nothing.
+    """
+
+    TITLE = "Emotion word processing in the brain"
+
+    @staticmethod
+    def _write_legacy(tmp_path, raw_title, author, year, payload, title_only_gap=False):
+        from shared.cache import write_cache
+        from shared.utils import cache_key
+        key = cache_key(f"{raw_title}|{author}|{year}|||"
+                        f"{int(title_only_gap)}_doisearch_v2")
+        write_cache(tmp_path, key, payload)
+        return key
+
+    def test_legacy_resolution_is_served_and_restored_with_the_note(self, tmp_path):
+        from shared.cache import read_cache
+        from shared.doi_verify import resolve_doi_by_metadata
+        from shared.utils import cache_key, clean_search_query
+        payload = {"found": True, "doi": "10.9/orig", "title": self.TITLE,
+                   "year": 2019, "openalex_id": "", "source": "crossref"}
+        legacy = self._write_legacy(tmp_path, self.TITLE, "Schindler", 2019, payload)
+        with _patch_get(side_effect=AssertionError("no network expected")):
+            hit = resolve_doi_by_metadata(self.TITLE, "Schindler", 2019)
+        assert hit["doi"] == "10.9/orig"
+        current = cache_key(f"{clean_search_query(self.TITLE)}|Schindler|2019|||"
+                            "0_doisearch_v3")
+        stored = read_cache(tmp_path, current)
+        assert stored["found"] is True
+        assert stored["cache_migrated"]["from_key"] == legacy
+
+    def test_legacy_found_false_is_ignored_and_the_search_runs(self, tmp_path):
+        from shared.doi_verify import resolve_doi_by_metadata
+        self._write_legacy(tmp_path, self.TITLE, "Schindler", 2019, {"found": False})
+        def fake_get(url, **kw):
+            return _resp(200, {"message": {"items": []}} if "crossref.org" in url
+                         else {"results": []})
+        with _patch_get(side_effect=fake_get) as g:
+            assert resolve_doi_by_metadata(self.TITLE, "Schindler", 2019) is None
+        assert g.call_count == 2   # CrossRef and OpenAlex both asked
+
+    def test_legacy_resolution_failing_revalidation_is_ignored(self, tmp_path):
+        """A stored hit whose year is decades off is not what today's tier accepts."""
+        from shared.doi_verify import resolve_doi_by_metadata
+        self._write_legacy(tmp_path, self.TITLE, "Schindler", 2019,
+                           {"found": True, "doi": "10.9/wrong", "title": self.TITLE,
+                            "year": 1965, "openalex_id": "", "source": "crossref"})
+        def fake_get(url, **kw):
+            return _resp(200, {"message": {"items": []}} if "crossref.org" in url
+                         else {"results": []})
+        with _patch_get(side_effect=fake_get) as g:
+            assert resolve_doi_by_metadata(self.TITLE, "Schindler", 2019) is None
+        assert g.call_count == 2
+
+    def test_current_key_hit_never_consults_the_legacy_entry(self, tmp_path):
+        from shared.cache import write_cache
+        from shared.doi_verify import resolve_doi_by_metadata
+        from shared.utils import cache_key, clean_search_query
+        self._write_legacy(tmp_path, self.TITLE, "Schindler", 2019,
+                           {"found": True, "doi": "10.9/legacy", "title": self.TITLE,
+                            "year": 2019, "openalex_id": "", "source": "crossref"})
+        current = cache_key(f"{clean_search_query(self.TITLE)}|Schindler|2019|||"
+                            "0_doisearch_v3")
+        write_cache(tmp_path, current, {"found": False})
+        with _patch_get(side_effect=AssertionError("no network expected")):
+            assert resolve_doi_by_metadata(self.TITLE, "Schindler", 2019) is None
+
+
 class TestVerifyAndCorrect:
     """Statuses: verified, corrected, mismatch, no_doi, not_found,
     no_metadata, api_error, skipped."""
