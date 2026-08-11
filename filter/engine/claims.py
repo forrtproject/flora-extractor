@@ -32,6 +32,15 @@ A run that dies mid-batch leaves an `active` claim: end it `failed` and re-claim
 what it did not reach. Never re-claim under a live claim — the RPC rejects the
 whole batch, by design.
 
+Every call goes through ONE transport seam, `_request`, which retries a transient
+failure 3× at 1s/2s/4s and then raises `ClaimsError` (#189). A refusal is never
+retried, and an exhausted ladder never returns a no-op: surviving a blip is the
+improvement, swallowing a failure is not. What each write does about a retry is
+decided per write, by whether the database can absorb the same write twice —
+`record_verdict` mints its own row id and upserts on it, `release_claim` forgives
+`claim_not_active` after a retry, `claim` reports that a conflict it meets after a
+retry may be its own, and `record_supersession` is not retried at all.
+
 A claim is also a LEASE. A run killed outright (SIGKILL, a lost host) never
 reaches its completion path, and an `active` claim with no end blocks its works
 from every later batch. So a claim carries `expires_at = now + CLAIM_TTL_HOURS`;
@@ -40,10 +49,15 @@ once that passes it blocks nothing, in the RPC and in `claimed_work_ids()` alike
 """
 
 import datetime
+import logging
 import os
+import time
+import uuid
 from typing import Any, Iterable, Optional
 
 import requests
+
+log = logging.getLogger(__name__)
 
 # PostgREST caps a page at db-max-rows regardless of the Range header; every read
 # pages until a short page comes back (same rule as shared/supabase_client.py).
@@ -81,6 +95,14 @@ CLAIM_TTL_HOURS = 6
 # status codes and neither is distinguishable from any other 400 by code alone.
 _MISSING_EXPIRY_MARKERS = ("expires_at", "PGRST202")
 MIGRATION_0004 = "db/migrations/0004_claim_expiry.sql"
+
+# The house retry ladder (CLAUDE.md, "Error Handling on API Failures"): three more
+# attempts at 1s/2s/4s. It belongs HERE rather than at each call site because a tier
+# run makes one claims call per verdict, so an hours-long run meets a transient
+# eventually — two overnight runs died on a read timeout and a reset peer (#189).
+# What is retried is the TRANSPORT, never a refusal: a 4xx that is not 429 is the
+# server saying no, and a claim conflict or an auth failure must arrive unchanged.
+_RETRY_BACKOFF = (1.0, 2.0, 4.0)
 
 
 class ClaimsError(RuntimeError):
@@ -183,17 +205,72 @@ class ClaimsClient:
         headers.update(extra or {})
         return headers
 
-    def _post(self, path: str, payload: Any, prefer: Optional[str] = None,
-              tier: str = "") -> Any:
+    def _request(self, method: str, url: str, *, retry: bool = True,
+                 **kwargs: Any) -> tuple[requests.Response, bool]:
+        """One PostgREST call. Returns `(response, retried)`.
+
+        *retried* says an earlier attempt failed in transport, which is the one
+        thing a non-idempotent caller needs to know: a refusal that follows a lost
+        response may be the server refusing this run's OWN earlier write.
+
+        A connection error, a timeout, an HTTP 5xx and a 429 are transient and are
+        tried again on the `_RETRY_BACKOFF` ladder. Everything else — every other
+        4xx, and every response once the ladder is spent — is handed back for
+        `_parse` to raise on, so an auth or config failure still fails loudly and
+        immediately. A transport failure that outlives the ladder is raised as
+        `ClaimsError`, not as the bare `requests` exception, because every caller
+        in the engine (the extract tier's heartbeat above all) catches that class.
+
+        *retry* is False only where a retry could double a write the database
+        cannot deduplicate — see `record_supersession`.
+        """
+        attempts = len(_RETRY_BACKOFF) + 1 if retry else 1
+        for attempt in range(attempts):
+            last = attempt == attempts - 1
+            # Resolved per attempt so a test that patches `requests.post` with a
+            # sequence of failures is honoured on every one of them.
+            verb = {"get": requests.get, "post": requests.post,
+                    "patch": requests.patch}[method]
+            try:
+                resp = verb(url, timeout=self.timeout, **kwargs)
+            except requests.exceptions.RequestException as exc:
+                if last:
+                    raise ClaimsError(
+                        f"{url} → {type(exc).__name__} after {attempts} attempt(s): "
+                        f"{exc}") from exc
+                detail: str = f"{type(exc).__name__}: {exc}"
+            else:
+                if last or (resp.status_code != 429 and resp.status_code < 500):
+                    return resp, attempt > 0
+                detail = f"HTTP {resp.status_code}"
+            log.warning("claims %s %s failed (%s) — retrying in %.0fs",
+                        method.upper(), url.rsplit("/", 1)[-1], detail,
+                        _RETRY_BACKOFF[attempt])
+            time.sleep(_RETRY_BACKOFF[attempt])
+        raise AssertionError("unreachable: the loop returns or raises on its last pass")
+
+    def _post_raw(self, path: str, payload: Any, prefer: Optional[str] = None,
+                  retry: bool = True) -> tuple[requests.Response, bool]:
+        """POST *payload* unparsed, with the `retried` flag `_request` reports.
+
+        The two claim RPCs read that flag: what a retried call must make of a
+        refusal is not what a first attempt must make of it, and the refusal is
+        theirs to interpret rather than `_parse`'s.
+        """
         extra = {"Prefer": prefer} if prefer else None
-        resp = requests.post(f"{self.url}/rest/v1/{path}", headers=self._headers(extra),
-                             json=_without_nuls(payload), timeout=self.timeout)
+        return self._request("post", f"{self.url}/rest/v1/{path}",
+                             headers=self._headers(extra),
+                             json=_without_nuls(payload), retry=retry)
+
+    def _post(self, path: str, payload: Any, prefer: Optional[str] = None,
+              tier: str = "", retry: bool = True) -> Any:
+        resp, _ = self._post_raw(path, payload, prefer, retry)
         return self._parse(resp, path, tier)
 
     def _patch(self, path: str, params: dict, payload: dict) -> Any:
-        resp = requests.patch(f"{self.url}/rest/v1/{path}", headers=self._headers(),
-                              params=params, json=_without_nuls(payload),
-                              timeout=self.timeout)
+        resp, _ = self._request("patch", f"{self.url}/rest/v1/{path}",
+                                headers=self._headers(), params=params,
+                                json=_without_nuls(payload))
         return self._parse(resp, path)
 
     def _parse(self, resp, path: str, tier: str = "") -> Any:
@@ -234,7 +311,7 @@ class ClaimsClient:
                 "Range": f"{offset}-{offset + _PAGE_SIZE - 1}",
                 "Prefer": "count=none",
             })
-            resp = requests.get(url, headers=headers, params=params, timeout=self.timeout)
+            resp, _ = self._request("get", url, headers=headers, params=params)
             if resp.status_code >= 400:
                 body = resp.text or ""
                 if _missing_expiry(body):
@@ -296,14 +373,28 @@ class ClaimsClient:
         payload_items = [{"work_id": int(w), "pile": pile} for w, pile in items]
         if not payload_items:
             raise ValueError("nothing to claim: items is empty")
-        result = self._post("rpc/engine_claim_batch", {
+        resp, retried = self._post_raw("rpc/engine_claim_batch", {
             "p_release_id": release_id,
             "p_tier": tier,
             "p_items": payload_items,
             "p_meta": meta or {},
             "p_expires_at": _lease_end(ttl_seconds),
-        }, tier=tier)
-        return _scalar(result)
+        })
+        try:
+            return _scalar(self._parse(resp, "rpc/engine_claim_batch", tier))
+        except ClaimConflict as exc:
+            if not retried:
+                raise
+            # The RPC is one transaction and cannot be replayed: an attempt whose
+            # response was lost may have COMMITTED, and the conflict the retry hits
+            # is then this run's own claim. Nothing here can tell the two apart, so
+            # the caller is told what to check rather than sold a guess. It is not a
+            # regression — without the retry the same blip killed the process, and
+            # the orphan claim lapses with its lease either way.
+            raise ClaimConflict(
+                tier, f"{exc.message} — an earlier attempt of this same call failed "
+                "in transport, so the claim holding these works may be this run's "
+                "own; check engine_claims before assuming a second runner") from exc
 
     def renew_claim(self, claim_id: str, ttl_seconds: Optional[int] = None) -> str:
         """Extend a live claim's lease; returns the new lease end.
@@ -327,12 +418,21 @@ class ClaimsClient:
         A partially finished run completes the claim for what it did and re-claims
         the remainder as a NEW claim — there is no partial state. Ending a claim
         frees its items, because the conflict check reads active claims only.
+
+        The RPC refuses an already-ended claim (`claim_not_active`). After a
+        retry that refusal is not a failure: an earlier attempt reached the server
+        after all, and the claim being ended is precisely what this call wanted.
+        Only after a retry — a FIRST attempt meeting it means something else ended
+        the claim under the run, which the caller must still hear about.
         """
         if status not in END_STATUSES:
             raise ValueError(f"bad claim status: {status} (expected one of {END_STATUSES})")
-        result = self._post("rpc/engine_release_claim",
-                            {"p_claim_id": claim_id, "p_status": status})
-        return _scalar(result)
+        resp, retried = self._post_raw("rpc/engine_release_claim",
+                                       {"p_claim_id": claim_id, "p_status": status})
+        if (retried and resp.status_code >= 400
+                and "claim_not_active" in (resp.text or "")):
+            return claim_id
+        return _scalar(self._parse(resp, "rpc/engine_release_claim"))
 
     def claims(self, release_id: Optional[str] = None, tier: Optional[str] = None,
                status: Optional[str] = None) -> list[dict]:
@@ -391,12 +491,11 @@ class ClaimsClient:
         and `release-claim` only needs to say how big the thing it is about to end
         is. PostgREST reports it in `Content-Range` when asked for `count=exact`.
         """
-        resp = requests.get(
-            f"{self.url}/rest/v1/engine_claim_items",
+        resp, _ = self._request(
+            "get", f"{self.url}/rest/v1/engine_claim_items",
             headers=self._headers({"Range-Unit": "items", "Range": "0-0",
                                    "Prefer": "count=exact"}),
-            params={"select": "work_id", "claim_id": f"eq.{claim_id}"},
-            timeout=self.timeout)
+            params={"select": "work_id", "claim_id": f"eq.{claim_id}"})
         if resp.status_code >= 400:
             raise ClaimsError(f"engine_claim_items → HTTP {resp.status_code}: "
                               f"{resp.text.strip()}")
@@ -422,6 +521,15 @@ class ClaimsClient:
         extract tier's per-target rows; migration 0005). It is sent only when
         given, so a screen verdict written against a pre-0005 database still
         inserts.
+
+        THE ROW CARRIES ITS OWN ID, minted here, once, outside the retry ladder,
+        and the insert is an upsert on it. That is what makes the most frequent
+        write in a tier run safe to retry: a server that committed before its
+        response was lost sees the same id again and updates the row to the values
+        it already holds, which the permanence trigger allows because nothing
+        changes (`engine_verdicts_permanence()`, migration 0001 — it compares the
+        whole row minus `superseded_by`/`response_state`/`response_hash`). A
+        server-generated id would make the retry a SECOND verdict for the work.
         """
         if response_state not in RESPONSE_STATES:
             raise ValueError(
@@ -429,6 +537,7 @@ class ClaimsClient:
         if response_state == UPLOADED and not response_hash:
             raise ValueError("response_state 'uploaded' needs a response_hash naming the blob")
         row = {
+            "id": str(uuid.uuid4()),
             "claim_id": claim_id, "work_id": int(work_id), "tier": tier,
             "model": model, "prompt_hash": prompt_hash, "verdict": verdict,
             "confidence": confidence, "quote": quote,
@@ -437,7 +546,8 @@ class ClaimsClient:
         }
         if payload is not None:
             row["payload"] = payload
-        result = self._post("engine_verdicts", row, prefer="return=representation")
+        result = self._post("engine_verdicts", row,
+                            prefer="resolution=merge-duplicates,return=representation")
         return _first(result)["id"]
 
     def verdicts(self, tier: str, claim_ids: Optional[Iterable[str]] = None,
@@ -537,6 +647,13 @@ class ClaimsClient:
         it names them. Nothing here writes to `unvalidated`, `validated` or
         `validation_queue` — those rows are immutable once sent, and the
         validation repo reads this table to decide what to do about them.
+
+        The one write with NO transport retry. `engine_supersessions` is append-only
+        at the database (`engine_supersessions_append_only_trg`, migration 0002),
+        so the upsert that makes a verdict insert replayable is refused here — a
+        retry after a lost response could only add a second lineage row saying the
+        same thing. It is also not in any long loop: its callers are the operator
+        commands `audit_dois --apply` and `--redo`, which are re-run whole.
         """
         if kind not in SUPERSESSION_KINDS:
             raise ValueError(
@@ -550,7 +667,8 @@ class ClaimsClient:
             "affected_record_ids": [str(r) for r in affected_record_ids],
             "actor": actor,
         }
-        result = self._post("engine_supersessions", row, prefer="return=representation")
+        result = self._post("engine_supersessions", row,
+                            prefer="return=representation", retry=False)
         return _first(result)["id"]
 
 

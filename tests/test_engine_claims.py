@@ -9,6 +9,7 @@ import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 from filter.engine import sizing
 from filter.engine.claims import (CLAIM_TTL_HOURS, PENDING_UPLOAD, UPLOADED,
@@ -275,3 +276,104 @@ class TestNulsNeverReachPostgres:
         # Non-strings pass through untouched.
         assert sent["payload"]["targets"][0]["n"] == 3
         assert sent["payload"]["targets"][0]["ok"] is True
+
+
+class TestTransientFailuresAreRetried:
+    """A blip must not kill an hours-long run (#189).
+
+    Two overnight `extract.tier --run` campaigns died on a `ReadTimeout` and a
+    `ConnectionResetError` raised straight out of `requests`. A tier run makes one
+    claims call per verdict, so a long run meets a transient eventually. The retry
+    is at the transport seam, `_request`, and never covers a refusal.
+    """
+
+    @staticmethod
+    def _no_sleep():
+        return patch("filter.engine.claims.time.sleep")
+
+    def test_a_blip_recovers_and_the_retry_repeats_the_same_verdict_row(self):
+        """The recovered write is the SAME row, not a second verdict for the work.
+
+        `record_verdict` mints the row id itself and upserts on it, so a server
+        that committed before its response was lost sees that id again and updates
+        the row to the values it already holds.
+        """
+        blip = requests.exceptions.ReadTimeout("read timed out")
+        with self._no_sleep() as sleep, patch(
+                "filter.engine.claims.requests.post",
+                side_effect=[blip, _response(201, [{"id": "v-1"}])]) as post:
+            got = _client().record_verdict(claim_id="c", work_id=7, tier="extract",
+                                           verdict="resolved",
+                                           response_state=PENDING_UPLOAD)
+
+        assert got == "v-1"
+        assert post.call_count == 2
+        first, second = (call.kwargs["json"] for call in post.call_args_list)
+        assert first["id"] == second["id"]
+        assert first == second
+        # The upsert is what makes replaying that id safe.
+        assert "merge-duplicates" in post.call_args.kwargs["headers"]["Prefer"]
+        sleep.assert_called_once_with(1.0)
+
+    def test_an_exhausted_ladder_raises_rather_than_no_opping(self):
+        """Four attempts, 1s/2s/4s apart, then a ClaimsError — never a silent skip."""
+        reset = requests.exceptions.ConnectionError("Connection aborted.")
+        with self._no_sleep() as sleep, patch(
+                "filter.engine.claims.requests.post", side_effect=reset) as post:
+            with pytest.raises(ClaimsError) as excinfo:
+                _client().record_verdict(claim_id="c", work_id=7, tier="extract",
+                                         verdict="resolved",
+                                         response_state=PENDING_UPLOAD)
+
+        assert post.call_count == 4
+        assert [call.args[0] for call in sleep.call_args_list] == [1.0, 2.0, 4.0]
+        assert "ConnectionError" in str(excinfo.value)
+
+    def test_a_5xx_is_transient_and_a_4xx_is_not(self):
+        """A 503 is the server failing; a 403 is the server answering."""
+        with self._no_sleep(), patch("filter.engine.claims.requests.get",
+                                     side_effect=[_response(503, None, "upstream"),
+                                                  _response(200, [])]) as get:
+            assert _client().claims(tier="extract") == []
+        assert get.call_count == 2
+
+        with self._no_sleep(), patch(
+                "filter.engine.claims.requests.get",
+                return_value=_response(403, None, "no key")) as get:
+            with pytest.raises(ClaimsError):
+                _client().claims(tier="extract")
+        assert get.call_count == 1
+
+    def test_a_recovered_release_claim_forgives_an_already_ended_claim(self):
+        """The lost response ENDED the claim, and ending it is what the call wanted."""
+        ended = _response(400, None, "claim_not_active: c-1 is already complete")
+        with self._no_sleep(), patch(
+                "filter.engine.claims.requests.post",
+                side_effect=[requests.exceptions.ReadTimeout("timed out"), ended]):
+            assert _client().release_claim("c-1", "complete") == "c-1"
+
+        # A FIRST attempt meeting it means something else ended the claim under the
+        # run, which the caller must still hear about.
+        with patch("filter.engine.claims.requests.post", return_value=ended):
+            with pytest.raises(ClaimsError):
+                _client().release_claim("c-1", "complete")
+
+    def test_a_conflict_after_a_retry_says_it_may_be_this_run_s_own_claim(self):
+        """The claim RPC cannot be replayed, so the operator is told what to check."""
+        conflict = _response(409, None, "claim_conflict: 3 of 500 works already held")
+        with self._no_sleep(), patch(
+                "filter.engine.claims.requests.post",
+                side_effect=[requests.exceptions.ReadTimeout("timed out"), conflict]):
+            with pytest.raises(ClaimConflict) as excinfo:
+                _client().claim("rel-abc", "extract", [(1, "extract")])
+        assert "this run's own" in str(excinfo.value)
+
+    def test_the_append_only_lineage_write_is_not_retried(self):
+        """`engine_supersessions` has no upsert to fall back on (migration 0002)."""
+        with self._no_sleep(), patch(
+                "filter.engine.claims.requests.post",
+                side_effect=requests.exceptions.ReadTimeout("timed out")) as post:
+            with pytest.raises(ClaimsError):
+                _client().record_supersession(work_id=1, kind="verdict",
+                                              affected_record_ids=["r-1"])
+        assert post.call_count == 1
