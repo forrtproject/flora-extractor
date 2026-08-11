@@ -198,3 +198,65 @@ class TestChangeDetection:
             assert [p["text"] for part in payload["contents"]
                     for p in part["parts"]] == ["p"]
 
+
+
+class TestTheFloraLabelRenameEquivalence:
+    """The declared cache equivalence (issue #171) for the FLoRA outcome-label rename.
+
+    `resolve_targets_and_outcomes` hashes the RENDERED prompt into its cache key, so
+    the 4,424 stored answers are reachable only if the legacy vocabulary renders the
+    prompt those entries were bought under, byte for byte. Nothing raises when that
+    breaks: the key simply misses and the run re-buys the answer. These digests were
+    taken from the prompts as they stood immediately before the rename.
+    """
+
+    ENTRIES = [
+        {"key": "@smith2009", "doi": "10.1/a", "authors": "Smith & Jones",
+         "year": "2009", "title": "A study of things", "source": "candidate"},
+        {"key": "@ramirez2014", "doi": "", "openalex_id": "W1", "authors": "Ramirez",
+         "year": "2014", "title": "Delay discounting", "source": "reference"},
+    ]
+    EVIDENCE = dict(pdf_abstract="PDF ABS", intro="INTRO TEXT", methods="METHODS TEXT",
+                    discussion="DISCUSSION TEXT",
+                    discussion_provenance="the PDF's conclusion")
+
+    @staticmethod
+    def _digest(text: str) -> str:
+        import hashlib
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+    def test_the_legacy_target_outcome_rendering_is_unchanged(self):
+        full = prompts.build_target_outcome_prompt(
+            "Study R", "Abstract R", self.ENTRIES, legacy_vocabulary=True,
+            **self.EVIDENCE)
+        bare = prompts.build_target_outcome_prompt(
+            "Study R", "Abstract R", self.ENTRIES, legacy_vocabulary=True)
+        assert self._digest(full) == "bd66cb8566b91a8c"
+        assert self._digest(bare) == "1516e143608769dd"
+
+    def test_the_legacy_outcome_rendering_is_unchanged(self):
+        full = prompts.build_outcome_prompt(
+            "Title R", "Abstract snip", "Smith", "2009", "A study of things",
+            "BODY TEXT", "INTRO SNIP", "evidence line", "the PDF's conclusion",
+            legacy_vocabulary=True)
+        bare = prompts.build_outcome_prompt(
+            "Title R", "Abstract snip", "Smith", "2009", "A study of things",
+            legacy_vocabulary=True)
+        assert self._digest(full) == "6ff0214d83884131"
+        assert self._digest(bare) == "a52c4c239e1aa761"
+
+    def test_what_is_sent_is_the_flora_vocabulary(self):
+        """The legacy rendering exists for cache keys and is never the one sent."""
+        from shared.schema import OUTCOME_LABELS
+
+        sent = prompts.build_target_outcome_prompt(
+            "Study R", "Abstract R", self.ENTRIES, **self.EVIDENCE)
+        assert '"statistically successful but flawed"' in sent
+        assert "statistically_successful_but_flawed" not in sent
+        assert '"descriptive only"' in sent
+        for label in OUTCOME_LABELS.values():
+            assert f'"{label}"' in sent, label
+
+    def test_a_marker_no_vocabulary_defines_is_an_error(self):
+        with pytest.raises(KeyError):
+            prompts._vocab("one of «not_a_category»", prompts.OUTCOME_LABELS)

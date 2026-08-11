@@ -89,7 +89,7 @@ _MULTI_A = {
     "study_o": "2", "year_o": "1999", "authors_o": "B. Original",
     "link_method": "llm_references", "link_evidence": "the model named @orig1999",
     "link_confidence": "high", "link_llm_model": "gpt-5.4-mini",
-    "doi_o_verification": "verified", "outcome": "success",
+    "doi_o_verification": "verified", "outcome": "successful",
     "outcome_phrase": "We replicated the first effect.", "outcome_confidence": "high",
     "out_quote_source": "discussion", "outcome_llm_model": "gpt-5.4-mini",
     "type": "replication", "original_rank": "1", "n_originals": "2",
@@ -99,7 +99,7 @@ _MULTI_B = {**_MULTI_A,
             "oa_work_id_o": "W2000000092", "study_r": "2",
             "doi_o": "10.1000/second", "title_o": "Second original",
             "study_o": "1", "year_o": "2001", "authors_o": "C. Original",
-            "outcome": "failure",
+            "outcome": "failed",
             "outcome_phrase": "The second effect did not replicate.",
             "original_rank": "2"}
 

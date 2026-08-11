@@ -8,8 +8,10 @@ runtimes: see [AGENTS.md](AGENTS.md), which points here.
 **FLoRA Extractor** discovers, extracts, and validates replication and reproduction
 studies for the [FLoRA database](https://forrt.org/replication-hub/flora/). For each
 candidate paper it identifies which original study is targeted and what the outcome was
-(success / failure / mixed / descriptive / statistically_successful_but_flawed /
-uninformative / cannot_be_determined / not_a_replication).
+(successful / failed / mixed / descriptive only / statistically successful but flawed /
+uninformative / cannot_be_determined / not_a_replication). The first six are FLoRA's
+own spellings, read off `data/flora.csv`; the last two are ours, for a paper that
+checks nothing and for a verdict we could not reach.
 
 ## Architecture — 4-Stage Pipeline
 
@@ -63,9 +65,27 @@ than `EXTRACT_PENDING_RETRY_DAYS` (14) RESTS: it is subtracted like a settled wo
 until the delay lapses, a new generation reopens it, or `--redo` names it, because
 five runs of one campaign otherwise re-bought ~830 unresolvable works' queries
 each. `api_error` retries immediately. The export applies the FLoRA/validated skip
-lists at render too, so a work that enters FLoRA after extraction stops shipping. `--redo W1,W2` re-extracts named works and
-supersedes their previous result rows; editing a prompt or a model mints a new
-extract GENERATION, which reopens every work at once.
+lists at render too, so a work that enters FLoRA after extraction stops shipping.
+
+**Two ways to reopen, and the ladder is not one of them.** `--redo W1,W2` re-extracts
+named works; `--redo-status unidentified_original,no_original_found` names a
+POPULATION — any result verdict (`resolved`, `provisional`, `not_a_replication`,
+`no_original_found`, `target_pending`, `api_error`) or any `link_method`, since two
+link methods can share one verdict and a change that reaches one need not reach the
+other. Both supersede the previous result row. Editing a prompt or a model mints a
+new extract GENERATION, which reopens every work at once, because it changes what the
+pipeline ASKS.
+
+`EXTRACT_LADDER_VERSION` was in that fingerprint until 2026-08-10 and is not any
+more. A ladder change alters how an original is FOUND, and it reaches a population its
+author knows when writing it: ladder 22 was measured over the 105
+`unidentified_original` rows, and 23 addressed the same class — while reopening every
+settled work costs a whole campaign's wall clock for 3,025 works. So the reopen is
+named, not inferred, and each changelog entry in `link_original.py` carries the
+command that reopens what it fixed. This gave up no safety that was being enforced:
+the export carries forward rows from a superseded generation by default, so a
+stale-ladder verdict shipped either way. `--current-generation-only` is the separate,
+honest lever for that question.
 
 The CSV runner (`python -m extract.run_extract`, with `--fresh`, `--rescreen`,
 `--extracted-test` and `--screen-here`) is retired — it prints a pointer and exits 2.
@@ -269,8 +289,9 @@ context, an incomplete screen, a full-text provider failure — so an outage bel
 accepted link no longer writes `target_pending` over it. When the full-text rung does
 answer, its reading replaces the carried one, except that a later UNSETTLED outcome
 never overwrites an earlier settled one (`_union_targets`, tracked in `outcome_stage`).
-`EXTRACT_LADDER_VERSION` records what the ladder was when a row was written; nothing
-reads it yet.
+`EXTRACT_LADDER_VERSION` records what the ladder was when a row was written. Nothing
+reads it — it is provenance, deliberately: a bump reopens no work by itself, and the
+population a bump reaches is named on the command line (`--redo-status`).
 
 **One prompt per vocabulary for the three LLM rungs, asking BOTH questions.**
 `build_target_outcome_prompt()` (replication) and `build_repro_target_outcome_prompt()`
@@ -442,6 +463,63 @@ about the call changes. A legacy hit is re-stored under the current key carrying
 `cache_migrated` note — the prompt version and models it is now filed under, and the
 key it came from — so every response on disk stays traceable to what produced it; the
 legacy entry is left in place for other checkouts and the shared HF cache.
+
+### Editing a prompt without invalidating its cache
+
+A prompt edit that provably cannot change any answer — a category renamed, a typo, a
+reordering the model cannot read differently — does not have to re-buy every answer
+already on disk. It is not automatic, and nothing detects it: the maintainer declares
+it, once, and the declaration is reviewable. **An answer-preserving edit has three
+invalidation surfaces, and missing any one of them silently undoes the whole exercise.**
+The worked example is the FLoRA outcome-label rename of 2026-08-10, which moved the two
+replication prompts and re-bought nothing.
+
+1. **The LLM cache key.** Two components move: `prompt_version(builder)`, and — where
+   the call site hashes the rendered prompt, as `resolve_targets_and_outcomes` does —
+   the prompt TEXT. Freeze the pre-edit version as a literal, make the pre-edit text
+   REPRODUCIBLE, and read through
+   `read_cache_migrating(cache_dir, key, legacy_keys, migrate_note)`. Reproducible
+   means the varying part is a parameter, not a copy: the outcome vocabulary is written
+   into the fragments as `«success»` markers and rendered twice
+   (`_vocab` in `shared/prompts.py`), so `build_target_outcome_prompt(...,
+   legacy_vocabulary=True)` rebuilds the old text exactly rather than approximately. A
+   search-and-replace over the rendered text is not good enough — these prompts use
+   "failed" and "successful" as ordinary English too.
+2. **The tier's GENERATION fingerprint**, if the prompt is in `_GENERATION_PROMPTS`
+   (`extract/tier.py`, `filter/engine/tiers.py`). This one is easy to forget and
+   expensive to miss: the cache can be perfect and the run still re-extracts every
+   settled work, paying the OpenAlex verification bill again. Declare the pair in
+   `_GENERATION_PROMPT_EQUIVALENCES` as `prompt: (version_after, version_before)`.
+3. **Every seam an old ANSWER comes back through**, if the edit changed the vocabulary
+   of the answer rather than only the wording of the question. The answers are not
+   re-bought, so they arrive in the old vocabulary for as long as they live on disk —
+   this is a permanent translation, not a migration step. One map
+   (`OUTCOME_LEGACY_MAP` / `canonical_outcome` in `shared/schema.py`), applied at four
+   places, and **the two cache-READ seams are the ones that get missed**: a cached
+   answer is a stored ROW, normalised when it was written, so it never passes through
+   the normaliser again.
+   - `normalise_outcome_block` (`shared/schema.py`) — a fresh LLM answer.
+   - the cache-hit branch of `resolve_targets_and_outcomes` (`shared/llm_client.py`).
+   - the cache-hit branch of `_outcome_result` (`extract/code_outcome.py`).
+   - `_normalise` in `extract/export.py` — a stored payload becoming a CSV cell.
+
+   Miss the read seams and the damage is silent and downstream: `_aggregate_outcomes`
+   in `run_extract.py` compares against the new labels, finds nothing substantive in a
+   legacy-spelled block, and ships `cannot_be_determined` over a verdict the pipeline
+   had already paid for.
+
+**Every equivalence is pinned to the reviewed post-edit version, in both directions.**
+`(after, before)` pairs and `if version == …_RENAMED_VERSION` guards mean the next
+edit to that prompt produces a third version, matches no declaration, and falls back
+to strict invalidation on its own. Nothing has to be un-declared later.
+
+**Before editing, snapshot; after editing, assert.** Render the affected prompts with
+fixed synthetic inputs and keep the digests, because a legacy rendering that is one
+space out fails as a cache MISS, not as an error — the run just costs money.
+`TestTheFloraLabelRenameEquivalence` in `tests/test_prompt_versions.py` pins those
+digests, and `test_the_label_rename_does_not_reopen_the_settled_works` in
+`tests/test_extract_tier.py` pins the generation. Both fail loudly if a later edit
+breaks the equivalence, which is the only way this stays true.
 
 Content-complete keys are also what makes the cache **shareable**: an entry from
 another machine is provably the answer this checkout would have computed, so

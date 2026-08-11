@@ -33,4 +33,4 @@ class TestNoLlmExtractOutcome:
             title_r="Test",
             no_llm=True,
         )
-        assert result["outcome"] == "failure"
+        assert result["outcome"] == "failed"

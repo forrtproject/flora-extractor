@@ -34,14 +34,14 @@ def test_call_openai_retries_then_succeeds(monkeypatch):
         calls["n"] += 1
         if calls["n"] < 3:
             raise RuntimeError("transient 503")
-        return _resp('{"outcome": "success"}')
+        return _resp('{"outcome": "successful"}')
 
     fake_client = MagicMock()
     fake_client.chat.completions.create.side_effect = create
     with patch("openai.OpenAI", return_value=fake_client):
         result, err = llm.call_openai("prompt", model="m")
 
-    assert result == {"outcome": "success"}
+    assert result == {"outcome": "successful"}
     assert calls["n"] == 3
     assert sleeps == [1, 2]  # exponential backoff between the 3 attempts
 
@@ -1632,7 +1632,7 @@ def test_every_target_carries_its_own_outcome(monkeypatch, tmp_path):
     an outcome the evidence does not settle, and an unmatched target is coded too —
     which entries become rows is decided downstream."""
     _targets(monkeypatch, tmp_path, {"targets": [
-        _target(outcome="failure", outcome_phrase="it did not hold",
+        _target(outcome="failed", outcome_phrase="it did not hold",
                 out_quote_source="discussion", outcome_confident=True),
         _target(key=None, match_certain=False, target_as_named="Ramirez (2014)",
                 outcome="cannot_be_determined", outcome_confident=False),
@@ -1641,9 +1641,35 @@ def test_every_target_carries_its_own_outcome(monkeypatch, tmp_path):
                                            rung="fulltext", discussion="D")
 
     assert [t["outcome_block"]["outcome"] for t in out["targets"]] == [
-        "failure", "cannot_be_determined"]
+        "failed", "cannot_be_determined"]
     assert out["targets"][0]["outcome_block"]["out_quote_source"] == "discussion"
     assert out["targets"][0]["outcome_block"]["outcome_confidence"] == "high"
+
+
+def test_a_pre_rename_cached_answer_comes_back_in_todays_vocabulary(monkeypatch, tmp_path):
+    """An outcome block is normalised when it is WRITTEN, so a cache hit never passes
+    through `normalise_outcome_block` again. Every entry bought before the FLoRA label
+    rename says `success`, and everything downstream compares against `successful`."""
+    calls: list = []
+    _targets(monkeypatch, tmp_path,
+             {"targets": [_target(outcome="successful", outcome_phrase="it held",
+                                  outcome_confident=True)], "reasoning": "r"},
+             calls=calls)
+    args = ("10.1/x", "T", "A", _CAND, [])
+    llm.resolve_targets_and_outcomes(*args, rung="fulltext", discussion="D")
+
+    # The entry now on disk, rewritten to the vocabulary it would carry had it been
+    # bought before the rename — the file is the fixture, so the key is the real one.
+    entry = next(tmp_path.glob("targetoutcome_*.json"))
+    stored = json.loads(entry.read_text(encoding="utf-8"))
+    stored["targets"][0]["outcome_block"]["outcome"] = "success"
+    entry.write_text(json.dumps(stored), encoding="utf-8")
+
+    calls.clear()
+    out = llm.resolve_targets_and_outcomes(*args, rung="fulltext", discussion="D")
+    assert calls == [], "the second call must be served from the cache"
+    assert out["targets"][0]["outcome_block"]["outcome"] == "successful"
+    assert out["targets"][0]["outcome_block"]["outcome_phrase"] == "it held"
 
 
 def test_an_out_of_vocabulary_outcome_becomes_cannot_be_determined(monkeypatch, tmp_path):
@@ -1677,7 +1703,7 @@ def test_record_type_check_is_read_only_when_the_closing_sections_were_sent(monk
                                                                            tmp_path):
     """It is a judgment about the methods. A rung that read no body has not seen them,
     so a stray answer must not veto the row."""
-    answer = {"targets": [_target(outcome="success", record_type_check="neither")],
+    answer = {"targets": [_target(outcome="successful", record_type_check="neither")],
               "reasoning": "r"}
     _targets(monkeypatch, tmp_path, answer)
     without = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", _CAND, [],
@@ -1686,7 +1712,7 @@ def test_record_type_check_is_read_only_when_the_closing_sections_were_sent(monk
     with_text = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", _CAND, [],
                                                  rung="fulltext", discussion="D")
 
-    assert without["targets"][0]["outcome_block"]["outcome"] == "success"
+    assert without["targets"][0]["outcome_block"]["outcome"] == "successful"
     assert with_text["targets"][0]["outcome_block"]["outcome"] == "not_a_replication"
 
 

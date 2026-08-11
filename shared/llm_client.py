@@ -716,6 +716,16 @@ def _validate_targets(raw: list, key_map: dict[str, dict], prompt: str,
     return targets, notes
 
 
+# ── Declared cache equivalence: the FLoRA outcome-label rename (issue #171) ──
+# `build_target_outcome_prompt` hashed to the first of these before the rename and to
+# the second after it, and the edit changed nothing but how six categories are
+# spelled. Both are literals rather than computed values, which is what makes the
+# equivalence expire by itself: an edit that changes what the prompt ASKS produces a
+# third version, matches neither, and re-buys the answers.
+_TARGET_OUTCOME_PRE_RENAME_VERSION = "15fc8eee0150"
+_TARGET_OUTCOME_RENAMED_VERSION    = "1d5a31e3a518"
+
+
 def resolve_targets_and_outcomes(doi_r:       str,
                                  study_r:     str,
                                  abstract_r:  str,
@@ -774,12 +784,33 @@ def resolve_targets_and_outcomes(doi_r:       str,
     # A new prefix on purpose. The old "llm"/"reftarget" entries answered a narrower
     # question — a target and nothing else — so replaying one under this call would
     # hand back a resolution with no outcome on it. They stay on disk, unread, and
-    # there is deliberately no declared equivalence: the question changed.
-    key = content_key("targetoutcome", doi_r or study_r,
-                      prompt_version(builder_name),
-                      cache_model_id(LINKING_MODEL, LINKING_EFFORT),
+    # there is deliberately no equivalence to them: the question changed. The
+    # equivalence declared below is a different thing — same question, one word of the
+    # answer spelled differently.
+    version = prompt_version(builder_name)
+    model_id = cache_model_id(LINKING_MODEL, LINKING_EFFORT)
+    key = content_key("targetoutcome", doi_r or study_r, version, model_id,
                       rung, record_type, identities, prompt)
-    cached = read_cache(LLM_CACHE_DIR, key)
+    # The FLoRA-label rename (see OUTCOME_LABELS in shared/schema.py) moved two things
+    # in this key at once: the prompt version, and the prompt text the key hashes. Both
+    # are reconstructible — the version is frozen below, the text is this same builder
+    # rendered in the legacy vocabulary — and the answers are the ones this call would
+    # get today, one word of each spelled the way the pipeline used to spell it. The
+    # equivalence is pinned to the version the rename produced, so the next edit to
+    # this prompt asks a question these entries have not answered and pays for it.
+    legacy_keys: list[str] = []
+    if not is_repro and version == _TARGET_OUTCOME_RENAMED_VERSION:
+        legacy_prompt = build(study_r, abstract_r, entries,
+                              pdf_abstract=pdf_abstract, intro=intro, methods=methods,
+                              discussion=discussion,
+                              discussion_provenance=discussion_provenance,
+                              legacy_vocabulary=True)
+        legacy_keys = [content_key("targetoutcome", doi_r or study_r,
+                                   _TARGET_OUTCOME_PRE_RENAME_VERSION, model_id,
+                                   rung, record_type, identities, legacy_prompt)]
+    cached = read_cache_migrating(LLM_CACHE_DIR, key, legacy_keys,
+                                  {"prompt_version": version, "rung": rung,
+                                   "migration": "flora_outcome_labels"})
     if cached is not None:
         cached.setdefault("llm_source", "cache")
         cached.setdefault("llm_prompt", "")
@@ -796,6 +827,14 @@ def resolve_targets_and_outcomes(doi_r:       str,
         for t in cached.get("targets") or []:
             if t.get("key") and not t.get("record"):
                 t["record"] = key_map.get(t["key"])
+            # An outcome block is normalised when it is WRITTEN, so a hit never passes
+            # through `normalise_outcome_block` again — an entry stored before the
+            # FLoRA rename hands back `success` where everything downstream now
+            # compares against `successful`. Translated here, at the door the answer
+            # comes back through, rather than at each of the places that read it.
+            block = t.get("outcome_block")
+            if isinstance(block, dict) and block.get("outcome"):
+                block["outcome"] = canonical_outcome(block["outcome"])
         return cached
 
     result, provider, llm_error = call_model(prompt, LINKING_MODEL,

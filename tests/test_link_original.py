@@ -449,7 +449,7 @@ class TestMayStopAtARule:
 # A verdict the ladder may stop on, and one it must read on for. Every answer below
 # carries the settled one unless a test says otherwise: the descent is a separate
 # behaviour from the gate, and the gate tests are about the gate.
-_SETTLED   = {"outcome": "failure", "outcome_phrase": "did not replicate"}
+_SETTLED   = {"outcome": "failed", "outcome_phrase": "did not replicate"}
 _UNSETTLED = {"outcome": "cannot_be_determined", "outcome_phrase": ""}
 
 
@@ -895,7 +895,7 @@ class TestOutcomeDescent:
             row = _run_gate("A study", _ONE_PAIR, self._CANDS,
                             abstract_answer=self._resolved(dict(_SETTLED)))
         assert row["resolved"] is True
-        assert row["outcome_block"]["outcome"] == "failure"
+        assert row["outcome_block"]["outcome"] == "failed"
         assert acquired == [], "a settled row must not pay for a document"
 
     def test_an_unsettled_outcome_descends_to_the_full_text(self):
@@ -906,7 +906,7 @@ class TestOutcomeDescent:
                         llm_answer=self._resolved(dict(_SETTLED),
                                                   resolution_method="llm_fulltext"))
         assert row["resolution_method"] == "llm_fulltext"
-        assert row["outcome_block"]["outcome"] == "failure"
+        assert row["outcome_block"]["outcome"] == "failed"
 
     def test_a_carried_resolution_survives_a_no_document_exit(self):
         """No document means nothing further can settle the verdict — but the link was
@@ -938,15 +938,15 @@ class TestOutcomeDescent:
         late["outcome_stage"] = "llm_fulltext"
         merged = link_original._union_targets([early], [late])
         assert len(merged) == 1
-        assert merged[0]["outcome_block"]["outcome"] == "failure"
+        assert merged[0]["outcome_block"]["outcome"] == "failed"
 
     def test_a_later_settled_outcome_does_win(self):
         early = _gate_target("10.9/orig", "Original")
         early["outcome_block"] = dict(_UNSETTLED)
         late = _gate_target("10.9/orig", "Original")
-        late["outcome_block"] = {"outcome": "success"}
+        late["outcome_block"] = {"outcome": "successful"}
         merged = link_original._union_targets([early], [late])
-        assert merged[0]["outcome_block"]["outcome"] == "success"
+        assert merged[0]["outcome_block"]["outcome"] == "successful"
 
     def test_an_unsettled_reproduction_axis_is_enough_to_descend(self):
         """Either axis unresolved is a reason to read on: half a verdict must not stop

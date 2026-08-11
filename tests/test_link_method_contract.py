@@ -68,7 +68,7 @@ def test_sanity_check_writes_no_unclassified_destination(tmp_path, monkeypatch):
         rows.append({"doi_r": f"10.1/{method}", "doi_o": f"10.2/o{i}",
                      "link_method": method, "doi_o_verification": "verified",
                      "outcome": "not_a_replication" if method == "not_a_replication"
-                     else "success"})
+                     else "successful"})
     df = pd.DataFrame(rows)
     for c in EXTRACTED_COLS:
         if c not in df.columns:
@@ -111,7 +111,7 @@ def test_sanity_check_routes_every_unresolved_method_as_its_bucket_says(tmp_path
             "doi_o_verification": "verified", "link_method": method,
             # The screen's discard verdict writes both fields; sanity_check routes
             # that row on the outcome, so the fixture has to carry it too.
-            "outcome": "not_a_replication" if method == "not_a_replication" else "success",
+            "outcome": "not_a_replication" if method == "not_a_replication" else "successful",
         })
     df = pd.DataFrame(rows)
     for c in EXTRACTED_COLS:

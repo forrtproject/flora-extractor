@@ -26,8 +26,8 @@ from shared.schema import SET_ASIDE_DESTINATIONS
 
 dashboard_bp = Blueprint("dashboard", __name__)
 
-_OUTCOME_KEYS = ("success", "failure", "mixed", "descriptive",
-                 "statistically_successful_but_flawed", "uninformative",
+_OUTCOME_KEYS = ("successful", "failed", "mixed", "descriptive only",
+                 "statistically successful but flawed", "uninformative",
                  "cannot_be_determined", "not_a_replication",
                  "pending", "api_error")
 # The five rule-based resolution methods are now distinct link_method values. The

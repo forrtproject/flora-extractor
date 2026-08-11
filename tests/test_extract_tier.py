@@ -57,7 +57,7 @@ def _extracted(**overrides) -> dict:
                 "link_method": "llm_references", "link_confidence": "high",
                 "link_evidence": "the model named @orig1999",
                 "doi_o": "10.1000/orig", "title_o": "The original",
-                "doi_o_verification": "verified", "outcome": "success"})
+                "doi_o_verification": "verified", "outcome": "successful"})
     row.update(overrides)
     return row
 
@@ -216,7 +216,9 @@ def test_the_generation_is_pinned_by_its_inputs():
     """A bump must read as a diff of WHAT changed, not as one hex string becoming
     another. The names are the pin; the values move with the code they name."""
     inputs = generation_inputs()
-    assert set(inputs) == {"ladder", "prompts", "models"}
+    # The ladder is deliberately absent: it changes HOW an original is found, not what
+    # the pipeline asks, and its reopen is named (`--redo-status`) rather than inferred.
+    assert set(inputs) == {"prompts", "models"}
     assert set(inputs["prompts"]) == {
         "build_target_outcome_prompt", "build_repro_target_outcome_prompt",
         "build_outcome_prompt", "build_repro_outcome_prompt",
@@ -227,12 +229,35 @@ def test_the_generation_is_pinned_by_its_inputs():
         # so it reopens works on the same grounds.
         "build_keyed_confirm_prompt"}
     assert set(inputs["models"]) == {"linking", "outcome", "pdf_parse"}
-    assert isinstance(inputs["ladder"], int)
     # The efforts are IN the model ids, or two runs at different reasoning levels
     # would share a generation (`cache_model_id`).
     from shared.config import LINKING_EFFORT
     assert LINKING_EFFORT in inputs["models"]["linking"]
     assert len(extract_generation()) == 16
+
+
+def test_the_label_rename_does_not_reopen_the_settled_works():
+    """The declared equivalence (issue #171) for the FLoRA outcome-label rename.
+
+    Both replication prompts still hash into the fingerprint at the version they had
+    before the rename, so the works settled under it stay settled. The check is worth
+    a test because the failure is silent in the wrong direction: a broken equivalence
+    reopens 1,899 works and the next run simply re-extracts them.
+    """
+    for name, (after, before) in tier_mod._GENERATION_PROMPT_EQUIVALENCES.items():
+        assert prompt_version(name) == after, (
+            f"{name} has been edited since the rename was reviewed; either the edit "
+            f"is answer-preserving and the pair here needs re-declaring against the "
+            f"new version, or it is not and the entry must go")
+        assert generation_inputs()["prompts"][name] == before
+
+
+def test_an_undeclared_prompt_edit_still_moves_the_generation(monkeypatch):
+    """The equivalence is pinned to one reviewed version, so it expires by itself."""
+    monkeypatch.setattr(tier_mod, "_GENERATION_PROMPT_EQUIVALENCES",
+                        {"build_outcome_prompt": ("not-the-current-version", "old")})
+    assert (generation_inputs()["prompts"]["build_outcome_prompt"]
+            == prompt_version("build_outcome_prompt"))
 
 
 def test_a_changed_prompt_mints_a_new_generation(monkeypatch):
@@ -475,6 +500,73 @@ def test_validation_verdicts_do_not_settle_the_live_worklist():
 
     assert tier_mod.settled_work_ids(client, "live") == {1}
     assert tier_mod.settled_work_ids(client, "validation") == {2}
+
+
+def test_redo_status_names_the_population_a_ladder_change_reaches():
+    """The reopen a ladder bump needs: the works that ended in a named verdict, not
+    every settled work. Latest row wins and the mode is honoured, exactly as the
+    checkpoint reads them — a work the worklist would offer anyway needs no reopening.
+    """
+    from unittest.mock import MagicMock
+
+    gen = tier_mod.extract_generation()
+    claims = [{"id": "c-live", "meta": {"mode": "live", "generation": gen}},
+              {"id": "c-val", "meta": {"mode": "validation", "generation": gen}}]
+    rows = [
+        # work 1 ended unresolved; work 2 resolved; work 3 was unresolved and is not
+        # any more, so its latest row is what counts.
+        {"claim_id": "c-live", "work_id": 1, "verdict": NO_ORIGINAL_FOUND,
+         "created_at": "2026-08-06T00:00:00Z", "id": "v1"},
+        {"claim_id": "c-live", "work_id": 2, "verdict": RESOLVED,
+         "created_at": "2026-08-06T00:00:00Z", "id": "v2"},
+        {"claim_id": "c-live", "work_id": 3, "verdict": NO_ORIGINAL_FOUND,
+         "created_at": "2026-08-06T00:00:00Z", "id": "v3"},
+        {"claim_id": "c-live", "work_id": 3, "verdict": RESOLVED,
+         "created_at": "2026-08-07T00:00:00Z", "id": "v4"},
+        {"claim_id": "c-val", "work_id": 9, "verdict": NO_ORIGINAL_FOUND,
+         "created_at": "2026-08-06T00:00:00Z", "id": "v5"},
+    ]
+    client = MagicMock()
+    client.claims.return_value = claims
+    client.verdicts.return_value = rows
+
+    assert tier_mod.works_with_status(client, [NO_ORIGINAL_FOUND]) == {1}
+    assert tier_mod.works_with_status(client, [NO_ORIGINAL_FOUND, RESOLVED]) == {1, 2, 3}
+    assert tier_mod.works_with_status(client, [NO_ORIGINAL_FOUND],
+                                      mode="validation") == {9}
+
+
+def test_redo_status_takes_a_link_method_where_the_verdict_is_too_coarse():
+    """`unidentified_original` and `keyed_link_disputed` are both `provisional`
+    endings, and the ladder changes that reach one do not reach the other — so the
+    finer name has to be askable."""
+    from unittest.mock import MagicMock
+
+    gen = tier_mod.extract_generation()
+    claims = [{"id": "c", "meta": {"mode": "live", "generation": gen}}]
+    rows = [
+        {"claim_id": "c", "work_id": 1, "verdict": PROVISIONAL, "id": "v1",
+         "created_at": "2026-08-06T00:00:00Z",
+         "payload": {"targets": [{"link_method": "unidentified_original"}]}},
+        {"claim_id": "c", "work_id": 2, "verdict": PROVISIONAL, "id": "v2",
+         "created_at": "2026-08-06T00:00:00Z",
+         "payload": {"targets": [{"link_method": "keyed_link_disputed"}]}},
+    ]
+    client = MagicMock()
+    client.claims.return_value = claims
+    client.verdicts.return_value = rows
+
+    assert tier_mod.works_with_status(client, ["unidentified_original"]) == {1}
+    assert tier_mod.works_with_status(client, [PROVISIONAL]) == {1, 2}
+
+
+def test_a_status_name_that_does_not_exist_is_refused():
+    """A typo must not silently reopen nothing — the flag would read as "already
+    fixed" when it had asked for a class that cannot exist."""
+    from unittest.mock import MagicMock
+
+    with pytest.raises(ValueError, match="not a result verdict or a link method"):
+        tier_mod.works_with_status(MagicMock(), ["unidentified_originals"])
 
 
 def test_one_errored_target_stops_a_multi_target_work_settling():

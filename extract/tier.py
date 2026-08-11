@@ -15,8 +15,10 @@ This is the ONLY front door. The CSV runner that used to sit beside it is gone
 checkpoint, the verdict row itself. A run resumes by rebuilding its worklist: a work
 whose latest current-generation result row settles it is not offered again, and
 `target_pending`/`api_error` do not settle. `--redo` re-extracts named works and
-supersedes their previous result row; editing a prompt or a model mints a new
-generation, which reopens every work at once.
+supersedes their previous result row; `--redo-status unidentified_original` names a
+POPULATION instead of ids, which is how a ladder change reopens the rows it was
+written for. Editing a prompt or a model mints a new generation, which reopens every
+work at once — a ladder bump does not, since 2026-08-10.
 
 **Two kinds of verdict row, told apart by the `verdict` column.**
 
@@ -169,6 +171,22 @@ def _ttl_seconds() -> int:
 # What is deliberately NOT in it: the pool, the release, the rule book. A verdict
 # follows the WORK. A re-route mints a new release id without changing a single
 # thing about how a paper's original is found.
+#
+# Nor is EXTRACT_LADDER_VERSION, since 2026-08-10. It was, and every ladder bump
+# therefore reopened every settled work — 3,025 of them, a whole campaign's wall
+# clock, to fix the population the bump was actually written for: ladder 22 was
+# measured over the 105 `unidentified_original` rows and 23 addressed the same class.
+# A ladder change alters HOW an original is found, not WHAT the pipeline asks, and it
+# reaches a population its author knows at the time of writing. So the reopen is now
+# named rather than inferred: `--redo-status unidentified_original` (or `--redo` with
+# work ids), and each changelog entry in `link_original.py` carries the command that
+# reopens what it fixed. The version is still stamped on every row, which is where a
+# reader learns what produced a verdict.
+#
+# This costs no safety that was being enforced: the export carries forward rows from a
+# superseded generation by default, so a stale-ladder verdict shipped either way. What
+# it stopped doing is re-buying them. `--current-generation-only` is the separate lever
+# for the render, and the honest one for that question.
 _GENERATION_PROMPTS = ("build_target_outcome_prompt",
                        "build_repro_target_outcome_prompt",
                        "build_outcome_prompt",
@@ -191,12 +209,15 @@ def generation_inputs() -> dict:
     should read as a diff of what changed, not as one opaque hex string becoming
     another.
     """
-    from extract.link_original import EXTRACT_LADDER_VERSION
     from shared.prompts import prompt_version
 
+    def version(name: str) -> str:
+        current = prompt_version(name)
+        after, before = _GENERATION_PROMPT_EQUIVALENCES.get(name, ("", ""))
+        return before if current == after else current
+
     return {
-        "ladder": EXTRACT_LADDER_VERSION,
-        "prompts": {name: prompt_version(name) for name in _GENERATION_PROMPTS},
+        "prompts": {name: version(name) for name in _GENERATION_PROMPTS},
         "models": {
             "linking": cache_model_id(LINKING_MODEL, LINKING_EFFORT),
             "outcome": cache_model_id(OUTCOME_MODEL, OUTCOME_EFFORT),
@@ -206,7 +227,7 @@ def generation_inputs() -> dict:
 
 
 def extract_generation() -> str:
-    """Fingerprint of the ladder, prompts and models this tier extracts with now."""
+    """Fingerprint of the prompts and models this tier extracts with now."""
     payload = json.dumps(generation_inputs(), sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
@@ -575,6 +596,61 @@ def settled_work_ids(client: ClaimsClient, mode: str = "live") -> set[int]:
         if decision.get("settles") or _resting(decision):
             out.add(work)
     return out
+
+
+def works_with_status(client: ClaimsClient, statuses: Iterable[str],
+                      mode: str = "live") -> set[int]:
+    """Works whose latest current-generation *mode* result ended in one of *statuses* —
+    what `--redo-status` turns a name into.
+
+    The reopen a ladder bump needs, named instead of inferred. A change to how an
+    original is FOUND reaches a population its author already knows: ladder 22 was
+    measured over the `unidentified_original` rows before it shipped, and 23 addressed
+    the same class. Reopening every settled work to reach them cost a campaign's wall
+    clock; this asks for the class.
+
+    A status is either a RESULT VERDICT — the work's whole ending, `RESULT_VERDICTS` —
+    or a LINK METHOD, which names a row: `unidentified_original` and
+    `keyed_link_disputed` are both `provisional` endings, and a ladder change that
+    reaches one does not reach the other. A work matches a link method when any row of
+    its result carries it, so the finer name is the one to reach for.
+
+    Same reading of the store as `settled_work_ids` — latest result, current
+    generation, one mode — because a work the worklist would offer anyway needs no
+    reopening. The caller feeds the result to `--redo`, which supersedes the old row.
+    """
+    from filter.engine.tiers import _by_work
+
+    wanted = {str(v).strip() for v in statuses if str(v).strip()}
+    unknown = wanted - set(RESULT_VERDICTS) - LINK_METHOD_VALUES
+    if unknown:
+        raise ValueError(
+            f"not a result verdict or a link method: {', '.join(sorted(unknown))}\n"
+            f"  verdicts:     {', '.join(RESULT_VERDICTS)}\n"
+            f"  link methods: {', '.join(sorted(LINK_METHOD_VALUES))}")
+    methods = wanted & LINK_METHOD_VALUES
+    verdicts = wanted & set(RESULT_VERDICTS)
+
+    claims = client.claims(tier=TIER_EXTRACT)
+    generations = {c["id"]: (c.get("meta") or {}).get("generation") for c in claims}
+    in_mode = {c["id"] for c in claims
+               if ((c.get("meta") or {}).get("mode") or "live") == mode}
+    rows = [r for r in client.verdicts(TIER_EXTRACT, with_payload=bool(methods))
+            if r.get("claim_id") in in_mode]
+
+    named: set[int] = set()
+    for work, rows_ in _by_work(TIER_EXTRACT, rows, generations).items():
+        decision = _decide(rows_)
+        if decision["outcome"] in verdicts:
+            named.add(work)
+            continue
+        if not methods or decision["row"] is None:
+            continue
+        payload = decision["row"].get("payload") or {}
+        if any(str(r.get("link_method") or "") in methods
+               for r in render_payload(payload)):
+            named.add(work)
+    return named
 
 
 # ---------------------------------------------------------------------------
@@ -1088,6 +1164,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--redo", default=None,
                         help="Comma-separated work ids: re-extract despite the "
                              "checkpoint, and supersede each work's previous result row.")
+    parser.add_argument("--redo-status", default=None,
+                        help="Comma-separated result verdicts or link methods "
+                             "(e.g. unidentified_original, no_original_found): redo "
+                             "every work whose latest result ended that way. How a "
+                             "ladder change reopens the rows it was written for.")
     parser.add_argument("--release", default=None,
                         help="Routing release (default: the store's only one).")
     parser.add_argument("--overlay", type=Path, default=None,
@@ -1132,10 +1213,23 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(f"no state authority configured ({exc}) — estimating over the whole "
               "admitted pile, with no verdicts or claims subtracted.")
 
+    redo = set(_ids(args.redo) or ())
+    if args.redo_status:
+        if client is None:
+            raise SystemExit("--redo-status reads the verdicts from the state "
+                             "authority; set SUPABASE_URL and SUPABASE_SERVICE_KEY.")
+        try:
+            named = works_with_status(
+                client, [s.strip() for s in args.redo_status.split(",")], args.mode)
+        except ValueError as exc:
+            raise SystemExit(str(exc))
+        print(f"--redo-status {args.redo_status}: {len(named):,} work(s) reopened")
+        redo |= named
+
     try:
         report = run_extract_tier(
             con, client, release_id, mode=args.mode, batch_label=args.batch_label,
-            limit=args.limit, only=_ids(args.only), redo=_ids(args.redo),
+            limit=args.limit, only=_ids(args.only), redo=sorted(redo) or None,
             pool_dir=args.pool, spec_dir=args.spec_dir,
             overlay_dir=_overlay_dir(args),
             aliases=load_aliases(args.spec_dir / ALIASES_FILENAME),

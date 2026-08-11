@@ -386,27 +386,68 @@ DOI_VERIFICATION_VALUES = {
 # outcome categories a classifier may emit — code_outcome and run_extract both
 # import OUTCOME_CATEGORIES rather than defining their own copies.
 #
-# The five substantive values mirror the FLoRA codebook's dropdown. Two of them were
-# missing until the rule-alignment pass:
+# The six substantive values are the strings FLoRA's own database stores, read off
+# `data/flora.csv` rather than restated from memory: successful (1,028 rows), failed
+# (885), mixed (553), statistically successful but flawed (7), descriptive only (6),
+# uninformative (4). Four of them used to be spelled differently here — `success`,
+# `failure`, `descriptive`, `statistically_successful_but_flawed` — so every row this
+# pipeline produced arrived at the validation import in a vocabulary the database does
+# not use. OUTCOME_LEGACY_MAP below translates the answers bought under the old
+# spellings; nothing writes them any more.
+#
+# Two of the six were missing until the rule-alignment pass:
 #   uninformative — the FLoRA category for a replication whose AUTHORS say it cannot
 #     speak to the original (underpowered, failed at the design level). It had been
 #     retired as legacy and folded into cannot_be_determined, which conflated a
 #     property of the paper with a failure of our extraction: merged, the database
 #     could not tell a null-informative replication from an unread one, and every
 #     "share we could not code" figure silently counted correctly-coded papers.
-#   statistically_successful_but_flawed — FLoRA's category for "we replicated the
+#   statistically successful but flawed — FLoRA's category for "we replicated the
 #     effect using the original methods, but show those methods do not test the
-#     hypothesis". Without it such papers code as `success`, which is the reading
+#     hypothesis". Without it such papers code as `successful`, which is the reading
 #     FLoRA created the category to avoid.
-OUTCOME_CATEGORIES = {
-    "success", "failure", "mixed", "descriptive",
-    "statistically_successful_but_flawed",
-    "uninformative",
-    "cannot_be_determined",
+#
+# The slot names on the left of OUTCOME_LABELS are what the prompt fragments in
+# shared/prompts.py write as «success», «failure» and so on. They are markers, not
+# values: the value is always the right-hand side, and the legacy vocabulary is one
+# other rendering of the same markers.
+OUTCOME_LABELS = {
+    "success":              "successful",
+    "failure":              "failed",
+    "mixed":                "mixed",
+    "descriptive":          "descriptive only",
+    "flawed":               "statistically successful but flawed",
+    "uninformative":        "uninformative",
+    "cannot_be_determined": "cannot_be_determined",
+}
+
+OUTCOME_CATEGORIES = set(OUTCOME_LABELS.values()) | {
     # Emitted when the full-text outcome pass answers record_type_check="neither":
     # the paper does not check the named original at all.
     "not_a_replication",
 }
+
+# The spellings this pipeline used before the FLoRA rename, mapped to the labels that
+# replaced them. This is a permanent translation, not a migration step: the LLM answers
+# on disk were bought under the old vocabulary and are still served (see "Editing a
+# prompt without invalidating its cache" in CLAUDE.md), so a cached verdict reaches
+# normalise_outcome_block saying "success" for as long as that cache entry lives. The
+# same map is applied where the export renders a stored verdict payload, which is how
+# the 1,899 rows extracted before the rename ship in the new vocabulary without being
+# re-bought.
+OUTCOME_LEGACY_MAP = {
+    "success":                             "successful",
+    "failure":                             "failed",
+    "descriptive":                         "descriptive only",
+    "statistically_successful_but_flawed": "statistically successful but flawed",
+}
+
+
+def canonical_outcome(value: str) -> str:
+    """*value* in today's vocabulary: a pre-rename spelling translated, anything else
+    returned as it came (including the reproduction joins and the state markers)."""
+    text = str(value or "").strip()
+    return OUTCOME_LEGACY_MAP.get(text, text)
 
 # Reproduction outcomes use a completely different vocabulary from replications.
 # A reproduction re-runs the ORIGINAL data/code, so two independent questions apply,
@@ -544,9 +585,13 @@ def normalise_outcome_block(result: dict, record_type: str,
         # exactly the one-quote-for-two-judgments problem the axes were split to end.
         phrase, source = "", ""
     else:
-        outcome = _outcome_text(result.get("outcome", "cannot_be_determined")).lower()
+        # A cached answer from before the FLoRA rename says "success" where the
+        # vocabulary now says "successful"; the answer is the same one, so it is
+        # translated rather than coerced to cannot_be_determined by the check below.
+        outcome = canonical_outcome(
+            _outcome_text(result.get("outcome", "cannot_be_determined")).lower())
         # Reproductions use the computation/robustness axes, replications the
-        # success/failure/... enum. Validating against the wrong one would silently
+        # successful/failed/... enum. Validating against the wrong one would silently
         # coerce every verdict to cannot_be_determined.
         if outcome not in outcome_categories_for(record_type):
             outcome = "cannot_be_determined"

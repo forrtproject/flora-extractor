@@ -49,8 +49,8 @@ POOL_STAGE = "pool"
 
 # Canonical outcome categories + pipeline-state markers (see shared/schema.py).
 _OUTCOME_KEYS = (
-    "success", "failure", "mixed", "descriptive",
-    "statistically_successful_but_flawed", "uninformative",
+    "successful", "failed", "mixed", "descriptive only",
+    "statistically successful but flawed", "uninformative",
     "cannot_be_determined", "not_a_replication",
     "pending", "api_error",
 )

@@ -16,6 +16,8 @@ from typing import Any
 
 import requests
 
+from .schema import canonical_outcome
+
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
 
@@ -354,35 +356,31 @@ _CONFUSION_FIELDS: dict[str, tuple[str, str]] = {
     "outcome": ("outcome", "final_outcome"),
     "type":    ("type",    "final_type"),
 }
-# Preferred label order so the diagonal reads success→success, etc. Anything seen
-# but not listed (e.g. reproduction-grid outcomes) is appended alphabetically.
+# Preferred label order so the diagonal reads successful→successful, etc. Anything
+# seen but not listed (e.g. reproduction-grid outcomes) is appended alphabetically.
 _PREFERRED_LABELS: dict[str, list[str]] = {
-    "outcome": ["success", "failure", "mixed", "descriptive",
-                "statistically_successful_but_flawed", "uninformative",
+    "outcome": ["successful", "failed", "mixed", "descriptive only",
+                "statistically successful but flawed", "uninformative",
                 "cannot_be_determined", "not_a_replication"],
     "type":    ["replication", "reproduction"],
 }
 
-# The validation DB stores the human final in FLoRA's own spelling
-# (successful/failed — see the UPDATEs in flora-validation/db_schema.sql).
-# Canonicalise both sides so success-vs-successful reads as agreement (the diagonal),
-# not a spurious correction — otherwise the matrix hugely overstates the pipeline's
-# error rate.
+# Both sides now speak FLoRA's own spelling: the validation DB always did (see the
+# UPDATEs in flora-validation/db_schema.sql), and the pipeline does since the rename.
+# What still needs canonicalising is the PIPELINE side of a row extracted before it —
+# `success` against a human `successful` is agreement (the diagonal), not a correction,
+# and reading it as one hugely overstates the pipeline's error rate.
 #
 # `uninformative` used to be folded into cannot_be_determined here, back when the
 # pipeline could not emit it. It now can, and the two mean different things — the
 # authors' verdict versus our failure to reach one — so a human who chose
 # uninformative over the pipeline's cannot_be_determined has made a real correction
 # and the matrix should show it off-diagonal.
-_OUTCOME_CANON: dict[str, str] = {
-    "successful": "success",
-    "failed": "failure",
-}
 
 
 def _canon(field: str, value: Any) -> str:
     v = _norm(value)
-    return _OUTCOME_CANON.get(v, v) if field == "outcome" else v
+    return canonical_outcome(v) if field == "outcome" else v
 
 
 def build_confusion_matrices(rows: list[dict]) -> dict:

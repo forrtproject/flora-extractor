@@ -84,17 +84,17 @@ class TestExpandToSentences:
 
 class TestKeywordScan:
     @pytest.mark.parametrize("text,expected", [
-        ("we found no evidence of ego depletion", "failure"),
-        ("failed to replicate the original finding", "failure"),
-        ("null result for the predicted effect", "failure"),
-        ("the three-item CRT was successfully replicated", "success"),
-        ("effect was robustly replicated across three samples", "success"),
-        ("IAT demonstrated strong psychometric properties consistent with original reports", "success"),
+        ("we found no evidence of ego depletion", "failed"),
+        ("failed to replicate the original finding", "failed"),
+        ("null result for the predicted effect", "failed"),
+        ("the three-item CRT was successfully replicated", "successful"),
+        ("effect was robustly replicated across three samples", "successful"),
+        ("IAT demonstrated strong psychometric properties consistent with original reports", "successful"),
         ("partially replicated with some but not all findings held", "mixed"),
-        ("No evidence was found for precognition in any experiment", "failure"),
-        ("adapted the procedure in a different cultural population", "descriptive"),
+        ("No evidence was found for precognition in any experiment", "failed"),
+        ("adapted the procedure in a different cultural population", "descriptive only"),
         # A failure phrase outranks a success keyword in the same clause.
-        ("we failed to replicate the originally replicated finding", "failure"),
+        ("we failed to replicate the originally replicated finding", "failed"),
         # Declines: effect size alone must not decide the outcome. `mixed` requires
         # the authors' own evidence to be partly supporting and partly not; a
         # supported-but-smaller effect is a success. Neither is decidable here, so
@@ -119,7 +119,7 @@ class TestKeywordScan:
                 "replicated in Study 2.")
         hit = _keyword_scan(text, "abstract")
         assert hit is not None
-        assert hit["outcome"] != "failure"
+        assert hit["outcome"] != "failed"
 
     def test_success_elsewhere_does_not_veto_a_failure_sentence(self):
         """The veto is per sentence — a success claim about a different result is not one."""
@@ -127,7 +127,7 @@ class TestKeywordScan:
                 "The focal effect failed to replicate.")
         hit = _keyword_scan(text, "abstract")
         assert hit is not None
-        assert hit["outcome"] == "failure"
+        assert hit["outcome"] == "failed"
 
     @pytest.mark.parametrize("text", [
         "We found no significant difference between our estimate and the original, "
@@ -144,9 +144,9 @@ class TestKeywordScan:
         """
         hit = _keyword_scan(text, "abstract")
         assert hit is not None
-        assert hit["outcome"] == "success"
+        assert hit["outcome"] == "successful"
         alone = _keyword_scan("We found no evidence of ego depletion.", "abstract")
-        assert alone["outcome"] == "failure"
+        assert alone["outcome"] == "failed"
         assert alone["outcome_confidence"] == "medium"
 
     def test_outcome_phrase_spans_the_surrounding_sentences(self):
@@ -168,7 +168,7 @@ class TestExtractOutcome:
     def test_keyword_hit_still_routes_through_llm_when_available(self, tmp_path):
         """#70: even a clear keyword hit must be seen by the LLM (is_genuine_attempt
         veto) when the LLM is available — the keyword short-circuit is no_llm-only."""
-        mock = {"outcome": "failure", "outcome_phrase": "no effect", "is_genuine_attempt": True,
+        mock = {"outcome": "failed", "outcome_phrase": "no effect", "is_genuine_attempt": True,
                 "confidence": "high", "out_quote_source": "abstract"}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
              patch("extract.code_outcome.call_model", return_value=(mock, "openai", "")) as mock_llm, \
@@ -179,13 +179,13 @@ class TestExtractOutcome:
                 title_r="A Replication Study",
             )
         mock_llm.assert_called()  # keyword hit no longer skips the LLM
-        assert result["outcome"] == "failure"
+        assert result["outcome"] == "failed"
 
     def test_keyword_hit_vetoed_as_not_a_replication(self, tmp_path):
         """#70: a 'failed to replicate' abstract whose text shows the paper checks no
         named original becomes not_a_replication instead of a coded failure. The veto is
         record_type_check, which is asked only when the model was given the text."""
-        neither = {"outcome": "failure", "outcome_phrase": "background prose",
+        neither = {"outcome": "failed", "outcome_phrase": "background prose",
                    "record_type_check": "neither", "confident": True,
                    "out_quote_source": "discussion"}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
@@ -203,7 +203,7 @@ class TestExtractOutcome:
     def test_a_text_that_re_tests_nothing_is_vetoed_too(self, tmp_path):
         """target_check == no_original is the same veto reached from the other side:
         the paper checks no earlier published finding at all."""
-        no_original = {"outcome": "success", "outcome_phrase": "q", "confident": True,
+        no_original = {"outcome": "successful", "outcome_phrase": "q", "confident": True,
                        "out_quote_source": "discussion", "target_check": "no_original"}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
              patch("extract.code_outcome.call_model",
@@ -227,7 +227,7 @@ class TestExtractOutcome:
                 no_llm=True,
             )
         mock_llm.assert_not_called()
-        assert result["outcome"] == "failure"
+        assert result["outcome"] == "failed"
         assert result["out_quote_source"] == "abstract"
         assert result.get("outcome_reasoning", "") == ""
         assert result["llm_model"] == "keyword"
@@ -273,7 +273,7 @@ class TestExtractOutcome:
 
     def test_llm_result_cached(self, tmp_path):
         """LLM result should be written to cache and reused."""
-        mock_result = {"outcome": "success", "outcome_phrase": "replicated",
+        mock_result = {"outcome": "successful", "outcome_phrase": "replicated",
                        "confidence": "high", "out_quote_source": "abstract"}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
              patch("extract.code_outcome.call_model", return_value=(mock_result, "openai", "")), \
@@ -282,7 +282,32 @@ class TestExtractOutcome:
             with patch("extract.code_outcome.call_model") as mock2:
                 r2 = extract_outcome("10.1234/cache", abstract_r="ambiguous text")
                 mock2.assert_not_called()
-        assert r1["outcome"] == r2["outcome"] == "success"
+        assert r1["outcome"] == r2["outcome"] == "successful"
+
+    def test_a_pre_rename_cached_verdict_is_read_in_todays_vocabulary(self, tmp_path):
+        """A hit returns the stored ROW, normalised when it was written — so nothing
+        re-checks its vocabulary. Every entry bought before the FLoRA label rename says
+        `failure` where the pipeline now says `failed`."""
+        import json
+
+        mock_result = {"outcome": "failed", "outcome_phrase": "it did not hold",
+                       "confidence": "high", "out_quote_source": "abstract"}
+        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.code_outcome.call_model",
+                   return_value=(mock_result, "openai", "")), \
+             patch("extract.code_outcome.time.sleep"):
+            extract_outcome("10.1234/rename", abstract_r="ambiguous text")
+
+            entry = next(tmp_path.glob("outcome_*.json"))
+            stored = json.loads(entry.read_text(encoding="utf-8"))
+            stored["outcome"] = "failure"
+            entry.write_text(json.dumps(stored), encoding="utf-8")
+
+            with patch("extract.code_outcome.call_model") as no_call:
+                again = extract_outcome("10.1234/rename", abstract_r="ambiguous text")
+                no_call.assert_not_called()
+        assert again["outcome"] == "failed"
+        assert again["outcome_phrase"] == "it did not hold"
 
     def test_invalid_llm_outcome_normalised(self, tmp_path):
         """LLM returning an unexpected outcome value should become cannot_be_determined."""
@@ -304,7 +329,7 @@ class TestLLMOutcomePrompt:
                  original_title="", original_authors="", original_year="",
                  llm_return=None):
         if llm_return is None:
-            llm_return = {"outcome": "success", "outcome_phrase": "We confirmed the effect.",
+            llm_return = {"outcome": "successful", "outcome_phrase": "We confirmed the effect.",
                           "confidence": "high", "out_quote_source": "abstract",
                           "outcome_reasoning": "All effects replicated."}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
@@ -322,7 +347,7 @@ class TestLLMOutcomePrompt:
         hold the body back for. Each passage is named, so a quote is attributable."""
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
              patch("extract.code_outcome.call_model", return_value=(
-                 {"outcome": "success", "outcome_phrase": "x", "outcome_confidence": "high",
+                 {"outcome": "successful", "outcome_phrase": "x", "outcome_confidence": "high",
                   "out_quote_source": "abstract", "outcome_reasoning": ""},
                  "openai", "")) as mock_llm, \
              patch("extract.code_outcome.time.sleep"):
@@ -342,7 +367,7 @@ class TestLLMOutcomePrompt:
         goes with it, and the model is asked to check it (target_check)."""
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
              patch("extract.code_outcome.call_model", return_value=(
-                 {"outcome": "success", "outcome_phrase": "x", "confident": True,
+                 {"outcome": "successful", "outcome_phrase": "x", "confident": True,
                   "out_quote_source": "abstract", "outcome_reasoning": ""},
                  "openai", "")) as mock_llm, \
              patch("extract.code_outcome.time.sleep"):
@@ -370,7 +395,7 @@ class TestLLMOutcomePrompt:
         screen voters already saw, so it is not asked to re-decide what the paper is —
         and a stray answer must not end the row."""
         llm_return = {
-            "outcome": "failure",
+            "outcome": "failed",
             "outcome_phrase": "We did not find support for the original effect.",
             "record_type_check": "neither",
             "confident": True,
@@ -379,7 +404,7 @@ class TestLLMOutcomePrompt:
         }
         result, mock_llm = self._run_llm(tmp_path, llm_return=llm_return)
         assert "record_type_check" not in mock_llm.call_args[0][0]
-        assert result["outcome"] == "failure"
+        assert result["outcome"] == "failed"
 
 
 # ── Outcome-coding unification tests ─────────────────────────────────────────
@@ -403,7 +428,7 @@ class TestKeywordScanNoFulltext:
 
 class TestOutcomePromptContent:
     def _prompt(self, tmp_path, **kw):
-        ret = {"outcome": "success", "outcome_phrase": "x", "confidence": "high",
+        ret = {"outcome": "successful", "outcome_phrase": "x", "confidence": "high",
                "out_quote_source": "abstract", "outcome_reasoning": ""}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
              patch("extract.code_outcome.call_model", return_value=(ret, "openai", "")) as mock_llm, \
@@ -413,7 +438,7 @@ class TestOutcomePromptContent:
 
     def test_abstract_truncated_at_3000(self, tmp_path):
         long_abstract = ("A" * 2999) + "MARKER_INSIDE" + ("B" * 3000) + "MARKER_OUTSIDE"
-        ret = {"outcome": "success", "outcome_phrase": "x", "confidence": "high",
+        ret = {"outcome": "successful", "outcome_phrase": "x", "confidence": "high",
                "out_quote_source": "abstract", "outcome_reasoning": ""}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
              patch("extract.code_outcome.call_model", return_value=(ret, "openai", "")) as mock_llm, \
@@ -483,7 +508,7 @@ class TestOutcomePromptPlaceholderInjection:
 class TestOutcomeCacheKey:
     """One content-keyed entry per outcome answer — no legacy DOI-only key."""
 
-    _RET = {"outcome": "success", "outcome_phrase": "x", "confidence": "high",
+    _RET = {"outcome": "successful", "outcome_phrase": "x", "confidence": "high",
             "out_quote_source": "abstract", "outcome_reasoning": ""}
 
     def _run(self, tmp_path, **kwargs):
@@ -573,7 +598,7 @@ _MOCK_LINK = {
     "grobid_intro": "",
 }
 _MOCK_OUTCOME = {
-    "outcome": "success", "outcome_phrase": "replicated",
+    "outcome": "successful", "outcome_phrase": "replicated",
     "outcome_confidence": "high", "out_quote_source": "abstract",
     "outcome_reasoning": "", "llm_model": "gemini-outcome",
 }
@@ -869,8 +894,8 @@ class TestMakePairId:
 
 class TestMergeMultiRow:
     _FILTER_ROW = pd.Series({"doi_r": "10.1/rep", "title_r": "Rep Paper",
-                             "filter_status": "replication"})
-    _OUTCOME = {"outcome": "success", "outcome_phrase": "",
+                             "paper_type": "replication"})
+    _OUTCOME = {"outcome": "successful", "outcome_phrase": "",
                 "outcome_confidence": "high", "out_quote_source": "abstract"}
 
     def _merge(self, orig, link_method="llm_fulltext"):
@@ -961,7 +986,7 @@ class TestReproductionOutcome:
         repl = outcome_categories_for("replication")
         assert "computationally reproducible, robust" in repro
         assert "computationally reproducible, robust" not in repl
-        assert "success" in repl and "success" not in repro
+        assert "successful" in repl and "successful" not in repro
         assert "cannot_be_determined" in repro and "cannot_be_determined" in repl
 
     def test_axes_are_stored_and_the_outcome_is_derived(self, tmp_path):
@@ -1003,7 +1028,7 @@ class TestReproductionOutcome:
     def test_replication_value_rejected_for_reproduction(self, tmp_path):
         """If the LLM answers with the replication vocabulary for a reproduction,
         it must NOT be accepted silently."""
-        mock = {"outcome": "success", "outcome_phrase": "q", "confident": True,
+        mock = {"outcome": "successful", "outcome_phrase": "q", "confident": True,
                 "out_quote_source": "abstract", "outcome_reasoning": "r"}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
              patch("extract.code_outcome.call_model", return_value=(mock, "openai", "")), \
@@ -1040,7 +1065,7 @@ class TestRecordTypeCheckRecode:
     set `type` could not. A row coded in the wrong vocabulary is re-coded once — one
     hop, never a loop."""
 
-    _FT_SAYS_REPRO = {"outcome": "failure", "outcome_phrase": "It did not hold.",
+    _FT_SAYS_REPRO = {"outcome": "failed", "outcome_phrase": "It did not hold.",
                       "record_type_check": "reproduction", "confident": True,
                       "out_quote_source": "discussion", "outcome_reasoning": "r"}
     _REPRO_VERDICT = {"outcome_computation": "computational issues",
@@ -1085,7 +1110,7 @@ class TestRecordTypeCheckRecode:
         ft = dict(self._FT_SAYS_REPRO, record_type_check=check)
         result, mock_llm = self._run(tmp_path, [ft])
         assert mock_llm.call_count == 1
-        assert result["outcome"] == "failure"
+        assert result["outcome"] == "failed"
         assert "record_type" not in result
 
     def test_a_failed_recode_is_not_cached(self, tmp_path):
@@ -1120,20 +1145,20 @@ class TestOutcomeResponseRepair:
 
     def test_string_true_is_read_as_confident(self, tmp_path):
         for value in ("true", "True"):
-            result = self._run(tmp_path, {"outcome": "success", "outcome_phrase": "q",
+            result = self._run(tmp_path, {"outcome": "successful", "outcome_phrase": "q",
                                           "out_quote_source": "abstract",
                                           "confident": value,
                                           "outcome_reasoning": f"r{value}"})
             assert result["outcome_confidence"] == "high", value
 
     def test_string_false_is_not_read_as_confident(self, tmp_path):
-        result = self._run(tmp_path, {"outcome": "success", "outcome_phrase": "q",
+        result = self._run(tmp_path, {"outcome": "successful", "outcome_phrase": "q",
                                       "out_quote_source": "abstract",
                                       "confident": "false", "outcome_reasoning": "r"})
         assert result["outcome_confidence"] == "low"
 
     def test_null_becomes_empty_not_the_string_none(self, tmp_path):
-        result = self._run(tmp_path, {"outcome": "success", "outcome_phrase": None,
+        result = self._run(tmp_path, {"outcome": "successful", "outcome_phrase": None,
                                       "out_quote_source": None, "confident": True,
                                       "outcome_reasoning": None})
         assert result["outcome_phrase"] == ""
@@ -1168,7 +1193,7 @@ class TestGuardOriginalLink:
         """The multi-original path merges the outcome before the guard runs, so a
         rejected row would otherwise carry a coded outcome on an unresolved link."""
         out = run_extract._guard_original_link(self._row(
-            doi_o="10.1/repl", outcome="success", outcome_phrase="we replicated it",
+            doi_o="10.1/repl", outcome="successful", outcome_phrase="we replicated it",
             outcome_confidence="high", out_quote_source="abstract"))
         assert out["link_method"] == "target_pending"
         assert out["outcome"] == "pending"
@@ -1596,7 +1621,7 @@ class TestClassifyModelAttribution:
         filled only by _merge_row would be blank on exactly the rows that got coded."""
         row = run_extract._apply_outcome({}, _MOCK_OUTCOME)
         assert row["outcome_llm_model"] == "gemini-outcome"
-        assert row["outcome"] == "success"
+        assert row["outcome"] == "successful"
 
     def test_the_link_model_is_the_link_stages_own(self):
         """The outcome step fails over independently of the link step, so the two
@@ -2189,13 +2214,13 @@ class TestOutcomeReadsTheDiscussion:
         def fake_extract_outcome(doi_r, abstract_r, fulltext="", *a, **kw):
             captured["fulltext"] = fulltext
             captured.update(kw)
-            return {"outcome": "success", "outcome_phrase": "", "outcome_confidence": "high",
+            return {"outcome": "successful", "outcome_phrase": "", "outcome_confidence": "high",
                     "out_quote_source": "discussion", "outcome_reasoning": ""}
 
         monkeypatch.setattr(run_extract, "extract_outcome", fake_extract_outcome)
         run_extract._get_outcome(
             "10.1/x",
-            pd.Series({"abstract_r": "", "title_r": "T", "filter_status": "replication"}),
+            pd.Series({"abstract_r": "", "title_r": "T", "paper_type": "replication"}),
             {},
         )
         assert captured["fulltext_provenance"] == "discussion"
@@ -2215,7 +2240,7 @@ class TestSamePaperStudiesCollapse:
     """
 
     @staticmethod
-    def _orig(rank, doi, study_number="", outcome="success", title="T", conf="high"):
+    def _orig(rank, doi, study_number="", outcome="successful", title="T", conf="high"):
         return {"rank": rank, "doi": doi, "title": title, "first_author": "Smith",
                 "year": 2010, "study_number": study_number, "outcome": outcome,
                 "evidence": f"ev{rank}", "outcome_evidence": f"oev{rank}",
@@ -2242,17 +2267,17 @@ class TestSamePaperStudiesCollapse:
 
     def test_conflicting_outcomes_aggregate_to_mixed(self):
         out = run_extract._collapse_same_paper_originals([
-            self._orig(1, "10.1000/a", "1", outcome="success"),
-            self._orig(2, "10.1000/a", "2", outcome="failure"),
+            self._orig(1, "10.1000/a", "1", outcome="successful"),
+            self._orig(2, "10.1000/a", "2", outcome="failed"),
         ])
         assert out[0]["outcome"] == "mixed"
 
     def test_silent_study_does_not_outvote_a_verdict(self):
         out = run_extract._collapse_same_paper_originals([
-            self._orig(1, "10.1000/a", "1", outcome="failure"),
+            self._orig(1, "10.1000/a", "1", outcome="failed"),
             self._orig(2, "10.1000/a", "2", outcome="cannot_be_determined"),
         ])
-        assert out[0]["outcome"] == "failure"
+        assert out[0]["outcome"] == "failed"
 
     def test_partial_study_numbers_are_dropped_not_guessed(self):
         """Claiming "1" when a second study went unnumbered would assert the
@@ -2298,9 +2323,9 @@ class TestSamePaperStudiesCollapse:
 
     def test_study_o_reaches_the_row(self):
         row = _merge_multi_row(
-            pd.Series({"doi_r": "10.9/r", "title_r": "R", "filter_status": "replication"}),
+            pd.Series({"doi_r": "10.9/r", "title_r": "R", "paper_type": "replication"}),
             self._orig(1, "10.1000/a", "1, 2"),
-            {"outcome": "success"}, "multiple_original", "high", 1,
+            {"outcome": "successful"}, "multiple_original", "high", 1,
         )
         assert row["study_o"] == "1, 2"
 
@@ -2315,9 +2340,9 @@ class TestSamePaperStudiesCollapse:
 
     def test_study_r_reaches_the_row(self):
         row = _merge_multi_row(
-            pd.Series({"doi_r": "10.9/r", "title_r": "R", "filter_status": "replication"}),
+            pd.Series({"doi_r": "10.9/r", "title_r": "R", "paper_type": "replication"}),
             dict(self._orig(1, "10.1000/a", "1, 2"), study_r="3"),
-            {"outcome": "success"}, "multiple_original", "high", 1,
+            {"outcome": "successful"}, "multiple_original", "high", 1,
         )
         assert row["study_o"] == "1, 2"
         assert row["study_r"] == "3"
@@ -2327,9 +2352,9 @@ class TestSamePaperStudiesCollapse:
         producer that sets a real number can fill it."""
         row = _merge_multi_row(
             pd.Series({"doi_r": "10.9/r", "title_r": "R", "study_r": "A Paper Title",
-                       "filter_status": "replication"}),
+                       "paper_type": "replication"}),
             self._orig(1, "10.1000/a", "1"),
-            {"outcome": "success"}, "single_original", "high", 1,
+            {"outcome": "successful"}, "single_original", "high", 1,
         )
         assert row["study_r"] == ""
 
@@ -2643,8 +2668,8 @@ class TestAdapterRowsSettleAfterTheDrops:
                    _mock_target("@b", "", "An unindexed original (reprint)", "Smith",
                                 2009, study_numbers="2",
                                 replication_study_numbers="2")]
-        outcomes = iter([dict(_MOCK_OUTCOME, outcome="success"),
-                         dict(_MOCK_OUTCOME, outcome="failure")])
+        outcomes = iter([dict(_MOCK_OUTCOME, outcome="successful"),
+                         dict(_MOCK_OUTCOME, outcome="failed")])
         with patch.object(run_extract, "run_for_doi", return_value=dict(
                 _MOCK_LINK, resolved=False, resolution_method="llm_multi_target",
                 resolved_doi_o="", resolved_title_o="", multi_target=True, n_targets=2,
@@ -2852,7 +2877,7 @@ class TestYearNormalisation:
             filter_row,
             {"doi": "10.2/orig", "title": "An original", "year": 2009.0,
              "confidence": "high", "rank": 1},
-            {"outcome": "success"}, "single_original", "high", 1,
+            {"outcome": "successful"}, "single_original", "high", 1,
         )
         assert row["year_r"] == "2018"
         assert row["year_o"] == "2009"
@@ -2936,7 +2961,7 @@ class TestCarriedOutcomeReachesTheRow:
         """The guard demotes a self-link to target_pending. A verdict coded against the
         original it just rejected must not survive onto the row."""
         target = _mock_target("@self", "10.1/rep", "The paper itself", "Smith", 2020,
-                              outcome_block={"outcome": "success",
+                              outcome_block={"outcome": "successful",
                                              "outcome_phrase": "it held"})
         rows, coder = self._run(self._link([target]))
         assert rows[0]["link_method"] == "target_pending"
@@ -3011,14 +3036,14 @@ class TestTargetCheckOnTheRow:
     def test_a_different_original_lowers_the_confidence_and_says_so(self):
         row = run_extract._apply_outcome(
             {"link_confidence": "high", "link_evidence": "citation context"},
-            {"outcome": "success", "target_check": "other_original"})
+            {"outcome": "successful", "target_check": "other_original"})
         assert row["link_confidence"] == "low"
         assert "different original" in row["link_evidence"]
 
     def test_agreement_changes_nothing(self):
         row = run_extract._apply_outcome(
             {"link_confidence": "high", "link_evidence": "citation context"},
-            {"outcome": "success", "target_check": "this_original"})
+            {"outcome": "successful", "target_check": "this_original"})
         assert row["link_confidence"] == "high"
         assert row["link_evidence"] == "citation context"
 

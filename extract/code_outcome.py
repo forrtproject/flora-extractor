@@ -44,17 +44,23 @@ from typing import Optional
 
 from shared.config import LLM_CACHE_DIR, OUTCOME_EFFORT, OUTCOME_MODEL, log
 from shared import token_counter
-from shared.cache import content_key, read_cache, write_cache
+from shared.cache import content_key, read_cache_migrating, write_cache
 from shared.llm_client import cache_model_id, call_model
 from shared.prompts import (
     build_outcome_prompt, build_repro_outcome_prompt, prompt_version,
 )
-from shared.schema import EMPTY_OUTCOME_AXES, normalise_outcome_block
+from shared.schema import (EMPTY_OUTCOME_AXES, canonical_outcome,
+                           normalise_outcome_block)
 from shared.token_usage import TokenBudgetExhausted
 
 # Truncation caps (chars) for the passages this call sends.
 _ABSTRACT_CAP = 3000
 _FULLTEXT_CAP = 8000
+
+# The two versions `build_outcome_prompt` hashed to either side of the FLoRA
+# outcome-label rename — the declared equivalence read at the cache key below.
+_OUTCOME_PRE_RENAME_VERSION = "88efc83ad293"
+_OUTCOME_RENAMED_VERSION    = "e9ef589b44d1"
 _INTRO_CAP    = 2000
 
 # ── Sentence splitter helpers ─────────────────────────────────────────────────
@@ -195,7 +201,7 @@ def _keyword_scan(text: str, source: str) -> Optional[dict]:
     """
     m = _failure_match(text)
     if m:
-        return {"outcome": "failure",
+        return {"outcome": "failed",
                 "outcome_phrase": _expand_to_sentences(text, m.start(), m.end()),
                 "outcome_confidence": "high", "out_quote_source": source}
     m = _MIXED.search(text)
@@ -205,17 +211,17 @@ def _keyword_scan(text: str, source: str) -> Optional[dict]:
                 "outcome_confidence": "medium", "out_quote_source": source}
     m = _SUCCESS.search(text)
     if m:
-        return {"outcome": "success",
+        return {"outcome": "successful",
                 "outcome_phrase": _expand_to_sentences(text, m.start(), m.end()),
                 "outcome_confidence": "high", "out_quote_source": source}
     m = _FAILURE_WEAK.search(text)
     if m:
-        return {"outcome": "failure",
+        return {"outcome": "failed",
                 "outcome_phrase": _expand_to_sentences(text, m.start(), m.end()),
                 "outcome_confidence": "medium", "out_quote_source": source}
     m = _DESCRIPTIVE.search(text)
     if m:
-        return {"outcome": "descriptive",
+        return {"outcome": "descriptive only",
                 "outcome_phrase": _expand_to_sentences(text, m.start(), m.end()),
                 "outcome_confidence": "medium", "out_quote_source": source}
     return None
@@ -311,15 +317,30 @@ def _outcome_result(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
     build = build_repro_outcome_prompt if is_repro else build_outcome_prompt
     version = prompt_version(
         "build_repro_outcome_prompt" if is_repro else "build_outcome_prompt")
-    key = content_key("outcome", doi_r, cache_model_id(OUTCOME_MODEL, OUTCOME_EFFORT),
-                      version, record_type,
-                      title_r, abstract_snip,
-                      original_authors, original_year, original_title,
-                      original_evidence, intro_snip, fulltext_provenance, text_snip)
-    cached = read_cache(LLM_CACHE_DIR, key)
+    parts = (record_type, title_r, abstract_snip,
+             original_authors, original_year, original_title,
+             original_evidence, intro_snip, fulltext_provenance, text_snip)
+    model_id = cache_model_id(OUTCOME_MODEL, OUTCOME_EFFORT)
+    key = content_key("outcome", doi_r, model_id, version, *parts)
+    # The FLoRA-label rename (OUTCOME_LABELS in shared/schema.py) changed how six
+    # categories are spelled and nothing else, so the answers filed under the previous
+    # version of this prompt are the answers this call would get today. Unlike the
+    # combined target+outcome key, this one does not hash the rendered prompt, so the
+    # frozen version is the whole equivalence. Pinned to the version the rename
+    # produced: a later edit to the prompt matches neither literal and pays.
+    legacy_keys = ([content_key("outcome", doi_r, model_id,
+                                _OUTCOME_PRE_RENAME_VERSION, *parts)]
+                   if version == _OUTCOME_RENAMED_VERSION else [])
+    cached = read_cache_migrating(LLM_CACHE_DIR, key, legacy_keys,
+                                  {"prompt_version": version,
+                                   "migration": "flora_outcome_labels"})
     if cached is not None:
         cached.setdefault("outcome_reasoning", "")
         cached.setdefault("target_check", "")
+        # A hit is a stored ROW, already normalised when it was written, so nothing
+        # re-runs the vocabulary check on it: an entry bought before the FLoRA rename
+        # says `failure` where the pipeline now says `failed`. Translated at the door.
+        cached["outcome"] = canonical_outcome(cached.get("outcome"))
         return cached, True
 
     token_counter.set_stage("extract_outcome")

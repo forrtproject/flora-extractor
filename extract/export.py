@@ -84,7 +84,7 @@ from shared.config import DATA_DIR, log
 from shared.flora_skip import (VALIDATED_SKIP_NAME, default_flora_skip_dois,
                                load_validated_skip)
 from shared.schema import (EXTRACTED_COLS, SET_ASIDE_DESTINATIONS, YEAR_COLS,
-                           set_aside_dir, year_str)
+                           canonical_outcome, set_aside_dir, year_str)
 from shared.utils import clean_doi
 
 DEFAULT_OUT = DATA_DIR / "extracted.csv"
@@ -200,7 +200,14 @@ def rows_from_results(results: dict[int, dict]) -> list[dict]:
 
 
 def _normalise(row: dict) -> dict:
-    """Every column present, no None, bare-integer years — the CSV's own conventions."""
+    """Every column present, no None, bare-integer years — the CSV's own conventions.
+
+    The outcome is translated here rather than left as the payload stored it: the
+    verdicts settled before the FLoRA outcome-label rename hold `success` where the
+    database's vocabulary says `successful`, and a stored verdict is not re-bought to
+    correct a spelling. `canonical_outcome` leaves everything else — the reproduction
+    joins, `pending`, `api_error` — as it came.
+    """
     out = {col: "" for col in EXTRACTED_COLS}
     for col, value in row.items():
         if col in out:
@@ -208,6 +215,7 @@ def _normalise(row: dict) -> dict:
     for col in YEAR_COLS:
         if col in out:
             out[col] = year_str(out[col])
+    out["outcome"] = canonical_outcome(out.get("outcome"))
     return out
 
 

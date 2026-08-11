@@ -43,8 +43,8 @@ def test_rule_exit_survives_llm_evidence_prepend():
 
 def test_outcome_split_by_type():
     df = pd.DataFrame([
-        {"type": "replication",  "outcome": "success",  "year_r": "2020"},
-        {"type": "replication",  "outcome": "failure",  "year_r": "2020"},
+        {"type": "replication",  "outcome": "successful",  "year_r": "2020"},
+        {"type": "replication",  "outcome": "failed",  "year_r": "2020"},
         {"type": "Reproduction", "outcome": "computationally successful, robust", "year_r": "2021"},
         {"type": "reproduction", "outcome": "cannot_be_determined", "year_r": ""},
     ])
@@ -52,7 +52,7 @@ def test_outcome_split_by_type():
 
     assert stats["by_type"] == {"replication": 2, "reproduction": 2}
     # Reproduction outcomes must not leak into the replication distribution.
-    assert stats["by_outcome_replication"] == {"success": 1, "failure": 1}
+    assert stats["by_outcome_replication"] == {"successful": 1, "failed": 1}
     assert stats["by_outcome_reproduction"] == {
         "computationally successful, robust": 1, "cannot_be_determined": 1,
     }
@@ -60,7 +60,7 @@ def test_outcome_split_by_type():
 
 
 def test_year_counts_drop_junk():
-    df = pd.DataFrame([{"year_r": y, "outcome": "success", "type": "replication"}
+    df = pd.DataFrame([{"year_r": y, "outcome": "successful", "type": "replication"}
                        for y in ["2020", "2020", "n/a", "", "20xx", "2019.0"]])
     # "2019.0" truncates to a valid 2019; the rest are dropped.
     assert _compute_extracted_stats(df)["by_year"] == {"2020": 2, "2019": 1}
@@ -83,16 +83,16 @@ def _analytics(rows, monkeypatch):
 def test_agreement_both_kept_and_both_changed(monkeypatch):
     rows = [
         # both humans keep the outcome
-        {"record_id": "a", "outcome": "success",
+        {"record_id": "a", "outcome": "successful",
          "validator_1": _judge(), "validator_2": _judge()},
         # both change it to the SAME replacement
-        {"record_id": "b", "outcome": "success",
+        {"record_id": "b", "outcome": "successful",
          "validator_1": _judge(out_c="incorrect", corrected_outcome="mixed"),
          "validator_2": _judge(out_c="incorrect", corrected_outcome="Mixed")},
         # both change it to DIFFERENT replacements
-        {"record_id": "c", "outcome": "success",
+        {"record_id": "c", "outcome": "successful",
          "validator_1": _judge(out_c="incorrect", corrected_outcome="mixed"),
-         "validator_2": _judge(out_c="incorrect", corrected_outcome="failure")},
+         "validator_2": _judge(out_c="incorrect", corrected_outcome="failed")},
     ]
     out = _analytics(rows, monkeypatch)["agreement"]["outcome"]
 
@@ -106,15 +106,15 @@ def test_agreement_both_kept_and_both_changed(monkeypatch):
 def test_agreement_split_vote_uses_llm_as_the_tiebreak_signal(monkeypatch):
     rows = [
         # v1 changed, v2 kept, LLM says incorrect → LLM sided with the changer
-        {"record_id": "a", "outcome": "success",
+        {"record_id": "a", "outcome": "successful",
          "validator_1": _judge(out_c="incorrect"), "validator_2": _judge(),
          "llm_validator": _judge(out_c="incorrect")},
         # v1 kept, v2 changed, LLM says correct → LLM sided with the keeper
-        {"record_id": "b", "outcome": "success",
+        {"record_id": "b", "outcome": "successful",
          "validator_1": _judge(), "validator_2": _judge(out_c="incorrect"),
          "llm_validator": _judge(out_c="correct")},
         # split with no LLM slot at all
-        {"record_id": "c", "outcome": "success",
+        {"record_id": "c", "outcome": "successful",
          "validator_1": _judge(out_c="incorrect"), "validator_2": _judge()},
     ]
     out = _analytics(rows, monkeypatch)["agreement"]["outcome"]
@@ -127,10 +127,10 @@ def test_agreement_split_vote_uses_llm_as_the_tiebreak_signal(monkeypatch):
 
 def test_agreement_ignores_records_missing_a_human_slot(monkeypatch):
     rows = [
-        {"record_id": "a", "outcome": "success", "validator_1": _judge()},
-        {"record_id": "b", "outcome": "success"},
+        {"record_id": "a", "outcome": "successful", "validator_1": _judge()},
+        {"record_id": "b", "outcome": "successful"},
         # a filled slot with no verdict on this field must not count either
-        {"record_id": "c", "outcome": "success",
+        {"record_id": "c", "outcome": "successful",
          "validator_1": _judge(out_c=None), "validator_2": _judge()},
     ]
     result = _analytics(rows, monkeypatch)
@@ -143,10 +143,10 @@ def test_agreement_ignores_records_missing_a_human_slot(monkeypatch):
 
 def test_final_vs_pipeline_counts_changes_per_field(monkeypatch):
     rows = [
-        {"record_id": "a", "type": "replication", "outcome": "success", "doi_o": "10.1/x",
+        {"record_id": "a", "type": "replication", "outcome": "successful", "doi_o": "10.1/x",
          "final_type": "replication", "final_outcome": "mixed", "final_doi_o": "10.1/X"},
-        {"record_id": "b", "type": "replication", "outcome": "success", "doi_o": "10.1/y",
-         "final_type": "reproduction", "final_outcome": "success"},
+        {"record_id": "b", "type": "replication", "outcome": "successful", "doi_o": "10.1/y",
+         "final_type": "reproduction", "final_outcome": "successful"},
     ]
     fvp = _analytics(rows, monkeypatch)["final_vs_pipeline"]
 
@@ -159,23 +159,23 @@ def test_final_vs_pipeline_counts_changes_per_field(monkeypatch):
 def test_resolution_tracks_what_the_reviewer_finally_did(monkeypatch):
     rows = [
         # split vote; reviewer kept the pipeline value → sided with the keeper
-        {"record_id": "a", "outcome": "success", "validation_status": "validated",
+        {"record_id": "a", "outcome": "successful", "validation_status": "validated",
          "validator_1": _judge(out_c="incorrect", corrected_outcome="mixed"),
-         "validator_2": _judge(), "final_outcome": "success"},
+         "validator_2": _judge(), "final_outcome": "successful"},
         # split vote; reviewer took the changer's replacement
-        {"record_id": "b", "outcome": "success", "validation_status": "validated",
+        {"record_id": "b", "outcome": "successful", "validation_status": "validated",
          "validator_1": _judge(out_c="incorrect", corrected_outcome="mixed"),
          "validator_2": _judge(), "final_outcome": "mixed"},
         # split vote; reviewer picked something neither proposed
-        {"record_id": "c", "outcome": "success", "validation_status": "validated",
+        {"record_id": "c", "outcome": "successful", "validation_status": "validated",
          "validator_1": _judge(out_c="incorrect", corrected_outcome="mixed"),
-         "validator_2": _judge(), "final_outcome": "failure"},
+         "validator_2": _judge(), "final_outcome": "failed"},
         # split vote, record rejected outright
-        {"record_id": "d", "outcome": "success", "validation_status": "rejected",
+        {"record_id": "d", "outcome": "successful", "validation_status": "rejected",
          "validator_1": _judge(out_c="incorrect", corrected_outcome="mixed"),
          "validator_2": _judge()},
         # split vote still awaiting the reviewer
-        {"record_id": "e", "outcome": "success", "validation_status": "consensus_reached",
+        {"record_id": "e", "outcome": "successful", "validation_status": "consensus_reached",
          "validator_1": _judge(out_c="incorrect", corrected_outcome="mixed"),
          "validator_2": _judge()},
     ]
@@ -189,9 +189,9 @@ def test_resolution_tracks_what_the_reviewer_finally_did(monkeypatch):
 
 
 def test_resolution_treats_not_validation_as_excluded(monkeypatch):
-    rows = [{"record_id": "a", "outcome": "success", "validation_status": "validated",
+    rows = [{"record_id": "a", "outcome": "successful", "validation_status": "validated",
              "validator_1": _judge(), "validator_2": _judge(),
-             "final_type": "not_validation", "final_outcome": "success"}]
+             "final_type": "not_validation", "final_outcome": "successful"}]
     res = _analytics(rows, monkeypatch)["agreement"]["outcome"]["resolution"]["both_kept"]
 
     assert res["excluded"] == 1

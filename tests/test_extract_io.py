@@ -46,8 +46,8 @@ def test_apply_outcome_blanks_the_axes_on_a_replication():
     as a reproduction verdict on a replication row."""
     row = _apply_outcome(
         {"type": "replication", "outcome_computation": "computational issues"},
-        {"outcome": "success", "outcome_confidence": "high"})
-    assert row["outcome"] == "success"
+        {"outcome": "successful", "outcome_confidence": "high"})
+    assert row["outcome"] == "successful"
     for col in run_extract._OUTCOME_AXIS_COLS:
         assert row[col] == "", col
 

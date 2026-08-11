@@ -24,7 +24,7 @@ def _clean_row(**overrides) -> dict:
         "link_method": "llm_cited_candidates",
         "link_confidence": "high",
         "doi_o_verification": "verified",
-        "outcome": "success",
+        "outcome": "successful",
         "outcome_phrase": "found strong support for it",
         "outcome_confidence": "high",
         "out_quote_source": "abstract",

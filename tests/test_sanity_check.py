@@ -27,20 +27,20 @@ def test_each_problem_row_is_flagged_for_its_bucket(tmp_path, monkeypatch):
     ex = tmp_path / "extracted.csv"
     _write(ex, [
         {"doi_r": "10.1/keep", "doi_o": "10.2/o", "year_r": "2020", "year_o": "2015",
-         "outcome": "failure", "doi_o_verification": "verified", "openalex_id_r": "W0",
+         "outcome": "failed", "doi_o_verification": "verified", "openalex_id_r": "W0",
          "link_method": "llm_cited_candidates", "pair_id": "p0"},
         {"doi_r": "10.1/cbd", "doi_o": "10.2/o2", "outcome": "cannot_be_determined",
          "doi_o_verification": "verified", "openalex_id_r": "W1", "link_method": "llm_cited_candidates"},
         {"doi_r": "10.1/nar", "outcome": "not_a_replication", "openalex_id_r": "W2"},
-        {"doi_r": "10.1/self", "doi_o": "10.1/self", "outcome": "success",
+        {"doi_r": "10.1/self", "doi_o": "10.1/self", "outcome": "successful",
          "doi_o_verification": "verified", "openalex_id_r": "W3", "link_method": "llm_cited_candidates"},
         # A mismatch is a doi_o that points at the wrong paper, so the row HAS one:
         # without it the row is malformed and demoted to target_pending instead.
-        {"doi_r": "10.1/mis", "doi_o": "10.2/o5", "outcome": "success",
+        {"doi_r": "10.1/mis", "doi_o": "10.2/o5", "outcome": "successful",
          "doi_o_verification": "mismatch", "openalex_id_r": "W4", "link_method": "llm_cited_candidates"},
         {"doi_r": "10.1/tp", "outcome": "cannot_be_determined",
          "link_method": "target_pending", "openalex_id_r": "W5"},
-        {"doi_r": "10.7287/peerj.2068v0.1/reviews/1", "doi_o": "10.2/o6", "outcome": "success",
+        {"doi_r": "10.7287/peerj.2068v0.1/reviews/1", "doi_o": "10.2/o6", "outcome": "successful",
          "doi_o_verification": "verified", "openalex_id_r": "W6", "link_method": "llm_cited_candidates"},
     ])
 
@@ -107,7 +107,7 @@ def test_deep_flags_non_study_work_types(tmp_path, monkeypatch):
              "10.1/study": "journal-article",
              "10.2/untyped": ""}
     monkeypatch.setattr(sc, "fetch_doi_metadata", lambda d: {"type": types.get(d, "")})
-    rows = [{"doi_r": d, "doi_o": "10.9/o", "outcome": "success",
+    rows = [{"doi_r": d, "doi_o": "10.9/o", "outcome": "successful",
              "doi_o_verification": "verified", "openalex_id_r": f"W{i}",
              "link_method": "llm_references"} for i, d in enumerate(types)]
 
@@ -178,7 +178,7 @@ def test_pooled_search_rows_belong_in_the_file(tmp_path, monkeypatch):
     monkeypatch.setattr(sc, "DATA_DIR", tmp_path)
     ex = tmp_path / "extracted.csv"
     _write(ex, [
-        {"doi_r": "10.1/keep", "doi_o": "10.2/landmark", "outcome": "failure",
+        {"doi_r": "10.1/keep", "doi_o": "10.2/landmark", "outcome": "failed",
          "doi_o_verification": "verified", "openalex_id_r": "W1",
          "link_method": "llm_title_search"},
         {"doi_r": "10.1/disp", "doi_o": "10.2/other", "outcome": "pending",
@@ -198,7 +198,7 @@ def test_a_malformed_row_is_reported_as_what_it_is(tmp_path, monkeypatch):
     as target_pending rather than as a resolved row."""
     monkeypatch.setattr(sc, "DATA_DIR", tmp_path)
     ex = tmp_path / "extracted.csv"
-    _write(ex, [{"doi_r": "10.1/bad", "doi_o": "", "outcome": "success",
+    _write(ex, [{"doi_r": "10.1/bad", "doi_o": "", "outcome": "successful",
                  "openalex_id_r": "W1", "link_method": "llm_fulltext"}])
     s = sc.run_sanity_check(ex, deep=False)
     assert s["flagged"]["target_pending"] == 1

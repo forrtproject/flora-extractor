@@ -89,15 +89,15 @@ def test_build_confusion_matrices_basic():
     rows = [
         # pipeline outcome vs final outcome
         {"validation_status": "validated", "type": "replication", "final_type": "replication",
-         "outcome": "success", "final_outcome": "success"},   # correct
+         "outcome": "successful", "final_outcome": "successful"},   # correct
         {"validation_status": "validated", "type": "replication", "final_type": "replication",
-         "outcome": "success", "final_outcome": "failure"},   # pipeline wrong: success->failure
+         "outcome": "successful", "final_outcome": "failed"},   # pipeline wrong: success->failure
         {"validation_status": "validated", "type": "replication", "final_type": "reproduction",
          "outcome": "mixed", "final_outcome": "mixed"},        # type wrong: repl->repro
         {"validation_status": "rejected", "type": "replication", "final_type": "replication",
-         "outcome": "success", "final_outcome": "success"},    # excluded (rejected)
+         "outcome": "successful", "final_outcome": "successful"},    # excluded (rejected)
         {"validation_status": "validated", "type": "replication", "final_type": "replication",
-         "outcome": "failure", "final_outcome": ""},           # not finalised on outcome
+         "outcome": "failed", "final_outcome": ""},           # not finalised on outcome
     ]
     m = sc.build_confusion_matrices(rows)
 
@@ -105,7 +105,7 @@ def test_build_confusion_matrices_basic():
     assert oc["n"] == 3          # 3 finalised, non-excluded outcome rows
     assert oc["correct"] == 2    # success/success + mixed/mixed
     assert oc["accuracy"] == round(2 / 3 * 100, 1)
-    i, j = oc["labels"].index("success"), oc["labels"].index("failure")
+    i, j = oc["labels"].index("successful"), oc["labels"].index("failed")
     assert oc["matrix"][i][j] == 1   # one success miscoded as failure
 
     tp = m["type"]
@@ -121,13 +121,13 @@ def test_build_confusion_matrices_label_order_and_extras():
          "outcome": "computationally successful, robust",
          "final_outcome": "computationally successful, robust"},
         {"validation_status": "validated", "type": "replication", "final_type": "replication",
-         "outcome": "failure", "final_outcome": "failure"},
+         "outcome": "failed", "final_outcome": "failed"},
     ]
     oc = sc.build_confusion_matrices(rows)["outcome"]
     # preferred labels come first in their canonical order; unknown repro-grid label appended
-    assert oc["labels"][0] == "failure"
+    assert oc["labels"][0] == "failed"
     assert "computationally successful, robust" in oc["labels"]
-    assert oc["labels"].index("failure") < oc["labels"].index("computationally successful, robust")
+    assert oc["labels"].index("failed") < oc["labels"].index("computationally successful, robust")
 
 
 def test_build_confusion_matrices_canonicalises_outcome_vocab():
@@ -136,18 +136,18 @@ def test_build_confusion_matrices_canonicalises_outcome_vocab():
     import shared.supabase_client as sc
     rows = [
         {"validation_status": "validated", "type": "replication", "final_type": "replication",
-         "outcome": "success", "final_outcome": "successful"},           # same, diff vocab
+         "outcome": "successful", "final_outcome": "successful"},           # same, diff vocab
         {"validation_status": "validated", "type": "replication", "final_type": "replication",
          "outcome": "uninformative", "final_outcome": "uninformative"},  # same
         {"validation_status": "validated", "type": "replication", "final_type": "replication",
-         "outcome": "success", "final_outcome": "failed"},               # genuine miscode
+         "outcome": "successful", "final_outcome": "failed"},               # genuine miscode
     ]
     oc = sc.build_confusion_matrices(rows)["outcome"]
     assert oc["n"] == 3
     assert oc["correct"] == 2, "success/successful is agreement; uninformative matches itself"
     # canonical labels only — no 'successful'/'failed' leak through
-    assert set(oc["labels"]) <= {"success", "failure", "uninformative"}
-    i, j = oc["labels"].index("success"), oc["labels"].index("failure")
+    assert set(oc["labels"]) <= {"successful", "failed", "uninformative"}
+    i, j = oc["labels"].index("successful"), oc["labels"].index("failed")
     assert oc["matrix"][i][j] == 1
 
 

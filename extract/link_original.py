@@ -425,9 +425,18 @@ OUTCOME_DESCENT = True
 # changes, not when the code moves: rung order or membership, the acceptance rule
 # (match_certain), may_stop_at_a_rule / _HELD_ONLY_METHODS, the PDF acquisition tier
 # order, best_parse_result's scoring, or assign_target_keys' namespace rule.
-# It is part of `extract_generation()`, so bumping it mints a new generation and
-# reopens every work at once — which is how a resolution change gets re-run without
-# --redo, and how the previous generation's verdict rows stay live and readable.
+# It is NOT part of `extract_generation()` (since 2026-08-10), so bumping it reopens
+# nothing by itself. Say which rows the bump reaches, as its entry's last line, in the
+# form that re-runs them:
+#
+#     reopen: --redo-status unidentified_original
+#
+# — because a bump reaches a population its author already knows (22 was measured over
+# the 105 unidentified-original rows), and reopening all 3,025 settled works to reach
+# 105 cost a campaign's wall clock. A status is any result verdict or any link_method;
+# `--redo-status resolved,provisional,not_a_replication,no_original_found,target_pending,api_error`
+# is the old everything-reopens behaviour, spelled out. The entries below predate the
+# convention and carry no line.
 #
 #   2  a named target that could not be identified writes target_pending rather than
 #      falling through to no_original_found (2026-08-07)
@@ -487,7 +496,19 @@ OUTCOME_DESCENT = True
 #  21  OSF requests carry the OSF_TOKEN when set: 20 of the no-document rows are
 #      api.osf.io nodes that answer 401 anonymously but list their files to the
 #      project's own token (2026-08-09)
-EXTRACT_LADDER_VERSION: int = 21
+#  22  Title matching normalises (NFKC, ligatures, line-break hyphens) and the
+#      pooled path accepts symmetric containment — registries store
+#      subtitle-stripped titles, so the hit can be a subset of the query;
+#      auto-accept paths keep the strict rule. authors_o takes the surname off
+#      "Surname, F." instead of the initial, queries are cleaned before search,
+#      and a recovered DOI must pass non_article_doi. Measured over the 105
+#      unidentified-original rows: 62 recovered on the pooled rule (2026-08-10)
+#  23  a single accepted link whose record has a title but no identifier goes through
+#      the pooled search too: `resolved` is True on a title alone, so those rows
+#      never reached the adjudicated search and settled unidentified_original. A
+#      per-target row also keeps the OpenAlex id its record carried when the title
+#      search finds none (2026-08-10)
+EXTRACT_LADDER_VERSION: int = 23
 
 
 # Columns to pass through from the input row (no renaming). Only columns

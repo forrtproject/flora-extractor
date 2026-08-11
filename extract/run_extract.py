@@ -874,8 +874,8 @@ def _best_fulltext_from_cache(cache_id: str) -> tuple[str, str, str]:
 # Verdicts that say something about the replication result. cannot_be_determined,
 # uninformative, descriptive and not_a_replication do not, so they never outvote a
 # study that reached a verdict when several studies are aggregated onto one row.
-_SUBSTANTIVE_OUTCOMES = {"success", "failure", "mixed",
-                         "statistically_successful_but_flawed"}
+_SUBSTANTIVE_OUTCOMES = {"successful", "failed", "mixed",
+                         "statistically successful but flawed"}
 
 
 def _aggregate_outcomes(outcomes: list[str]) -> str:
@@ -899,7 +899,7 @@ def _aggregate_outcomes(outcomes: list[str]) -> str:
         return "mixed"
     if substantive:
         return substantive[0]
-    for fallback in ("uninformative", "descriptive", "not_a_replication"):
+    for fallback in ("uninformative", "descriptive only", "not_a_replication"):
         if fallback in outcomes:
             return fallback
     return "cannot_be_determined"

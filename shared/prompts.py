@@ -9,10 +9,13 @@ is also the part of this pipeline most likely to change on the basis of a review
 its outputs, and a change to a prompt is a change to what the pipeline measures — it
 deserves its own diff, not one buried in a call site.
 
-Nothing here imports from the rest of the project, so it can be read (and diffed)
-without following any call chain. The builders take already-computed inputs and
-return a string; every decision about *what* to send stays with the caller, every
-decision about *how it is worded* lives here.
+The one thing here imported from the rest of the project is the replication outcome
+vocabulary (`OUTCOME_LABELS` in shared/schema.py): the labels a prompt asks for and
+the labels the CSV carries are one list, and keeping a second copy here is how they
+came apart. Everything else can be read (and diffed) without following any call chain.
+The builders take already-computed inputs and return a string; every decision about
+*what* to send stays with the caller, every decision about *how it is worded* lives
+here.
 
 Prompt IDs (L1, L2, …) match the screening-audit inventory.
 
@@ -29,6 +32,8 @@ import sys
 import textwrap
 from functools import lru_cache
 from types import FunctionType
+
+from .schema import OUTCOME_LABELS
 
 # ── The retired provider system message ──────────────────────────────────────
 # This text used to be sent as a system message with every call_openai() and
@@ -74,6 +79,40 @@ EVIDENCE_POLICY = (
     "on the supplied evidence. When the evidence does not determine a category, return "
     "the specified uncertainty value rather than inferring or guessing.\n\n"
 )
+
+# ── The replication outcome vocabulary, in two renderings ────────────────────
+# Every fragment that names an outcome category writes it as a «slot» marker and is
+# rendered twice at import: once in the vocabulary FLoRA's database stores
+# (OUTCOME_LABELS, from shared/schema.py) and once in the vocabulary this pipeline
+# used before that was corrected. Only the first is ever SENT. The second exists so a
+# call site can rebuild, byte for byte, the prompt an entry already on disk was bought
+# under — the cache key hashes the rendered text, so the legacy rendering IS the
+# legacy key. See "Editing a prompt without invalidating its cache" in CLAUDE.md.
+#
+# The markers are what make this safe: "failed" and "successful" also occur in these
+# prompts as ordinary English ("a manipulation check that failed", "whatever other
+# checks succeeded"), and a search-and-replace over the rendered text would rewrite
+# those too. A marker is only where a CATEGORY is named.
+_LEGACY_OUTCOME_LABELS = {
+    **OUTCOME_LABELS,
+    "success":     "success",
+    "failure":     "failure",
+    "descriptive": "descriptive",
+    "flawed":      "statistically_successful_but_flawed",
+}
+
+_VOCAB_MARKER = re.compile(r"«(\w+)»")
+
+
+def _vocab(template: str, labels: dict[str, str]) -> str:
+    """*template*'s «slot» markers replaced by *labels*' category names.
+
+    Raises KeyError on a marker no vocabulary defines: a prompt asking the model for a
+    category that is not in the enum would have its answers coerced to
+    cannot_be_determined, one row at a time, with nothing on the row to say why.
+    """
+    return _VOCAB_MARKER.sub(lambda m: labels[m.group(1)], template)
+
 
 # ── L3 / L5 / L6 — target identification AND outcome coding, in one call ──────
 # ONE prompt per vocabulary serves all three LLM rungs of the resolution ladder. The
@@ -184,12 +223,12 @@ Every target object carries the identification fields "key", "match_certain",
 and the outcome fields below. Code an outcome for EVERY target, including one whose
 key is null: the two judgments are made separately."""
 
-_TARGET_OUTCOME_FIELDS = """
+_TARGET_OUTCOME_FIELDS_SRC = """
 
 Outcome fields on each target object:
 
-- "outcome": one of "success", "failure", "mixed", "descriptive",
-  "statistically_successful_but_flawed", "uninformative", "cannot_be_determined" —
+- "outcome": one of "«success»", "«failure»", "«mixed»", "«descriptive»",
+  "«flawed»", "«uninformative»", "«cannot_be_determined»" —
   what this paper concludes about THIS original, from the categories below.
 - "outcome_phrase": the verbatim passage that proves that verdict, or "". Quote 1-4
   complete consecutive sentences: the shortest passage that makes the verdict
@@ -204,11 +243,14 @@ Outcome fields on each target object:
   alternative.{record_type_check_field}
 
 A matched target looks like this:
-{"key": "@smith2009", "match_certain": true, "target_as_named": "Smith & Jones (2009), Study 2", "study_numbers": "2", "replication_study_numbers": "1", "evidence_quote": "we conducted a direct replication of Smith and Jones (2009, Study 2)", "outcome": "failure", "outcome_phrase": "The original effect did not emerge in either of our samples.", "out_quote_source": "abstract", "outcome_confident": true, "outcome_reasoning": "The authors report the target effect as absent rather than reduced."}
+{"key": "@smith2009", "match_certain": true, "target_as_named": "Smith & Jones (2009), Study 2", "study_numbers": "2", "replication_study_numbers": "1", "evidence_quote": "we conducted a direct replication of Smith and Jones (2009, Study 2)", "outcome": "«failure»", "outcome_phrase": "The original effect did not emerge in either of our samples.", "out_quote_source": "abstract", "outcome_confident": true, "outcome_reasoning": "The authors report the target effect as absent rather than reduced."}
 
 A target you can see but cannot match to a listed record looks like this — note that
 key is the JSON value null, not the text "null", and that it is coded all the same:
 {"key": null, "match_certain": false, "target_as_named": "Ramirez (2014), the delay-discounting result", "study_numbers": "", "replication_study_numbers": "", "evidence_quote": "we re-analysed the delay-discounting data reported by Ramirez (2014)", "outcome": "cannot_be_determined", "outcome_phrase": "", "out_quote_source": "", "outcome_confident": false, "outcome_reasoning": "The evidence supplied never says how the re-analysis came out."}"""
+
+_TARGET_OUTCOME_FIELDS        = _vocab(_TARGET_OUTCOME_FIELDS_SRC, OUTCOME_LABELS)
+_TARGET_OUTCOME_FIELDS_LEGACY = _vocab(_TARGET_OUTCOME_FIELDS_SRC, _LEGACY_OUTCOME_LABELS)
 
 _REPRO_TARGET_OUTCOME_FIELDS = """
 
@@ -373,7 +415,8 @@ def build_target_outcome_prompt(study_r:      str,
                                 intro:        str = "",
                                 methods:      str = "",
                                 discussion:   str = "",
-                                discussion_provenance: str = "") -> str:
+                                discussion_provenance: str = "",
+                                legacy_vocabulary: bool = False) -> str:
     """Targets and their replication outcomes, one prompt for all three LLM rungs.
 
     entries come from shared.target_keys.assign_target_keys — the keys shown here are
@@ -382,11 +425,18 @@ def build_target_outcome_prompt(study_r:      str,
     Supplying *discussion* is what makes the outcome answerable and is the only thing
     that adds record_type_check: it is a judgment about the methods, and a rung that
     has read no closing sections has not seen them.
+
+    *legacy_vocabulary* renders the pre-rename outcome labels instead of FLoRA's.
+    Nothing sends that rendering: it exists so a caller can rebuild the prompt an
+    entry already on disk was bought under, and the cache key hashes the rendered
+    text. See the declared equivalence in shared/llm_client.py.
     """
     rtc = _TARGET_RTC_FIELD if discussion else ""
+    fields = _TARGET_OUTCOME_FIELDS_LEGACY if legacy_vocabulary else _TARGET_OUTCOME_FIELDS
+    rules  = _OUTCOME_RULES_LEGACY if legacy_vocabulary else _OUTCOME_RULES
     return (EVIDENCE_POLICY + _TARGET_TASK + "\n\n" + _TARGET_RESPONSE_HEAD
-            + _fill(_TARGET_OUTCOME_FIELDS, {"record_type_check_field": rtc})
-            + "\n\n" + _OUTCOME_RULES + "\n\nPAPER\n\n"
+            + _fill(fields, {"record_type_check_field": rtc})
+            + "\n\n" + rules + "\n\nPAPER\n\n"
             + "\n\n".join(_paper_blocks(study_r, abstract_r, entries, pdf_abstract,
                                         intro, methods, discussion,
                                         discussion_provenance))
@@ -603,7 +653,7 @@ _EVIDENCE_ABSTRACT = ("You have the paper's title and abstract, and the original
 _EVIDENCE_FULLTEXT = ("You have the paper's title and abstract, the original study it "
                       "has been linked to, and\npassages of the paper's own text.")
 
-_OUTCOME_TEMPLATE = """You are coding the outcome of a replication study for a database of replication studies.
+_OUTCOME_TEMPLATE_SRC = """You are coding the outcome of a replication study for a database of replication studies.
 
 {evidence_line}
 
@@ -614,8 +664,8 @@ object, but add no prose, commentary, markdown, or code fences outside it.
 
 Return exactly {field_count} fields:
 
-- "outcome": one of "success", "failure", "mixed", "descriptive",
-  "statistically_successful_but_flawed", "uninformative", "cannot_be_determined"
+- "outcome": one of "«success»", "«failure»", "«mixed»", "«descriptive»",
+  "«flawed»", "«uninformative»", "«cannot_be_determined»"
 - "outcome_phrase": the verbatim passage that proves the outcome, or ""
 - "out_quote_source": where that passage was copied from
 - "confident": true or false
@@ -659,78 +709,84 @@ ABSTRACT: {abstract_r}
 
 {intro_block}{fulltext_block}Respond with the JSON object only."""
 
+_OUTCOME_TEMPLATE        = _vocab(_OUTCOME_TEMPLATE_SRC, OUTCOME_LABELS)
+_OUTCOME_TEMPLATE_LEGACY = _vocab(_OUTCOME_TEMPLATE_SRC, _LEGACY_OUTCOME_LABELS)
+
 # Categories, coding rules and examples — the replication vocabulary itself, spliced by
 # both the standalone coder above and the combined target+outcome prompt. Split out so
 # the two ask the same question in the same words: they were written apart once, and
 # the definition of "mixed" drifted between them.
-_OUTCOME_RULES = """WHEN YOU CANNOT TELL
+_OUTCOME_RULES_SRC = """WHEN YOU CANNOT TELL
 
-Answer "cannot_be_determined" when the evidence in front of you does not state the outcome.
+Answer "«cannot_be_determined»" when the evidence in front of you does not state the outcome.
 Do not guess an outcome the evidence does not support, and do not withhold one it does state
 (or strongly imply, with a citable sentence that shows this).
 
 OUTCOME CATEGORIES
 
-- "success" — the authors conclude the original finding was confirmed, replicated or
-  supported. A finding the authors treat as supported is success even when the effect is
-  smaller or weaker than the original: effect size alone does not make it mixed.
-- "failure" — the authors conclude the original finding was not supported, was contradicted,
+- "«success»" — the authors conclude the original finding was confirmed, replicated or
+  supported. A finding the authors treat as supported is «success» even when the effect is
+  smaller or weaker than the original: effect size alone does not make it «mixed».
+- "«failure»" — the authors conclude the original finding was not supported, was contradicted,
   or failed to replicate.
-- "mixed" — the authors themselves present their evidence as partly supporting and partly not,
-  for example when some of several tested findings replicated and others did not. Use mixed
+- "«mixed»" — the authors themselves present their evidence as partly supporting and partly not,
+  for example when some of several tested findings replicated and others did not. Use «mixed»
   only when the paper frames its own result that way; do not infer it from a reduced effect
   size, or because you would have judged the evidence differently. If this paper re-tests
   several studies from the original this verdict is about and they came out differently,
-  that is mixed.
-- "descriptive" — the authors describe their study as a replication and reuse the original's
+  that is «mixed».
+- "«descriptive»" — the authors describe their study as a replication and reuse the original's
   methods in a new context or population, but never compare their results against the original
   finding. If the paper does compare its results to the original's — even in a new population —
   code another outcome instead.
-- "statistically_successful_but_flawed" — the authors obtained the original effect but argue
+- "«flawed»" — the authors obtained the original effect but argue
   that their own or the original's method does not validly test the hypothesis, for example
   "we replicated the effect using the original materials, but show that they are not a valid
   test of the claim". Use this only when that critique is the paper's main message; a
-  replication that merely notes minor limitations is success.
-- "uninformative" — the authors themselves state that a defect or limitation of this attempt
+  replication that merely notes minor limitations is «success».
+- "«uninformative»" — the authors themselves state that a defect or limitation of this attempt
   prevents it from providing a meaningful test of the original claim: it was underpowered, or
   the design failed. Their substantive verdict is that this particular attempt can support
-  neither confirmation nor contradiction. Do not use uninformative merely because an estimate
-  is imprecise, nonsignificant, mixed, or described cautiously.
-- "cannot_be_determined" — we cannot tell from the evidence supplied. The paper may well state
+  neither confirmation nor contradiction. Do not use «uninformative» merely because an estimate
+  is imprecise, nonsignificant, «mixed», or described cautiously.
+- "«cannot_be_determined»" — we cannot tell from the evidence supplied. The paper may well state
   an outcome somewhere we were not shown. Use this for missing evidence on our side, never for
-  a paper that reports its own attempt as incapable of adjudicating: that is uninformative.
+  a paper that reports its own attempt as incapable of adjudicating: that is «uninformative».
 
-Remember: "uninformative" is the authors' verdict about their study; "cannot_be_determined" is
+Remember: "«uninformative»" is the authors' verdict about their study; "«cannot_be_determined»" is
 our verdict about our evidence.
 
 CODING RULES
 
 - A manipulation check or preliminary test that failed, so that the hypothesis could not be
-  tested, is "failure" — not "uninformative" and not "cannot_be_determined". A manipulation
-  check that succeeded followed by a failed main test is also "failure".
+  tested, is "«failure»" — not "«uninformative»" and not "«cannot_be_determined»". A manipulation
+  check that succeeded followed by a failed main test is also "«failure»".
 - If the paper's title focuses on one specific effect and that effect did not replicate, code
-  "failure", whatever other checks succeeded.
-- A close replication that works alongside a conceptual replication that does not is "mixed".
+  "«failure»", whatever other checks succeeded.
+- A close replication that works alongside a conceptual replication that does not is "«mixed»".
 - Code the central finding the replication was designed to test. Robustness checks and
   exploratory analyses around it may be left out of the verdict.
 - Where this paper reports several of its own studies against the original this verdict is
   about, aggregate them into one verdict, following the authors' own judgment where they
-  state one; results that conflict with each other are "mixed".
+  state one; results that conflict with each other are "«mixed»".
 
 Examples:
 
 1. "Study x used method A to study reasons for 911 calls in city 1. Here, we replicate this
-   method to understand 911 calls in city 2." — descriptive: the methods are reused, the
+   method to understand 911 calls in city 2." — «descriptive»: the methods are reused, the
    original claim is never tested.
-2. "We replicated the main effect but not the interaction." — mixed.
-3. "Our findings confirm Smith et al. (2015)." — success.
+2. "We replicated the main effect but not the interaction." — «mixed».
+3. "Our findings confirm Smith et al. (2015)." — «success».
 4. "Our sample was too small to provide a meaningful test of the original effect." —
-   uninformative: this is the authors' own verdict.
+   «uninformative»: this is the authors' own verdict.
 5. "We obtained the original effect, but demonstrate that it can be explained by mere
-   regression to the mean." — statistically_successful_but_flawed.
+   regression to the mean." — «flawed».
 
 Judge the outcome of this paper's own replication, not outcomes it reports for other studies
 in its background or literature review."""
+
+_OUTCOME_RULES        = _vocab(_OUTCOME_RULES_SRC, OUTCOME_LABELS)
+_OUTCOME_RULES_LEGACY = _vocab(_OUTCOME_RULES_SRC, _LEGACY_OUTCOME_LABELS)
 
 # The two checks the model can only answer once it holds some of the paper's own text.
 # They are asked together because they are the same reading: what this paper actually

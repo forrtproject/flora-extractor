@@ -286,18 +286,25 @@ where a row sits in the pipeline.
 
 | Value | Meaning |
 | ----- | ------- |
-| `success` | Replication confirmed the original finding |
-| `failure` | Replication failed to find the original effect |
+| `successful` | Replication confirmed the original finding |
+| `failed` | Replication failed to find the original effect |
 | `mixed` | Some aspects replicated, others did not |
-| `descriptive` | Adapted methods in a new context, does not test original claim |
-| `statistically_successful_but_flawed` | The original effect was obtained, but the paper's main message is that the method does not validly test the claim |
+| `descriptive only` | Adapted methods in a new context, does not test original claim |
+| `statistically successful but flawed` | The original effect was obtained, but the paper's main message is that the method does not validly test the claim |
 | `uninformative` | The **authors themselves** report that their attempt cannot speak to the original — underpowered, design failure, evidence neither confirming nor contradicting |
 | `cannot_be_determined` | **We** could not reach a verdict from the text available to the pipeline. Not the same as `uninformative`: that is the paper's conclusion, this is our extraction falling short |
 | `not_a_replication` | Text does not describe a genuine attempt to replicate/reproduce the named original (unrelated, biological/technical, or metaphorical use of "replicate"/"reproduce") |
 | `pending` | Outcome not coded (pipeline-state marker). Written for every row whose `link_method` is not in `RESOLVED_LINK_METHODS` — there is no confirmed original to code an outcome against, so the outcome LLM never runs (`outcome_reasoning` says which method it was) |
 | `api_error` | Extraction failed after retries (pipeline-state marker) |
 
-> `uninformative` and `statistically_successful_but_flawed` are FLoRA codebook
+> The six substantive values are the strings FLoRA's own database stores, read off
+> `data/flora.csv`. Four of them were spelled differently here until 2026-08-10 —
+> `success`, `failure`, `descriptive`, `statistically_successful_but_flawed` — and
+> `OUTCOME_LEGACY_MAP` in `shared/schema.py` translates the verdicts and cached LLM
+> answers bought under those spellings. The rename moved no LLM cache and reopened no
+> settled work: see "Editing a prompt without invalidating its cache" in CLAUDE.md.
+
+> `uninformative` and `statistically successful but flawed` are FLoRA codebook
 > categories that the pipeline could not emit until the rule-alignment pass.
 > `uninformative` had been retired into `OUTCOME_LEGACY_VALUES` and folded into
 > `cannot_be_determined`, which merged a property of the paper with a limit of our
