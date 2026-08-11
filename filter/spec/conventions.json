@@ -3,25 +3,25 @@
   "piles": {
     "discard": {
       "exported": true,
-      "filter_status": "false_positive",
+      "paper_type": "false_positive",
       "filter_confidence": "high",
       "vocabulary_names_status": false
     },
     "screen_expensive": {
       "exported": true,
-      "filter_status": "needs_review",
+      "paper_type": "needs_review",
       "filter_confidence": "high",
       "vocabulary_names_status": true
     },
     "screen_cheap": {
       "exported": true,
-      "filter_status": "needs_review",
+      "paper_type": "needs_review",
       "filter_confidence": "medium",
       "vocabulary_names_status": true
     },
     "needs_human": {
       "exported": true,
-      "filter_status": "needs_review",
+      "paper_type": "needs_review",
       "filter_confidence": "low",
       "vocabulary_names_status": false
     },

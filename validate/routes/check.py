@@ -26,7 +26,7 @@ _STAGES = {
 
 # Which column holds the "type/status" filter for each stage
 _TYPE_COL = {
-    "filtered":       "filter_status",
+    "filtered":       "paper_type",
     "extracted":      "type",
     "extracted-test": "type",
 }

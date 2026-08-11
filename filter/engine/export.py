@@ -204,12 +204,12 @@ def _export_row(record: dict, routed: dict, policy: dict, prefix: str,
     from search.snapshot_scan import _row_from_snapshot  # avoids a Stage 1 import cycle
 
     row = _row_from_snapshot(record, abstract=record.get("abstract_text"))
-    status = policy["filter_status"]
+    status = policy["paper_type"]
     if policy.get("vocabulary_names_status") and vocabulary:
         status = vocabulary
     evidence = routed.get("evidence") or ""
     row.update({
-        "filter_status": status,
+        "paper_type": status,
         "filter_method": prefix + release_id[:12],
         "filter_evidence": f"rule:{routed['rule_id']}"
                            + (f"; {evidence}" if evidence else ""),

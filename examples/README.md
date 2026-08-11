@@ -106,7 +106,7 @@ YEAR_FROM=2023 YEAR_TO=2023 MAX_PER_SOURCE=50 \
 ## Where to look next
 
 - `docs/filter-engine.md` — Stage 2's design and module contracts.
-- `filter/spec/CONVENTIONS.md` — precedence bands, pile → `filter_status` mapping.
+- `filter/spec/CONVENTIONS.md` — precedence bands, pile → `paper_type` mapping.
 - `docs/cli-reference.md` — every command and flag, all four stages.
 - `docs/csv-schema.md` — the column contract between stages.
 - `search/spec/search-keywords.yaml` — the Stage 1 keyword spec the demos read.

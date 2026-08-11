@@ -53,7 +53,7 @@ _SINGLE = {
     "journal_r": "Research on professional responsibility and ethics in accounting",
     "openalex_id_r": "https://openalex.org/W4396880944", "source": "openalex",
     "ref_r": "Bailey · 2024 · Research on professional responsibility",
-    "filter_status": "replication", "filter_method": "rule_based",
+    "paper_type": "replication", "filter_method": "rule_based",
     "filter_evidence": "phrase:replication and extension", "filter_confidence": "high",
     "original_match_type": "single_original", "original_match_confidence": "low",
     "oa_work_id_r": "W4396880944", "oa_work_id_o": "W2144439281",
@@ -80,7 +80,7 @@ _MULTI_A = {
     "abstract_r": "We re-test two earlier findings.", "year_r": "2010",
     "authors_r": "A. Author", "journal_r": "J. Neuropsych",
     "openalex_id_r": "https://openalex.org/W2000000001", "source": "openalex",
-    "filter_status": "replication", "filter_method": "screen",
+    "paper_type": "replication", "filter_method": "screen",
     "filter_confidence": "high",
     "screen_categories": "direct_replication|multi_study",
     "original_match_type": "multiple_original", "original_match_confidence": "high",
@@ -110,7 +110,7 @@ _PENDING = {
     "doi_r": "10.1000/pending", "title_r": "A paper whose target was never found",
     "abstract_r": "Some abstract.", "year_r": "2022", "source": "openalex",
     "openalex_id_r": "https://openalex.org/W3000000003",
-    "filter_status": "replication", "filter_method": "screen",
+    "paper_type": "replication", "filter_method": "screen",
     "filter_confidence": "medium",
     "original_match_type": "single_original", "original_match_confidence": "low",
     "oa_work_id_r": "W3000000003",
@@ -124,7 +124,7 @@ _API_ERROR = {
     "doi_r": "10.1000/broke", "title_r": "A paper the provider fell over on",
     "abstract_r": "Some abstract.", "year_r": "2023", "source": "openalex",
     "openalex_id_r": "https://openalex.org/W4000000004",
-    "filter_status": "replication", "filter_method": "screen",
+    "paper_type": "replication", "filter_method": "screen",
     "filter_confidence": "high",
     "original_match_type": "single_original", "original_match_confidence": "low",
     "oa_work_id_r": "W4000000004",
@@ -144,7 +144,7 @@ def _row(partial: dict) -> dict:
 def _input_row(row: dict) -> dict:
     """The handoff row the judge would have read for *row*.
 
-    Every FILTERED_COLS + SCREEN_COLS value the CSV row carries. `filter_status` and
+    Every FILTERED_COLS + SCREEN_COLS value the CSV row carries. `paper_type` and
     `filter_method` are deliberately given their PRE-screen values where the row shows
     the screen retyped them, so the fixture exercises the case where a target entry
     has to carry a changed FILTERED_COLS value rather than inherit it.
@@ -152,7 +152,7 @@ def _input_row(row: dict) -> dict:
     source = {col: row.get(col, "") for col in FILTERED_COLS}
     source.update({col: "" for col in SCREEN_COLS if col not in source})
     if row.get("filter_method") == "screen":
-        source["filter_status"] = "needs_review"
+        source["paper_type"] = "needs_review"
         source["filter_method"] = "engine:abc123def456"
         source["screen_verdict"] = "proceed"
         source["screen_record_type"] = row.get("type", "")
@@ -225,8 +225,8 @@ def test_the_input_snapshot_is_not_duplicated_onto_every_target():
         assert "authors_r" not in target
     # …but a FILTERED_COLS value the row CHANGED is on the target, or the screen's
     # retyping would be lost.
-    assert all(t["filter_status"] == "replication" for t in payload["targets"])
-    assert payload["input"]["filter_status"] == "needs_review"
+    assert all(t["paper_type"] == "replication" for t in payload["targets"])
+    assert payload["input"]["paper_type"] == "needs_review"
 
 
 def test_rendering_needs_nothing_but_the_payload(monkeypatch):

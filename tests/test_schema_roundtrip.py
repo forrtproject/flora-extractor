@@ -72,10 +72,10 @@ def test_each_stage_extends_the_previous_one():
 _VALUE_SETS = [
     ("sample_candidates.csv", "source", SOURCE_VALUES),
     ("sample_filtered.csv", "source", SOURCE_VALUES),
-    ("sample_filtered.csv", "filter_status", FILTER_STATUS_VALUES),
+    ("sample_filtered.csv", "paper_type", FILTER_STATUS_VALUES),
     ("sample_filtered.csv", "filter_confidence", FILTER_CONFIDENCE_VALUES),
     ("sample_extracted.csv", "source", SOURCE_VALUES),
-    ("sample_extracted.csv", "filter_status", FILTER_STATUS_VALUES),
+    ("sample_extracted.csv", "paper_type", FILTER_STATUS_VALUES),
     ("sample_extracted.csv", "filter_confidence", FILTER_CONFIDENCE_VALUES),
     ("sample_extracted.csv", "original_match_type", ORIGINAL_MATCH_TYPE_VALUES),
     ("sample_extracted.csv", "doi_o_verification", DOI_VERIFICATION_VALUES),

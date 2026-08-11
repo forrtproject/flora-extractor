@@ -58,7 +58,7 @@ def _stats_json_to_api(sj: dict, source: str = "stats_json") -> dict:
     e  = sj.get("extracted")      or {}
     et = sj.get("extracted_test") or {}
 
-    by_status = f.get("by_filter_status", {})
+    by_status = f.get("by_paper_type", {})
     by_method = e.get("by_link_method",   {})
     by_model  = e.get("by_model",         {})
     by_outcome= e.get("by_outcome",       {})
@@ -231,11 +231,11 @@ _SET_ASIDE_COPY: dict[str, dict] = {
                "than a flagged one, so these are held back rather than guessed.",
         "action": "Resolve the original by hand, or confirm no original exists.",
     },
-    "fabricated_original_doi.csv": {
-        "title": "Fabricated Original DOI",
+    "unregistered_original_doi.csv": {
+        "title": "Unregistered Original DOI",
         "why": "doi_o looked like a registered DOI (plausible publisher prefix) but resolves "
-               "nowhere — doi.org 404, absent from CrossRef and OpenAlex. Almost always an LLM "
-               "hallucination or AI-generated upload citing a non-existent original.",
+               "nowhere — doi.org 404, absent from CrossRef and OpenAlex. Either the original "
+               "was cited with a DOI that was never registered, or the record is wrong.",
         "action": "Discard, or re-resolve the true original by hand if the replication is genuine.",
     },
     "unresolved_self_links.csv": {
@@ -264,14 +264,6 @@ _OTHER_SETS: dict[str, dict] = {
                "These rows STAY in extracted.csv; this file is a view of them, not a set-aside "
                "the pipeline files rows into.",
         "action": "Recover the full text, then re-run the work: extract.tier --redo.",
-    },
-    "reproductions": {
-        "title": "Reproductions (legacy set)",
-        "file": "reproductions.csv",
-        "why": "Hand-curated reproduction records carried over from earlier FLoRA work. Uses the "
-               "FLoRA entry-sheet column layout, not the extracted.csv schema.",
-        "action": "Merge into the main pipeline output once schemas are reconciled.",
-        "encoding": "cp1252",
     },
     "pre_validation_audit": {
         "title": "Pre-Validation Audit",
@@ -335,7 +327,7 @@ def _read_set(key: str) -> "pd.DataFrame | None":
                          dtype=str, on_bad_lines="skip").fillna("")
     except Exception:
         return None
-    # Hand-maintained CSVs (reproductions.csv) carry hundreds of trailing commas,
+    # Hand-maintained CSVs carry hundreds of trailing commas,
     # which pandas turns into empty "Unnamed: N" columns. Named columns are kept
     # even when empty — a blank field is information; a phantom column is not.
     keep = [c for c in df.columns

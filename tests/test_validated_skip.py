@@ -45,26 +45,26 @@ class TestShouldSkipValidated:
     def test_a_work_id_match_skips_the_row(self):
         """The handoff writes the URL form; the skip file holds the int64."""
         row = {"doi_r": "10.9/unseen", "openalex_id_r": "https://openalex.org/W11",
-               "filter_status": "replication"}
+               "paper_type": "replication"}
         assert _should_skip(row, "10.9/unseen", ({11}, set())) == "validated"
 
     def test_a_doi_only_record_still_blocks_the_row(self):
         """31 legacy records carry no work id; most still have a DOI, and that DOI
         is enough — a row with no OpenAlex id must not slip past on that account."""
-        row = {"doi_r": "10.1/a", "openalex_id_r": "", "filter_status": "replication"}
+        row = {"doi_r": "10.1/a", "openalex_id_r": "", "paper_type": "replication"}
         assert _should_skip(row, "10.1/a", (set(), {"10.1/a"})) == "validated"
 
     def test_a_record_identifying_nothing_blocks_nothing(self):
         """An empty skip list must not swallow rows whose own ids are also empty."""
-        row = {"doi_r": "", "openalex_id_r": "", "filter_status": "replication"}
+        row = {"doi_r": "", "openalex_id_r": "", "paper_type": "replication"}
         assert _should_skip(row, "", (set(), set())) is None
         blank = {"doi_r": "10.5/x", "openalex_id_r": "not-an-id",
-                 "filter_status": "replication"}
+                 "paper_type": "replication"}
         assert _should_skip(blank, "10.5/x", (set(), set())) is None
 
     def test_an_unrelated_row_is_processed(self):
         row = {"doi_r": "10.9/new", "openalex_id_r": "https://openalex.org/W99",
-               "filter_status": "replication"}
+               "paper_type": "replication"}
         assert _should_skip(row, "10.9/new", ({11}, {"10.1/a"})) is None
 
 

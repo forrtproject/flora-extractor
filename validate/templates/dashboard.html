@@ -804,7 +804,7 @@ python -m search.pool_sync --push</pre>
 
         <div class="docs-card">
           <div class="docs-card-head">No LLM in Stage 2</div>
-          <p>Stage 2 used to escalate <code>needs_review</code> rows to an LLM. That step is retired: a second, weaker verdict here only pre-empted Stage 3's validated front-door screen. <code>needs_review</code> rows now flow straight to Stage 3, and when the screen passes one, <code>run_extract</code> overwrites <code>filter_status</code> with the screen's paper type and sets <code>filter_method</code> to <code>screen</code>.</p>
+          <p>Stage 2 used to escalate <code>needs_review</code> rows to an LLM. That step is retired: a second, weaker verdict here only pre-empted Stage 3's validated front-door screen. <code>needs_review</code> rows now flow straight to Stage 3, and when the screen passes one, <code>run_extract</code> overwrites <code>paper_type</code> with the screen's paper type and sets <code>filter_method</code> to <code>screen</code>.</p>
           <p style="margin-top:8px">The values <code>llm</code> and <code>both</code> in <code>filter_method</code> are historical — rows written before the swap still carry them.</p>
         </div>
 
@@ -844,7 +844,7 @@ python -m filter.engine handoff --out data/filtered.csv        # → Stage 3's i
               <tr><td class="col-name">source</td><td class="col-desc">Discovery source</td><td class="col-desc">openalex_snapshot</td></tr>
               <tr><td class="col-name">ref_r</td><td class="col-desc">Formatted reference string</td><td class="col-desc">Open Science Collaboration (2015). Science.</td></tr>
               <tr style="background:var(--surface-2)"><td colspan="3" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">Added by Stage 2</td></tr>
-              <tr><td class="col-name">filter_status</td><td class="col-desc">Classification result</td><td class="col-desc">replication | reproduction | false_positive | needs_review</td></tr>
+              <tr><td class="col-name">paper_type</td><td class="col-desc">Classification result</td><td class="col-desc">replication | reproduction | false_positive | needs_review</td></tr>
               <tr><td class="col-name">filter_method</td><td class="col-desc">Which classifier decided</td><td class="col-desc">rule_based | screen (llm, both = historical)</td></tr>
               <tr><td class="col-name">filter_evidence</td><td class="col-desc">Phrase or quote that triggered classification</td><td class="col-desc">phrase:direct replication; cite:(Bargh, 1996)</td></tr>
               <tr><td class="col-name">filter_confidence</td><td class="col-desc">high | medium | low (categorical)</td><td class="col-desc">high</td></tr>
@@ -972,7 +972,7 @@ python -m filter.engine handoff --out data/filtered.csv        # → Stage 3's i
             <div class="flow-node" style="border-left:3px solid #2563eb">
               <span class="flow-count llm" id="fe-llm">—</span>
               <div class="flow-node-head">Written through as <code>needs_review</code></div>
-              No LLM call here. Stage 3's two-model front-door screen decides these rows and, when it passes one, overwrites <code>filter_status</code> with its paper type and sets <code>filter_method</code> to <code>screen</code>.
+              No LLM call here. Stage 3's two-model front-door screen decides these rows and, when it passes one, overwrites <code>paper_type</code> with its paper type and sets <code>filter_method</code> to <code>screen</code>.
               <div class="flow-split" id="fe-llm-split"></div>
             </div>
             <div class="flow-arrow-down">↓</div>
@@ -1054,7 +1054,7 @@ python -m extract.audit_dois --apply  # write corrections</pre>
               <tr><td class="col-name">pair_id</td><td class="col-desc">Hash of (doi_r, doi_o) — unique row key for dedup and promote</td></tr>
               <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:3px 8px;letter-spacing:.4px">Inherited from filtered.csv</td></tr>
               <tr><td class="col-name" style="font-size:9px">doi_r, title_r, abstract_r, year_r,<br>authors_r, journal_r, url_r,<br>openalex_id_r, source, ref_r</td><td class="col-desc">All 10 candidate-row columns</td></tr>
-              <tr><td class="col-name" style="font-size:9px">filter_status, filter_method,<br>filter_evidence, filter_confidence</td><td class="col-desc">All 4 Stage 2 filter columns</td></tr>
+              <tr><td class="col-name" style="font-size:9px">paper_type, filter_method,<br>filter_evidence, filter_confidence</td><td class="col-desc">All 4 Stage 2 filter columns</td></tr>
               <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:3px 8px;letter-spacing:.4px">Match classification — Stage 3</td></tr>
               <tr><td class="col-name">original_match_type</td><td class="col-desc">single_original | multiple_match | multiple_original</td></tr>
               <tr><td class="col-name">original_match_confidence</td><td class="col-desc">high | medium | low</td></tr>
@@ -1220,7 +1220,7 @@ python -m extract.audit_dois --apply  # write corrections</pre>
             <div class="flow-arrow-down">↓</div>
             <div class="flow-node">
               <div class="flow-node-head">Load + skip</div>
-              Reads <code>filtered.csv</code>. Skips rows where <code>filter_status = false_positive</code> and DOIs already written to <code>extracted.csv</code> (or <code>extracted-test.csv</code> in sandbox mode).
+              Reads <code>filtered.csv</code>. Skips rows where <code>paper_type = false_positive</code> and DOIs already written to <code>extracted.csv</code> (or <code>extracted-test.csv</code> in sandbox mode).
             </div>
             <div class="flow-arrow-down">↓ per replication / reproduction row</div>
             <div class="flow-node">
@@ -2357,7 +2357,7 @@ async function loadSet(key) {
 
 // Values rendered as a coloured chip rather than plain text.
 const CHIP_COLS = new Set(['type','outcome','status','severity','check','link_method',
-                           'link_confidence','doi_o_verification','filter_status',
+                           'link_confidence','doi_o_verification','paper_type',
                            'original_match_type']);
 const CHIP_TONE = {
   high:'ok', success:'ok', verified:'ok', replication:'ok', corrected:'ok',

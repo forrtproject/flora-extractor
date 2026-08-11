@@ -149,6 +149,11 @@ never been independently validated. Discuss shared changes with all stage teams.
 Authoritative: **`shared/schema.py`**; column reference: [`docs/csv-schema.md`](docs/csv-schema.md).
 Never change a column name without updating `schema.py` and notifying all teams.
 
+- `paper_type` (the `replication|reproduction|false_positive|needs_review` field) was
+  called `filter_status` until issue #93. The validation database column keeps the old
+  name — `csv_to_db.py` in `flora-validation` reads either and writes
+  `record_metadata.filter_status` — and `render_payload()` in `extract/tier.py` maps
+  the old key on payloads stored before the rename.
 - `filter_confidence` is categorical (`high|medium|low`), not a float.
 - `uninformative` is the AUTHORS' verdict; `cannot_be_determined` is OURS.
 - `study_o` holds target study NUMBER(s) inside the original paper (several studies of
@@ -251,7 +256,7 @@ zero settled misses):
 
 On a pass, the screen's `record_type` (both voters agreeing wins; splits fall back to
 the first qualifying voter; `both` → replication) becomes `type` and overwrites
-`filter_status` (`filter_method = "screen"`); with no qualifying vote at all, Stage 2's
+`paper_type` (`filter_method = "screen"`); with no qualifying vote at all, Stage 2's
 values are kept and `type` stays empty. `screen_categories` (union of both voters) is
 written on every screened row. Voter models are folded into the classify cache key, so
 changing a voter or the prompt invalidates exactly those verdicts — and mints a new
@@ -701,6 +706,19 @@ outcome and both readings for a human; an unconfident "no" only flags; no answer
 writes `api_error` so the row is not settled on a transient failure. Measured before
 wiring over all 63 settled keyed links in the evaluation samples: the one known-wrong
 link flagged, zero false positives (`analysis/stage3_eval/keyed_confirm_eval.py`).
+
+**The search-based links are GRADED, and the grade decides nothing yet** (issues #183
+and #186 shape 2). `_confirm_search_row()` in `extract/run_extract.py`, also inside
+`_finalise_row`, sends every accepted `llm_title_search` / `llm_author_year_search`
+link through `confirm_search_original()` — the same cold inputs as the keyed check —
+and gets one of four grades: `clearly_target` · `likely_target` · `unlikely_target` ·
+`clearly_not_target`. The grade is appended to `link_evidence` as
+`search_confirm: <grade> — <reasoning>` and changes no link, no confidence and no
+method; a provider failure records `search_confirm: api_error` and leaves the row
+settled. Graded rather than binary because the binary check was measured on this class
+at 0 flags in 200 rows. Which grade should gate what is a calibration to make from
+collected grades — `analysis/stage3_eval/search_confirm_plan.md` — which is why
+`build_search_confirm_prompt` is deliberately outside `_GENERATION_PROMPTS`.
 
 ## Further Reference
 

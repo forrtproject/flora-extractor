@@ -31,7 +31,7 @@ SPEC_VERSION = 1
 NON_SPEC_FILES = frozenset({"conventions.json", "aliases.json", "holdout.json"})
 
 # Policy files that are not filters but DO decide what a row ends up saying:
-# conventions.json holds the pile→filter_status mapping the export writes, so a
+# conventions.json holds the pile→paper_type mapping the export writes, so a
 # routing release that did not bind it could be exported under a different
 # vocabulary policy than the one it was routed under. `aliases.json` is
 # deliberately absent — it has its own release input (`alias_release`) — and

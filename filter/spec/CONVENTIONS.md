@@ -18,9 +18,9 @@ release, and an export against a stale bundle is refused. `aliases.json` reaches
 the release id by its own hash (`alias_release`) and `holdout.json` names an
 evaluation set that changes no row's status, so neither is in `bundle_hash()`.
 
-## Pile → `filter_status`
+## Pile → `paper_type`
 
-| pile | `filter_status` | `filter_confidence` |
+| pile | `paper_type` | `filter_confidence` |
 | --- | --- | --- |
 | `discard` | `false_positive` | high |
 | `screen_expensive` | `needs_review`, or the winning rule's `vocabulary` if it names one | high |
@@ -30,7 +30,7 @@ evaluation set that changes no row's status, so neither is in `bundle_hash()`.
 
 `vocabulary_names_status` in `conventions.json` is the mechanism: it is true for
 both screening piles, and when the winning rule names a vocabulary that
-vocabulary becomes the status; otherwise the pile's own `filter_status` stands.
+vocabulary becomes the status; otherwise the pile's own `paper_type` stands.
 Whether a rule names one is the rule's own decision, recorded in its spec: a
 `vocabulary` is a claim about what the row *is*, and a rule whose admission is a
 request for attention rather than a verdict names none.

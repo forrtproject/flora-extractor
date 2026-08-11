@@ -154,7 +154,7 @@ def test_stage3_never_runs_the_cheap_tier(tmp_path, monkeypatch):
     monkeypatch.setattr(ps, "LLM_CACHE_DIR", tmp_path)
     row = pd.Series({"doi_r": "10.1/x", "title_r": "Market entry",
                      "abstract_r": "We estimate the effect of concentration. " * 8,
-                     "filter_status": "replication", "source": "openalex"})
+                     "paper_type": "replication", "source": "openalex"})
     # A fully screened row, as Stage 2's handoff writes it.
     row["screen_verdict"] = "proceed"
     row["screen_record_type"] = "replication"

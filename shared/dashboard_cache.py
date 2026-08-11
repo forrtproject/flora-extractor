@@ -223,7 +223,7 @@ def _read_for_stats(stage: str) -> "pd.DataFrame | None":
     """
     _STATS_COLS: dict[str, list[str]] = {
         "filtered":       ["doi_r", "url_r", "abstract_r", "year_r",
-                           "filter_status", "filter_method", "filter_confidence",
+                           "paper_type", "filter_method", "filter_confidence",
                            "filter_evidence"],
         "extracted":      ["link_method", "link_llm_model", "original_match_type",
                            "outcome", "doi_o_verification", "type", "year_r"],
@@ -278,19 +278,19 @@ def _compute_large_stage_stats(stage: str) -> "dict[str, Any] | None":
 
         exit_counts:   dict[str, int] = {}
         year_counts:   dict[str, int] = {}
-        # {rule exit → {final filter_status → n}} — lets the flowchart show what the
+        # {rule exit → {final paper_type → n}} — lets the flowchart show what the
         # LLM did with the two needs_review arms it receives.
         exit_status:   dict[str, dict[str, int]] = {}
 
         # Pass 1: lightweight columns only — get all counts except data quality
-        _light_cols = ("filter_status", "filter_method", "filter_confidence",
+        _light_cols = ("paper_type", "filter_method", "filter_confidence",
                        "filter_evidence", "year_r")
 
         def _process_filt_chunk(chunk: pd.DataFrame) -> None:
             nonlocal total
             chunk = chunk.fillna("")
             total += len(chunk)
-            for k, v in chunk.get("filter_status", pd.Series(dtype=str)).value_counts().items():
+            for k, v in chunk.get("paper_type", pd.Series(dtype=str)).value_counts().items():
                 status_counts[str(k)] = status_counts.get(str(k), 0) + int(v)
             for k, v in chunk.get("filter_method", pd.Series(dtype=str)).value_counts().items():
                 method_counts[str(k)] = method_counts.get(str(k), 0) + int(v)
@@ -301,8 +301,8 @@ def _compute_large_stage_stats(stage: str) -> "dict[str, Any] | None":
             if "filter_evidence" in chunk.columns:
                 exits = chunk["filter_evidence"].apply(classify_rule_exit)
                 _merge_counts(exit_counts, exits.value_counts().to_dict())
-                if "filter_status" in chunk.columns:
-                    grouped = chunk.assign(_exit=exits).groupby(["_exit", "filter_status"]).size()
+                if "paper_type" in chunk.columns:
+                    grouped = chunk.assign(_exit=exits).groupby(["_exit", "paper_type"]).size()
                     for (ex, st), n in grouped.items():
                         bucket = exit_status.setdefault(str(ex), {})
                         bucket[str(st)] = bucket.get(str(st), 0) + int(n)
@@ -329,21 +329,21 @@ def _compute_large_stage_stats(stage: str) -> "dict[str, Any] | None":
         # Pass 2: data quality for replication+reproduction rows only.
         # This subset is small (tens of thousands), so loading it fully is safe.
         rr_no_doi = rr_no_doi_or_url = rr_no_abstract = 0
-        _dq_cols = ("doi_r", "url_r", "abstract_r", "filter_status")
+        _dq_cols = ("doi_r", "url_r", "abstract_r", "paper_type")
         try:
-            if pq_path.exists() and "filter_status" in pq.read_schema(pq_path).names:
+            if pq_path.exists() and "paper_type" in pq.read_schema(pq_path).names:
                 import pyarrow.compute as pc
                 pf = pq.ParquetFile(pq_path)
                 existing = pf.schema_arrow.names
                 read_cols = [c for c in _dq_cols if c in existing]
-                filters = [("filter_status", "in", ["replication", "reproduction"])]
+                filters = [("paper_type", "in", ["replication", "reproduction"])]
                 rr = pq.read_table(pq_path, columns=read_cols, filters=filters).to_pandas().fillna("")
             else:
                 rr_chunks = []
                 for chunk in pd.read_csv(csv_path, encoding="utf-8-sig", dtype=str,
                                          chunksize=100_000, on_bad_lines="skip",
                                          usecols=lambda c: c in _dq_cols):
-                    sub = chunk[chunk["filter_status"].isin(["replication","reproduction"])]
+                    sub = chunk[chunk["paper_type"].isin(["replication","reproduction"])]
                     if len(sub):
                         rr_chunks.append(sub)
                 rr = pd.concat(rr_chunks, ignore_index=True).fillna("") if rr_chunks else pd.DataFrame()
@@ -360,7 +360,7 @@ def _compute_large_stage_stats(stage: str) -> "dict[str, Any] | None":
 
         return {
             "total":                   total,
-            "by_filter_status":        status_counts,
+            "by_paper_type":        status_counts,
             "by_filter_method":        method_counts,
             "by_filter_confidence":    conf_counts,
             "by_rule_exit":            {k: exit_counts.get(k, 0) for k in _RULE_EXIT_KEYS},

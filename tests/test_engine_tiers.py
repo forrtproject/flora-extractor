@@ -827,7 +827,7 @@ def test_screened_only_without_supabase_refuses(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr("filter.engine.claims.ClaimsClient",
                         MagicMock(side_effect=ClaimsNotConfigured("SUPABASE_URL unset")))
     monkeypatch.setattr(cli, "open_store", MagicMock())
-    monkeypatch.setattr(cli, "_resolve_release", lambda con, release: RELEASE)
+    monkeypatch.setattr(cli, "_resolve_release", lambda con, release, cache_dir=None: RELEASE)
     monkeypatch.setattr(cli, "read_release", lambda release_id, cache_dir=None: {})
     args = argparse.Namespace(store=tmp_path / "engine.duckdb", release=None,
                               as_routed=False, out=str(tmp_path / "filtered.csv"),
@@ -851,7 +851,7 @@ def test_as_routed_writes_its_own_file_not_the_screened_one(monkeypatch, tmp_pat
     monkeypatch.setattr("filter.engine.claims.ClaimsClient",
                         MagicMock(side_effect=ClaimsNotConfigured("SUPABASE_URL unset")))
     monkeypatch.setattr(cli, "open_store", MagicMock())
-    monkeypatch.setattr(cli, "_resolve_release", lambda con, release: RELEASE)
+    monkeypatch.setattr(cli, "_resolve_release", lambda con, release, cache_dir=None: RELEASE)
     monkeypatch.setattr(cli, "read_release", lambda release_id, cache_dir=None: {})
     written: list = []
     monkeypatch.setattr(
@@ -932,7 +932,7 @@ def test_the_screen_verdict_travels_to_stage_three_intact(con, pool, tmp_path,
     assert row["screen_votes"] == (f"{voter1}=replication/confident|"
                                    f"{voter2}=both/unconfident")
     # The type reaches Stage 3's paper-type field too.
-    assert (row["filter_status"], row["filter_method"]) == ("replication", "screen")
+    assert (row["paper_type"], row["filter_method"]) == ("replication", "screen")
 
     import pandas as pd
 
@@ -1026,7 +1026,7 @@ def test_a_crash_between_the_two_renames_never_leaves_an_unbound_csv(
 
 
 def test_a_live_expensive_verdict_types_the_row_stage_three_reads(con, pool, tmp_path):
-    """`filter_status` is Stage 3's paper-type field, and the front door decides it.
+    """`paper_type` is Stage 3's paper-type field, and the front door decides it.
     Running that door here means Stage 3 reads the answer instead of guessing."""
     live = _decided_client("screen_expensive", "live", [
         {"work_id": 11, "verdict": "reproduction", "model": _voter_models()[0],
@@ -1041,7 +1041,7 @@ def test_a_live_expensive_verdict_types_the_row_stage_three_reads(con, pool, tmp
     out, manifest = _handoff(con, pool, tmp_path, live)
     rows = {r["openalex_id_r"]: r for r in _read(out)}
 
-    assert rows["https://openalex.org/W11"]["filter_status"] == "reproduction"
+    assert rows["https://openalex.org/W11"]["paper_type"] == "reproduction"
     assert rows["https://openalex.org/W11"]["filter_method"] == "screen"
     # Two confident "none" votes are the gate's discard; the row does not travel.
     assert "https://openalex.org/W12" not in rows

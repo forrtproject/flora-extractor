@@ -17,7 +17,7 @@ the strongest signal before the murky residue, without anyone having to sort a
 derived data — the next `route` run recomputes it from pool and specs — so a
 verdict written into it would be erased. A work a live `screen_cheap` run
 discarded is left out of the file; a work a live `screen_expensive` run typed
-carries that type as its `filter_status`, and one it discarded is left out too.
+carries that type as its `paper_type`, and one it discarded is left out too.
 Verdicts from a `validation`-mode run change nothing, which is what that mode
 means. The verdicts are read across releases: the release scopes the piles, not
 the evidence, and a work decided before a re-route is still a decided work.
@@ -147,7 +147,7 @@ def write_handoff(con, pool_dir: Path, out_csv: Path, release_id: str, *,
         if decision:
             row.update(screen_columns(row, decision))
             if decision.get("record_type"):
-                row["filter_status"] = decision["record_type"]
+                row["paper_type"] = decision["record_type"]
                 row["filter_method"] = "screen"
                 retyped += 1
         by_pile[pile].append(row)

@@ -28,7 +28,7 @@ CANDIDATES_COLS = [
 # ── Stage 2 output: filtered.csv ─────────────────────────────────────────────
 # All CANDIDATES_COLS + the following:
 FILTER_ADDED_COLS = [
-    "filter_status",     # str — replication | reproduction | false_positive | needs_review
+    "paper_type",     # str — replication | reproduction | false_positive | needs_review
     "filter_method",     # str — engine:<release_id> (the filter engine) | screen (Stage 3's
                          #       front door). rule_based/llm/both are historical only.
     "filter_evidence",   # str — phrase or quote that triggered classification
@@ -147,7 +147,8 @@ EXTRACT_ADDED_COLS = [
     "pdf_source",          # str   — acquisition tier that supplied the document
                            #         (row_url | arxiv | osf | openalex_oa | unpaywall_pdf |
                            #          semanticscholar | core | europepmc | landing_* |
-                           #          serpapi | playwright | openalex_xml); blank when none
+                           #          serpapi | playwright | openalex_xml |
+                           #          osf_registration | html_landing); blank when none
     "parse_method",        # str   — winning parser from best_parse_result()
                            #         (openalex_xml | pdfminer | grobid | docpluck |
                            #          opendataloader | markitdown | docx); blank when
@@ -330,7 +331,7 @@ SET_ASIDE_DESTINATIONS = {
     "no_original_found": "no_original_found.csv",
     "self_link": "unresolved_self_links.csv",
     "doi_mismatch": "unresolved_doi_mismatch.csv",
-    "fabricated_doi_o": "fabricated_original_doi.csv",
+    "unregistered_doi_o": "unregistered_original_doi.csv",
 }
 
 # The two destinations a re-run is MEANT to redo, so resume must not count them as
@@ -654,11 +655,11 @@ def outcome_categories_for(record_type: str) -> set:
 # paper is, and the pipeline records that rather than defaulting to replication.
 TYPE_VALUES = {"replication", "reproduction"}
 
-# Sources actually produced by the pipeline. #46: bob_reed / i4r were advertised
-# here but their fetchers (search/external_lists.py) are never called, so no such
-# rows exist — reserved until external_lists is wired into run_search. Both names
-# are already in shared.config.CURATED_SOURCES, so those rows will bypass Stage 2's
-# keyword filter on the day the fetchers are wired in.
+# Sources actually produced by the pipeline. bob_reed / i4r are not in the enum:
+# their fetchers were retired with the API-harvest Stage 1 (PR #158, parked on
+# wip/api-harvest-sources); a curated harvester is issue #150. Both names remain in
+# shared.config.CURATED_SOURCES, so such rows would bypass the pre-screen if a
+# harvester lands.
 SOURCE_VALUES = {"openalex", "openalex_concept", "openalex_snapshot", "semantic_scholar",
                  "backfill_old_pipeline"}
 

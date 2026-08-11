@@ -21,6 +21,7 @@ from extract.tier import (API_ERROR, NOT_A_REPLICATION, NO_ORIGINAL_FOUND,
                           PROVISIONAL, RESOLVED, TARGET_PENDING, ExtractWork,
                           extract_generation, generation_inputs)
 from filter.engine.claims import ClaimLeaseLost
+from shared.prompts import prompt_version
 from shared.schema import (EXTRACTED_COLS, FILTERED_COLS,
                            PROVISIONAL_LINK_METHODS, SCREEN_COLS)
 
@@ -30,7 +31,7 @@ _INPUT = {
     "year_r": "2024", "authors_r": "A. Author", "journal_r": "J. Repl",
     "url_r": "", "openalex_id_r": "https://openalex.org/W99", "source": "openalex",
     "ref_r": "Author · 2024 · J. Repl",
-    "filter_status": "replication", "filter_method": "engine:abc",
+    "paper_type": "replication", "filter_method": "engine:abc",
     "filter_evidence": "rule:x", "filter_confidence": "high",
     "screen_verdict": "proceed", "screen_record_type": "replication",
     "screen_categories": "direct_replication", "screen_votes": "m1=replication/confident",
@@ -120,6 +121,24 @@ def test_the_payload_rebuilds_the_rows_the_judge_produced():
     for original, back in zip(rows, rebuilt):
         for col in EXTRACTED_COLS:
             assert str(back[col]) == str(original.get(col, "")), col
+
+
+def test_a_payload_stored_before_the_paper_type_rename_still_renders():
+    """A verdict stored under `filter_status` renders as `paper_type` (issue #93).
+
+    Both halves: the input row, and a target — a work the screen retyped carries
+    the paper type on the target, because that is where a CHANGED input value goes.
+    """
+    payload = {
+        "kind": "result",
+        "input": {"doi_r": "10.1000/legacy", "filter_status": "needs_review"},
+        "targets": [{"pair_id": "p1", "doi_o": "10.1000/orig"},
+                    {"pair_id": "p2", "doi_o": "10.1000/second",
+                     "filter_status": "reproduction"}],
+    }
+    rendered = tier_mod.render_payload(payload)
+    assert [row["paper_type"] for row in rendered] == ["needs_review", "reproduction"]
+    assert all("filter_status" not in row for row in rendered)
 
 
 def test_an_llm_rung_writes_one_evidence_row_per_call_it_made():
