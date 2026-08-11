@@ -1145,25 +1145,118 @@ def build_keyed_confirm_prompt(title_r: str, abstract_snip: str,
     })
 
 
+SEARCH_CONFIRM_GRADES = ("clearly_target", "likely_target",
+                         "unlikely_target", "clearly_not_target")
+
+_SEARCH_CONFIRM_TEMPLATE = """You are grading a link between a study and the paper an earlier stage identified as the original work it re-tests or re-analyses.
+
+The identification was made by SEARCHING bibliographic databases for the target the
+study named, and picking one result. The study's own reference list did not supply
+that record, so the link rests on a search hit rather than on a work the study itself
+listed. The failure this grading looks for is a real, correctly described paper that
+shares a title, a topic or an author with the one the study actually re-tested.
+
+THE STUDY:
+Title: {title_r}
+Abstract: {abstract_r}
+
+WHAT THE STUDY SAID ABOUT ITS TARGET: {evidence_quote}
+
+THE RECORD THE SEARCH RETURNED:
+{record_block}
+
+How confidently is that record the paper the study names as its target?
+
+Judge subject matter and authorship together, against the abstract and the quoted
+evidence. These are NOT reasons to grade a record down:
+- A year a few off: a preprint or working paper and its published version are the
+  same work.
+- A title that differs in wording, subtitle or language, when subject and authors
+  agree.
+
+Answer with JSON and nothing else:
+{
+  "verdict": "<clearly_target|likely_target|unlikely_target|clearly_not_target>",
+  "reasoning": "<one sentence: what decided it>"
+}
+
+The four grades mean:
+- clearly_target — subject and authorship both match what the study describes
+  re-testing, and there is no real doubt.
+- likely_target — more likely than not the same paper, with something unconfirmed:
+  thin evidence, a partial author match, a subject that fits without being pinned down.
+- unlikely_target — probably a different paper, without that being certain: a
+  plausible near-miss, or a same-author paper on a neighbouring question.
+- clearly_not_target — a different paper: another subject, or another set of authors,
+  than the work the study describes re-testing.
+
+Grade what the evidence supports, and use the middle two grades for what it leaves
+open. Thin information is never a low grade: "unlikely" and "clearly not" are claims
+about the RECORD being wrong, not about your evidence being poor. Nothing is removed
+on this answer — the grades are being collected to measure how well they separate
+correct links from wrong ones.
+"""
+
+
+def build_search_confirm_prompt(title_r: str, abstract_snip: str,
+                                evidence_quote: str, record: dict) -> str:
+    """How confidently is the record a SEARCH returned the paper the study names as
+    its target — issue #183, and issue #186's second shape.
+
+    GRADED rather than binary, and the grades act on nothing yet. The binary form of
+    this question was measured over exactly this class and flagged nothing (0 flags on
+    200 fresh rows, both real wrongs passed;
+    analysis/stage3_eval/model_triage_2026-08-08.md): a yes/no gate over records the
+    same model already adjudicated in `pick_author_year_original` has no room to
+    disagree with itself. Four grades have that room, and what any of them should gate
+    is a calibration to make from collected answers
+    (analysis/stage3_eval/search_confirm_plan.md).
+
+    Inputs are limited to what a stored result row can reconstruct — title_r,
+    abstract_r, the link evidence, and the record's title/authors/year/citation/DOI —
+    exactly as build_keyed_confirm_prompt is, so the calibration measures the prompt
+    the ladder sends rather than a richer one.
+    """
+    lines = [f"Title: {record.get('title') or '(no title)'}",
+             f"Authors: {record.get('authors') or '(unknown)'}",
+             f"Year: {record.get('year') or '?'}"]
+    if record.get("citation"):
+        lines.append(f"Full citation: {record['citation']}")
+    if record.get("doi"):
+        lines.append(f"DOI: {record['doi']}")
+    return _fill(_SEARCH_CONFIRM_TEMPLATE, {
+        "title_r": title_r or "(not available)",
+        "abstract_r": (abstract_snip or "(not available)")[:TARGET_ABSTRACT_CHARS],
+        "evidence_quote": evidence_quote or "(none recorded)",
+        "record_block": "\n".join(lines),
+    })
+
+
 def build_outcome_prompt(title_r: str, abstract_snip: str,
                          original_authors: str = "", original_year: str = "",
                          original_title: str = "", text_snip: str = "",
                          intro_snip: str = "", original_evidence: str = "",
-                         text_provenance: str = "") -> str:
+                         text_provenance: str = "",
+                         legacy_vocabulary: bool = False) -> str:
     """Replication outcome for a link this call did not make.
 
     Either passage of the paper's own text selects the checking pass: the model is
     told what it holds, the named blocks are appended, and record_type_check and
     target_check are asked for. With neither, nothing about the body is rendered at
     all — an empty block would offer a quote source the model never saw.
+
+    *legacy_vocabulary* renders the pre-rename outcome labels instead of FLoRA's.
+    Nothing sends that rendering: it exists so a caller can rebuild the prompt an
+    entry already on disk was bought under. See the declared equivalence in
+    extract/code_outcome.py.
     """
     has_text = bool(text_snip or intro_snip)
-    return _fill(_OUTCOME_TEMPLATE, {
+    return _fill(_OUTCOME_TEMPLATE_LEGACY if legacy_vocabulary else _OUTCOME_TEMPLATE, {
         "evidence_line": _EVIDENCE_FULLTEXT if has_text else _EVIDENCE_ABSTRACT,
         "field_count": "seven" if has_text else "five",
         "check_fields": _OUTCOME_CHECK_FIELDS if has_text else "",
         "check_meanings": _OUTCOME_CHECK_MEANING if has_text else "",
-        "outcome_rules": _OUTCOME_RULES,
+        "outcome_rules": _OUTCOME_RULES_LEGACY if legacy_vocabulary else _OUTCOME_RULES,
         "original_block": _original_block(
             "AN EARLIER STAGE OF THE PIPELINE LINKED THIS PAPER TO:",
             original_authors, original_year, original_title, original_evidence),

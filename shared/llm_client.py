@@ -39,9 +39,10 @@ from .cache import content_key, read_cache, read_cache_migrating, write_cache
 from .rate_limit import throttle
 from .prompts import (
     build_author_year_pick_prompt, build_classify_prompt, build_keyed_confirm_prompt,
-    build_repro_target_outcome_prompt, build_target_outcome_prompt, prompt_version,
+    build_repro_target_outcome_prompt, build_search_confirm_prompt,
+    build_target_outcome_prompt, prompt_version, SEARCH_CONFIRM_GRADES,
 )
-from .schema import normalise_outcome_block
+from .schema import canonical_outcome, normalise_outcome_block
 from .target_keys import assign_target_keys
 from .utils import clean_doi
 
@@ -1590,6 +1591,65 @@ def confirm_keyed_original(doi_r: str, title_r: str, abstract_r: str,
                                      "reasoning": reasoning})
     return {"plausible": plausible, "confident": confident, "reasoning": reasoning,
             "llm_model": LINKING_MODEL, "llm_error": ""}
+
+
+def confirm_search_original(doi_r: str, title_r: str, abstract_r: str,
+                            evidence_quote: str, record: dict) -> dict:
+    """Grade the record a SEARCH picked as the study's target — issue #183, and
+    issue #186's second shape, on `llm_title_search` / `llm_author_year_search`.
+
+    A separate, cold call, exactly as `confirm_keyed_original` is: the pick was made
+    by `pick_author_year_original` over a pooled candidate list, and asking the same
+    call to re-affirm its own choice grades nothing. The ANSWER is graded rather than
+    binary — the binary question was measured over this class and produced 0 flags on
+    200 fresh rows — and no grade acts on a row yet; see
+    analysis/stage3_eval/search_confirm_plan.md.
+
+    Returns {"verdict": str | None, "reasoning": str, "llm_model": str,
+             "llm_error": str, "provider_failure": bool}. `verdict` is one of
+    SEARCH_CONFIRM_GRADES, or None when there is no usable answer. The two None cases
+    are kept apart because the caller records them differently: a provider failure
+    (`provider_failure` true) is a fact about the run, an out-of-vocabulary or
+    field-less reply is a fact about nothing. Neither is cached; every valid grade is,
+    `clearly_not_target` included.
+    """
+    prompt = build_search_confirm_prompt(title_r, abstract_r, evidence_quote, record)
+    # The record's identity on its own account, as in confirm_keyed_original: the
+    # prompt shows title/authors/year, but the row is written from the DOI, and a
+    # re-search can move the DOI under an identical-looking record block.
+    identity = str(record.get("doi") or record.get("openalex_id") or "")
+    key = content_key("searchconfirm", doi_r or title_r,
+                      prompt_version("build_search_confirm_prompt"),
+                      cache_model_id(LINKING_MODEL, LINKING_EFFORT),
+                      identity, prompt)
+    cached = read_cache(LLM_CACHE_DIR, key)
+    if cached is not None:
+        return {"verdict": cached.get("verdict"),
+                "reasoning": str(cached.get("reasoning", "") or ""),
+                "llm_model": LINKING_MODEL, "llm_error": "",
+                "provider_failure": False}
+
+    result, _provider, llm_error = call_model(prompt, LINKING_MODEL,
+                                              reasoning_effort=LINKING_EFFORT)
+    no_answer = {"verdict": None, "reasoning": "", "llm_model": "",
+                 "llm_error": llm_error, "provider_failure": True}
+    if not result:
+        return no_answer
+
+    verdict = str(result.get("verdict", "") or "").strip().lower()
+    if verdict not in SEARCH_CONFIRM_GRADES:
+        # Valid JSON answering some other question. Caching it would file a
+        # non-answer as a grade, permanently — and an unrecognised label is not a
+        # provider failure, so it is not reported as one either.
+        return {"verdict": None, "reasoning": "", "llm_model": LINKING_MODEL,
+                "llm_error": f"reply carried no grade from "
+                             f"{'/'.join(SEARCH_CONFIRM_GRADES)}: {verdict[:60]!r}",
+                "provider_failure": False}
+
+    reasoning = str(result.get("reasoning", "") or "")[:500]
+    write_cache(LLM_CACHE_DIR, key, {"verdict": verdict, "reasoning": reasoning})
+    return {"verdict": verdict, "reasoning": reasoning, "llm_model": LINKING_MODEL,
+            "llm_error": "", "provider_failure": False}
 
 
 def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,

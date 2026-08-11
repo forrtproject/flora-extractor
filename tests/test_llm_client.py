@@ -1762,3 +1762,61 @@ class TestAPickThatIsNotOneOfTheCandidates:
         out = self._ask(tmp_path, {"pick": "1", "confident": True, "reasoning": "yes"})
         assert out["pick"]["doi"] == "10.1/a" and out["confident"] is True
         assert list(tmp_path.glob("*.json"))
+
+
+class TestSearchConfirmGrading:
+    """Issues #183 / #186 shape 2: the search-link check answers on four grades, and
+    only a grade from that vocabulary is an answer worth keeping."""
+
+    _RECORD = {"doi": "10.9/orig", "title": "The original", "authors": "Smith, J.",
+               "year": "2010", "citation": "Smith, J. (2010). The original."}
+
+    def _ask(self, tmp_path, reply, error=""):
+        with patch("shared.llm_client.LLM_CACHE_DIR", tmp_path), \
+             patch("shared.llm_client.call_model",
+                   return_value=(reply, "openai", error)):
+            return llm.confirm_search_original("10.1/rep", "T", "A", "q", self._RECORD)
+
+    def test_a_grade_is_returned_and_cached(self, tmp_path):
+        out = self._ask(tmp_path, {"verdict": "likely_target", "reasoning": "close"})
+        assert out["verdict"] == "likely_target" and out["reasoning"] == "close"
+        assert out["provider_failure"] is False
+        assert list(tmp_path.glob("searchconfirm_*.json"))
+
+    def test_the_worst_grade_is_an_answer_too(self, tmp_path):
+        out = self._ask(tmp_path, {"verdict": "clearly_not_target", "reasoning": "no"})
+        assert out["verdict"] == "clearly_not_target"
+        assert list(tmp_path.glob("searchconfirm_*.json"))
+
+    def test_a_label_outside_the_vocabulary_is_not_cached(self, tmp_path):
+        out = self._ask(tmp_path, {"verdict": "maybe", "reasoning": "r"})
+        assert out["verdict"] is None and out["llm_error"]
+        assert out["provider_failure"] is False, \
+            "an unreadable reply is not a provider failure"
+        assert list(tmp_path.glob("*.json")) == []
+
+    def test_a_provider_failure_is_reported_as_one_and_is_not_cached(self, tmp_path):
+        out = self._ask(tmp_path, None, error="503")
+        assert out["verdict"] is None and out["provider_failure"] is True
+        assert list(tmp_path.glob("*.json")) == []
+
+    def test_the_key_names_the_prompt_version_the_model_and_the_effort(self, tmp_path):
+        from shared.llm_client import cache_model_id
+        from shared.prompts import prompt_version
+
+        seen: list = []
+        with patch("shared.llm_client.LLM_CACHE_DIR", tmp_path), \
+             patch("shared.llm_client.call_model",
+                   return_value=({"verdict": "clearly_target", "reasoning": ""},
+                                 "openai", "")), \
+             patch("shared.llm_client.content_key",
+                   side_effect=lambda *a: (seen.append(a), "k")[1]):
+            llm.confirm_search_original("10.1/rep", "T", "A", "q", self._RECORD)
+
+        parts = seen[0]
+        assert parts[0] == "searchconfirm"
+        assert prompt_version("build_search_confirm_prompt") in parts
+        # The model AND the effort it was asked at — the two never share an entry.
+        model_part = cache_model_id(llm.LINKING_MODEL, llm.LINKING_EFFORT)
+        assert model_part in parts
+        assert llm.LINKING_EFFORT in model_part
