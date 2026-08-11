@@ -338,8 +338,6 @@ The push is **not done from this repo**: `csv_to_db.py` in the
 repo reads resolved `extracted.csv` rows (those with
 `paper_type ∈ {replication, reproduction}` and a resolved `link_method`) into three
 Supabase tables, in one psycopg2 transaction with `ON CONFLICT (pair_id) DO NOTHING`.
-(An older importer here, `extract/csv_to_db.py`, is parked on the `wip/csv-to-db`
-branch and is not run — see issue #172.)
 
 > **The import needs a schema change in the validation repo before it will run.**
 > `unvalidated` needs `title_r` and `title_o` columns: `study_r` / `study_o` are study

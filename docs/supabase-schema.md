@@ -13,11 +13,8 @@ transaction and inserts `ON CONFLICT (pair_id) DO NOTHING`, so it is atomic and
 idempotent. This repo only *reads* the tables, through `shared/supabase_client.py`,
 for the Stage 4 dashboard.
 
-An older importer lived here as `extract/csv_to_db.py`. It was never run against the
-current schema and is parked on the `wip/csv-to-db` branch, with `WIP.md` recording
-the non-atomic three-insert defect it carried. Its `_build_unvalidated_row()` /
-`_build_queue_rows()` / `_build_metadata_row()` are referenced below only as written
-descriptions of the payload shape — the live column list is the validation repo's.
+The column lists below are what the dashboard reads and what the import is expected to
+send; the authoritative payload is `csv_to_db.py` in the validation repo.
 
 ## Tables
 
@@ -25,10 +22,9 @@ descriptions of the payload shape — the live column list is the validation rep
 
 All records pushed for validation. The importer must keep its payload in step with
 the table: PostgREST rejects the whole insert when the payload names a column the
-table does not have, so a new column needs an `alter table` first. The payload shape
-is described by `_build_unvalidated_row()` on the `wip/csv-to-db` branch. The fields
-the dashboard reads back are the `select` strings in `shared/supabase_client.py`. The
-ones worth naming here:
+table does not have, so a new column needs an `alter table` first. The fields the
+dashboard reads back are the `select` strings in `shared/supabase_client.py`. The ones
+worth naming here:
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -43,7 +39,7 @@ ones worth naming here:
 
 Individual validator assignments, their completion status, and the judgements
 themselves. **The import writes only the skeleton** — one row per validator slot with
-exactly four fields (`_build_queue_rows()` on the `wip/csv-to-db` branch) —
+exactly four fields —
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -85,14 +81,13 @@ Completed validation records with per-validator and LLM check results.
 
 Per-record metadata. Not currently used by the monitoring dashboard — the filter,
 link and outcome method / confidence / model fields, the author, journal and OpenAlex
-id fields, and the original rank and count (`_build_metadata_row` on the
-`wip/csv-to-db` branch). A column added to the payload needs a matching
-`alter table record_metadata add column …` before the next import: PostgREST
+id fields, and the original rank and count. A column added to the payload needs a
+matching `alter table record_metadata add column …` before the next import: PostgREST
 rejects the whole insert when the payload names a column the table does not have.
 
-**Not sent by the live import.** The parked payload builder sends these; the live
-`flora-validation/csv_to_db.py` does not, and the columns have to exist before an
-import that sends them runs (tracked in forrtproject/flora-validation#3):
+**Not sent by the live import.** `flora-validation/csv_to_db.py` does not send these,
+and the columns have to exist before an import that sends them runs (tracked in
+forrtproject/flora-validation#3):
 
 | Column | Type | Sent since | Description |
 |--------|------|-----------|-------------|
@@ -105,8 +100,8 @@ import that sends them runs (tracked in forrtproject/flora-validation#3):
 0001), both nullable because every row imported before the filter engine existed
 has neither. **The live import does not populate them yet** — it sends
 `openalex_id_r` as text and no release — so every record it writes carries null
-lineage and is invisible to `filter/engine/supersede.py`. Wiring them up is part of
-issue #172.
+lineage and is invisible to `filter/engine/supersede.py`. Wiring them up is work for
+the validation repo (forrtproject/flora-validation#3).
 
 | Column | Type | Description |
 |--------|------|-------------|
