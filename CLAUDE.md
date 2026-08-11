@@ -1,17 +1,12 @@
 # CLAUDE.md — FLoRA Extractor
 
-Primary instruction document for AI coding agents and human contributors. Other agent
-runtimes: see [AGENTS.md](AGENTS.md), which points here.
-
 ## What This Project Does
 
 **FLoRA Extractor** discovers, extracts, and validates replication and reproduction
 studies for the [FLoRA database](https://forrt.org/replication-hub/flora/). For each
 candidate paper it identifies which original study is targeted and what the outcome was
 (successful / failed / mixed / descriptive only / statistically successful but flawed /
-uninformative / cannot_be_determined / not_a_replication). The first six are FLoRA's
-own spellings, read off `data/flora.csv`; the last two are ours, for a paper that
-checks nothing and for a verdict we could not reach.
+uninformative / cannot_be_determined / not_a_replication).
 
 ## Architecture — 4-Stage Pipeline
 
@@ -19,7 +14,7 @@ checks nothing and for a verdict we could not reach.
 Stage 1: search/        → SEARCHES only            → the survivor pool (parquet)
 Stage 2: filter/engine/ → routes the pool into piles → data/filtered.csv (handoff)
 Stage 3: extract/       → finds original + outcome   → verdicts → data/extracted.csv
-Stage 4: validate/      → read-only monitoring dashboard (no CSV output)
+Stage 4: validate/      → read-only monitoring dashboard here, main validation tasks are in separate repo flora-validation
 ```
 
 ```bash
@@ -34,20 +29,11 @@ python -m validate.app              # Stage 4 dashboard → http://localhost:500
 
 **Stage 3's output is `data/extracted.csv`, and that is where this repo stops
 writing.** Human validation lives in a separate Supabase-backed repo, and the push of
-resolved rows into the three Supabase validation tables (`unvalidated`,
-`record_metadata`, `validation_queue`; validator slots `human_1`/`human_2`/`llm`) is
-performed there, by `csv_to_db.py` in the `flora-validation` repo (confirmed in
-issue #172). That script reads `data/extracted.csv`, runs one psycopg2 transaction
-and inserts `ON CONFLICT (pair_id) DO NOTHING`, so it is atomic and idempotent. This
-repo only READS those tables, through `shared/supabase_client.py`, for the Stage 4
-dashboard. The final artifact is the Supabase `validated` table — there is no
-`data/validated.csv`.
-
-A second, older importer used to live here as `extract/csv_to_db.py`. Nothing
-imported it, it was never run against the current schema, and it carried a real
-defect (three non-atomic PostgREST inserts per row, no retry, orphan rows the pair-id
-dedup never reconciles). It is parked on the `wip/csv-to-db` branch with a `WIP.md`
-explaining what would make it correct; do not revive it.
+resolved rows into the  Supabase validation tables is
+performed, by `csv_to_db.py` in the `flora-validation` repo. 
+That script reads `data/extracted.csv`.
+This repo only READS the validaiton tables, through `shared/supabase_client.py`, for the Stage 4
+dashboard. The final artifact is the Supabase `validated` table.
 
 **Stage 3 runs as a claimed engine tier, and the export is the only writer of
 `data/extracted.csv`.** `python -m extract.tier --run` claims works, runs the ladder
@@ -628,7 +614,20 @@ in `pytest` runs. Live tests go in `tests/live/` behind `TEST_LIVE_API=1`. Each 
 has a schema test via `validate_csv_columns()`. Do not over-test: one test per seam,
 and delete tests when their code path dies.
 
+**Run targeted tests while iterating, the full suite once.** `.venv/bin/pytest -q`
+over `tests/` takes 100–440 s. During iteration run only the affected file or class
+(`.venv/bin/pytest tests/test_engine_147_rules.py -q`); run the full suite once
+before pushing.
+
 ## Environment
+
+**The interpreter is `.venv/bin/python`, and that is how every command in this repo is
+written.** Bare `python` is not on the maintainer's PATH, and the system `python3` is
+missing `pyarrow`, so it cannot even import Stage 2. A command written for a human to
+run — in a report, a commit message, a doc, a changelog's `reopen:` line — must be
+pasteable from the project root as it stands: `.venv/bin/python -m extract.export
+--release <id>`. The bare `python -m …` form appears in this file's examples as a
+shorthand for the module path; it is not a command to hand over.
 
 Copy `.env.example` to `.env`. Three files, in precedence order — real environment >
 `.env` (gitignored: secrets and per-machine settings) > `.env.defaults` (committed:
