@@ -141,6 +141,35 @@ def test_the_editorial_anchor_claims_the_artifact_and_spares_the_paper(specs):
     assert not _matches_family(specs, paper)
 
 
+@pytest.mark.parametrize("title,claimed", [
+    ("Review of: Revisiting the psychology of windfall gains", True),
+    ("Decision Revise: Revisiting celebrity contagion", True),
+    ("Recommendation of: A multilab investigation into the N2pc", True),
+    ('Review of: "Analyst Perceptions of Corporate Social Responsibility"', True),
+    # The colon is what separates the genre from its parent. Without it the words
+    # open an ordinary paper about the genre, and the rule must spare it.
+    ("Review of replication practice in psychology", False),
+    ("Recommendation of preregistration for replication work", False),
+])
+def test_the_colon_separated_genres_are_claimed_and_only_those(specs, title, claimed):
+    """PCI Registered Reports, Qeios and Copernicus write the genre and its parent
+    with a colon between them, which `\\b` cannot match after (issue #192). 19 such
+    objects reached extracted.csv as replications, up to six per replicated paper."""
+    row = _row(title, "The reviewer's comments on the submitted manuscript.")
+    assert _matches(specs, "not-a-paper-title", row) is claimed
+
+
+def test_a_pci_review_suffix_is_claimed_by_its_identifier_too(specs):
+    """PCI extends the reviewed paper's own DOI rather than minting a path segment,
+    so the identifier says what the object is on its own evidence."""
+    assert _matches(specs, "not-a-paper-doi",
+                    _row("Revisiting the psychology of windfall gains", "",
+                         doi="10.24072/pci.rr.101145.rev11"))
+    assert not _matches(specs, "not-a-paper-doi",
+                        _row("Revisiting the psychology of windfall gains", "",
+                             doi="10.24072/pci.rr.101145"))
+
+
 @pytest.mark.parametrize("doi,claimed", [
     ("10.1000/jexp.2019.4471.suppl", True),
     ("https://doi.org/10.1000/jexp.2019.4471.suppl", True),

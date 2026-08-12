@@ -1,6 +1,6 @@
 {
   "id": "not-a-paper-doi",
-  "description": "The identifier's own structure says the object is not the paper. Above admission (`replication-claim`, 700): a review object echoes its parent's title verbatim, so it fires replication arms on something that is not the study, and no amount of replication vocabulary in the text makes the identifier point at a paper. Two separately-labelled arms, kept as their own clauses so each can be audited and retired on its own evidence. (1) A `/reviews/` or `/decisions/` path segment is minted by the publisher for the review object (e.g. 10.7287/peerj.10325v0.1/reviews/2); such records echo the reviewed paper's title verbatim, so every replication phrase in the title fires on something that is not the paper. A narrowing worth doing later is anchoring the segment to known registrants rather than matching anywhere in the DOI. (2) A DOI ending in `.suppl` is the supplementary object minted alongside an article, not the article; terminal-anchored so it cannot fire on a DOI that merely contains the string. It is the identifier-side counterpart of the `supplementary-materials` work type in not-a-report-type, and the two overlap deliberately: different fields, either one alone is enough. Deposit-only registrants are a different kind of claim — a list of external facts about who mints what, not a pattern in the identifier — and live in their own spec, `deposit-registrant`.",
+  "description": "The identifier's own structure says the object is not the paper. Above admission (`replication-claim`, 700): a review object echoes its parent's title verbatim, so it fires replication arms on something that is not the study, and no amount of replication vocabulary in the text makes the identifier point at a paper. Three separately-labelled arms, kept as their own clauses so each can be audited and retired on its own evidence. (1) A `/reviews/` or `/decisions/` path segment is minted by the publisher for the review object (e.g. 10.7287/peerj.10325v0.1/reviews/2); such records echo the reviewed paper's title verbatim, so every replication phrase in the title fires on something that is not the paper. A narrowing worth doing later is anchoring the segment to known registrants rather than matching anywhere in the DOI. (2) A DOI ending in `.suppl` is the supplementary object minted alongside an article, not the article; terminal-anchored so it cannot fire on a DOI that merely contains the string. It is the identifier-side counterpart of the `supplementary-materials` work type in not-a-report-type, and the two overlap deliberately: different fields, either one alone is enough. (3) PCI Registered Reports encodes the same two objects as SUFFIXES on the reviewed paper's own DOI instead of as path segments: `.rev11`, `.rev12`, `.d1`. The arm is anchored to that one registrant, because a bare `\\.d\\d+$` is too generic to apply to the whole corpus while `10.24072` is a single publisher whose scheme can be stated exactly. It overlaps the `review of:` / `decision revise:` title arms of not-a-paper-title deliberately: different fields, either one alone is enough. Deposit-only registrants are a different kind of claim — a list of external facts about who mints what, not a pattern in the identifier — and live in their own spec, `deposit-registrant`.",
   "match": {
     "any_of": [
       {
@@ -8,6 +8,9 @@
       },
       {
         "doi_regex": "\\.suppl$"
+      },
+      {
+        "doi_regex": "^10\\.24072/.*\\.(?:rev|d)\\d+$"
       }
     ]
   },
@@ -27,6 +30,13 @@
       "date": "2026-08-04",
       "owner": "flora-extractor",
       "rationale": "Arm 2 (\\.suppl$), new in the v2 rule book: a terminal \".suppl\" is the identifier a publisher mints for the supplementary object of an article. Structural for the same reason as arm 1 — the claim is about what the registrant writes into the identifier, not about a rate estimated from a sample — and the terminal anchor is what keeps it that way: a DOI that merely contains the string is not claimed."
+    },
+    {
+      "level": "human",
+      "date": "2026-08-13",
+      "owner": "flora-extractor",
+      "n": 66,
+      "rationale": "Arm 3 (^10.24072/….revN|.dN), issue #192. Structural in the same sense as arm 1 — the suffix is what PCI Registered Reports mints for the review and decision objects of the paper whose DOI it is extended from — and the registrant anchor is what keeps it that way. Count over a named population: 66 works in the 5,146,160-row survivor pool carry such a DOI, and every one of the 66 titles was read: 42 begin 'Review of:' and 24 'Decision Revise:', and none is a study. Recall against data/flora.csv is exact: 0 of its 2,504 doi_r and 0 of its doi_o values match."
     }
   ]
 }
