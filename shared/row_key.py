@@ -1,19 +1,17 @@
 """
 row_key.py — the one definition of "which paper is this row?".
 
-Stages 1, 2 and 3 each need to recognise a row they have already seen, and each
-had grown its own version of the same fallback chain — with two different
-priority orders, so the same row could be filed under one identifier in
-candidates.csv and a different one in filtered.csv.
+One fallback chain, in one place, so that a row a stage has already seen is
+recognised by the same identifier wherever the question is asked.
 
-The key STRINGS are part of the on-disk format: cache/candidates_index.txt and
-cache/filtered_index.txt were written with the ``oa:``/``url:``/``title:``
-prefixes below, so those must not change or every existing index is invalidated.
+``row_keys`` returns every key a row can be recognised by, strongest first, for a
+caller that wants a match on ANY identifier. ``primary_key`` returns the strongest
+alone; `_cache_id` in `extract/run_extract.py` is its live consumer, naming the
+parse cache entry of a row that has no DOI.
 
-``row_keys`` returns every key a row can be recognised by (the candidates index
-stores all of them, so a duplicate is caught via any identifier);
-``primary_key`` returns the first, which is what the single-key resume indexes
-store.
+The key STRINGS are part of the on-disk format. A cache entry filed under
+``oa:``/``url:``/``title:`` is found again only by the same prefix, so changing one
+orphans every entry written with it.
 """
 
 import math
