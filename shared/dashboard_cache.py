@@ -5,11 +5,17 @@ Each pipeline runner calls refresh(stage) at the end of its run (and in its
 finally block so partial progress is saved on Ctrl-C).  The dashboard API
 endpoints check for Parquet / stats.json before falling back to CSV reads.
 
-Stage 1's artifact is the survivor pool (``SNAPSHOT_POOL_DIR``), not a CSV: it is
-a directory of parquet partitions written by the snapshot scan, so it has no
-Parquet mirror and its stats are read from the pool itself. It is also several GB
-and gitignored, which means a checkout without it is normal — every pool function
-returns None rather than raising so the dashboard can say "not available here".
+Only Stage 3's two CSVs have a mirror. The other two stages own artifacts that
+are not CSVs at all, and each is read where it lives:
+
+* **Stage 1** is the survivor pool (``SNAPSHOT_POOL_DIR``) — a directory of
+  parquet partitions written by the snapshot scan. It is several GB and
+  gitignored, so a checkout without it is normal: every pool function returns
+  None rather than raising, and the dashboard says "not available here".
+* **Stage 2** is the routing store (``filter/engine/store.py``, DuckDB). Its
+  figures are queried live, per release, from the same store Stage 3 builds its
+  worklist off. Nothing is mirrored, because the store already answers a count
+  in milliseconds and a mirror is one more thing that can be stale.
 
 Public API
 ----------
@@ -17,6 +23,7 @@ Public API
   update_stats(stage)    recompute counts → update stats.json
   refresh(stage)         write_parquet + update_stats (normal call site)
   pool_totals()          cheap survivor-pool row/file/byte counts (footers only)
+  compute_filtered_stats()  Stage 2 pile counts for the newest routed release
 """
 from __future__ import annotations
 
@@ -39,13 +46,14 @@ DASHBOARD_DIR   = DATA_DIR / "dashboard"
 STATS_JSON_PATH = DASHBOARD_DIR / "stats.json"
 
 _STAGE_CSV: dict[str, Path] = {
-    "filtered":       DATA_DIR / "filtered.csv",
     "extracted":      DATA_DIR / "extracted.csv",
     "extracted-test": DATA_DIR / "extracted-test.csv",
 }
 
-# Stage 1 has no CSV — its stats come from the pool directory.
+# The two stages whose artifact is not a CSV: Stage 1's pool directory and
+# Stage 2's routing store. Both are read live, and neither has a mirror.
 POOL_STAGE = "pool"
+FILTERED_STAGE = "filtered"
 
 # Canonical outcome categories + pipeline-state markers (see shared/schema.py).
 _OUTCOME_KEYS = (
@@ -63,34 +71,6 @@ _METHOD_KEYS = (
     "llm_cited_candidates", "llm_fulltext",
     "no_original_found", "target_pending", "api_error",
 )
-
-
-# How a Stage-2 row got its verdict, recovered from filter_evidence rather than a
-# dedicated column. `engine_route` is the current path: the filter engine writes
-# `rule:<spec id>` and the pile did the deciding. The `r*` keys are the retired
-# per-row classifier's exits, kept because rows on disk still carry them — that
-# generation of Stage 2 prepended its rule evidence to an LLM verdict
-# ("<rule> | llm:<...>"), so the marker survives even where the LLM reclassified.
-_RULE_EXIT_KEYS = ("engine_route", "r1_exclusion", "r2_no_phrase", "r3_no_cite",
-                   "r4_no_same_sentence", "r5_pass", "unknown")
-
-
-def classify_rule_exit(evidence: str) -> str:
-    """Which Stage-2 exit produced this row, from its filter_evidence string."""
-    e = str(evidence or "")
-    if e.startswith("rule:"):
-        return "engine_route"
-    if e.startswith("exclusion:"):
-        return "r1_exclusion"
-    if e.startswith("no replication phrase detected"):
-        return "r2_no_phrase"
-    if "; no author-year cite" in e:
-        return "r3_no_cite"
-    if "; no same-sentence cite" in e:
-        return "r4_no_same_sentence"
-    if "; cite:" in e:
-        return "r5_pass"
-    return "unknown"
 
 
 def _year_counts(series: "pd.Series") -> dict[str, int]:
@@ -215,16 +195,8 @@ def _compute_extracted_stats(df: pd.DataFrame) -> dict[str, Any]:
 
 
 def _read_for_stats(stage: str) -> "pd.DataFrame | None":
-    """Read only the columns needed for stats computation.
-
-    For extracted/extracted-test (small files) loads the whole table at once.
-    filtered is potentially millions of rows — callers should prefer
-    _compute_large_stage_stats instead and only use this for small stages.
-    """
+    """Read only the columns needed for stats computation, Parquet mirror first."""
     _STATS_COLS: dict[str, list[str]] = {
-        "filtered":       ["doi_r", "url_r", "abstract_r", "year_r",
-                           "paper_type", "filter_method", "filter_confidence",
-                           "filter_evidence"],
         "extracted":      ["link_method", "link_llm_model", "original_match_type",
                            "outcome", "doi_o_verification", "type", "year_r"],
         "extracted-test": ["link_method", "link_llm_model", "original_match_type",
@@ -253,126 +225,61 @@ def _read_for_stats(stage: str) -> "pd.DataFrame | None":
         return None
 
 
-def _compute_large_stage_stats(stage: str) -> "dict[str, Any] | None":
-    """Compute stats for the filtered stage without loading it fully into memory.
+# ── Stage 2: the routing store ─────────────────────────────────────────────────
+# One release's pile counts, straight out of DuckDB. This is the source Stage 3
+# builds its worklist from, so the dashboard's Stage 2 figures and the works the
+# extractor will actually see are the same fact, asked twice.
+#
+# Every failure here is a STATE the dashboard reports, not an error it hides: a
+# checkout with no store, a store another process is rebuilding, a release whose
+# sidecar record is missing. Each returns `available: False` with the reason, so
+# the panel says which one it is instead of rendering a zero.
 
-    Strategy:
-    - Read only lightweight columns (no abstract_r) in 100k-row chunks to get
-      all counts.
-    - For filtered: use parquet predicate pushdown to read doi/url/abstract
-      only for the small replication+reproduction subset.
-    - Falls back to the CSV path if Parquet is unavailable.
+
+def compute_filtered_stats(store_path: "Path | None" = None) -> dict[str, Any]:
+    """Pile counts for the newest routed release, read live from the store.
+
+    *store_path* defaults to the engine's own store. The release is resolved the
+    way `--release latest` resolves it — the newest `created_at` among the
+    releases the store holds routing for — and its id is returned with the counts,
+    because a pile count means nothing without the release it was counted under.
     """
-    pq_path  = _parquet_path(stage)
-    csv_path = _STAGE_CSV[stage]
+    from filter.engine.store import (DEFAULT_STORE_PATH, StoreUnavailable,
+                                     open_store, pile_counts, resolve_release)
 
-    if not pq_path.exists() and not csv_path.exists():
-        return None
-
-    # ── Filtered ────────────────────────────────────────────────────────────
-    if stage == "filtered":
-        total = 0
-        status_counts: dict[str, int] = {}
-        method_counts: dict[str, int] = {}
-        conf_counts:   dict[str, int] = {}
-
-        exit_counts:   dict[str, int] = {}
-        year_counts:   dict[str, int] = {}
-        # {rule exit → {final paper_type → n}} — lets the flowchart show what the
-        # LLM did with the two needs_review arms it receives.
-        exit_status:   dict[str, dict[str, int]] = {}
-
-        # Pass 1: lightweight columns only — get all counts except data quality
-        _light_cols = ("paper_type", "filter_method", "filter_confidence",
-                       "filter_evidence", "year_r")
-
-        def _process_filt_chunk(chunk: pd.DataFrame) -> None:
-            nonlocal total
-            chunk = chunk.fillna("")
-            total += len(chunk)
-            for k, v in chunk.get("paper_type", pd.Series(dtype=str)).value_counts().items():
-                status_counts[str(k)] = status_counts.get(str(k), 0) + int(v)
-            for k, v in chunk.get("filter_method", pd.Series(dtype=str)).value_counts().items():
-                method_counts[str(k)] = method_counts.get(str(k), 0) + int(v)
-            for k, v in chunk.get("filter_confidence", pd.Series(dtype=str)).value_counts().items():
-                conf_counts[str(k)] = conf_counts.get(str(k), 0) + int(v)
-            if "year_r" in chunk.columns:
-                _merge_counts(year_counts, _year_counts(chunk["year_r"]))
-            if "filter_evidence" in chunk.columns:
-                exits = chunk["filter_evidence"].apply(classify_rule_exit)
-                _merge_counts(exit_counts, exits.value_counts().to_dict())
-                if "paper_type" in chunk.columns:
-                    grouped = chunk.assign(_exit=exits).groupby(["_exit", "paper_type"]).size()
-                    for (ex, st), n in grouped.items():
-                        bucket = exit_status.setdefault(str(ex), {})
-                        bucket[str(st)] = bucket.get(str(st), 0) + int(n)
-
+    path = Path(store_path or DEFAULT_STORE_PATH)
+    try:
+        con = open_store(path, read_only=True)
+    except StoreUnavailable as exc:
+        return {"available": False, "reason": str(exc), "store": str(path)}
+    try:
+        # `resolve_release` exits the process on an unresolvable release, which is
+        # right for a CLI and fatal in a web worker — so it is caught here and
+        # turned back into a state.
         try:
-            if pq_path.exists():
-                pf = pq.ParquetFile(pq_path)
-                existing = pf.schema_arrow.names
-                read_cols = [c for c in _light_cols if c in existing]
-                for batch in pf.iter_batches(batch_size=100_000, columns=read_cols):
-                    _process_filt_chunk(batch.to_pandas())
-            else:
-                for chunk in pd.read_csv(csv_path, encoding="utf-8-sig", dtype=str,
-                                         chunksize=100_000, on_bad_lines="skip",
-                                         usecols=lambda c: c in _light_cols):
-                    _process_filt_chunk(chunk)
-        except Exception as exc:
-            log.warning("dashboard_cache: chunked filtered (pass 1) failed: %s", exc)
-            return None
+            release_id = resolve_release(con, "latest", cache_dir=path.parent)
+        except SystemExit as exc:
+            return {"available": False, "reason": str(exc), "store": str(path)}
+        piles = pile_counts(con, release_id)
+    finally:
+        con.close()
 
-        rep_repro_total = (status_counts.get("replication", 0) +
-                           status_counts.get("reproduction", 0))
+    created_at = ""
+    try:
+        from filter.engine.release import read_release
+        created_at = str(read_release(release_id, cache_dir=path.parent)
+                         .get("created_at") or "")
+    except (FileNotFoundError, OSError, ValueError):
+        pass
 
-        # Pass 2: data quality for replication+reproduction rows only.
-        # This subset is small (tens of thousands), so loading it fully is safe.
-        rr_no_doi = rr_no_doi_or_url = rr_no_abstract = 0
-        _dq_cols = ("doi_r", "url_r", "abstract_r", "paper_type")
-        try:
-            if pq_path.exists() and "paper_type" in pq.read_schema(pq_path).names:
-                import pyarrow.compute as pc
-                pf = pq.ParquetFile(pq_path)
-                existing = pf.schema_arrow.names
-                read_cols = [c for c in _dq_cols if c in existing]
-                filters = [("paper_type", "in", ["replication", "reproduction"])]
-                rr = pq.read_table(pq_path, columns=read_cols, filters=filters).to_pandas().fillna("")
-            else:
-                rr_chunks = []
-                for chunk in pd.read_csv(csv_path, encoding="utf-8-sig", dtype=str,
-                                         chunksize=100_000, on_bad_lines="skip",
-                                         usecols=lambda c: c in _dq_cols):
-                    sub = chunk[chunk["paper_type"].isin(["replication","reproduction"])]
-                    if len(sub):
-                        rr_chunks.append(sub)
-                rr = pd.concat(rr_chunks, ignore_index=True).fillna("") if rr_chunks else pd.DataFrame()
-
-            if len(rr):
-                doi_c = rr["doi_r"] if "doi_r" in rr.columns else pd.Series([""] * len(rr))
-                url_c = rr["url_r"] if "url_r" in rr.columns else pd.Series([""] * len(rr))
-                abs_c = rr["abstract_r"] if "abstract_r" in rr.columns else pd.Series([""] * len(rr))
-                rr_no_doi         = int((doi_c == "").sum())
-                rr_no_doi_or_url  = int(((doi_c == "") & (url_c == "")).sum())
-                rr_no_abstract    = int((abs_c == "").sum())
-        except Exception as exc:
-            log.warning("dashboard_cache: filtered data-quality pass failed: %s", exc)
-
-        return {
-            "total":                   total,
-            "by_paper_type":        status_counts,
-            "by_filter_method":        method_counts,
-            "by_filter_confidence":    conf_counts,
-            "by_rule_exit":            {k: exit_counts.get(k, 0) for k in _RULE_EXIT_KEYS},
-            "rule_exit_status":        exit_status,
-            "by_year":                 year_counts,
-            "rep_repro_total":         rep_repro_total,
-            "rep_repro_no_doi":        rr_no_doi,
-            "rep_repro_no_doi_or_url": rr_no_doi_or_url,
-            "rep_repro_no_abstract":   rr_no_abstract,
-        }
-
-    return None  # not a large stage
+    return {
+        "available": True,
+        "store": str(path),
+        "release_id": release_id,
+        "release_created_at": created_at,
+        "total": sum(piles.values()),
+        "by_pile": piles,
+    }
 
 
 # ── Stage 1: the survivor pool ─────────────────────────────────────────────────
@@ -479,11 +386,10 @@ def compute_stage_stats(stage: str,
     """
     if stage == POOL_STAGE:
         return compute_pool_stats(pool_dir or SNAPSHOT_POOL_DIR)
+    if stage == FILTERED_STAGE:
+        return compute_filtered_stats()
     if stage not in _STAGE_CSV:
         raise ValueError(f"Unknown stage: {stage!r}")
-    # filtered is too large to load fully into RAM
-    if stage == "filtered":
-        return _compute_large_stage_stats(stage)
     df = _read_for_stats(stage)
     return None if df is None else _compute_extracted_stats(df)
 
@@ -520,15 +426,15 @@ def update_stats(stage: str, pool_dir: "Path | None" = None) -> None:
 def refresh(stage: str, pool_dir: "Path | None" = None) -> None:
     """Write Parquet mirror then update stats.json for this stage.
 
-    The pool has no CSV and no mirror — it is already parquet — so refreshing it
-    is stats-only. *pool_dir* is honoured for the pool stage only; see
+    The pool and the routing store have no CSV and no mirror, so refreshing
+    either is stats-only. *pool_dir* is honoured for the pool stage only; see
     `compute_stage_stats` for why the writer, not the reader, names it.
     """
-    if stage == POOL_STAGE:
+    if stage in (POOL_STAGE, FILTERED_STAGE):
         try:
-            update_stats(POOL_STAGE, pool_dir=pool_dir)
+            update_stats(stage, pool_dir=pool_dir)
         except Exception as exc:
-            log.warning("dashboard_cache: update_stats failed for pool: %s", exc)
+            log.warning("dashboard_cache: update_stats failed for %s: %s", stage, exc)
         return
     if stage not in _STAGE_CSV:
         log.warning("dashboard_cache.refresh: unknown stage %r — skipping", stage)

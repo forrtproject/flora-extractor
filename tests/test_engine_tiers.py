@@ -830,21 +830,28 @@ def test_screened_only_without_supabase_refuses(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(cli, "_resolve_release", lambda con, release, cache_dir=None: RELEASE)
     monkeypatch.setattr(cli, "read_release", lambda release_id, cache_dir=None: {})
     args = argparse.Namespace(store=tmp_path / "engine.duckdb", release=None,
-                              as_routed=False, out=str(tmp_path / "filtered.csv"),
+                              as_routed=False, out=str(tmp_path / "record.csv"),
                               pool=tmp_path, spec_dir=tmp_path, overlay=None,
                               no_overlay=True,
                               from_year=None, to_year=None)
 
     with pytest.raises(SystemExit) as exc:
-        cli.cmd_handoff(args)
+        cli.cmd_export_csv(args)
     assert "--as-routed" in str(exc.value)
 
 
-@pytest.mark.parametrize("out", [None, "elsewhere.csv"],
-                         ids=["default", "--out wins"])
-def test_as_routed_writes_its_own_file_not_the_screened_one(monkeypatch, tmp_path, out):
-    """The two modes write the same columns, so only the name says whether every row
-    in the file was screened. An as-routed run must not take the screened name."""
+def test_export_csv_requires_a_name_for_the_file_it_writes(tmp_path):
+    """The export is a record someone asked for, not an input anything re-reads. A
+    default name is how a derived file becomes a fixture that goes stale unwatched,
+    so the parser refuses without --out."""
+    from filter.engine import cli
+
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(["export-csv", "--store", str(tmp_path)])
+
+
+def test_export_csv_writes_exactly_where_out_says(monkeypatch, tmp_path):
+    """Whatever the mode, the file lands at --out and nowhere else."""
     from filter.engine import cli
     from filter.engine.claims import ClaimsNotConfigured
 
@@ -861,13 +868,13 @@ def test_as_routed_writes_its_own_file_not_the_screened_one(monkeypatch, tmp_pat
             "typed_by_tier_verdict": 0, "skipped_unscreened": 0,
             "screened_only": False, "release_id": RELEASE, "sha256": "0" * 8})
 
+    out = str(tmp_path / "elsewhere.csv")
     args = argparse.Namespace(store=tmp_path / "engine.duckdb", release=None,
                               as_routed=True, out=out, pool=tmp_path,
                               spec_dir=tmp_path, overlay=None, no_overlay=True,
                               from_year=None, to_year=None)
-    assert cli.cmd_handoff(args) == 0
-    assert written == [Path(out or handoff_mod.HANDOFF_UNSCREENED_CSV)]
-    assert written[0] != Path(handoff_mod.HANDOFF_CSV)
+    assert cli.cmd_export_csv(args) == 0
+    assert written == [Path(out)]
 
 
 # ---------------------------------------------------------------------------

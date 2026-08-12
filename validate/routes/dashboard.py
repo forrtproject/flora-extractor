@@ -58,7 +58,6 @@ def _stats_json_to_api(sj: dict, source: str = "stats_json") -> dict:
     e  = sj.get("extracted")      or {}
     et = sj.get("extracted_test") or {}
 
-    by_status = f.get("by_paper_type", {})
     by_method = e.get("by_link_method",   {})
     by_model  = e.get("by_model",         {})
     by_outcome= e.get("by_outcome",       {})
@@ -84,19 +83,14 @@ def _stats_json_to_api(sj: dict, source: str = "stats_json") -> dict:
         "pool_by_year":   p.get("by_year", {}),
         "pool_gate_hits": p.get("gate_hits", {}),
         "pool_source":    "live" if live is not None else ("stats_json" if p else "none"),
-        # Filtered
-        "filtered_count":           f.get("total"),
-        "filter_replication":       by_status.get("replication",    0),
-        "filter_reproduction":      by_status.get("reproduction",   0),
-        "filter_false_positive":    by_status.get("false_positive", 0),
-        "filter_needs_review":      by_status.get("needs_review",   0),
-        "filter_no_doi":            f.get("rep_repro_no_doi",          0),
-        "filter_no_doi_or_url":     f.get("rep_repro_no_doi_or_url",   0),
-        "filter_no_abstract":       f.get("rep_repro_no_abstract",     0),
-        "filter_rep_repro_total":   f.get("rep_repro_total",           0),
-        "filter_by_rule_exit":      f.get("by_rule_exit",     {}),
-        "filter_rule_exit_status":  f.get("rule_exit_status", {}),
-        "filtered_by_year":         f.get("by_year",          {}),
+        # Filtered (Stage 2) — the routing store, per release
+        "filtered_available":  bool(f.get("available")),
+        "filtered_reason":     f.get("reason", ""),
+        "filtered_store":      f.get("store", ""),
+        "filtered_release":    f.get("release_id"),
+        "filtered_release_created_at": f.get("release_created_at", ""),
+        "filtered_count":      f.get("total"),
+        "filtered_by_pile":    f.get("by_pile", {}),
         # Extracted
         "extracted_count":           e.get("total"),
         "target_pending_count":      e.get("target_pending_count", 0),
@@ -155,20 +149,25 @@ def api_csv_stats():
     one implementation of every aggregation. The pool is never computed here —
     it is gigabytes of parquet, and _stats_json_to_api already overlays the cheap
     footer-only count for the machine that has it.
+
+    Stage 2 is always computed, never read from stats.json: it is one DuckDB
+    query against the routing store, and a figure that costs milliseconds should
+    be the store's answer now rather than whatever a past run wrote down.
     """
     sj = load_stats()
-    missing = [s for s in _STAGE_FILES if not sj.get(s.replace("-", "_"))]
-    if missing:
-        for stage in missing:
-            try:
-                computed = compute_stage_stats(stage)
-            except Exception:
-                computed = None
-            if computed is not None:
-                sj[stage.replace("-", "_")] = computed
-        return jsonify(_stats_json_to_api(sj, source="csv"))
-
-    return jsonify(_stats_json_to_api(sj))
+    missing = [s for s in _CSV_STAGES if not sj.get(s.replace("-", "_"))]
+    for stage in missing:
+        try:
+            computed = compute_stage_stats(stage)
+        except Exception:
+            computed = None
+        if computed is not None:
+            sj[stage.replace("-", "_")] = computed
+    try:
+        sj["filtered"] = compute_stage_stats("filtered")
+    except Exception as exc:  # noqa: BLE001 — a panel state, never a 500
+        sj["filtered"] = {"available": False, "reason": str(exc)}
+    return jsonify(_stats_json_to_api(sj, source="csv" if missing else "stats_json"))
 
 
 # ── Set-aside CSVs ────────────────────────────────────────────────────────────
@@ -404,20 +403,87 @@ def api_set_download():
 
 
 _STAGE_FILES = {
-    "filtered":       DATA_DIR / "filtered.csv",
     "extracted":      DATA_DIR / "extracted.csv",
     "extracted-test": DATA_DIR / "extracted-test.csv",
 }
 
+# Stage 2 has no file of its own, so it is generated on request (below).
+_CSV_STAGES = tuple(_STAGE_FILES)
+
+
+def _generate_filtered_csv():
+    """Write the newest release's screened rows to a temp file and send it.
+
+    The same rows `python -m filter.engine export-csv` writes, through the same
+    function — one definition of what a Stage 2 record contains. It streams the
+    whole survivor pool, so this request takes minutes; that is the price of a
+    figure nobody has to trust a stale file for.
+    """
+    from filter.engine.claims import ClaimsClient, ClaimsNotConfigured
+    from filter.engine.export import ALIASES_FILENAME, SPEC_DIR
+    from filter.engine.handoff import decisions, write_handoff
+    from filter.engine.release import read_release
+    from filter.engine.spec import load_specs
+    from filter.engine.store import (DEFAULT_STORE_PATH, StoreUnavailable,
+                                     open_store, resolve_release)
+    from filter.engine.workids import load_aliases
+    from shared.config import OVERLAY_DIR, SNAPSHOT_POOL_DIR
+
+    store = DEFAULT_STORE_PATH
+    try:
+        con = open_store(store, read_only=True)
+    except StoreUnavailable as exc:
+        return jsonify({"error": str(exc)}), 404
+    try:
+        try:
+            release_id = resolve_release(con, "latest", cache_dir=store.parent)
+        except SystemExit as exc:
+            return jsonify({"error": str(exc)}), 404
+        try:
+            record = read_release(release_id, cache_dir=store.parent)
+        except (FileNotFoundError, OSError) as exc:
+            return jsonify({"error": f"no release record for {release_id[:12]}: {exc}"}), 404
+        try:
+            drop, screen = decisions(ClaimsClient())
+        except ClaimsNotConfigured as exc:
+            return jsonify({"error": f"{exc} — without it no screen verdict can be "
+                                     "read, so there is nothing to export."}), 503
+        except Exception as exc:  # noqa: BLE001 — network boundary; a partial
+            # verdict read would export a file short of rows the engine paid for.
+            return jsonify({"error": f"could not read the screen verdicts: {exc}"}), 502
+
+        download_dir = DATA_DIR / "dashboard" / "download"
+        download_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"filtered_{release_id[:12]}_{datetime.date.today().isoformat()}.csv"
+        out_path = download_dir / filename
+        overlay_dir = OVERLAY_DIR if OVERLAY_DIR.is_dir() else None
+        write_handoff(con, SNAPSHOT_POOL_DIR, out_path, release_id,
+                      drop=drop, screen=screen, decided=set(screen),
+                      specs=load_specs(SPEC_DIR), spec_dir=SPEC_DIR,
+                      aliases=load_aliases(SPEC_DIR / ALIASES_FILENAME),
+                      expect_bundle_hash=record.get("bundle_hash"),
+                      expect_alias_release=record.get("alias_release"),
+                      overlay_dir=overlay_dir,
+                      expect_overlay_hash=record.get("overlay_hash"))
+    finally:
+        con.close()
+    return send_file(str(out_path), as_attachment=True,
+                     download_name=filename, mimetype="text/csv")
+
 
 @dashboard_bp.route("/api/dashboard/download")
 def api_dashboard_download():
-    """Stream a raw pipeline CSV as a download attachment.
+    """Stream a pipeline CSV as a download attachment.
 
     Query params:
       stage — filtered | extracted | extracted-test
+
+    `filtered` is generated from the routing store on request; the other two are
+    files Stage 3 wrote.
     """
     stage = request.args.get("stage", "extracted").strip()
+    if stage == "filtered":
+        return _generate_filtered_csv()
     if stage not in _STAGE_FILES:
         return jsonify({"error": "invalid stage"}), 400
 

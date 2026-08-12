@@ -1,7 +1,8 @@
 """
 Tests for the dashboard aggregations added for the stage-by-stage stats redesign:
-the Stage-2 rule-exit classifier, the Stage-3 replication/reproduction outcome
-split, and the Supabase per-field validator agreement logic.
+Stage 2's release figures from the routing store, the Stage-3
+replication/reproduction outcome split, and the Supabase per-field validator
+agreement logic.
 
 These are all branch-heavy derivations over data the pipeline never labels
 explicitly, so they are the parts most likely to drift silently.
@@ -10,33 +11,105 @@ import pandas as pd
 import pytest
 
 from shared import supabase_client as supa
-from shared.dashboard_cache import _compute_extracted_stats, classify_rule_exit
+from shared.dashboard_cache import _compute_extracted_stats
 
 
-# ── Stage 2: rule exit recovered from filter_evidence ────────────────────────
+# ── Stage 2: the routing store ───────────────────────────────────────────────
 
-@pytest.mark.parametrize("evidence,expected", [
-    ("exclusion:dna replication",                      "r1_exclusion"),
-    ("no replication phrase detected",                 "r2_no_phrase"),
-    ("phrase:direct replication; no author-year cite", "r3_no_cite"),
-    ("phrase:we replicated; no same-sentence cite",    "r4_no_same_sentence"),
-    ("phrase:replication of; cite:(Smith, 2011)",      "r5_pass"),
-    ("rule:phrase-with-cite; phrase:direct replication", "engine_route"),
-    ("rule:dataset-type",                              "engine_route"),
-    ("",                                               "unknown"),
-    (None,                                             "unknown"),
-])
-def test_classify_rule_exit(evidence, expected):
-    assert classify_rule_exit(evidence) == expected
+def _routed_store(tmp_path, piles: dict[str, int], created_at="2026-08-11T21:13:13+00:00",
+                  release="f7e4667b6c464d85", write_record=True):
+    """A store with one routed release, plus the sidecar record that dates it."""
+    import json
+
+    from filter.engine.store import open_store
+
+    store = tmp_path / "engine.duckdb"
+    con = open_store(store)
+    work = 0
+    for pile, count in piles.items():
+        for _ in range(count):
+            work += 1
+            con.execute("INSERT INTO routing VALUES (?, ?, '', 'r', 1, [], '', ?)",
+                        [work, pile, release])
+    con.close()
+    if write_record:
+        releases = tmp_path / "releases"
+        releases.mkdir(exist_ok=True)
+        (releases / f"{release}.json").write_text(
+            json.dumps({"created_at": created_at}), encoding="utf-8")
+    return store
 
 
-def test_rule_exit_survives_llm_evidence_prepend():
-    """The retired per-row Stage 2 prepended its rule evidence to the LLM verdict.
-    Rows written that way are still on disk, so the marker must stay recoverable —
-    otherwise every LLM-touched historical row falls into 'unknown'."""
-    assert classify_rule_exit(
-        "phrase:we replicate; no author-year cite | llm:replicates Smith (2011)"
-    ) == "r3_no_cite"
+def test_filtered_stats_name_the_release_they_counted(tmp_path):
+    """A pile count is meaningless without the release it was counted under, so the
+    release id and its timestamp travel with the numbers."""
+    from shared.dashboard_cache import compute_filtered_stats
+
+    store = _routed_store(tmp_path, {"discard": 3, "screen_expensive": 2, "pending": 5})
+    stats = compute_filtered_stats(store)
+
+    assert stats["available"] is True
+    assert stats["release_id"] == "f7e4667b6c464d85"
+    assert stats["release_created_at"].startswith("2026-08-11")
+    assert stats["total"] == 10
+    assert stats["by_pile"] == {"discard": 3, "screen_expensive": 2, "pending": 5}
+
+
+def test_filtered_stats_pick_the_newest_release(tmp_path):
+    """The dashboard shows what the pipeline is working on now, which is what
+    `--release latest` resolves to."""
+    from shared.dashboard_cache import compute_filtered_stats
+
+    _routed_store(tmp_path, {"discard": 1}, created_at="2026-08-01T00:00:00+00:00",
+                  release="old0000000000000")
+    store = _routed_store(tmp_path, {"screen_expensive": 4},
+                          created_at="2026-08-11T00:00:00+00:00",
+                          release="new0000000000000")
+    stats = compute_filtered_stats(store)
+
+    assert stats["release_id"] == "new0000000000000"
+    assert stats["total"] == 4
+
+
+@pytest.mark.parametrize("make", [
+    lambda tmp_path: tmp_path / "absent.duckdb",
+    lambda tmp_path: _routed_store(tmp_path, {"discard": 1}, write_record=False),
+], ids=["no store", "no release record"])
+def test_filtered_stats_report_absence_as_a_state(tmp_path, make):
+    """Every way of having no figures must reach the panel as a reason, not as a
+    zero and not as a crash — `resolve_release` exits the process on a release it
+    cannot date, which in a web worker is fatal."""
+    from shared.dashboard_cache import compute_filtered_stats
+
+    stats = compute_filtered_stats(make(tmp_path))
+
+    assert stats["available"] is False
+    assert stats["reason"]
+    assert stats.get("total") is None
+
+
+def test_a_refresh_replaces_a_stale_filtered_block(tmp_path, monkeypatch):
+    """The block on disk was written by a pipeline generation that counted a CSV.
+    A refresh has to overwrite it — returning None on any failure would leave the
+    old numbers standing, which is the staleness this stage moved to the store to
+    avoid."""
+    import json
+
+    import shared.dashboard_cache as dc
+
+    stats_path = tmp_path / "stats.json"
+    stats_path.write_text(json.dumps({"filtered": {"total": 2582749}}), encoding="utf-8")
+    monkeypatch.setattr(dc, "DASHBOARD_DIR", tmp_path)
+    monkeypatch.setattr(dc, "STATS_JSON_PATH", stats_path)
+    store = _routed_store(tmp_path, {"screen_expensive": 7})
+    real = dc.compute_filtered_stats
+    monkeypatch.setattr(dc, "compute_filtered_stats", lambda *a, **k: real(store))
+
+    dc.refresh("filtered")
+
+    written = json.loads(stats_path.read_text(encoding="utf-8"))["filtered"]
+    assert written["total"] == 7
+    assert written["release_id"] == "f7e4667b6c464d85"
 
 
 # ── Stage 3: outcome split by record type ────────────────────────────────────
@@ -263,13 +336,73 @@ def test_csv_stats_endpoint_reports_pool_absence(tmp_path, monkeypatch):
 
     monkeypatch.setattr(dash, "load_stats", lambda: {})
     monkeypatch.setattr(dash, "pool_totals", lambda: None)
-    monkeypatch.setattr(dash, "_STAGE_FILES", {})
+    monkeypatch.setattr(dash, "_CSV_STAGES", ())
+    monkeypatch.setattr(dash, "compute_stage_stats", lambda stage: None)
     from validate.app import create_app
     data = create_app().test_client().get("/api/dashboard/csv-stats").get_json()
 
     assert data["pool_present"] is False
     assert data["pool_source"] == "none"
     assert data["pool_count"] is None
+
+
+def test_csv_stats_serve_the_stores_answer_not_stats_json(monkeypatch):
+    """Stage 2's figures are one DuckDB query, so they are asked for on every load.
+    A stats.json block must never be able to show a release the store has moved on
+    from."""
+    import validate.routes.dashboard as dash
+
+    monkeypatch.setattr(dash, "load_stats", lambda: {
+        "filtered": {"available": True, "release_id": "stale", "total": 2582749}})
+    monkeypatch.setattr(dash, "pool_totals", lambda: None)
+    monkeypatch.setattr(dash, "_CSV_STAGES", ())
+    monkeypatch.setattr(dash, "compute_stage_stats", lambda stage: {
+        "available": True, "release_id": "f7e4667b6c46", "release_created_at": "2026-08-11",
+        "total": 5146160, "by_pile": {"discard": 558355}, "store": "cache/engine/engine.duckdb"})
+    from validate.app import create_app
+    data = create_app().test_client().get("/api/dashboard/csv-stats").get_json()
+
+    assert data["filtered_release"] == "f7e4667b6c46"
+    assert data["filtered_count"] == 5146160
+    assert data["filtered_by_pile"] == {"discard": 558355}
+
+
+def test_csv_stats_pass_a_store_failure_through_as_a_panel_state(monkeypatch):
+    """No store, a locked store or an undatable release must reach the panel as a
+    reason to show. A 500 here takes the whole dashboard down with it."""
+    import validate.routes.dashboard as dash
+
+    def _boom(stage):
+        raise RuntimeError("no routing store at cache/engine/engine.duckdb")
+
+    monkeypatch.setattr(dash, "load_stats", lambda: {})
+    monkeypatch.setattr(dash, "pool_totals", lambda: None)
+    monkeypatch.setattr(dash, "_CSV_STAGES", ())
+    monkeypatch.setattr(dash, "compute_stage_stats", _boom)
+    from validate.app import create_app
+    data = create_app().test_client().get("/api/dashboard/csv-stats").get_json()
+
+    assert data["filtered_available"] is False
+    assert "no routing store" in data["filtered_reason"]
+    assert data["filtered_count"] is None
+
+
+def test_the_filtered_download_generates_from_the_store_or_says_why(monkeypatch, tmp_path):
+    """There is no filtered.csv to fall back to, by design: the file went stale
+    unnoticed. Either the store produces the rows now, or the endpoint says what is
+    missing."""
+    import validate.routes.dashboard as dash
+    from filter.engine.store import StoreUnavailable
+
+    def _unavailable(path, read_only=False):
+        raise StoreUnavailable("no routing store at cache/engine/engine.duckdb")
+
+    monkeypatch.setattr("filter.engine.store.open_store", _unavailable)
+    from validate.app import create_app
+    resp = create_app().test_client().get("/api/dashboard/download?stage=filtered")
+
+    assert resp.status_code == 404
+    assert "no routing store" in resp.get_json()["error"]
 
 
 # ── Set-aside CSVs ───────────────────────────────────────────────────────────

@@ -36,7 +36,6 @@ from filter.engine.diagnostics import diagnose, render_text
 from filter.engine.export import (
     ALIASES_FILENAME, SPEC_DIR, StaleBundleError, check_release_binding, export_pile,
 )
-from filter.engine.handoff import HANDOFF_CSV, HANDOFF_UNSCREENED_CSV
 from filter.engine.overlay import OverlayError, chunk_paths, worklist
 from filter.engine.pool_reader import iter_pool_batches, overlay_manifest_hash
 from filter.engine.release import read_release, releases_dir, routing_release, write_release
@@ -57,31 +56,6 @@ def schema_version() -> str:
     """The export contract's own version — a hash of the column list it writes."""
     return "csv:" + hashlib.sha256(
         ",".join(ENGINE_EXPORTED_COLS).encode("utf-8")).hexdigest()[:12]
-
-
-def _unmanifested(pool_dir: Optional[Path]) -> str:
-    """`unmanifested:<12 hex>` — an unfingerprintable pool, told apart from others.
-
-    A release id is the identity claims and verdicts hang off, so two different
-    pools must not mint the same one. The literal `unmanifested` did exactly that:
-    every half-pulled or sidecar-less pool on earth shared one release-id input, so
-    two of them routed into one release and shared each other's claims and
-    verdicts. The discriminator is the cheapest fact that still separates them —
-    each parquet's name and size, which needs no footer read and is available
-    precisely when the real fingerprint is not (a missing sidecar, a partial
-    transfer). It is deliberately NOT a fingerprint: no row counts, no gate, no
-    file contents, and it keeps the `unmanifested` prefix so nothing reads it as
-    provenance. A pool the discriminator cannot be taken over either — an unreadable
-    directory — falls back to the bare literal, which is the one case where two
-    pools may still collide and the one where nothing at all is known about either.
-    """
-    try:
-        files = sorted(Path(pool_dir).glob("*.parquet")) if pool_dir else []
-        parts = "|".join(f"{p.name}:{p.stat().st_size}" for p in files)
-    except OSError:
-        return UNMANIFESTED
-    digest = hashlib.sha256(parts.encode("utf-8")).hexdigest()[:12]
-    return f"{UNMANIFESTED}:{digest}"
 
 
 def _unmanifested(pool_dir: Optional[Path]) -> str:
@@ -499,11 +473,18 @@ def cmd_reconcile(args) -> int:
     return 0
 
 
-def cmd_handoff(args) -> int:
+def cmd_export_csv(args) -> int:
+    """Write one release's screened rows to a named CSV — an ad-hoc record.
+
+    Stage 3 reads the routing store and the pool directly, so nothing in the
+    standard flow consumes this file. It is produced when a person wants a
+    readable snapshot of what a release admitted, and `--out` is required so
+    every such snapshot is named by whoever asked for it: a default name is how
+    a derived file becomes a fixture that quietly goes stale.
+    """
     from filter.engine.handoff import decisions, write_handoff
 
-    out_csv = Path(args.out) if args.out else Path(
-        HANDOFF_UNSCREENED_CSV if args.as_routed else HANDOFF_CSV)
+    out_csv = Path(args.out)
     con = open_store(args.store, read_only=True)
     release_id = _resolve_release(con, args.release, cache_dir=args.store.parent)
     try:
@@ -511,7 +492,7 @@ def cmd_handoff(args) -> int:
     except FileNotFoundError:
         raise SystemExit(
             f"no release record for {release_id[:12]} beside {args.store} — the "
-            "handoff cannot prove which bundle routed it. Re-run "
+            "export cannot prove which bundle routed it. Re-run "
             "`python -m filter.engine route`.")
     overlay_dir = _overlay(args)
     _print_overlay(overlay_dir)
@@ -533,10 +514,10 @@ def cmd_handoff(args) -> int:
         if not args.as_routed:
             raise SystemExit(
                 "no state authority configured (SUPABASE_URL unset), so no tier "
-                "verdicts can be read — and the handoff exports only screened "
-                "rows, which would make this file empty. Configure Supabase, or "
-                "pass --as-routed to hand off the piles as the rules routed them.")
-        print("no state authority configured (SUPABASE_URL unset) — handing off "
+                "verdicts can be read — and this export carries only screened "
+                "rows, which would make the file empty. Configure Supabase, or "
+                "pass --as-routed to export the piles as the rules routed them.")
+        print("no state authority configured (SUPABASE_URL unset) — exporting "
               "the piles as routed, with no tier verdicts applied.")
 
     try:
@@ -555,7 +536,7 @@ def cmd_handoff(args) -> int:
         raise SystemExit(str(exc))
     con.close()
 
-    label = "Stage 3 input" if manifest["screened_only"] else "as routed, UNSCREENED"
+    label = "screened rows" if manifest["screened_only"] else "as routed, UNSCREENED"
     print(f"{manifest['rows']:,} row(s) -> {out_csv}   ({label})")
     for pile, count in manifest["rows_per_pile"].items():
         print(f"  {pile:<18} {count:,}")
@@ -564,10 +545,6 @@ def cmd_handoff(args) -> int:
     print(f"  skipped, never screened {manifest['skipped_unscreened']:,}"
           + ("" if manifest["screened_only"] else "   (--as-routed: verdicts "
              "applied, but an unscreened row still travels)"))
-    if not manifest["screened_only"] and not args.out:
-        print(f"  --as-routed writes {HANDOFF_UNSCREENED_CSV}, not {HANDOFF_CSV}: rows "
-              "here can carry a blank screen verdict, and Stage 3 writes those "
-              "target_pending. Point --filtered-csv at this file to run it anyway.")
     print(f"  release {manifest['release_id']}")
     print(f"  sha256  {manifest['sha256']}")
     return 0
@@ -762,27 +739,27 @@ def build_parser() -> argparse.ArgumentParser:
                                 "Without it, nothing is uploaded or written.")
     reconcile.set_defaults(func=cmd_reconcile)
 
-    handoff = sub.add_parser(
-        "handoff", help="Write the screen piles as Stage 3's filtered.csv.")
-    handoff.add_argument(
-        "--out", default=None,
-        help=f"Output CSV. Default: {HANDOFF_CSV} for the screened handoff, "
-             f"{HANDOFF_UNSCREENED_CSV} with --as-routed.")
-    handoff.add_argument("--pool", type=Path, default=SNAPSHOT_POOL_DIR)
-    handoff.add_argument("--store", type=Path, default=DEFAULT_STORE_PATH)
-    handoff.add_argument("--release", default=None,
-                         help="Release to hand off (default: the store's only one).")
-    handoff.add_argument("--from-year", type=int, default=None)
-    handoff.add_argument("--to-year", type=int, default=None)
-    handoff.add_argument(
+    export_csv = sub.add_parser(
+        "export-csv",
+        help="Write a release's screen piles to a named CSV — an ad-hoc record.")
+    export_csv.add_argument(
+        "--out", required=True,
+        help="Output CSV. Required: this file is a record someone asked for, not "
+             "an input the pipeline re-reads, so it is named at the call.")
+    export_csv.add_argument("--pool", type=Path, default=SNAPSHOT_POOL_DIR)
+    export_csv.add_argument("--store", type=Path, default=DEFAULT_STORE_PATH)
+    export_csv.add_argument("--release", default=None,
+                            help="Release to export (default: the store's only one).")
+    export_csv.add_argument("--from-year", type=int, default=None)
+    export_csv.add_argument("--to-year", type=int, default=None)
+    export_csv.add_argument(
         "--as-routed", action="store_true",
         help="Export the piles as the rules routed them, applying whatever tier "
              "verdicts exist. The default exports only rows a live tier run "
-             f"reached a verdict on. Writes {HANDOFF_UNSCREENED_CSV} unless --out "
-             "says otherwise: an as-routed file carries blank screen columns and "
-             "must not take the screened handoff's name.")
-    _add_overlay_flags(handoff, "It must match the one the release was routed under.")
-    handoff.set_defaults(func=cmd_handoff)
+             "reached a verdict on; an as-routed file carries blank screen "
+             "columns for the rows nothing has judged.")
+    _add_overlay_flags(export_csv, "It must match the one the release was routed under.")
+    export_csv.set_defaults(func=cmd_export_csv)
 
     worklist_cmd = sub.add_parser(
         "worklist", help="Export the no_text rows as a backfill worklist.")

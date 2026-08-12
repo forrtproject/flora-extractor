@@ -111,7 +111,6 @@
   padding:1px 5px; border-radius:3px; letter-spacing:.3px;
   vertical-align:middle; white-space:nowrap;
 }
-.stage-tag-filtered       { background:#d1fae5; color:#065f46; }
 .stage-tag-extracted      { background:#ede9fe; color:#5b21b6; }
 .stage-tag-extracted-test { background:#fef3c7; color:#92400e; }
 
@@ -226,7 +225,6 @@
     <div class="stage-pills" id="stagePills">
       <label class="stage-pill active"><input type="checkbox" name="stage" value="extracted" checked> Extracted</label>
       <label class="stage-pill"><input type="checkbox" name="stage" value="extracted-test"> Extracted-Test</label>
-      <label class="stage-pill"><input type="checkbox" name="stage" value="filtered"> Filtered</label>
     </div>
 
     <!-- Row 1: year + type + multi-select filters -->
@@ -380,16 +378,8 @@ var TYPE_OPTS_EXTRACTED = [
   {value:'replication',   label:'Replication'},
   {value:'reproduction',  label:'Reproduction'},
 ];
-var TYPE_OPTS_FILTERED = [
-  {value:'replication',   label:'Replication'},
-  {value:'reproduction',  label:'Reproduction'},
-  {value:'needs_review',  label:'Needs review'},
-  {value:'false_positive',label:'False positive'},
-];
-
 function updateTypePanelOptions() {
   var stages     = getSelectedStages();
-  var hasFiltered  = stages.some(function(s){ return s === 'filtered'; });
   var hasExtracted = stages.some(function(s){ return s === 'extracted' || s === 'extracted-test'; });
 
   var panel = document.getElementById('ms-type-panel');
@@ -399,7 +389,6 @@ function updateTypePanelOptions() {
   });
 
   var opts = [];
-  if (hasFiltered) opts = opts.concat(TYPE_OPTS_FILTERED);
   if (hasExtracted) {
     TYPE_OPTS_EXTRACTED.forEach(function(o) {
       if (!opts.some(function(x){ return x.value === o.value; })) opts.push(o);
@@ -535,12 +524,10 @@ function esc(s) {
 }
 
 var STAGE_TAG_CLASS = {
-  'filtered':       'stage-tag-filtered',
   'extracted':      'stage-tag-extracted',
   'extracted-test': 'stage-tag-extracted-test',
 };
 var STAGE_ABBR = {
-  'filtered':'FILT',
   'extracted':'EXT','extracted-test':'TEST',
 };
 

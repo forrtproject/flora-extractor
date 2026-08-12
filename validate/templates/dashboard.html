@@ -740,8 +740,8 @@ python -m search.pool_sync --push</pre>
       <div class="docs-panel">
         <div class="docs-card">
           <div class="docs-card-head">What Stage 2 does</div>
-          <p>Removes false positives and classifies candidates into <code>replication</code>, <code>reproduction</code>, <code>needs_review</code>, or <code>false_positive</code>. Routes the <strong>survivor pool</strong> (<code>cache/snapshot_pool/</code>) — Stage 1's parquet output — partition by partition; <code>handoff</code> writes Stage 3's input.</p>
-          <p>Stage 2 is <strong>deterministic</strong>: the rule filter decides every row with no API calls, and rows it cannot decide stay <code>needs_review</code> and are written through unchanged — Stage 3's two-model front-door screen is the validated decider of "is this a replication at all". Results are streamed row-by-row to <code>filtered.csv</code> via a persistent index (<code>cache/filtered_index.txt</code>) so interrupted runs resume without reprocessing.</p>
+          <p>Routes the <strong>survivor pool</strong> (<code>cache/snapshot_pool/</code>) — Stage 1's parquet output — partition by partition into piles: <code>discard</code>, <code>screen_expensive</code>, <code>screen_cheap</code>, <code>needs_human</code>, <code>pending</code>. Declarative JSON rules in <code>filter/spec/</code> decide the pile by precedence. <strong>Rules route and discard; only the LLM tiers admit.</strong></p>
+          <p>The routing lives in the DuckDB store (<code>cache/engine/engine.duckdb</code>), one row per work per release, and the release id names the pool, bundle and overlay it was routed under. Stage 3 builds its worklist from that store and the pool directly — there is no file between the two stages. <code>export-csv</code> writes a readable record of one release when a person wants one.</p>
         </div>
 
         <div class="docs-card">
@@ -815,19 +815,19 @@ python -m search.pool_sync --push</pre>
             <tbody>
               <tr><td class="col-name">route</td><td>—</td><td class="col-desc">Route the survivor pool into a release in the store</td></tr>
               <tr><td class="col-name">screen --tier T</td><td>dry run</td><td class="col-desc">Run an LLM tier over its pile. Nothing is claimed or spent without <code>--run</code></td></tr>
-              <tr><td class="col-name">handoff --out F</td><td>screened only</td><td class="col-desc">Write the screen piles as Stage 3's <code>filtered.csv</code>; <code>--as-routed</code> includes unscreened rows</td></tr>
-              <tr><td class="col-name">--from-year / --to-year</td><td>none</td><td class="col-desc">Bound the handoff by <code>year_r</code></td></tr>
+              <tr><td class="col-name">export-csv --out F</td><td>screened only</td><td class="col-desc">Write the screen piles of one release to a named CSV; <code>--as-routed</code> includes unscreened rows</td></tr>
+              <tr><td class="col-name">--from-year / --to-year</td><td>none</td><td class="col-desc">Bound <code>export-csv</code> by <code>year_r</code></td></tr>
               <tr><td class="col-name">--limit N</td><td>none</td><td class="col-desc">On <code>screen</code>, stop after N works — how a first live batch stays small</td></tr>
             </tbody>
           </table>
           <pre class="cli-block" style="margin-top:10px">python -m filter.engine route                                  # pool → a release
 python -m filter.engine screen --tier screen_expensive         # dry run: price it
 python -m filter.engine screen --tier screen_expensive --run   # claim and spend
-python -m filter.engine handoff --out data/filtered.csv        # → Stage 3's input</pre>
+python -m filter.engine export-csv --out /tmp/release.csv      # an ad-hoc record</pre>
         </div>
 
         <div class="docs-card">
-          <div class="docs-card-head">filtered.csv — all columns</div>
+          <div class="docs-card-head">The Stage 2 row — all columns</div>
           <p style="font-size:11px;color:var(--text-faint);margin:0 0 8px">Inherits all 10 candidate-row columns (<code>CANDIDATES_COLS</code> in <code>shared/schema.py</code>) plus the 4 added by Stage 2.</p>
           <table class="docs-table">
             <thead><tr><th>Column</th><th>Description</th><th>Example</th></tr></thead>
@@ -855,132 +855,39 @@ python -m filter.engine handoff --out data/filtered.csv        # → Stage 3's i
 
       <!-- Right: stats -->
       <div class="stats-panel">
-        <div class="kpi-row">
-          <a href="/api/dashboard/download?stage=filtered" class="kpi-card" title="Download filtered.csv">
-            <div class="kpi-num" id="k-filtered">—</div>
-            <div class="kpi-label">Total Filtered ↓</div>
-            <div class="kpi-sub">filtered.csv</div>
-          </a>
-        </div>
-
-        <p style="font-size:10px;color:var(--text-faint);margin:0 0 6px">Click a card to download that subset as CSV.</p>
-
-        <div class="kpi-row">
-          <a href="/api/check/download?stage=filtered&type=replication" class="kpi-card" title="Download replication rows">
-            <div class="kpi-num" id="f-replication" style="color:#16a34a">—</div>
-            <div class="kpi-label">Replications ↓</div>
-            <div class="kpi-sub" id="f-replication-pct"></div>
-          </a>
-          <a href="/api/check/download?stage=filtered&type=reproduction" class="kpi-card" title="Download reproduction rows">
-            <div class="kpi-num" id="f-reproduction" style="color:#2563eb">—</div>
-            <div class="kpi-label">Reproductions ↓</div>
-            <div class="kpi-sub" id="f-reproduction-pct"></div>
-          </a>
-          <a href="/api/check/download?stage=filtered&type=needs_review" class="kpi-card" title="Download needs-review rows">
-            <div class="kpi-num" id="f-needs-review" style="color:#f59e0b">—</div>
-            <div class="kpi-label">Needs Review ↓</div>
-            <div class="kpi-sub" id="f-needs-review-pct"></div>
-          </a>
-          <a href="/api/check/download?stage=filtered&type=false_positive" class="kpi-card" title="Download false-positive rows">
-            <div class="kpi-num" id="f-false-positive" style="color:#dc2626">—</div>
-            <div class="kpi-label">False Positives ↓</div>
-            <div class="kpi-sub" id="f-false-positive-pct"></div>
-          </a>
-        </div>
-
         <div class="stat-card">
-          <h3>Data Quality — Replications &amp; Reproductions only</h3>
+          <h3>Routing release</h3>
           <div class="stat-row">
-            <span>Rep+Repro total</span>
-            <span><strong id="f-rr-total">—</strong></span>
+            <span>Release</span>
+            <span><strong id="f-release">—</strong></span>
           </div>
-          <a class="stat-row" href="/api/check/download?stage=filtered&type=replication&type=reproduction&no_doi=1" title="Download rep+repro rows with no DOI">
-            <span>No DOI <span class="dl-hint">↓</span></span>
-            <span><strong id="f-rr-no-doi" style="color:#f59e0b">—</strong>
-              <span class="stat-pct" id="f-rr-no-doi-pct"></span></span>
-          </a>
-          <a class="stat-row" href="/api/check/download?stage=filtered&type=replication&type=reproduction&no_doi_url=1" title="Download rep+repro rows with no DOI or URL">
-            <span>No DOI or URL <span class="dl-hint">↓</span></span>
-            <span><strong id="f-rr-no-doi-url" style="color:#dc2626">—</strong>
-              <span class="stat-pct" id="f-rr-no-doi-url-pct"></span></span>
-          </a>
-          <a class="stat-row" href="/api/check/download?stage=filtered&type=replication&type=reproduction&no_abstract=1" title="Download rep+repro rows with no abstract">
-            <span>No abstract <span class="dl-hint">↓</span></span>
-            <span><strong id="f-rr-no-abstract" style="color:#9ca3af">—</strong>
-              <span class="stat-pct" id="f-rr-no-abstract-pct"></span></span>
+          <div class="stat-row">
+            <span>Routed at</span>
+            <span><strong id="f-release-created">—</strong></span>
+          </div>
+          <div class="stat-row">
+            <span>Store</span>
+            <span><strong id="f-store" style="font-size:10px">—</strong></span>
+          </div>
+          <div class="null-note" id="f-unavailable" style="display:none"></div>
+        </div>
+
+        <div class="kpi-row">
+          <a href="/api/dashboard/download?stage=filtered" class="kpi-card"
+             title="Generate a CSV of this release's screened rows — reads the whole survivor pool, so it takes minutes">
+            <div class="kpi-num" id="k-filtered">—</div>
+            <div class="kpi-label">Works Routed ↓</div>
+            <div class="kpi-sub">CSV, generated on request</div>
           </a>
         </div>
 
         <div class="stat-card">
-          <h3>Filtered by Publication Year</h3>
-          <div id="filt-year-chart"><div class="null-note">Loading…</div></div>
-        </div>
-
-        <div class="stat-card" style="padding:14px 16px">
-          <h3>How it works — data flow <span style="font-weight:400;text-transform:none;letter-spacing:0">· live counts from filtered.csv</span></h3>
-          <div class="flow-chart" style="gap:2px">
-            <div class="flow-node-cli">python -m filter.engine route</div>
-            <div class="flow-arrow-down">↓</div>
-            <div class="flow-node">
-              <div class="flow-node-head">Load + resume</div>
-              Reads the survivor pool parquet partition by partition. Keys already routed are skipped — a run resumes where it left off.
-            </div>
-            <div class="flow-arrow-down">↓ per row</div>
-            <div class="flow-node" style="border-left:3px solid #dc2626">
-              <span class="flow-count stop" id="fe-r1">—</span>
-              <div class="flow-node-head">Rule 1 — Exclusion check</div>
-              Title + abstract scanned for biological or technical patterns (DNA/RNA/viral/cell replication, replication fork/origin/stress, code/data/model replication…)<br>
-              <strong>Match →</strong> <code>false_positive</code> [high confidence, rule_based] — stop here
-            </div>
-            <div class="flow-arrow-down">↓ no match <span id="fe-after-r1" style="font-size:10px;font-family:monospace"></span></div>
-            <div class="flow-node" style="border-left:3px solid #dc2626">
-              <span class="flow-count stop" id="fe-r2">—</span>
-              <div class="flow-node-head">Rule 2 — Replication phrase check</div>
-              Any of 35+ replication phrases present in title or abstract?<br>
-              <strong>None found →</strong> <code>false_positive</code> [high, rule_based] — stop here
-            </div>
-            <div class="flow-arrow-down">↓ phrase found <span id="fe-after-r2" style="font-size:10px;font-family:monospace"></span></div>
-            <div class="flow-node">
-              <div class="flow-node-head">Rule 3 — Type detection</div>
-              Do only reproduction-flavoured phrases fire (<em>could not reproduce</em>, <em>reproducibility of</em>…)?<br>
-              <strong>Yes →</strong> base_status = <code>reproduction</code> &nbsp; <strong>No →</strong> base_status = <code>replication</code>
-              <div class="flow-split">Not an exit — every surviving row continues to Rule 4.</div>
-            </div>
-            <div class="flow-arrow-down">↓</div>
-            <div class="flow-node">
-              <span class="flow-count llm" id="fe-r4">—</span>
-              <div class="flow-node-head">Rule 4 — Specific-target gate</div>
-              Does text contain an author–year citation like <code>(Author, YYYY)</code> within a plausible year range?<br>
-              <strong>No →</strong> uncertain — send to LLM &nbsp; <strong>Yes →</strong> continue to the proximity gate
-            </div>
-            <div class="flow-arrow-down">↓ cite found</div>
-            <div class="flow-node">
-              <span class="flow-count llm" id="fe-r5">—</span>
-              <div class="flow-node-head">Rule 5 — Same-sentence proximity gate</div>
-              Is the citation in the <strong>same sentence</strong> as the replication phrase? A phrase and a
-              citation that merely co-occur somewhere in the abstract are frequently unrelated.<br>
-              <strong>No →</strong> uncertain — left as <code>needs_review</code>
-            </div>
-            <div class="flow-arrow-down">↓ same sentence</div>
-            <div class="flow-node" style="border-left:3px solid #16a34a">
-              <span class="flow-count pass" id="fe-r6">—</span>
-              <div class="flow-node-head">Rule pass — accepted by rules alone</div>
-              Phrase and citation co-located → <code>replication</code> or <code>reproduction</code> [high, rule_based], no API call.
-              <div class="flow-split" id="fe-r6-split"></div>
-            </div>
-            <div class="flow-arrow-down">↓ uncertain rows from Rules 4 + 5</div>
-            <div class="flow-node" style="border-left:3px solid #2563eb">
-              <span class="flow-count llm" id="fe-llm">—</span>
-              <div class="flow-node-head">Written through as <code>needs_review</code></div>
-              No LLM call here. Stage 3's two-model front-door screen decides these rows and, when it passes one, overwrites <code>paper_type</code> with its paper type and sets <code>filter_method</code> to <code>screen</code>.
-              <div class="flow-split" id="fe-llm-split"></div>
-            </div>
-            <div class="flow-arrow-down">↓</div>
-            <div class="flow-node" style="border-left:3px solid #16a34a">
-              <div class="flow-node-head">Write</div>
-              Row streamed to <code>filtered.csv</code> · Resume key added to <code>cache/filtered_index.txt</code> · Parquet cache refreshed
-            </div>
-          </div>
+          <h3>Piles</h3>
+          <div id="f-pile-breakdown"><div class="null-note">Loading…</div></div>
+          <p style="font-size:10px;color:var(--text-faint);margin:8px 0 0">
+            Rules route and discard; only the LLM tiers admit. <code>screen_expensive</code>
+            is the pile the validated two-voter screen pays for, and a work reaches Stage 3
+            only once that screen has passed it.</p>
         </div>
       </div>
     </div>
@@ -1045,14 +952,14 @@ python -m extract.audit_dois --apply  # write corrections</pre>
 
         <div class="docs-card">
           <div class="docs-card-head">extracted.csv — all columns</div>
-          <p style="font-size:11px;color:var(--text-faint);margin:0 0 8px">Inherits all filtered.csv columns plus the columns added by Stage 3.</p>
+          <p style="font-size:11px;color:var(--text-faint);margin:0 0 8px">Inherits every Stage 2 column plus the columns added by Stage 3.</p>
           <div style="max-height:320px;overflow-y:auto;border:1px solid var(--border);border-radius:4px">
           <table class="docs-table" style="font-size:10px">
             <thead><tr><th>Column</th><th>Description / Values</th></tr></thead>
             <tbody>
               <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:3px 8px;letter-spacing:.4px">Unique identifier</td></tr>
               <tr><td class="col-name">pair_id</td><td class="col-desc">Hash of (doi_r, doi_o) — unique row key for dedup and promote</td></tr>
-              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:3px 8px;letter-spacing:.4px">Inherited from filtered.csv</td></tr>
+              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:3px 8px;letter-spacing:.4px">Inherited from the Stage 2 row</td></tr>
               <tr><td class="col-name" style="font-size:9px">doi_r, title_r, abstract_r, year_r,<br>authors_r, journal_r, url_r,<br>openalex_id_r, source, ref_r</td><td class="col-desc">All 10 candidate-row columns</td></tr>
               <tr><td class="col-name" style="font-size:9px">paper_type, filter_method,<br>filter_evidence, filter_confidence</td><td class="col-desc">All 4 Stage 2 filter columns</td></tr>
               <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:3px 8px;letter-spacing:.4px">Match classification — Stage 3</td></tr>
@@ -1220,7 +1127,7 @@ python -m extract.audit_dois --apply  # write corrections</pre>
             <div class="flow-arrow-down">↓</div>
             <div class="flow-node">
               <div class="flow-node-head">Load + skip</div>
-              Reads <code>filtered.csv</code>. Skips rows where <code>paper_type = false_positive</code> and DOIs already written to <code>extracted.csv</code> (or <code>extracted-test.csv</code> in sandbox mode).
+              Builds the worklist in process from the routing store and the survivor pool: works a live <code>screen_expensive</code> verdict admitted, minus the works a stored result verdict already settles.
             </div>
             <div class="flow-arrow-down">↓ per replication / reproduction row</div>
             <div class="flow-node">
@@ -1930,50 +1837,46 @@ function fillModel(pfx, csv, p) {
 
 const OUTCOMES = ['success','failure','mixed','uninformative','cannot_be_determined','descriptive','pending','api_error'];
 
-// ── Stage 2 flowchart live counts ────────────────────────────────────────────
-function renderRuleFlow(csv) {
-  const ex = csv.filter_by_rule_exit || {};
-  const st = csv.filter_rule_exit_status || {};
+// ── Stage 2 — the routing store ──────────────────────────────────────────────
+// Live figures for one release, queried from the routing store on every load. The
+// release id is shown beside them because a pile count without it names nothing.
+const PILE_COLOR = {
+  screen_expensive: '#16a34a', screen_cheap: '#2563eb',
+  needs_human: '#f59e0b', pending: '#9ca3af', discard: '#dc2626',
+};
+
+function renderFiltered(csv) {
+  const note = $('f-unavailable');
+  if (!csv.filtered_available) {
+    note.style.display = '';
+    note.textContent = csv.filtered_reason ||
+      'No routed release in the store — run python -m filter.engine route.';
+    $('f-release').textContent = 'none';
+    $('f-release-created').textContent = '—';
+    $('f-store').textContent = csv.filtered_store || '—';
+    $('k-filtered').textContent = '—';
+    $('f-pile-breakdown').innerHTML =
+      '<div class="null-note">No release to count piles for.</div>';
+    return;
+  }
+  note.style.display = 'none';
+  $('f-release').textContent = String(csv.filtered_release).slice(0, 12);
+  $('f-release-created').textContent = csv.filtered_release_created_at || '—';
+  $('f-store').textContent = csv.filtered_store || '—';
+  $('k-filtered').textContent = fmt(csv.filtered_count);
+
+  const piles = csv.filtered_by_pile || {};
   const total = csv.filtered_count || 0;
-  if (!total || !Object.keys(ex).length) return;
-
-  const setCount = (id, n) => {
-    const el = $(id); if (!el) return;
-    el.innerHTML = `${fmt(n)}<span class="fc-pct">${
-      total ? ((n/total)*100).toFixed(1)+'%' : ''}</span>`;
-  };
-  const r1 = ex.r1_exclusion||0, r2 = ex.r2_no_phrase||0;
-  const r3 = ex.r3_no_cite||0,   r4 = ex.r4_no_same_sentence||0, r5 = ex.r5_pass||0;
-
-  setCount('fe-r1', r1);
-  setCount('fe-r2', r2);
-  setCount('fe-r4', r3);
-  setCount('fe-r5', r4);
-  setCount('fe-r6', r5);
-  setCount('fe-llm', r3 + r4);
-
-  const survived1 = total - r1;
-  const survived2 = survived1 - r2;
-  $('fe-after-r1').textContent = `${fmt(survived1)} continue`;
-  $('fe-after-r2').textContent = `${fmt(survived2)} continue`;
-
-  // The type split is only observable on rows the rules accepted outright.
-  const pass = st.r5_pass || {};
-  $('fe-r6-split').textContent =
-    `${fmt(pass.replication||0)} replication · ${fmt(pass.reproduction||0)} reproduction — no API call`;
-
-  // What the LLM did with everything Rules 4 + 5 handed it.
-  const llmIn = {};
-  [st.r3_no_cite||{}, st.r4_no_same_sentence||{}].forEach(o =>
-    Object.entries(o).forEach(([k,v]) => llmIn[k] = (llmIn[k]||0) + v));
-  const llmTotal = Object.values(llmIn).reduce((a,b)=>a+b,0);
-  $('fe-llm-split').innerHTML = llmTotal
-    ? 'LLM verdicts: ' + ['replication','reproduction','false_positive','needs_review']
-        .filter(k => llmIn[k])
-        .map(k => `<strong>${fmt(llmIn[k])}</strong> ${k} (${((llmIn[k]/llmTotal)*100).toFixed(1)}%)`)
-        .join(' · ')
-    : '';
+  const names = Object.keys(piles).sort((a, b) => piles[b] - piles[a]);
+  $('f-pile-breakdown').innerHTML = names.length
+    ? names.map(name => `<div class="stat-row">
+        <span>${name}</span>
+        <span><strong style="color:${PILE_COLOR[name] || 'inherit'}">${fmt(piles[name])}</strong>
+          <span class="stat-pct">${pct(piles[name], total)}</span></span>
+      </div>`).join('')
+    : '<div class="null-note">This release routed no works.</div>';
 }
+
 
 // ── Stage 1 — survivor pool ──────────────────────────────────────────────────
 // Row/file/byte counts come from the pool on THIS machine (parquet footers, cheap).
@@ -2027,26 +1930,8 @@ async function loadPipeline() {
   // Stage 1 — survivor pool
   renderPool(csv);
 
-  // Filter tab
-  $('k-filtered').textContent = fmt(csv.filtered_count);
-  const ftotal = csv.filtered_count||0;
-  [['replication','#16a34a'],['reproduction','#2563eb'],
-   ['needs-review','#f59e0b'],['false-positive','#dc2626']].forEach(([k])=>{
-    const key=k.replace('-','_');
-    $(`f-${k}`).textContent     = fmt(csv[`filter_${key}`]);
-    $(`f-${k}-pct`).textContent = pct(csv[`filter_${key}`], ftotal);
-  });
-  // Filter data quality (rep+repro only)
-  const rrTotal = csv.filter_rep_repro_total||0;
-  $('f-rr-total').textContent        = fmt(rrTotal);
-  $('f-rr-no-doi').textContent       = fmt(csv.filter_no_doi);
-  $('f-rr-no-doi-pct').textContent   = pct(csv.filter_no_doi, rrTotal);
-  $('f-rr-no-doi-url').textContent   = fmt(csv.filter_no_doi_or_url);
-  $('f-rr-no-doi-url-pct').textContent = pct(csv.filter_no_doi_or_url, rrTotal);
-  $('f-rr-no-abstract').textContent  = fmt(csv.filter_no_abstract);
-  $('f-rr-no-abstract-pct').textContent = pct(csv.filter_no_abstract, rrTotal);
-  renderYearChart($('filt-year-chart'), csv.filtered_by_year, 1950);
-  renderRuleFlow(csv);
+  // Filter tab (Stage 2)
+  renderFiltered(csv);
 
   // Extract tab
   $('k-extracted').textContent      = fmt(csv.extracted_count);

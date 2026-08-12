@@ -1,5 +1,12 @@
 """
-check.py — Check tab: filter + search over any pipeline CSV.
+check.py — Check tab: filter + search over Stage 3's output CSVs.
+
+The searchable stages are the ones that HAVE a table on disk: `extracted` and
+`extracted-test`. Stage 2 is not among them — its artifact is the routing store
+plus the survivor pool, and answering one search over that pair means streaming
+several GB of parquet per request. The Stage 2 figures live on the dashboard,
+which reads the store directly, and a row-level record of a release comes from
+`python -m filter.engine export-csv --out <file>`.
 
 Routes:
   GET /check                  → check page
@@ -19,14 +26,12 @@ from shared.dashboard_cache import DASHBOARD_DIR
 check_bp = Blueprint("check", __name__)
 
 _STAGES = {
-    "filtered":       DATA_DIR / "filtered.csv",
     "extracted":      DATA_DIR / "extracted.csv",
     "extracted-test": DATA_DIR / "extracted-test.csv",
 }
 
 # Which column holds the "type/status" filter for each stage
 _TYPE_COL = {
-    "filtered":       "paper_type",
     "extracted":      "type",
     "extracted-test": "type",
 }
