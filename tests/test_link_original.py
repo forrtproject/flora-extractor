@@ -1149,3 +1149,50 @@ class TestACitationParenthesisMayCarryMoreThanTheYear:
     def test_a_real_title_after_the_citation_still_wins(self):
         assert not link_original.citation_without_title(
             "Zhong, Bohns, & Gino (2010) Good lamps are the best police")
+
+
+class TestAnOriginalCannotPostdateItsReplication:
+    """Issue #191: six links in the 2026-08 export named an "original" published after
+    the replication. Four of them were the replication's own later journal version or
+    a sibling replication — every one of those echoes the original's title, which is
+    exactly what a title search ranks on, and `doi_o != doi_r` catches only the
+    identical identifier."""
+
+    def test_a_later_year_is_impossible(self):
+        assert link_original.published_after(2021, 1985)
+        assert link_original.published_after("2020", "2019")
+
+    def test_the_same_year_is_allowed(self):
+        """A preprint and the journal version of the study it replicates routinely
+        share a year."""
+        assert not link_original.published_after(2019, 2019)
+
+    def test_a_missing_or_unreadable_year_fires_nothing(self):
+        assert not link_original.published_after(None, 2019)
+        assert not link_original.published_after(2021, "")
+        assert not link_original.published_after(2021, "n.d.")
+
+    def test_the_pre_pdf_rung_drops_a_hit_the_replication_predates(self):
+        hit = {"doi": "10.1177/2515245919881152", "year": 2020,
+               "title": "Reexamining the effect of gustatory disgust",
+               "authors": ["Johnson, D."]}
+        with patch.object(link_original, "_search_crossref_by_title",
+                          return_value=hit), \
+             patch.object(link_original, "_search_openalex_by_title",
+                          return_value=None):
+            assert link_original._search_title_for_original(
+                "10.31234/osf.io/349pk", "gustatory disgust and moral judgment",
+                "Reexamining the effect of gustatory disgust", 2018) is None
+
+    def test_the_same_hit_stands_for_an_older_replication(self):
+        hit = {"doi": "10.1177/2515245919881152", "year": 2020,
+               "title": "Reexamining the effect of gustatory disgust",
+               "authors": ["Johnson, D."]}
+        with patch.object(link_original, "_search_crossref_by_title",
+                          return_value=hit), \
+             patch.object(link_original, "_search_openalex_by_title",
+                          return_value=None):
+            resolved = link_original._search_title_for_original(
+                "10.1/rep", "gustatory disgust and moral judgment", "Another study",
+                2024)
+        assert resolved and resolved["resolved_doi_o"] == "10.1177/2515245919881152"

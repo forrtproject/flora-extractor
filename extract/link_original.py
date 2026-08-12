@@ -508,7 +508,13 @@ OUTCOME_DESCENT = True
 #      never reached the adjudicated search and settled unidentified_original. A
 #      per-target row also keeps the OpenAlex id its record carried when the title
 #      search finds none (2026-08-10)
-EXTRACT_LADDER_VERSION: int = 23
+#  24  neither search path offers a candidate published after the replication
+#      (`published_after`, issue #191): the closest title match to a replication is
+#      often its own later journal version, a sibling replication or a commentary
+#      answering it, and doi_o != doi_r rules out only the identical identifier
+#      (2026-08-13)
+#      reopen: --redo-status llm_title_search,llm_author_year_search
+EXTRACT_LADDER_VERSION: int = 24
 
 
 # Columns to pass through from the input row (no renaming). Only columns
@@ -633,8 +639,36 @@ def _first_author(authors) -> str:
     return str(authors or "").split(",")[0].strip()
 
 
+def _year(value) -> "int | None":
+    """*value* as a four-digit publication year, or None when it is not one."""
+    match = re.search(r"\b(1[0-9]{3}|2[0-9]{3})\b", str(value or ""))
+    return int(match.group(1)) if match else None
+
+
+def published_after(year_o, year_r) -> bool:
+    """Whether a candidate original appeared AFTER the replication that names it.
+
+    A paper cannot re-test a study that did not exist when it was written, so this is
+    a structural impossibility rather than a weak signal, and the searches drop such a
+    candidate outright. The comparison is strict — a preprint and the journal version
+    of the study it replicates routinely share a year, so equality stays allowed.
+
+    Either year missing or unreadable answers False: the guard fires on evidence, and
+    a row that carries no year has none to fire on.
+
+    This is what the pooled searches otherwise get wrong most often. The closest title
+    match to a replication's title is frequently the replication's OWN later published
+    version, a sibling replication, or a commentary answering it — all of them echo the
+    original's title, and `doi_o != doi_r` only rules out the exact-same-identifier
+    case. Six such links were in the 2026-08 export (issue #191), four of them
+    outcome-coded as settled verdicts.
+    """
+    original, replication = _year(year_o), _year(year_r)
+    return bool(original and replication and original > replication)
+
+
 def _search_title_for_original(doi_r: str, target_desc: str,
-                               study_r: str) -> "dict | None":
+                               study_r: str, year_r=None) -> "dict | None":
     """Resolve a target the screen named but could not match to a reference.
 
     target_desc is however the abstract referred to the replicated study, so it may
@@ -652,6 +686,10 @@ def _search_title_for_original(doi_r: str, target_desc: str,
         if not doi_o or doi_o == clean_doi(doi_r):
             continue
         if jaccard_similarity(hit.get("title", ""), study_r) > 0.9:
+            continue
+        if published_after(hit.get("year"), year_r):
+            log.info("[%s] title hit %s dropped: published %s, after the "
+                     "replication (%s)", doi_r, doi_o, hit.get("year"), year_r)
             continue
         return {
             "resolved":          True,
@@ -1361,7 +1399,7 @@ def run_for_doi(doi_r:              str,
                      and all(v["classification"] in SCREEN_QUALIFYING and v["confident"]
                              for v in votes))
         if target_desc and both_sure:
-            hit = _search_title_for_original(doi_r, target_desc, study_r)
+            hit = _search_title_for_original(doi_r, target_desc, study_r, year_r)
             if hit:
                 log.info("[%s] Resolved by pre-PDF title search: %s", doi_r,
                          hit["resolved_title_o"])

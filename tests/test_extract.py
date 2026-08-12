@@ -3227,6 +3227,30 @@ class TestNamedButUnmatchedTargets:
         entry = self._run(monkeypatch)
         assert entry is None
 
+    def test_a_candidate_published_after_the_replication_never_reaches_the_model(
+            self, monkeypatch):
+        """Issue #191. The closest title match to a replication is often its own later
+        journal version or a sibling replication, and both echo the original's title.
+        A candidate the replication predates cannot be what it re-tested, so it is
+        dropped rather than flagged: there is no judgement for the model to make."""
+        monkeypatch.setattr("extract.link_original.title_search_candidates",
+                            lambda *a, **k: (list(self._HITS), False))
+        monkeypatch.setattr("shared.openalex_client.author_year_candidates",
+                            lambda *a, **k: ([], 0, False))
+        monkeypatch.setattr("shared.llm_client.pick_author_year_original", self._pick())
+        entry = run_extract._target_entry(
+            self._target(), "10.9/rep", {**self._CONTEXT, "year_r": "1952"})
+        # 1950 survives, 1954 does not, so the model's first-candidate pick is 1950.
+        assert entry is not None and entry["doi"] == "10.1/one"
+        assert [c["doi"] for c in entry["title_search_candidates"]] == ["10.1/one"]
+
+    def test_a_replication_with_no_year_filters_nothing(self, monkeypatch):
+        """The guard fires on evidence. A row carrying no year has none to fire on,
+        and dropping its candidates would cost links to buy nothing."""
+        entry = self._run(monkeypatch, hits=self._HITS)
+        assert entry is not None
+        assert len(entry["title_search_candidates"]) == 2
+
     def test_an_unreachable_provider_does_not_settle(self, monkeypatch):
         """Neither provider answered, so the row is api_error — which a re-run
         reopens — rather than no_original_found, which would close it for good."""

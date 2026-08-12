@@ -997,8 +997,8 @@ def _title_searched_entry(target: dict, doi_r: str, context: dict) -> "dict | No
     named = str(target.get("target_as_named") or "").strip()
     cleaned = clean_citation_title(named)
 
-    from extract.link_original import (citation_without_title, strip_citation_prefix,
-                                       title_search_candidates)
+    from extract.link_original import (citation_without_title, published_after,
+                                       strip_citation_prefix, title_search_candidates)
     from shared.openalex_client import (author_year_candidates,
                                         extract_author_year_patterns)
     from shared.llm_client import pick_author_year_original
@@ -1061,6 +1061,19 @@ def _title_searched_entry(target: dict, doi_r: str, context: dict) -> "dict | No
                 doubt = (["a PsycTESTS measure record, not the article itself"]
                          if psyctests_doi(str(c.get("doi") or "")) else [])
                 pool.append({**c, "source": "openalex_authoryear", "flags": doubt})
+
+    # One year guard over the whole pool, wherever a candidate came from: a work
+    # published after the replication cannot be the study it re-tested. A drop rather
+    # than a flag, because there is no judgement for the model to make.
+    possible: list[dict] = []
+    for c in pool:
+        if published_after(c.get("year"), context.get("year_r")):
+            log.info("[%s] candidate %s dropped: published %s, after the "
+                     "replication (%s)", doi_r, c.get("doi") or c.get("openalex_id"),
+                     c.get("year"), context.get("year_r"))
+        else:
+            possible.append(c)
+    pool = possible
 
     # The named string leads, then what was asked of it: the evidence line is what an
     # adjudication reads, and "authoryear:ramscar 2010" does not say which citation in
@@ -1820,9 +1833,11 @@ def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | Non
     """
     targets  = link.get("targets") or []
     # What the paper is ABOUT, for the resolvers that need to judge a candidate's
-    # subject matter rather than match its title.
+    # subject matter rather than match its title, and WHEN it appeared, which bounds
+    # what it can have replicated.
     context  = {"title_r": str(row.get("title_r", "") or ""),
-                "abstract_r": str(row.get("abstract_r", "") or "")}
+                "abstract_r": str(row.get("abstract_r", "") or ""),
+                "year_r": row.get("year_r")}
     recovered = link.get("_recovered_entry")
     resolved = ([(targets[0], recovered)] if recovered and len(targets) == 1
                 else [(t, _target_entry(t, doi_r, context)) for t in targets])
@@ -2046,7 +2061,8 @@ def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
             f"{row.get('title_r', '')}\n{row.get('abstract_r', '')}")
         if cited:
             context = {"title_r": str(row.get("title_r", "") or ""),
-                       "abstract_r": str(row.get("abstract_r", "") or "")}
+                       "abstract_r": str(row.get("abstract_r", "") or ""),
+                       "year_r": row.get("year_r")}
             probe = {"key": None, "match_certain": True, "record": None,
                      "study_numbers": "", "replication_study_numbers": "",
                      "target_as_named": cited[0]["raw"],
@@ -2091,7 +2107,8 @@ def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
     if (accepted and not clean_doi(str(link.get("resolved_doi_o", "") or ""))
             and not accepted_record.get("openalex_id")):
         context = {"title_r": str(row.get("title_r", "") or ""),
-                   "abstract_r": str(row.get("abstract_r", "") or "")}
+                   "abstract_r": str(row.get("abstract_r", "") or ""),
+                   "year_r": row.get("year_r")}
         raw_title = str(accepted_record.get("title") or "")
         cleaned   = clean_citation_title(raw_title)
         title     = raw_title if citation_fragment(cleaned) else cleaned
