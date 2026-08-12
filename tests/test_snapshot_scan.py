@@ -461,11 +461,11 @@ _GATE_CASES = [
     # live since replication-claim-title-strong's promotion (2026-08-05)
     ("A direct replication of the anchoring effect",
      "We report a direct replication of Smith (2010).", True, "screen_expensive"),
-    # the same claim in the abstract only is still a shadow tier's
-    # (replication-claim-text) and so reads `pending`
+    # the same claim without a qualifier or cited work: the broad title arm
+    # (replication-claim-title-broad, live) claims it
     ("We replicate prior findings",
      "We replicate prior findings in a new population, naming no target.",
-     True, "pending"),
+     True, "screen_expensive"),
     # replication-signal (shadow) — title stem only, bound for screen_cheap
     ("Reproducibility of the X effect",
      "Bees forage over long distances when the hive is disturbed.",
