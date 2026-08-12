@@ -159,6 +159,26 @@ def test_the_colon_separated_genres_are_claimed_and_only_those(specs, title, cla
     assert _matches(specs, "not-a-paper-title", row) is claimed
 
 
+def test_a_recommendation_is_claimed_by_its_abstract_when_the_title_hides_it(specs):
+    """PCI files most recommendations under the recommended paper's own title, so
+    85 of the 139 the abstract arm claims carry no genre word anywhere else."""
+    assert _matches(specs, "not-a-paper-abstract",
+                    _row("Weak-to-no evidence for a positive link between loneliness "
+                         "and anthropomorphism",
+                         "A recommendation of: Qinyu Xiao, Gilad Feldman. Insufficient "
+                         "evidence for the loneliness-anthropomorphism link."))
+
+
+def test_a_paper_that_mentions_a_recommendation_is_spared(specs):
+    """The anchor and the colon are the rule: a recommendation named mid-abstract is
+    a paper talking about one."""
+    paper = _row("Replication and preregistration in psychology",
+                 "We follow a recommendation of the Open Science Collaboration and "
+                 "preregister every replication.")
+    for rule in _discards(specs):
+        assert not _matches(specs, rule, paper), rule
+
+
 def test_a_pci_review_suffix_is_claimed_by_its_identifier_too(specs):
     """PCI extends the reviewed paper's own DOI rather than minting a path segment,
     so the identifier says what the object is on its own evidence."""

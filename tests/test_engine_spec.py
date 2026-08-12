@@ -28,6 +28,7 @@ EXPECTED = {
     "deposit-registrant": ("discard", 958, None, False),
     "figshare-attachment": ("discard", 956, None, False),
     "not-a-paper-title": ("discard", 955, None, False),
+    "not-a-paper-abstract": ("discard", 954, None, False),
     "not-a-report-type": ("discard", 940, None, False),
     "osf-registration-completed": ("screen_expensive", 936, None, False),
     "osf-registration-protocol": ("discard", 935, None, False),
@@ -50,7 +51,7 @@ _CLAIM_TIERS = ("replication-claim-cited-title", "replication-claim-title-strong
                 "replication-claim-text", "replication-claim-residual")
 _ADMISSION = _CLAIM_TIERS
 _ABOVE_ADMISSION = ("not-a-paper-doi", "deposit-registrant", "not-a-paper-title",
-                    "not-a-report-type")
+                    "not-a-paper-abstract", "not-a-report-type")
 _BELOW_ADMISSION = ("not-a-study-type",)
 
 

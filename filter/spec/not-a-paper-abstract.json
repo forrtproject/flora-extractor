@@ -1,0 +1,21 @@
+{
+  "id": "not-a-paper-abstract",
+  "description": "The ABSTRACT announces the document genre and then names its parent — \"A recommendation of: <authors> <title>\" — so the record is a Peer Community In recommendation and not the study it recommends. It is the abstract-side counterpart of not-a-paper-title, and it exists because PCI files most recommendations under the recommended paper's OWN title: 85 of the 139 pool works this claims carry no genre word in the title at all, so nothing in the identifier or the title can reach them. Start-anchored for the same reason that rule is, and with the colon required: a paper whose abstract mentions a recommendation of something, anywhere, is a paper. A PCI recommendation is also not a study for a second reason worth stating, because it decides what the rule may NOT be narrowed to. A Registered Reports recommendation comes in two kinds — Stage 1 recommends a protocol that has produced no results yet, Stage 2 recommends the completed study — and the OpenAlex record carries no trace of which: of the 108 `10.24072/pci.rr` works in the pool, 2 mention \"stage 1\" and 1 mentions \"stage 2\" in title or abstract. The distinction is only on PCI's own recommendation page, one HTTP request per record, which no rule can make. Both kinds are discarded here, and a Stage 2 recommendation is the review object of a replication that is separately in the corpus as its preprint. Above admission (`replication-claim`, 700): the recommendation quotes its parent's title and abstract, so the replication phrases it carries are its parent's.",
+  "match": {
+    "abstract_missing": false,
+    "abstract_regex": "^\\s*a recommendation of\\s*:"
+  },
+  "pile": "discard",
+  "vocabulary": null,
+  "precedence": 954,
+  "shadow": false,
+  "measured": [
+    {
+      "level": "human",
+      "date": "2026-08-13",
+      "owner": "flora-extractor",
+      "n": 139,
+      "rationale": "Count over a named population: 139 of the 5,146,160 works in the survivor pool open their abstract this way, and all 139 are on registrant 10.24072 — the pattern selects one publisher's records without naming it, across nine PCI communities (rr 84, ecology 17, evolbiol 16, genomics 15, and six smaller). All 139 were read: every one is a recommendation record, 54 of them titled with a genre word not-a-paper-title already claims and 85 titled as the recommended paper. Recall against data/flora.csv is exact: 0 of its 2,504 titles open this way. Evidence for the six the rule reaches in the 2026-08 export, and for the Stage 1 / Stage 2 split behind the description: issue #192."
+    }
+  ]
+}

@@ -87,6 +87,11 @@ CORPUS = [
          title="A replication of the Smith effect", abstract="Peer review."),
     _row(work="https://openalex.org/W6",
          title="Review for: A replication of the Smith effect", abstract="Editorial."),
+    # The genre is in the abstract alone: PCI files most recommendations under the
+    # recommended paper's own title (954).
+    _row(work="https://openalex.org/W61", doi="10.24072/pci.rr.100750",
+         title="Weak-to-no evidence for a link between loneliness and anthropomorphism",
+         abstract="A recommendation of: Xiao & Feldman. A replication of Smith (2019)."),
     # the metadata-crosswalk discard (500)
     _row(work="https://openalex.org/W7", type_="paratext",
          title="Front matter", abstract="Contents of the replication special issue."),
