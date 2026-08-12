@@ -65,11 +65,10 @@ verdicts. Stage 4 reads that file.
 # so most collaborators pull the pool instead: python -m search.pool_sync --pull
 python -m search.run_search --scan
 
-# Stage 2 — route the survivor pool, screen what the rules could not settle,
-# and write the handoff record (Stage 3 does not read it — see above)
+# Stage 2 — route the survivor pool and screen what the rules could not settle.
+# The routing store and the tier verdicts are the output; Stage 3 reads both.
 python -m filter.engine route
 python -m filter.engine screen --tier screen_expensive --run
-python -m filter.engine handoff --out data/filtered.csv
 # `screen` is a dry run without --run, and --run needs SUPABASE_URL /
 # SUPABASE_SERVICE_KEY: the claim is what stops two runs paying for the same works.
 
@@ -83,27 +82,32 @@ python -m extract.export --release <id>   # the verdicts → data/extracted.csv
 python -m validate.app        # → http://localhost:5001
 ```
 
+For a readable snapshot of what one release admitted — a record to review or share,
+which nothing in the pipeline reads back — write it to a file you name:
+
+```bash
+python -m filter.engine export-csv --out data/screened-<id>.csv --release <id>
+```
+
 ## Seeding from existing data
 
-If the shared-drive CSVs are available, you can skip Stages 1–2:
+If the shared-drive files are available, you can skip the stages that produced them:
 
 | File | Description |
 |------|-------------|
 | the survivor pool (parquet) | Stage 1 output — pull it with `python -m search.pool_sync --pull` and run Stage 2 |
-| `data/filtered.csv` | Stage 2 output — a reviewable record of what the screen admitted. Stage 3 does not read it; running Stage 3 needs the routing store and the pool, not this file |
 | `data/extracted.csv` | Stage 3 output — load into web app for monitoring |
 | `data/FLoRA entry sheet - replication list.csv`, `data/flora.csv` | Rows already in FLoRA — the two files `shared/flora_skip.py` reads. The skip is unconditional: it applies in the extract tier's worklist and again in the export, with no flag to turn it on |
 
 ### Large data files (DVC + Cloudflare R2)
 
-This is for the two RETIRED pre-engine corpora, `candidates.csv` and the old
+This is for the two historical pre-engine corpora, `candidates.csv` and
 `filtered.csv`, which were far too large for git or the free GitHub LFS tier — the
 DVC pointers hold them zipped at 1.67 GB and 1.68 GB (`data/candidates.zip.dvc`,
-`data/filtered.zip.dvc`). Neither is written any more: Stage 1's corpus is the
+`data/filtered.zip.dvc`). The pipeline writes neither: Stage 1's corpus is the
 survivor pool (shared through Hugging Face — see
-[cli-reference.md](cli-reference.md)) and the current `data/filtered.csv` is Stage 2's
-handoff at a couple of thousand rows. Set this up only if you need the historical
-corpora.
+[cli-reference.md](cli-reference.md)) and Stage 2's output is the routing store plus
+the tier verdicts. Set this up only if you need the historical corpora.
 
 They are stored **zipped** in a Cloudflare R2 bucket and versioned with
 [DVC](https://dvc.org); only the small `data/*.zip.dvc` pointer files are committed

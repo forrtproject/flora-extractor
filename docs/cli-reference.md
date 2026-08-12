@@ -279,9 +279,12 @@ generously; the spec bundle is the one rule set that decides what a paper is.
 
 **Input:** the survivor pool (`cache/snapshot_pool`), plus the text overlay in
 `cache/engine/overlay` when it holds any  
-**Output:** `data/filtered.csv`, written by `handoff`
+**Output:** the routing release in the DuckDB store — the pile each work landed
+in, plus a permanent screen verdict per work the expensive tier judged. Stage 3
+reads that store and the pool directly; nothing writes a file between the stages.
+`export-csv` writes an ad-hoc CSV record of a release when a person wants one.
 
-The usual order is `route` → `screen` → `handoff`.
+The usual order is `route` → `screen`.
 
 ```bash
 # What the bundle currently says — one line per spec, plus the bundle hash
@@ -312,8 +315,8 @@ python -m filter.engine screen --tier screen_cheap --run --live
 # The pending/no_text rows, as a worklist for the abstract backfill
 python -m filter.engine worklist --out data/no_text_worklist.csv --pool cache/snapshot_pool
 
-# Write the file Stage 3 reads
-python -m filter.engine handoff --out data/filtered.csv --from-year 2011
+# An ad-hoc CSV record of what this release admitted
+python -m filter.engine export-csv --out /tmp/release-2011.csv --from-year 2011
 
 # Push response blobs an earlier run left pending (dry run without --run)
 python -m filter.engine reconcile
@@ -335,20 +338,20 @@ python -m filter.engine release-claim --claim <id> --status failed --yes
 | `screen` | Runs one LLM tier (`--tier screen_cheap\|screen_expensive`) over that pile. **Dry run by default**: it prints the row count, the token-length distribution of the abstracts it would send and `N rows → tier X ≈ $Y`, and claims, fetches and spends nothing. `--run` claims the batch through the Supabase claims RPC *before* the first voter is asked, records one permanent verdict row per vote, and completes the claim; a claim conflict refuses without spending anything, and an exhausted token budget fails the claim and stops with the verdicts already written intact. |
 | `reconcile` | Sweeps verdict rows an EARLIER run left `response_pending_upload` — the flag off, no token, a commit that 429'd — matches them to the blobs in `cache/engine/responses/` by response hash, commits those in `FLORA_HF_COMMIT_BATCH`-sized commits and marks only what a commit accepted. **Dry run by default**; `--run` acts. A pending row whose blob has been deleted is reported, not fatal. Refuses outright when Hugging Face is unconfigured (`ENGINE_TIER_HF_UPLOAD` off, no `FLORA_POOL_REPO`, no `HF_TOKEN`) rather than sweeping nothing. |
 | `worklist` | Exports the release's `pending/no_text` rows (joined back to the pool for doi/title/year) as the worklist `filter.engine.backfill` reads. |
-| `handoff` | Writes the two screen piles — `screen_expensive` first, then `screen_cheap` — as the file Stage 3 reads, in `ENGINE_EXPORTED_COLS` order, with a live `screen_expensive` record type written into `paper_type` and its full verdict into `SCREEN_COLS` (Stage 3 reads that instead of screening). **Only rows a live `screen_expensive` run reached a verdict on travel** — a cheap-tier verdict can drop a row but never admit one: a discarded work is left out and counted as `dropped_by_tier_verdict`, a work no live run decided (never screened, or still short of a second vote) is left out and counted as `skipped_unscreened`. `--as-routed` exports the piles as routed instead, applying whatever verdicts exist, and writes `data/filtered-unscreened.csv` rather than the screened contract's `data/filtered.csv` (`--out` overrides either). Unlike `export`, its manifest is rewritable: the handoff is a materialized view Stage 3 re-reads, not an immutable artifact. |
+| `export-csv` | Writes the two screen piles of one release — `screen_expensive` first, then `screen_cheap` — to the CSV named by the required `--out`, in `ENGINE_EXPORTED_COLS` order, with a live `screen_expensive` record type written into `paper_type` and its full verdict into `SCREEN_COLS`. **Only rows a live `screen_expensive` run reached a verdict on travel** — a cheap-tier verdict can drop a row but never admit one: a discarded work is left out and counted as `dropped_by_tier_verdict`, a work no live run decided (never screened, or still short of a second vote) is left out and counted as `skipped_unscreened`. `--as-routed` exports the piles as routed instead, applying whatever verdicts exist. A `<out>.manifest.json` sidecar records the release, the row count and the file's sha256; unlike `export`'s, it is rewritable — re-exporting the same release after more works were screened is a newer record of the same thing. |
 | `release-claim` | With no arguments, lists every claim still `active` — id, tier, item count, when it was taken, when its lease runs out, and whether it has already expired. `--claim <id> --yes` ends one through the same `engine_release_claim` RPC a finishing run calls (`--status failed` by default; `cancelled` / `complete` also accepted), which frees its works. Verdicts are untouched. Rarely needed: a claim expires by itself `CLAIM_TTL_HOURS` (6) after it is taken, so this is for freeing works sooner than that. |
 | `status` | Every release found beside the store, with its creation time and pile counts. |
 
-**The text overlay loads itself.** `route`, `export`, `screen` and `handoff` read
+**The text overlay loads itself.** `route`, `export`, `screen` and `export-csv` read
 the overlay in `FLORA_OVERLAY_DIR` (default `cache/engine/overlay`) whenever that
 directory holds overlay chunks — no flag needed, because an overlay-only rule
 (the `osf-registration-*` pair) silently matches nothing without it. `--overlay
 DIR` points at another overlay, `--no-overlay` runs against the bare pool, and
 each command prints one line — `overlay: <dir> (hash <12>)` or `overlay: none` —
 saying which text it read. The overlay folds into the release id, so `export`,
-`handoff` and `screen` refuse a release routed under a different overlay.
+`export-csv` and `screen` refuse a release routed under a different overlay.
 
-`--from-year` and `--to-year` both exist on `export` and `handoff` — the examples
+`--from-year` and `--to-year` both exist on `export` and `export-csv` — the examples
 above only ever show the lower bound. `release-claim` takes `--release <id>` to
 restrict its listing to one release.
 
@@ -371,7 +374,7 @@ and sizes and exists only so two different unfingerprintable pools do not mint t
 same release id and share each other's claims and verdicts — it is not provenance,
 which is why the `unmanifested` prefix stays visible.
 
-**`--release` and `--sample`.** `export`, `screen`, `handoff` and `worklist` each
+**`--release` and `--sample`.** `export`, `screen`, `export-csv` and `worklist` each
 take `--release <id>`: the release to read. A 12-character prefix is enough, as
 long as it is unambiguous. Omitted, the store's release is used
 when it holds exactly one and the command refuses when it holds several, so a
@@ -397,21 +400,22 @@ small enough to read. `--run` needs `SUPABASE_URL` and `SUPABASE_SERVICE_KEY`
 because the claim is what stops two runs spending on the same works; a dry run
 needs neither.
 
-**`handoff` exports what was screened.** Routing says a row deserves an LLM's
+**`export-csv` exports what was screened.** Routing says a row deserves an LLM's
 attention; only the validated pair says it reaches Stage 3. So a row the rules put
-in a screen pile but no live `screen_expensive` run ever decided is held back, and the manifest
-accounts for it separately from a discard (`skipped_unscreened` vs
-`dropped_by_tier_verdict`). `--as-routed` is the older behaviour, and the only
-one available without Supabase: with no claims client there are no verdicts, so
+in a screen pile but no live `screen_expensive` run ever decided is held back, and
+the manifest accounts for it separately from a discard (`skipped_unscreened` vs
+`dropped_by_tier_verdict`) — the same population Stage 3's worklist takes. This is
+what makes the export a faithful record of a release rather than a second opinion
+about it. `--as-routed` exports the piles as the rules routed them, and is the only
+mode available without Supabase: with no claims client there are no verdicts, so
 screened-only would write an empty file and the command refuses instead of doing
 that quietly. It refuses too, like `export`, when the spec bundle, alias file or
 overlay has moved since the release was routed.
 
-**The two modes write different files.** The screened handoff defaults to
-`data/filtered.csv`, `--as-routed` to `data/filtered-unscreened.csv`, and `--out`
-wins in either mode. The columns are identical, so the name is the only thing that
-distinguishes a file whose every row was screened from one whose verdicts may be
-blank — and Stage 3 reads `data/filtered.csv` by default.
+**`--out` is required.** The two modes write identical columns, so only the file's
+name says whether every row in it was screened. Naming it is also what keeps the
+export a record: a default name is how a derived file becomes a fixture that
+something starts reading and nobody notices going stale.
 
 ### Engine modules with their own entry points
 
@@ -485,8 +489,8 @@ python -m extract.export --release <id> --current-generation-only
 
 **Input:** the routing release and the survivor pool, read in process — the tier
 builds each work's row with `iter_export_rows` + `screen_columns`, the same two
-functions `filter.engine handoff` writes `data/filtered.csv` with. There is no input
-CSV to keep in step, and no handoff file is needed for a tier run.  
+functions `filter.engine export-csv` writes with. There is no input CSV to keep in
+step, and no Stage 2 file is needed for a tier run.  
 **Output:** permanent verdict rows in the state authority. `data/extracted.csv` is
 what `extract.export` renders from them.
 

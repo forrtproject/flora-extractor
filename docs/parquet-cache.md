@@ -13,11 +13,13 @@
 
 `data/dashboard/` is created automatically on first write.
 
-**There are three CSV stages and one that is not a CSV.** `_STAGE_CSV` in
-`shared/dashboard_cache.py` holds `filtered`, `extracted` and `extracted-test`.
-Stage 1 has no CSV: its artifact is the survivor pool directory, so it is the
-`pool` stage (`POOL_STAGE`), it gets no Parquet mirror, and its stats are read off
-the pool's own parquet partitions. `candidates` is not a stage any more.
+**Two CSV stages, and two whose artifact is not a CSV.** `_STAGE_CSV` in
+`shared/dashboard_cache.py` holds `extracted` and `extracted-test`; those are the
+only stages with a Parquet mirror. Stage 1 is the `pool` stage (`POOL_STAGE`): its
+artifact is the survivor pool directory, and its stats are read off the pool's own
+parquet partitions. Stage 2 is the `filtered` stage (`FILTERED_STAGE`): its artifact
+is the routing store, and its stats are one DuckDB query. Neither gets a mirror.
+`candidates` is not a stage any more.
 
 ---
 
@@ -30,14 +32,15 @@ Every pipeline runner calls `refresh(stage)` in a `try/finally` block so the cac
 | `search/run_search.py` | `pool` (with `pool_dir=`, because `--survivor-pool` may have sent the scan elsewhere) |
 | `extract/export.py` | `extracted` or `extracted-test`, whichever it just wrote |
 
-No runner refreshes `filtered`: Stage 2's `python -m filter.engine handoff`
-rewrites `data/filtered.csv` whenever the release or the tier verdicts move, and
-the Parquet copy is refreshed by calling `refresh("filtered")` by hand.
+No runner refreshes `filtered`, and nothing needs to: the dashboard queries the
+routing store on every load. `refresh("filtered")` writes the same figures into
+`stats.json` for a reader that has the store but not the app.
 
-`refresh(stage)` does two things in order — except for `pool`, which is
-**stats-only**: the pool is already parquet, so there is no mirror to write, and
-`refresh("pool", pool_dir=…)` calls `update_stats` alone. A stage name that is
-neither `pool` nor one of the three CSV stages logs "unknown stage — skipping" and
+`refresh(stage)` does two things in order — except for `pool` and `filtered`,
+which are **stats-only**: the pool is already parquet and the routing store is
+already a database, so there is no mirror to write and `refresh()` calls
+`update_stats` alone. A stage name that is none of the four logs
+"unknown stage — skipping" and
 does nothing.
 
 1. **`write_parquet(stage)`** — reads the stage CSV in 50 k-row chunks and writes a Parquet file via `pyarrow.parquet.ParquetWriter` (snappy compression). Writes to a `.tmp.parquet` file first and atomically renames it on success, so a partial write never corrupts the live file.
@@ -75,19 +78,16 @@ several GB and gitignored.
 
 ### filtered
 
+One routing release — the newest the store holds routing for.
+
 | Key | Meaning |
 | --- | ------- |
-| `total` | Row count |
-| `by_paper_type` | `{status: count}` for each `paper_type` value |
-| `by_filter_method` | `{method: count}` |
-| `by_filter_confidence` | `{level: count}` |
-| `rep_repro_total` | Rows where `paper_type` is `replication` or `reproduction` |
-| `rep_repro_no_doi` | Rep+repro rows with blank `doi_r` |
-| `rep_repro_no_doi_or_url` | Rep+repro rows with blank `doi_r` AND blank `url_r` |
-| `rep_repro_no_abstract` | Rep+repro rows with blank `abstract_r` |
-| `by_year` | `{year: count}` from `year_r` |
-| rule-exit counts | `{exit: count}` from `classify_rule_exit(filter_evidence)` — `engine_route` is the current path; the `r*` keys are the retired per-row classifier's exits, kept because rows on disk still carry them |
-| rule-exit × status | `{exit: {paper_type: count}}`, so the flowchart can show what happened to each arm |
+| `available` | `False` when there is no store, no datable release, or the store is locked; `reason` then says which |
+| `store` | Path to the DuckDB file the figures came from |
+| `release_id` | The release these counts belong to |
+| `release_created_at` | When that release was routed |
+| `total` | Works routed, summed over the piles |
+| `by_pile` | `{pile: count}` — `discard`, `screen_expensive`, `screen_cheap`, `needs_human`, `pending` |
 
 Computed in two passes (`_compute_large_stage_stats`): a lightweight chunked pass
 over `paper_type`/`filter_method`/`filter_confidence`/`filter_evidence`/`year_r`,
@@ -142,5 +142,5 @@ If a Parquet file or `stats.json` becomes stale (e.g. rows were edited directly 
 python -c "from shared.dashboard_cache import refresh; refresh('extracted')"
 
 # Or call each step separately
-python -c "from shared.dashboard_cache import write_parquet, update_stats; write_parquet('filtered'); update_stats('filtered')"
+python -c "from shared.dashboard_cache import write_parquet, update_stats; write_parquet('extracted'); update_stats('extracted')"
 ```

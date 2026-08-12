@@ -84,9 +84,9 @@ Stage 4  validate/       read-only dashboard                 → monitoring only
       text. The same reading also codes the outcome (success, failure, mixed, and so on).
       Each paper ends in one permanent <i>verdict</i> stored in Postgres. A separate export
       command turns the stored verdicts into <code>data/extracted.csv</code>.</li>
-  <li><b>Stage 4 — monitor.</b> A local Flask dashboard that reads the CSVs and the
-      validation tables. It is pipeline diagnostics, not the validation step itself, and
-      it changes nothing.</li>
+  <li><b>Stage 4 — monitor.</b> A local Flask dashboard that reads the routing store,
+      the exported CSVs and the validation tables. It is pipeline diagnostics, not the
+      validation step itself, and it changes nothing.</li>
 </ul>
 
 <p>Validation proper happens in a separate application. This repository stops at
@@ -102,7 +102,8 @@ humans review them. The final product is the Supabase <code>validated</code> tab
   <tr><td>work</td><td>One paper as it moves through the pipeline. Identified by its OpenAlex work id.</td></tr>
   <tr><td>release</td><td>One run of the Stage 2 rule book over the pool. Each release has an id and fixes which works sit in which pile. The store keeps every release, so commands that depend on one must name it with <code>--release</code>.</td></tr>
   <tr><td>verdict</td><td>The permanent result row Stage 3 stores for a work. Verdicts live in Postgres and outlive the routing that produced them. The verdict, not a file, is the checkpoint: a re-run skips every work whose verdict settles it.</td></tr>
-  <tr><td>generation</td><td>A version stamp for Stage 3's logic: a hash over its prompts, models and ladder version. Each verdict records the generation it was made under. When you edit a prompt or a model, the stamp changes, and works whose verdicts carry the old stamp count as unfinished again — the next run re-decides them with the new logic. Until new verdicts exist, the export renders the old ones, so the CSV never goes empty in between.</td></tr>
+  <tr><td>ladder</td><td>Stage 3's ordered list of resolution steps, cheapest first (title patterns → citation matches → LLM calls over abstract, references, search, full text). <code>EXTRACT_LADDER_VERSION</code> in <code>extract/link_original.py</code> numbers its revisions; each verdict records the ladder it was written under, as provenance only.</td></tr>
+  <tr><td>generation</td><td>A version stamp for Stage 3's logic: a hash over its prompts and models. Each verdict records the generation it was made under. When you edit a prompt or a model, the stamp changes, and works whose verdicts carry the old stamp count as unfinished again — the next run re-decides them with the new logic. Until new verdicts exist, the export renders the old ones, so the CSV never goes empty in between. The ladder version is deliberately NOT in the hash: a ladder change reaches a population its author knows, so the reopen is named on the command line (<code>--redo-status</code>) instead of forced on all 3,000+ settled works.</td></tr>
   <tr><td>claim</td><td>A short lease on a batch of works. Both LLM stages claim before they spend, which is what lets several machines share the screening and extraction work safely.</td></tr>
   <tr><td>set-aside</td><td>A row the export files into a separate CSV instead of <code>extracted.csv</code>, because it is not ready for validation (for example, no original found yet).</td></tr>
   <tr><td>skip lists</td><td>Two lists of papers already in FLoRA or already in the validation tables. Both the worklist and the export honour them, always, with no flag.</td></tr>
@@ -116,7 +117,9 @@ humans review them. The final product is the Supabase <code>validated</code> tab
   <li><b>Every API call is cached, and the cache key names everything the answer depends
       on</b> (prompt version, model, reasoning effort, inputs). Re-runs are near-free.
       The caches are shared through Hugging Face, so a collaborator pulls them instead of
-      paying the provider again.</li>
+      paying the provider again. After substantial screening or extraction work, publish
+      your answers with <code>python -m shared.cache_sync --push</code> — both tiers print
+      this reminder at the end of any run that spent.</li>
   <li><b>One model per call site, no fallback.</b> Every model is a named constant in
       <code>shared/config.py</code>. When a provider fails, the row records the failure;
       no other model answers in its place.</li>
@@ -135,12 +138,13 @@ humans review them. The final product is the Supabase <code>validated</code> tab
 </div>
 
 <ul>
-  <li><b>Current release:</b> <code>fc10feb6b50c</code> (2026-08-10; the earlier
-      <code>3dd96958b170</code> was re-routed after the paper_type rename moved the
-      spec bundle — same piles, and the shipped CSV still reflects it). Its piles over the
+  <li><b>Current release:</b> <code>fc10feb6b50c</code>. Its piles over the
       pool: 558,401 discard, 4,583,802 pending, 3,957 screen_expensive. The pending pile
-      is untouched by design; issue <a href="https://github.com/forrtproject/flora-extractor/issues/144" title="Stage B and beyond: staged processing of the snapshot corpus">#144</a> is the plan for widening.</li>
-  <li><b>Current generation:</b> <code>d7908ff6851d3228</code>, at ladder version 21.</li>
+      needs to be narrowed down step-by-step as new processing rules are added; issue <a href="https://github.com/forrtproject/flora-extractor/issues/144" title="Stage B and beyond: staged processing of the snapshot corpus">#144</a> is the plan for doing so.</li>
+  <li><b>Current generation:</b> <code>d1dbd07e1b14440c</code>, at ladder version 23.
+      The shipped verdicts were written under earlier generations declared equivalent
+      (the fingerprint additions since were answer-preserving), so nothing is reopened
+      by the difference.</li>
   <li><b>The CSV matches the store.</b> <code>extract.export --check</code> re-renders the
       verdicts in memory and diffs them against the file: zero differences. Verdicts exist
       for 3,036 of the 3,957 admitted works. The export also holds 379 verdicts for works
@@ -152,9 +156,9 @@ humans review them. The final product is the Supabase <code>validated</code> tab
       9.5 million tokens per day applies (the free allocation; resets at midnight UTC).
       The cap is a pre-call check against this checkout's own ledger
       (<code>cache/token_usage.json</code>). It stops a run cleanly, but it cannot bound a
-      call already in flight, and a second machine keeps its own count. Recent spend:
-      2026-08-09 was the heavy day (23.3M in / 4.7M out on <code>gpt-5.4-mini</code>, plus
-      8.4M / 0.8M on Gemini); 2026-08-10 so far: 5.6M / 2.8M OpenAI, 0.5M / 0.2M Gemini.</li>
+      call already in flight, and a second machine keeps its own count — so coordinate
+      before two machines run on the same day if the free allocation is meant to cover
+      both.</li>
 </ul>
 
 <h3>What the 1,899 shipped rows contain</h3>
@@ -174,24 +178,30 @@ humans review them. The final product is the Supabase <code>validated</code> tab
 </div>
 
 <ul>
-  <li><b>By type:</b> 1,865 replications, 25 reproductions, 9 without a type. The 9 are
-      the screen's honest shrug: on each, both voters answered "unclear" without
-      confidence, so the row proceeded but nothing qualified to name its paper type.
-      A sense-check on 2026-08-10 read all 9: they are OSF registrations whose stored
-      abstract is the registration template, so the screen was starved, not sceptical.
-      All 9 are genuine replications of named studies; backfilling their type is on the
-      work list, with two rows flagged for a quick human look.</li>
+  <li><b>By type:</b> 1,865 replications, 25 reproductions, 9 without a type — OSF
+      registrations whose stored abstract is the registration template, so the screen
+      had nothing to type them from. Six are confirmed replications and their verdicts
+      now carry <code>type = replication</code> in the store (the next export renders
+      it); the three rows of <code>10.17605/osf.io/zya9n</code> sit in the human queue.</li>
   <li><b>By link method</b> (how the original was found): reference list 637, title search
       581, author-and-year search 498, cited-candidates match 152, full text 26, title
-      pattern 4, citation context 1. The two search-based methods count as resolved links
-      since 2026-08-08, after two triages measured them at 98–99% precision.</li>
-  <li><b>By link confidence:</b> 816 high, 3 medium, 1,080 low. Low is not doubt about
-      the pick: the two search-based methods are set to low by policy, as a routing
-      signal for validator attention, because theirs are the links no reference list
-      corroborates — the model chose from pooled search results, not from the paper's own
-      references. Measured precision is 98–99%. The column is not redundant with the
-      method: it also varies within a method (a reference record without a DOI, a failed
-      DOI verification, and several post-hoc checks all demote individual rows).</li>
+      pattern 4, citation context 1. The last two are the ladder's cheap deterministic
+      rungs: <i>title pattern</i> matches a paper whose own title names its target
+      ("A Replication of X") against the candidate list; <i>citation context</i> matches
+      an author-year citation parsed out of the abstract against a cited candidate, on a
+      scored surname/year/title rule. The two search-based methods count as resolved links
+      after two triages measured them at 98–99% precision.</li>
+  <li><b>By link confidence:</b> 816 high, 3 medium, 1,080 low. On the two search-based
+      methods — the links no reference list corroborates — every accepted link is graded
+      by a separate, cold confirmation call (shown only the paper's title/abstract, the
+      quoted evidence and the matched record), and the grade sets the confidence:
+      clearly_target → high, likely_target → medium, anything less → low. The grade and
+      its reasoning are also recorded in <code>link_evidence</code>
+      (<code>search_confirm: …</code>). The 1,899 shipped rows predate that grading and
+      carry a blanket low on their search links; the next campaign's rows are graded
+      individually. The column also varies within a method: a reference record without a
+      DOI, a failed DOI verification, and several post-hoc checks all demote individual
+      rows.</li>
 </ul>
 
 <h3>Rows the export set aside</h3>
@@ -200,16 +210,16 @@ humans review them. The final product is the Supabase <code>validated</code> tab
 <table>
   <tr><th>File in <code>data/</code></th><th class="num">Rows</th><th>Meaning</th></tr>
   <tr><th colspan="3">Open — a re-run will try again</th></tr>
-  <tr><td><code>target_pending.csv</code></td><td class="num">951</td><td>the paper names originals that could not be matched to any record. Not closed, because "we could not look it up" is not "it replicates nothing". Each work rests for 14 days before a re-run buys its queries again.</td></tr>
-  <tr><td><code>api_error.csv</code></td><td class="num">2</td><td>a provider failed after retries; the next run asks again. This particular file is left over from an earlier render — the current one produced no such rows, and the export does not clear files it writes nothing to.</td></tr>
-  <tr><th colspan="3">Held for a human</th></tr>
+  <tr><td><code>target_pending.csv</code></td><td class="num">951</td><td>the paper names originals that could not be matched to any record. Not closed, because "we could not look it up" is not "it replicates nothing" — but held indefinitely, because re-running the same evidence re-buys the same answer. Only <code>--redo</code>/<code>--redo-status</code> or a generation bump reopens one; clearing the pile needs better acquisition (<a href="https://github.com/forrtproject/flora-extractor/issues/188" title="Full-text acquisition: five routes measured to work that the waterfall does not try">#188</a>) or a human decision.</td></tr>
+  <tr><td><code>api_error.csv</code></td><td class="num">0</td><td>a provider failed after retries; the next run asks again. Written only when a render produces such rows; the export deletes set-aside files it writes nothing to.</td></tr>
+  <tr><th colspan="3">Held for human review</th></tr>
   <tr><td><code>unidentified_original.csv</code></td><td class="num">105</td><td>the paper names an original, and we kept the link — but the matched record has no DOI and no OpenAlex id (typically a garbled parsed reference), so it cannot be keyed as a validation pair.</td></tr>
   <tr><td><code>keyed_link_disputed.csv</code></td><td class="num">20</td><td>a second, independent LLM check confidently disagreed with an accepted link (issue <a href="https://github.com/forrtproject/flora-extractor/issues/186" title="Pick between title-search candidates with a plausibility check">#186</a>). Link, outcome and both readings are kept for the reviewer.</td></tr>
   <tr><th colspan="3">Closed — the verdict is negative and settles the work</th></tr>
   <tr><td><code>not_a_replication.csv</code></td><td class="num">74</td><td>the screen or the extraction concluded the paper is not a replication or reproduction.</td></tr>
   <tr><td><code>no_original_found.csv</code></td><td class="num">65</td><td>the paper, read in full, identifies no original study at all.</td></tr>
   <tr><th colspan="3">Legacy</th></tr>
-  <tr><td><code>fabricated_original_doi.csv</code></td><td class="num">1</td><td>one old row whose stated original DOI is registered nowhere (checked against CrossRef, OpenAlex and doi.org). Nothing writes this file any more; the current pipeline takes <code>doi_o</code> from the matched record, so a model cannot invent one. Renaming it (to "unregistered") is on the work list, since the check tests registration, not fabrication.</td></tr>
+  <tr><td><code>unregistered_original_doi.csv</code></td><td class="num">1</td><td>one old row (<code>W3160067120</code>) whose stated original DOI is registered nowhere (checked against CrossRef, OpenAlex and doi.org). The current pipeline takes <code>doi_o</code> from the matched record, so this cannot recur; re-extract the work with <code>--redo W3160067120</code> in the next campaign and the file disappears.</td></tr>
 </table>
 </div>
 
@@ -217,14 +227,11 @@ humans review them. The final product is the Supabase <code>validated</code> tab
 + 74 + 65 + 20 set-aside rows = the 3,114 rendered rows that <code>--check</code> reports.</p>
 
 <div class="note">
-<b>Two artefact notes.</b> (1) <code>data/filtered.csv</code> on disk belongs to the
-2026-08-05 release <code>f8696c40bbfc</code> (1,614 rows). That is harmless: Stage 3 does
-not read the file. It builds its worklist in process from the routing store and the pool.
-The CSV is a reviewable record and a dashboard input. Re-run
-<code>python -m filter.engine handoff --out data/filtered.csv --release &lt;id&gt;</code> to
-refresh it. (2) <code>data/reproductions.csv</code>, a hand-curated legacy file nothing
-writes, moved to <code>data/archive/</code> on 2026-08-10. Its dashboard tab was removed,
-and the two analysis scripts that read it now point at the new path.
+<b>There is no intermediate CSV between the stages.</b> Stage 3 builds its worklist in
+process from the routing store and the pool — the dashboard reads the same source. A
+release's screened rows can be exported ad hoc as a record with
+<code>python -m filter.engine export-csv --out &lt;file&gt; --release &lt;id&gt;</code>.
+Hand-curated legacy files live in <code>data/archive/</code>.
 </div>
 
 <h2>3. Runbook — how to put entries through the pipeline</h2>
@@ -237,10 +244,10 @@ and the two analysis scripts that read it now point at the new path.
   <li><code>RESEARCHER_EMAIL</code> — for the OpenAlex and CrossRef politeness headers.</li>
   <li><code>GEMINI_API_KEY</code> and <code>OPENAI_API_KEY</code> — the screen and
       extraction models.</li>
-  <li><code>OPENROUTER_API_KEY</code> — only if you use models through OpenRouter.
-      An OpenRouter model id contains a "/" (for example
-      <code>qwen/qwen3-30b</code>); check the model constants in
-      <code>shared/config.py</code> to see whether any current model does.</li>
+  <li><code>OPENROUTER_API_KEY</code> — only if you use models through OpenRouter
+      (an OpenRouter model id contains a "/"). As per the model constants in
+      <code>shared/config.py</code>, this is currently only needed if the dormant cheap
+      pre-screen tier is activated — no live model routes there.</li>
   <li><code>SUPABASE_SERVICE_KEY</code> — required by every claimed <code>--run</code>.
       The claim is what stops two machines paying for the same works.
       <code>SUPABASE_URL</code> ships in <code>.env.defaults</code>.</li>
@@ -275,58 +282,70 @@ name one — a unique prefix is enough (<code>--release fc10</code>). The curren
 release is <code>fc10feb6b50c</code>.</p>
 
 <pre><code>python -m filter.engine screen --tier screen_expensive --release &lt;id&gt;        # dry run: cost estimate
-python -m filter.engine screen --tier screen_expensive --release &lt;id&gt; --run  # the real screen
-python -m filter.engine handoff --out data/filtered.csv --release &lt;id&gt;       # the record artefact</code></pre>
+python -m filter.engine screen --tier screen_expensive --release &lt;id&gt; --run  # the real screen</code></pre>
 
 <p class="muted">Without <code>--run</code>, <code>screen</code> is a dry run: it prints
-the row count and a cost estimate, and spends nothing. The handoff writes a manifest
-sidecar (<code>data/filtered.csv.manifest.json</code>) naming the release and row count.</p>
+the row count and a cost estimate, and spends nothing. That is the whole stage: Stage 3
+reads the screen's verdicts straight from the store. To export a release's screened rows
+as a reviewable CSV, run
+<code>python -m filter.engine export-csv --out &lt;file&gt; --release &lt;id&gt;</code>
+(it writes a manifest sidecar naming the release and row count).</p>
 
 <h3>3.3 Stage 3 — extract, then export</h3>
 
-<p>The tier and the export also refuse without <code>--release</code>. One rule before
-anything else: <b>the first run of changed code goes through the sandbox.</b> Sandbox
-verdicts are real but invisible to the live export, and promoting them is just re-running
-live — near-free, because every LLM call is cached.</p>
+<p>The tier and the export also refuse without <code>--release</code>. One general rule:
+<b>the first run of changed code should go through the sandbox, so results can be
+evaluated without corrupting real output.</b> The sandbox is <code>--mode
+validation</code> on both commands below: its verdicts are real but stored under that
+mode label, which the live export ignores. Promoting a good sandbox run is just
+re-running live — near-free, because every LLM call is cached.</p>
 
 <pre><code># Sandbox first, if any Stage 3 code, prompt or model changed:
-python -m extract.tier --run --mode validation --release &lt;id&gt;
+python -m extract.tier --release &lt;id&gt; --run --mode validation
 python -m extract.export --release &lt;id&gt; --mode validation --out data/extracted-test.csv
 # Read the sandbox rows before going live.
 
 python -m extract.tier --release &lt;id&gt;             # dry run: worklist size and cost estimate
-python -m extract.tier --run --release &lt;id&gt;       # the real run: claim → ladder → one verdict per work
+python -m extract.tier --release &lt;id&gt; --run       # the real run: claim → ladder → one verdict per work
 python -m extract.export --release &lt;id&gt;           # verdicts → data/extracted.csv (whole file, atomic)
 python -m extract.export --release &lt;id&gt; --check   # read-only: diff the store against the file
-python -m extract.sanity_check                    # integrity report over the exported CSV
-python -m extract.audit_dois                      # re-verify original DOIs; --apply supersedes verdicts</code></pre>
+python -m extract.sanity_check                    # integrity report over the exported CSV</code></pre>
 
-<p class="muted">The last two overlap less than they look. <code>sanity_check</code> is a
-read-only report over the whole CSV: schema, cross-field contradictions, and (with
-<code>--deep</code>) two network checks. <code>audit_dois</code> does one job:
-it re-checks every <code>doi_o</code> against the DOI registries and, under
-<code>--apply</code>, writes corrected verdicts. Run <code>sanity_check</code> after
-every export; run <code>audit_dois</code> when you have reason to doubt the DOIs.</p>
+<p class="muted">Run <code>sanity_check</code> after every export: a read-only report
+over the whole CSV — schema, cross-field contradictions, and (with <code>--deep</code>)
+two network checks. A separate tool, <code>python -m extract.audit_dois</code>, is NOT
+part of the standard flow: every row's <code>doi_o</code> was already verified once,
+inside the judge, before its verdict was stored. The audit is the on-demand
+re-verification for when you have reason to doubt settled rows — it costs up to three
+OpenAlex free-text searches per row, and under <code>--apply</code> writes corrected,
+superseding verdicts.</p>
 
 <p>What a re-run does, and does not, redo:</p>
 
 <ul>
   <li>The worklist is rebuilt between batches. It subtracts settled works, works on the
-      skip lists, works resting on a fresh <code>target_pending</code> (14 days), and
+      skip lists, works held on a current-generation <code>target_pending</code>, and
       anything the named release does not admit. <code>api_error</code> retries at once.
-      Note that a plain re-run of a rested <code>target_pending</code> work is likely
-      fruitless: nothing about the evidence has changed. What to do with these works
-      long-term is an open question (section 4).</li>
+      A <code>target_pending</code> work is held indefinitely — re-running the same
+      evidence re-buys the same answer — until <code>--redo</code>/<code>--redo-status</code>
+      names it or a generation bump reopens it.</li>
   <li><code>--redo W1,W2</code> re-extracts named works and supersedes their old
       verdicts.</li>
   <li>Editing a prompt or a model mints a new generation, which reopens every work at
-      once. Do this knowingly. Two things soften the cost. First, the LLM cache: if an
-      edit provably does not change the answer, you can declare the old and new cache
-      keys equivalent (issue <a href="https://github.com/forrtproject/flora-extractor/issues/171" title="Declared cache equivalences">#171</a>'s mechanism: register the legacy key parts in a
-      module-level constant and read through <code>read_cache_migrating()</code> in
-      <code>shared/cache.py</code>), and the existing answers keep serving. Second, even
-      without a declared equivalence, only the calls the edit actually touches miss the
-      cache; everything else on a reopened work replays free.</li>
+      once. Do this knowingly. Two things soften the cost. First, the LLM cache: when an
+      edit provably cannot change any answer (a typo, a renamed category), the maintainer
+      can declare the old and new cache keys equivalent — freeze the pre-edit prompt
+      version as a literal, register it in a module-level legacy-keys constant next to
+      the call site, and read the cache through <code>read_cache_migrating()</code> in
+      <code>shared/cache.py</code>, which substitutes only the declared component and
+      re-files legacy hits under the current key with a provenance note. The existing
+      answers then keep serving, and the declaration stops matching by itself as soon as
+      anything else about the call changes. The worked example is
+      <code>_CLASSIFY_LEGACY_KEY_PARTS</code> in <code>shared/llm_client.py</code>; the
+      full recipe (including the generation-fingerprint side of it) is in
+      <code>CLAUDE.md</code>, "Editing a prompt without invalidating its cache". Second,
+      even without a declared equivalence, only the calls the edit actually touches miss
+      the cache; everything else on a reopened work replays free.</li>
 </ul>
 
 <h3>3.4 Stage 4 — watch</h3>
@@ -356,107 +375,41 @@ with a settled outcome and a paper type are ready — 1,406 of the current 1,899
 
 <h2>4. Open issues and known next steps</h2>
 
-<p>Statuses below were verified against today's code and data on 2026-08-10, not taken
+<p>Statuses below were verified against today's code and data on 2026-08-12, not taken
 from the issue tracker at face value.</p>
 
-<div class="note">
-<b>Addendum, 2026-08-10 evening — much of the queue below is now implemented</b>
-(uncommitted in the working tree; 1,578 tests pass). Done: the claims-client retry
-(<a href="https://github.com/forrtproject/flora-extractor/issues/189" title="Claims client: a transient Supabase failure mid-run crashes the whole tier">#189</a> — it already survived two real connection resets in its first live run); the
-title-matching fixes plus the reachability fix that routes a resolved link with no
-identifier through the pooled adjudication (ladder is now 23); the graded, observe-only
-confirmation on search-based links
-(<a href="https://github.com/forrtproject/flora-extractor/issues/186" title="Pick between title-search candidates with a plausibility check">#186</a>/<a href="https://github.com/forrtproject/flora-extractor/issues/183" title="llm_title_search: add a confirmation LLM call">#183</a>, calibration plan in <code>analysis/stage3_eval/search_confirm_plan.md</code>);
-the <code>filter_status</code> → <code>paper_type</code> rename
-(<a href="https://github.com/forrtproject/flora-extractor/issues/93" title="Rename filter_status to paper_type">#93</a>, with
-<a href="https://github.com/forrtproject/flora-validation/pull/8">flora-validation PR #8</a>
-to merge FIRST); <code>--release latest</code>; the cache-push reminder; and the
-<code>unregistered_original_doi</code> rename. The rename moved the spec-bundle hash, so
-the pool was re-routed: the current release is now <code>fc10feb6b50c</code>
-(2026-08-10, same piles). Measured in the sandbox at ladder 23: of the 105
-unidentified-original rows, 39 now resolve with a DOI, 3 go to the disputed queue, 62
-remain — the live re-run that would ship this is not yet approved. A declared cache
-equivalence also landed: positive legacy title/DOI-search entries keep serving after
-the shape bumps (each re-validated under the current rule at read time; measured 519
-of 520 re-accepted), so a full-corpus campaign re-buys only the previous misses.
-Still open below:
-the remaining
-<a href="https://github.com/forrtproject/flora-extractor/issues/188" title="Full-text acquisition routes">#188</a>
-acquisition routes, the export flag for withheld rows, the type backfill for the 9
-type-less rows, the <code>target_pending</code> rethink, and the limitations
-re-measurement.
-</div>
-
-<h3>Agreed next steps — implementation queued</h3>
+<h3>Next steps — agreed and waiting</h3>
 <ul>
-  <li><b><a href="https://github.com/forrtproject/flora-extractor/issues/189" title="Claims client: a transient Supabase failure mid-run crashes the whole tier">#189</a> — add retry to the claims client.</b> A transient Supabase failure
-      mid-run currently crashes the whole extract tier. Small fix; do it before the next
-      long unattended run.</li>
+  <li><b>Run the widened campaign end to end.</b> The routing release admitting 7,968
+      works is screened, then extracted, then exported. In the same campaign:
+      <code>--redo</code> the 104 works whose unidentified-original fixes landed at
+      ladder 23 (sandbox-measured: of the 105 rows, 39 resolve with a DOI, 3 go to the
+      disputed queue, 62 remain) and the one <code>unregistered_original_doi</code> work
+      (<code>W3160067120</code>). Every number in section 2 is then re-read off the new
+      render.</li>
   <li><b><a href="https://github.com/forrtproject/flora-extractor/issues/188" title="Full-text acquisition: five routes measured to work that the waterfall does not try">#188</a> — the remaining full-text acquisition routes.</b> Three of the five
       measured routes landed in ladders 20–21; the remaining ones are the main lever on
-      the 487 <code>cannot_be_determined</code> rows and the 951 pending ones.</li>
-  <li><b><a href="https://github.com/forrtproject/flora-extractor/issues/186" title="Pick between title-search candidates with a plausibility check">#186</a> — plausibility check between title-search candidates.</b> The first
-      shape (a cold second-opinion check on keyed links) shipped at ladder 17; the
-      candidate-pick shape is open. Evaluation-first: measure on the existing samples
-      before wiring.</li>
-  <li><b><a href="https://github.com/forrtproject/flora-extractor/issues/183" title="llm_title_search: add a confirmation LLM call to enable confident discards and triaged review">#183</a> — confirmation call on the title-search step</b>, to enable confident
-      discards and triaged review. Overlaps <a href="https://github.com/forrtproject/flora-extractor/issues/186" title="Pick between title-search candidates with a plausibility check">#186</a>; design them together.</li>
-  <li><b><a href="https://github.com/forrtproject/flora-extractor/issues/93" title="Rename filter_status to paper_type in the pipeline schema, convert back on Supabase export">#93</a> — rename <code>filter_status</code> to <code>paper_type</code>.</b> Scope is
-      smaller than the issue says: the Supabase conversion point now lives in the
-      <code>flora-validation</code> repository, and no chunked migration is needed
-      (<code>filtered.csv</code> is 1,614 rows, not multi-GB). Mostly a mechanical rename
-      across schema, engine, templates, tests and docs.</li>
-  <li><b>Retire <code>data/filtered.csv</code> from the standard flow.</b> Nothing
-      requires it: Stage 3 builds its worklist in process, and its four readers (the
-      check page, the dashboard download button, the parquet mirror, and a handful of
-      analysis scripts) all degrade gracefully. The dashboard's "filtered" figure has
-      been stale by three orders of magnitude without anyone noticing — an intermediate
-      file that can go stale is a bug waiting to happen. Plan: stop instructing the
-      handoff in the runbooks, keep the command for ad-hoc record exports, point the
-      dashboard at the routing store.</li>
+      the 487 <code>cannot_be_determined</code> rows and the 951 parked
+      <code>target_pending</code> ones.</li>
+  <li><b>Decide the parked <code>target_pending</code> pile.</b> The 951 works are held
+      indefinitely (nothing auto-reopens them). Clearing the pile needs better
+      acquisition (<a href="https://github.com/forrtproject/flora-extractor/issues/188" title="Full-text acquisition: five routes measured to work that the waterfall does not try">#188</a>), a human queue, or a decision to close them.</li>
+  <li><b>Check the search-confirm calibration after the campaign.</b> The grade on
+      search-based links now sets <code>link_confidence</code>
+      (clearly_target → high, likely_target → medium, otherwise low). The campaign
+      grades every search link; read the grade distribution against
+      <code>analysis/stage3_eval/search_confirm_plan.md</code> and decide whether the
+      negative grades should also gate anything (a confident discard, a review queue) —
+      today they only lower confidence.</li>
   <li><b>Add an export flag for withheld rows.</b> <code>cannot_be_determined</code> rows
       eventually need human review in validation; today they ship in the CSV but are
       withheld. An explicit flag (or a separate output) would export them deliberately
       rather than never.</li>
-  <li><b>Rename <code>fabricated_original_doi</code> to <code>unregistered_original_doi</code>.</b>
-      The check tests whether a DOI is registered (CrossRef, OpenAlex, doi.org), not who
-      invented it, and the current pipeline takes <code>doi_o</code> from the matched
-      record, so a model cannot fabricate one.</li>
-  <li><b>Add <code>--release latest</code>.</b> One function
-      (<code>resolve_release</code> in <code>filter/engine/store.py</code>) plus a
-      wrinkle: release timestamps live in sidecar JSONs, not the DuckDB store, so
-      "latest" must read them and decide what to do when a sidecar is missing.</li>
-  <li><b>Nudge cache pushing.</b> Verdicts are shared through Postgres, but the LLM/API
-      caches travel by <code>cache_sync --push</code>, which is easy to forget. Print a
-      reminder at the end of screening and extraction runs.</li>
-  <li><b>Recover the unidentified originals (measured 2026-08-10).</b> A review of the
-      105 <code>unidentified_original</code> rows (66 distinct originals) found the
-      failure is MATCHING, not retrieval: for most rows the right paper was in the
-      CrossRef results and the string rules rejected it. Two defects do the damage: the
-      title check requires the query's words to appear in the hit (registries often store
-      subtitle-stripped titles, so the hit is a subset and can never pass), and
-      <code>authors_o</code> is built with <code>split()[-1]</code> on "Surname, F.",
-      which yields the initial — so the author check cannot pass either, and validators
-      see "L." as an author. A replayed fix (normalise text, test containment both ways)
-      recovers 58 rows correctly at 4 wrong. Ranked fixes, in order: symmetric
-      containment on the pooled path with a strict variant kept on auto-accept paths;
-      the one-line author fix; feed the paper's own naming of the target
-      (<code>target_as_named</code>) into the pooled search, where today a dead branch
-      discards it; query cleanup. Each must bump the search cache shape, or 210 cached
-      misses replay forever; the 104 affected works then need <code>--redo</code>
-      (sandbox first).</li>
-  <li><b>Backfill <code>type</code> for the 9 type-less rows.</b> A 2026-08-10
-      sense-check found all 9 are genuine replications; the screen answered "unclear"
-      only because it saw the OSF registration template instead of real content. Write
-      <code>type = replication</code> for the 7 works (as a superseding correction, the
-      <code>audit_dois --apply</code> route), and send the two
-      <code>10.17605/osf.io/zya9n</code> endowment-effect rows — whose evidence text is
-      identical — through the human queue first. The deeper fix: screen OSF
-      registrations on their registration content, not the templated abstract.</li>
-  <li><b>Rethink <code>target_pending</code>.</b> A plain re-run after the 14-day rest
-      re-asks the same questions of the same evidence and is likely fruitless. These 951
-      works need either better acquisition (<a href="https://github.com/forrtproject/flora-extractor/issues/188" title="Full-text acquisition: five routes measured to work that the waterfall does not try">#188</a>), a human queue, or a decision to
-      close them; re-running alone will not clear them.</li>
+  <li><b>Screen OSF registrations on their registration content.</b> The screen sees the
+      stored abstract, which for OSF registrations is often the registration template —
+      that starvation is what left 9 rows without a type (6 works since backfilled; the
+      3 rows of <code>10.17605/osf.io/zya9n</code>, whose evidence text is identical
+      across rows, sit in the human queue).</li>
   <li><b>Update <code>docs/limitations.md</code></b>: re-measure the full-text
       acquisition failure rate (the 62% figure predates the <a href="https://github.com/forrtproject/flora-extractor/issues/188" title="Full-text acquisition: five routes measured to work that the waterfall does not try">#188</a> routes), and
       refresh the review date.</li>
@@ -497,8 +450,16 @@ re-measurement.
       built.</li>
 </ul>
 
-<h3>Superseded — recommend closing</h3>
+<h3>Shipped or superseded — recommend closing</h3>
 <ul>
+  <li><b><a href="https://github.com/forrtproject/flora-extractor/issues/189" title="Claims client: a transient Supabase failure mid-run crashes the whole tier">#189</a></b> — claims-client retry: shipped; it survived two real connection
+      resets in its first live run.</li>
+  <li><b><a href="https://github.com/forrtproject/flora-extractor/issues/93" title="Rename filter_status to paper_type">#93</a></b> — the <code>filter_status</code> → <code>paper_type</code> rename:
+      shipped, with <a href="https://github.com/forrtproject/flora-validation/pull/8">flora-validation PR #8</a> reading either name on import.</li>
+  <li><b><a href="https://github.com/forrtproject/flora-extractor/issues/186" title="Pick between title-search candidates with a plausibility check">#186</a> / <a href="https://github.com/forrtproject/flora-extractor/issues/183" title="llm_title_search: add a confirmation LLM call">#183</a></b> — both shapes shipped: the cold second-opinion check on keyed
+      links (demotes to the disputed queue) and the graded confirmation on search links,
+      whose grade now sets <code>link_confidence</code>. What remains is the calibration
+      check above, not these issues.</li>
   <li><b><a href="https://github.com/forrtproject/flora-extractor/issues/86" title="Backfill: 18 rows in extracted.csv have a wrong original from the DOI-less cache collision">#86</a></b> — the DOI-less cache-collision rows. The engine rebuild re-extracted
       everything; none of the affected works are in today's export, and the collided
       title survives only in the archived pre-engine set-asides. One cross-repo residue:
@@ -517,14 +478,10 @@ re-measurement.
 
 <p><a href="docs/README.md"><code>docs/README.md</code></a> is the index.
 <code>CLAUDE.md</code> is the primary design document: the module map, the caching rules,
-the budgets, and the "before a run that spends" checklist. On 2026-08-10 the user-facing
-docs were audited against the code and the verified fixes applied; the recurring stale
-themes were the retired <code>provisional_title_search</code> quarantine, the missing
-14-day <code>target_pending</code> rest, and the export's skip lists.
-<code>docs/dashboard-guide.md</code> was fully current. Historical records live in
-<code>docs/archive/</code>, dated handover notes in <code>docs/tasks/</code>. The older
-<code>handover-next-steps.html</code> was archived to <code>archive/</code> on
-2026-08-10; this page supersedes it.</p>
+the budgets, and the "before a run that spends" checklist. Historical records live in
+<code>docs/archive/</code> and <code>archive/</code>, dated handover notes in
+<code>docs/tasks/</code>. This page is the current handover; it supersedes the archived
+<code>handover-next-steps.html</code>.</p>
 
 </main>
 <script>

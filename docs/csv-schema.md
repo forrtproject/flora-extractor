@@ -31,13 +31,24 @@ discovered paper.
 
 ---
 
-## filtered.csv (Stage 2 → Stage 3)
+## `ENGINE_EXPORTED_COLS` — the Stage 2 record shape (Stage 2 → Stage 3)
 
-Written by `python -m filter.engine handoff`: the filter engine's two screen piles
-(`screen_expensive` first, then `screen_cheap`) for one routing release, minus the
-works a live LLM tier discarded. It is a **materialized view** of the current
-release rather than an immutable export — it is rewritten whenever the release or
-the tier verdicts move, and its `.manifest.json` is rewritten with it.
+The row the filter engine hands a work to Stage 3 as: a work of one routing
+release's two screen piles (`screen_expensive` first, then `screen_cheap`), minus
+the works a live LLM tier discarded. Stage 3 builds it **in process** —
+`extract/tier.py` reads the routing store and the pool through `iter_export_rows()`
+and attaches the screen verdict with `screen_columns()` (both in
+`filter/engine/handoff.py`). No file sits between the two stages.
+
+The same shape is what an ad-hoc record CSV carries, for when a person wants a
+readable snapshot of what a release admitted:
+
+```bash
+python -m filter.engine export-csv --out data/screened-<id>.csv --release <id>
+```
+
+That file is written with a `.manifest.json` sidecar naming the release, the row
+count and the columns. Nothing in the pipeline reads it back.
 
 Columns are `ENGINE_EXPORTED_COLS` = `FILTERED_COLS` + `ENGINE_EXPORT_COLS` +
 `SCREEN_COLS`: all `CANDIDATES_COLS` fields, then the four filter columns below,
@@ -48,7 +59,7 @@ is a decision rather than a record.
 
 | Column | Type | Description |
 | ------ | ---- | ----------- |
-| `paper_type` | string | `replication` \| `reproduction` \| `needs_review` — the paper-type field; see below. `false_positive` is in the enum but never appears in `filtered.csv`: it is the `discard` pile's status, and `HANDOFF_PILES` (`filter/engine/handoff.py`) is the two screen piles only. Discarded rows are reachable through `filter.engine export --pile discard` |
+| `paper_type` | string | `replication` \| `reproduction` \| `needs_review` — the paper-type field; see below. `false_positive` is in the enum but never appears on a Stage 2 record row: it is the `discard` pile's status, and `HANDOFF_PILES` (`filter/engine/handoff.py`) is the two screen piles only. Discarded rows are reachable through `filter.engine export --pile discard` |
 | `filter_method` | string | `engine:<release id prefix>`, or `screen` on a row a live `screen_expensive` run typed. `rule_based` is historical |
 | `filter_evidence` | string | `rule:<spec id>` plus the evidence the backend matched (phrase, prefix, type…) |
 | `filter_confidence` | string | `high` \| `medium` \| `low` — categorical, not a float |
@@ -69,9 +80,9 @@ The screen verdict (`SCREEN_COLS` in `shared/schema.py`):
 
 | Column | Type | Description |
 | ------ | ---- | ----------- |
-| `screen_verdict` | string | `proceed` \| `discard`, from `screen_gate()`. **Blank means no verdict exists** — no live `screen_expensive` run settled this work — which only happens on an `--as-routed` handoff, an `export`ed pile or a hand-made CSV |
+| `screen_verdict` | string | `proceed` \| `discard`, from `screen_gate()`. **Blank means no verdict exists** — no live `screen_expensive` run settled this work — which only happens on an `--as-routed` `export-csv`, an `export`ed pile or a hand-made CSV |
 | `screen_record_type` | string | `replication` \| `reproduction`, the screen's own answer (`both` already mapped to `replication`); blank when neither voter gave a qualifying label |
-| `screen_categories` | string | **Multi-valued**, \|-joined union of both voters' category labels. Blank when the classify cache the handoff read it from is not on that machine — it is descriptive and nothing decides on it |
+| `screen_categories` | string | **Multi-valued**, \|-joined union of both voters' category labels. Blank when the classify cache `screen_columns()` reads it from is not on that machine — it is descriptive and nothing decides on it |
 | `screen_votes` | string | \|-joined `<model>=<classification>/<confident\|unconfident>`, in call order. The per-voter detail Stage 3's pre-PDF title-search rung is gated on (both voters qualifying AND confident), which no summary of the gate preserves |
 | `screen_evidence` | string | **Multi-valued**, every voter's justifying quote as `<model>: <quote>` segments joined by ` \|\| `, in call order. A quote is a verbatim sentence and may contain `\|`, so the separator is the doubled pipe `screen_votes` cannot contain. A voter that quoted nothing contributes no segment |
 | `screen_reasoning` | string | `<provider>: <reasoning>` per voter, ` \| `-joined. From the same cache as `screen_categories`, and blank on the same terms |
@@ -98,8 +109,8 @@ ways that happened:
   (`worklist` → `backfill` → `freeze` → `route`) exists to supply.
 
 These are the only two values `route_batch()` in `filter/engine/route.py` emits,
-and `conventions.json` declares them. `filter/engine/handoff.py` exports the two
-screen piles only, so an exported row's `pending_reason` is always empty.
+and `conventions.json` declares them. `HANDOFF_PILES` is the two screen piles only,
+so a row that reaches Stage 3 always has an empty `pending_reason`.
 
 > **Engine provenance is linked, not copied.** `EXTRACTED_COLS` in `shared/schema.py`
 > is `["pair_id"] + FILTERED_COLS + EXTRACT_ADDED_COLS` and deliberately excludes
@@ -126,7 +137,7 @@ old name, deliberately: the validation database column
 (`record_metadata.filter_status`, converted back by `csv_to_db.py` in
 `flora-validation`, which reads either name), and result payloads stored before the
 rename, which `render_payload()` in `extract/tier.py` maps at the read. Every CSV in
-`data/` keeps the old header until the export or handoff that wrote it runs again.
+`data/` keeps the old header until the export that wrote it runs again.
 
 `paper_type` comes from the pile the engine routed the work into, through the
 mapping in `filter/spec/conventions.json`, refined by the winning rule's
@@ -135,12 +146,12 @@ bundle that lands as: `screen_expensive` → `needs_review` at **high** confiden
 (its rules, the `replication-claim-*` tiers, name no vocabulary), and `screen_cheap` →
 `needs_review` at **medium**, except for the rules that do name one —
 `replication-signal` and `replication-probe` → `replication`,
-`reproduction-signal` → `reproduction`, also at medium. So a vocabulary status in `filtered.csv` today always arrives at
-medium confidence. Read `filter/spec/conventions.json` and the specs' `vocabulary`
+`reproduction-signal` → `reproduction`, also at medium. So a vocabulary status on a
+screened row today always arrives at medium confidence. Read `filter/spec/conventions.json` and the specs' `vocabulary`
 fields rather than trusting this paragraph.
 
 The front-door screen is the validated decider of "is this a
-replication at all", so when it passes a row, the handoff overwrites
+replication at all", so when it passes a row, `screen_columns()` overwrites
 `paper_type` with the screen's paper type (`replication` / `reproduction`) and
 sets `filter_method` to `screen`, recording which call made the call. When the gate
 proceeds without any qualifying vote (unclear/unclear, or an unconfident `none`
@@ -157,7 +168,7 @@ from before the engine still carry them and `schema.py` still lists them.
 
 ## extracted.csv (Stage 3 → web app)
 
-All `FILTERED_COLS` — the `FILTERED_COLS` half of filtered.csv, not the engine
+All `FILTERED_COLS` — the `FILTERED_COLS` half of the Stage 2 record, not the engine
 provenance appended after it — plus:
 
 | Column | Type | Description |
@@ -181,7 +192,7 @@ provenance appended after it — plus:
 | `link_evidence` | string | Quote or description supporting the link |
 | `link_confidence` | string | `high` \| `medium` \| `low`; downgraded to `low` on DOI mismatch |
 | `link_llm_model` | string | Model that decided the link; blank for rule-based rows. On `llm_references` rows this is the model that picked the reference, not the two classifiers that screened the paper. On `not_a_replication` rows it is the pair of front-door classifiers, joined with `+` (`SCREENING_MODEL_1+SCREENING_MODEL_2`) |
-| `screen_categories` | string | **Multi-valued.** The `\|`-joined union of both front-door voters' category labels, in the prompt's enum order: `clearly_declared`, `self_retest`, `measurement_validation`, `context_transfer`, `incidental_finding`, `initial_validation`, `tool_benchmark`, `builds_on_literature`, `terminology_only`, `about_replication`, `other`. Filter it by substring or by splitting on `\|` — never by equality, since most rows carry two or more values. Written on every screened row, discards included; blank on rows that arrived with no Stage 2 screen verdict and on rows written before the v3.2 screen. It is copied from the input row's `screen_categories` (`SCREEN_COLS`), which the handoff filled from the classify cache |
+| `screen_categories` | string | **Multi-valued.** The `\|`-joined union of both front-door voters' category labels, in the prompt's enum order: `clearly_declared`, `self_retest`, `measurement_validation`, `context_transfer`, `incidental_finding`, `initial_validation`, `tool_benchmark`, `builds_on_literature`, `terminology_only`, `about_replication`, `other`. Filter it by substring or by splitting on `\|` — never by equality, since most rows carry two or more values. Written on every screened row, discards included; blank on rows that arrived with no Stage 2 screen verdict and on rows written before the v3.2 screen. It is copied from the Stage 2 row's `screen_categories` (`SCREEN_COLS`), which `screen_columns()` filled from the classify cache |
 | `doi_o_verification` | string | DOI verification status — see below |
 | `pdf_source` | string | **Full-text provenance.** The acquisition tier that supplied the document the row was coded from: `row_url` (the row's own URL, downloaded directly — no index, no DOI needed), `arxiv`, `osf`, `openalex_oa`, `unpaywall_pdf`, `semanticscholar`, `core`, `europepmc`, `landing_<host>`, `serpapi`, `playwright`, or one of the three tiers that hand back a sections dict instead of a file (`_STRUCTURED_SOURCES` in `shared/pdf_sources.py`): `openalex_xml` (the OpenAlex GROBID XML), `osf_registration` (the OSF registration form, from the API) and `html_landing` (the row's own page, parsed with lxml). **Blank** when the ladder resolved before Stage 5 or acquired nothing — a `llm_fulltext` row with a blank `pdf_source` is a contradiction and should be treated as unverified |
 | `parse_method` | string | **Full-text provenance.** The parser whose result won `best_parse_result()` and therefore produced the text the LLM read: `openalex_xml`, `pdfminer`, `grobid`, `docpluck`, `opendataloader` or `markitdown`, or `docx` for a Word file. Blank when nothing was parsed. `docx` is a FORMAT, not a source — a preprint server serves a Word file as readily as a PDF, and `pdf_source` still names the acquisition tier |

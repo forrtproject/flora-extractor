@@ -1,13 +1,13 @@
 # Stage 2: Filter — Code Flow
 
-**Entry point:** `python -m filter.engine <command>` — `route`, then `screen`, then
-`handoff`.
+**Entry point:** `python -m filter.engine <command>` — `route`, then `screen`.
 
 ## What it does
 
 Applies a bundle of declarative filter specs to the survivor pool, routing every
-work into a pile; spends LLM money only on the two screening piles, under a claim;
-and materializes what survives as `data/filtered.csv` for Stage 3.
+work into a pile; and spends LLM money only on the two screening piles, under a
+claim. Its output is the routing store plus the tier verdicts in the state
+authority; Stage 3 builds each work's row from those two, in process.
 
 The dividing principle is that **rules route and discard, only LLM tiers admit**.
 No spec can conclude that a paper is a replication; the most a spec does is send it
@@ -55,18 +55,23 @@ python -m filter.engine screen --tier screen_cheap   [--run] [--live]
             then per work — judge, write the raw response, record one permanent
             verdict row per voter vote — and completes the claim.
     ▼
-python -m filter.engine handoff --out data/filtered.csv
+Stage 3 (extract/tier.py) assembles its own rows
     │
-    ├── handoff.py reads both screen piles, expensive first
-    ├── drops works a LIVE tier run discarded
-    ├── writes a live screen_expensive record type into paper_type
-    └── → data/filtered.csv + data/filtered.csv.manifest.json
+    ├── iter_export_rows() streams both screen piles, expensive first
+    ├── decisions() drops works a LIVE tier run discarded
+    └── screen_columns() attaches the verdict, and writes a live
+            screen_expensive record type into paper_type
 ```
 
 `export` writes a single pile as an immutable artifact with a manifest that may
-never be overwritten; `handoff` writes the file Stage 3 reads and is rewritten
-whenever the release or the verdicts move. `worklist` exports the `pending/no_text`
-rows for the abstract backfill that produces an overlay.
+never be overwritten. `export-csv` writes one release's screen piles to a named CSV
+with a manifest sidecar — a record someone asked for, which nothing reads back;
+`--out` is required so every such snapshot is named at the call. `worklist` exports
+the `pending/no_text` rows for the abstract backfill that produces an overlay.
+
+```bash
+python -m filter.engine export-csv --out data/screened-<id>.csv --release <id>
+```
 
 ## The two LLM tiers
 
@@ -81,10 +86,10 @@ discarded. Its zero-miss evidence was measured on a post-gate distribution, and
 issue #146 §2 requires re-validating it on this one before it discards
 autonomously. `--live` is what makes the discards take effect.
 
-`screen_expensive` runs the same screen Stage 3 runs, ahead of Stage 3, so its
-output can *be* the handoff rather than a second opinion on it.
+`screen_expensive` is the front door itself: it runs once, here, and Stage 3 reads
+its verdict off the row rather than voting again.
 
-**Live verdicts are applied at the handoff, not in the routing table.** Routing is
+**Live verdicts are applied at row assembly, not in the routing table.** Routing is
 derived data — the next `route` recomputes it from pool and specs — so a verdict
 written into it would be erased.
 
@@ -109,8 +114,8 @@ row a live `screen_expensive` run typed, where `filter_method` is `screen`.
 `filter_confidence` is `high | medium | low` — categorical, not a float. A 3-level
 label is more actionable than a continuous probability from a single LLM call.
 
-Stage 3 still overwrites `paper_type` with its own screen's paper type when it
-screens a row itself, and sets `filter_method = "screen"`.
+A row a live `screen_expensive` run typed carries that paper type and
+`filter_method = "screen"`, written by `screen_columns()` as the row is assembled.
 
 ## Key modules
 
@@ -120,6 +125,6 @@ screens a row itself, and sets `filter_method = "screen"`.
 | `filter/engine/route.py` | Evaluates specs against a pool batch; resolves the pile |
 | `filter/engine/store.py` | The DuckDB routing store — disposable, rebuilt by `route` |
 | `filter/engine/tiers.py` | The claimed, budget-gated LLM tiers and their dry run |
-| `filter/engine/handoff.py` | Both screen piles → `data/filtered.csv` for Stage 3 |
+| `filter/engine/handoff.py` | Both screen piles as Stage 3's row shape: `decisions()`, `screen_columns()`, and `write_handoff()` behind `export-csv` |
 | `filter/engine/claims.py` | The Supabase claims/verdicts client |
 | `filter/phrase_detection.py` | Stage 1's **search gate** vocabulary. Not part of Stage 2 — the engine evaluates the JSON specs itself and never calls it |

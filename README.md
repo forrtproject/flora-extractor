@@ -20,7 +20,7 @@ Starting from keyword searches of academic databases, FLoRA Extractor:
 
 ```
 Stage 1: search/       → the survivor pool    (search only — no filtering)
-Stage 2: filter/engine → data/filtered.csv    (route the pool, screen, hand off)
+Stage 2: filter/engine → routing store + screen verdicts (route the pool, screen)
 Stage 3: extract/      → data/extracted.csv   (link original + code outcome)
 Stage 4: validate/     → monitoring web app   (dashboard at localhost:5001)
                              ↕
@@ -47,7 +47,6 @@ cp .env.example .env   # fill in your API keys
 python -m search.run_search --scan
 python -m filter.engine route
 python -m filter.engine screen --tier screen_expensive --run
-python -m filter.engine handoff --out data/filtered.csv
 python -m extract.tier --run
 python -m extract.export --release <id>
 
@@ -56,7 +55,9 @@ python -m validate.app   # → http://localhost:5001
 ```
 
 Stage 2's `screen` is a dry run without `--run`, printing what a tier would cost
-before anything is claimed or spent.
+before anything is claimed or spent. Stage 3 reads no CSV: `extract.tier` builds its
+worklist from the routing store and the pool, and `extract.export` renders
+`data/extracted.csv` from the stored verdicts.
 
 See [docs/setup.md](docs/setup.md) for full setup instructions.
 

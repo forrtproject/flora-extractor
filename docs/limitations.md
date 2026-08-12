@@ -13,7 +13,7 @@ nothing in the number itself said which population it described. Name the
 denominator or do not quote the figure.
 
 Where an entry is marked **historical** or **superseded**, the number was measured on
-the retired `filtered.csv` of the **2026-07** production run and does not describe the
+the pre-engine Stage 2 corpus of the **2026-07** production run and does not describe the
 current pipeline. Last reviewed against the code on **2026-08-10**.
 
 ---
@@ -38,7 +38,7 @@ back. That asymmetry is why a token added to the gate is the expensive kind of
 change (it also enlarges the artifact every collaborator downloads) while a spec
 edit is the cheap kind.
 
-The historical measurement behind this entry, from the retired `filtered.csv`
+The historical measurement behind this entry, from the pre-engine Stage 2 corpus
 (production run of **2026-07**): rows with no replication phrase at all (~2.17M) were
 rejected at high confidence without any LLM review, while of the 132,197
 phrase-without-citation rows that *were* sent to the LLM, 28,438 were readmitted
@@ -76,8 +76,8 @@ is the whitelist's version of this cost, and it is unmeasured.
 
 ## (c) `filter_confidence` does not discriminate
 
-**Superseded measurement.** The "99.9% `high`" figure was measured on the retired
-`filtered.csv` of the **2026-07** production run, produced by a filter stage that no
+**Superseded measurement.** The "99.9% `high`" figure was measured on the pre-engine
+Stage 2 corpus of the **2026-07** production run, produced by a filter stage that no
 longer exists. Do not quote it.
 
 The field is uninformative for a different reason now: under the filter engine,
@@ -104,7 +104,7 @@ cheap bulk pathway over everything, then a gated one over what is still missing 
 a frozen overlay folds into the release id, so re-routing under it genuinely
 re-decides those rows.
 
-**Revisit obligation:** the ~494k figure above is the old `filtered.csv`. Re-measure
+**Revisit obligation:** the ~494k figure above is the pre-engine Stage 2 corpus. Re-measure
 it as a `pending/no_text` count on the current release, run the worklist → backfill
 → freeze → `route` cycle over it, and report how many piles the recovered abstracts
 changed.
@@ -204,11 +204,12 @@ recorded, discard not acted on — over fresh rows and count how often it would 
 row the validated screen went on to keep. That quantity is the real cost, it is
 measurable in the thousands without any gold labels, and it is the only number that
 should decide this. Re-check the economics at the same time. The figures on record are
-**historical**: measured on 2026-08-02 over the retired pre-engine `filtered.csv`,
+**historical**: measured on 2026-08-02 over the pre-engine Stage 2 corpus,
 49,800 of 2,581,092 rows reached Stage 3, making the whole screening bill ~$87 with
-this tier netting ~$30 of it. That file is gone; the engine handoff of 2026-08-05 is
-1,614 rows (`data/filtered.csv.manifest.json`), so both the bill and the saving have
-to be re-derived from a current release before either number is quoted.
+this tier netting ~$30 of it. The engine screens a far smaller population — 1,614
+works on the release of 2026-08-05 — so both the bill and the saving have to be
+re-derived from a current release before either number is quoted.
+`python -m filter.engine status` prints the per-pile counts to derive them from.
 
 ---
 

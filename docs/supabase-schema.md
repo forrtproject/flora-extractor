@@ -106,7 +106,7 @@ the validation repo (forrtproject/flora-validation#3).
 | Column | Type | Description |
 |--------|------|-------------|
 | `work_id` | bigint | The alias-resolved int64 OpenAlex id of the replication, derived from `openalex_id_r` via `filter/engine/workids.work_id()`. Null when the row carries no parseable OpenAlex id |
-| `release_id` | text | The routing release the row was handed off under. Null unless the import was given `--release-id` |
+| `release_id` | text | The routing release the row was exported under. Null unless the import was given `--release-id` |
 
 `work_id` is the load-bearing one. **Routing provenance is linked, not copied**:
 `extracted.csv` carries none of `ENGINE_EXPORT_COLS` (`route_rule`,
@@ -129,10 +129,10 @@ joined on:
   `engine_supersessions` rows naming the affected `record_id`s. It never mutates
   `unvalidated`, `validated` or `validation_queue`.
 
-`release_id` is a property of the **handoff**, not of a row: every row of one
-Stage 3 run came through one `filter.engine handoff`, and that command's
-`data/filtered.csv.manifest.json` names its `release_id`. The import should take it
-as one argument for the whole run and stamp every row with it.
+`release_id` is a property of the **export**, not of a row: every row of one
+`data/extracted.csv` was rendered under one routing release, the id given to
+`python -m extract.export --release <id>`. The import should take it as one argument
+for the whole run and stamp every row with it.
 
 Omitting it costs nothing that cannot be recovered — the `work_id` join above
 still answers every routing question — it only means the record does not record

@@ -9,7 +9,7 @@ The monitoring dashboard lives at `http://localhost:5001/dashboard` (start with 
 | Tab | Stage | Data source |
 | --- | ----- | ----------- |
 | Search | Stage 1 | The survivor pool (`cache/snapshot_pool/`) + `data/dashboard/stats.json` |
-| Filter | Stage 2 | `data/filtered.csv` |
+| Filter | Stage 2 | The routing store (`cache/engine/engine.duckdb`) |
 | Extract | Stage 3 | `data/extracted.csv` |
 | Extract-Test | Stage 3 sandbox | `data/extracted-test.csv` |
 | Supabase | Stage 4 | Live Supabase API |
@@ -19,11 +19,15 @@ After those five comes one **set-aside** sub-tab per quarantine file, built from
 `/api/dashboard/set-stats`, `/set-rows` and `/set-download`. The tab strip therefore
 grows when a new set-aside destination is added, with no template change.
 
-Stats are served via a 3-tier cascade (fastest to slowest):
+Stage 3's two CSVs are served via a 3-tier cascade (fastest to slowest):
 
 1. `data/dashboard/stats.json` — pre-computed at end of each pipeline run
 2. `data/dashboard/{stage}.parquet` — Parquet mirror written alongside stats.json
 3. Full CSV scan — fallback when neither exists
+
+Stage 2 is outside that cascade. Its figures are one DuckDB query against the
+routing store, asked on every page load, so there is nothing to pre-compute and
+nothing that can be stale.
 
 See [parquet-cache.md](parquet-cache.md) for how the cache is generated and refreshed.
 
@@ -74,43 +78,43 @@ copy, not generated from the code — where it disagrees with
 
 ### Filter — stats
 
-**Status KPI cards** (each is a download link):
+Everything on this panel belongs to ONE routing release: the newest the store holds
+routing for, resolved the way `python -m filter.engine export-csv --release latest`
+resolves it. The release id and the time it was routed are shown above the numbers,
+because a pile count names nothing without them.
 
-| Card | `paper_type` value |
-| ---- | --------------------- |
-| Total Filtered ↓ | all rows |
-| Replications ↓ | `replication` |
-| Reproductions ↓ | `reproduction` |
-| Needs Review ↓ | `needs_review` |
-| False Positives ↓ | `false_positive` |
+| Panel | What it shows |
+| ----- | ------------- |
+| Routing release | Release id (first 12 chars), `created_at`, and the store file the figures came from |
+| Works Routed ↓ | Every work the release routed, summed over the piles. The card is a download link — see below |
+| Piles | One row per pile, largest first, with its share of the total |
 
-**Data Quality — Replications & Reproductions only** (each row downloads that subset):
+**The download generates a CSV; it does not read one.** Clicking *Works Routed ↓*
+runs the same export `python -m filter.engine export-csv` writes — the release's
+screened rows, through `write_handoff` — into `data/dashboard/download/` and streams
+it back. It reads the whole survivor pool, so the request takes minutes. The
+endpoint returns a JSON error rather than a file when there is no store, no datable
+release, or no Supabase to read screen verdicts from.
 
-| Row | Filter applied |
-| --- | -------------- |
-| No DOI ↓ | `stage=filtered&type=replication&type=reproduction&no_doi=1` |
-| No DOI or URL ↓ | `stage=filtered&type=replication&type=reproduction&no_doi_url=1` |
-| No abstract ↓ | `stage=filtered&type=replication&type=reproduction&no_abstract=1` |
+**When there is nothing to show**, the panel says which: no routing store, a store
+another process holds the write lock on, or a release with no record beside the
+store to date it. It never renders a zero.
 
 ### Filter — docs panel
 
-The left panel explains what Stage 2 does and annotates the `filtered.csv` columns.
+The left panel explains what Stage 2 does and annotates the exported Stage 2
+columns.
 
-**Stale panel copy.** The text still describes the pre-#152 Stage 2 — a per-row rule
-classifier with an LLM escalation, its prompt reproduced inline, and its CLI flags.
-None of that exists: Stage 2 is now the declarative filter engine
-(`python -m filter.engine …`), where rules route and discard and only LLM tiers admit.
-Read [filter-engine.md](filter-engine.md) and [cli-reference.md](cli-reference.md)
-instead, and treat the panel's Stage 2 prose as historical until it is rewritten.
+**Stale panel copy.** The decision-logic table, the phrase pill list and the "No LLM
+in Stage 2" card describe the pre-#152 per-row rule classifier, which does not
+exist. Stage 2 is the declarative filter engine (`python -m filter.engine …`), where
+rules route and discard and only LLM tiers admit. Read
+[filter-engine.md](filter-engine.md) and [cli-reference.md](cli-reference.md)
+instead, and treat those three cards as historical until they are rewritten.
 
 The column annotations are likewise a copy: `ENGINE_EXPORTED_COLS` in
-`shared/schema.py` is the actual set the handoff writes, and
+`shared/schema.py` is the actual set an export writes, and
 [csv-schema.md](csv-schema.md) is the maintained reference.
-
-The `false_positive` card counts rows that carry that status. Note that
-`filter.engine handoff` never writes one — `false_positive` is the `discard` pile's
-status and the handoff ships only the two screen piles — so on a file produced by the
-current engine that card reads zero.
 
 ---
 

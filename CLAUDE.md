@@ -12,7 +12,7 @@ uninformative / cannot_be_determined / not_a_replication).
 
 ```text
 Stage 1: search/        → SEARCHES only            → the survivor pool (parquet)
-Stage 2: filter/engine/ → routes the pool into piles → data/filtered.csv (handoff)
+Stage 2: filter/engine/ → routes the pool into piles → screen verdicts in the store
 Stage 3: extract/       → finds original + outcome   → verdicts → data/extracted.csv
 Stage 4: validate/      → read-only monitoring dashboard here, main validation tasks are in separate repo flora-validation
 ```
@@ -21,7 +21,7 @@ Stage 4: validate/      → read-only monitoring dashboard here, main validation
 python -m search.run_search --scan  # Stage 1 → the survivor pool (--scan is required)
 python -m filter.engine route       # Stage 2 → routing release in the DuckDB store
 python -m filter.engine screen --tier screen_expensive --run   # the claimed LLM tier
-python -m filter.engine handoff --out data/filtered.csv        # → Stage 3's input
+python -m filter.engine export-csv --out <file>     # optional: a release's screened rows as a record CSV
 python -m extract.tier --run        # Stage 3 → claimed extraction, verdicts in Postgres
 python -m extract.export --release <id>   # the verdicts → data/extracted.csv
 python -m validate.app              # Stage 4 dashboard → http://localhost:5001
@@ -46,11 +46,10 @@ import forever. Omitted, the release is the store's when it holds exactly one, a
 store holding several refuses; `--all-releases` renders every stored verdict whatever
 routing says. Resume is the verdict row, not the file: the
 worklist subtracts every work whose latest current-generation result SETTLES it.
-`target_pending` and `api_error` do not settle — but a `target_pending` younger
-than `EXTRACT_PENDING_RETRY_DAYS` (14) RESTS: it is subtracted like a settled work
-until the delay lapses, a new generation reopens it, or `--redo` names it, because
-five runs of one campaign otherwise re-bought ~830 unresolvable works' queries
-each. `api_error` retries immediately. The export applies the FLoRA/validated skip
+`target_pending` and `api_error` do not settle — but a current-generation
+`target_pending` RESTS indefinitely: it is subtracted like a settled work until a
+new generation reopens it or `--redo`/`--redo-status` names it, because re-running
+the same evidence re-buys the same answer. `api_error` retries immediately. The export applies the FLoRA/validated skip
 lists at render too, so a work that enters FLoRA after extraction stops shipping.
 
 **Two ways to reopen, and the ladder is not one of them.** `--redo W1,W2` re-extracts
@@ -96,7 +95,7 @@ never been independently validated. Discuss shared changes with all stage teams.
 | ---- | ------- |
 | `shared/openalex_client.py` | OpenAlex API wrapper + `find_all_candidates()` (Stage 3 logic) |
 | `shared/openalex_keys.py`   | OpenAlex key rotation, shared by all stages |
-| `shared/llm_client.py`      | Gemini/OpenAI/OpenRouter calls — one model per call site, named explicitly, with no fallback to another provider — JSON parsing; `classify_replication()` (front-door screen, called by Stage 2's expensive tier), `cached_classification()` (read-only cache door, for the handoff), `screen_gate()`, `screen_voters()`, `resolve_targets_and_outcomes()` (the one call behind the abstract, reference-list and full-text rungs — target AND outcome), `screen_references_with_llm()` (reference-list target pick) |
+| `shared/llm_client.py`      | Gemini/OpenAI/OpenRouter calls — one model per call site, named explicitly, with no fallback to another provider — JSON parsing; `classify_replication()` (front-door screen, called by Stage 2's expensive tier), `cached_classification()` (read-only cache door, for the export-csv record export), `screen_gate()`, `screen_voters()`, `resolve_targets_and_outcomes()` (the one call behind the abstract, reference-list and full-text rungs — target AND outcome), `screen_references_with_llm()` (reference-list target pick) |
 | `shared/target_keys.py`     | `assign_target_keys()` — one deduplicated `@smith2009` namespace over a paper's candidates and references, plus the key → record map |
 | `shared/token_usage.py`     | Per-day/provider/model token recording (`cache/token_usage.json`) + the OpenAI daily budget check |
 | `shared/rate_limit.py`      | `throttle(service, interval)` — one reservation queue per remote service, so N worker threads share one rate rather than each sleeping its own |
@@ -124,7 +123,7 @@ never been independently validated. Discuss shared changes with all stage teams.
 | ----- | ----- |
 | `search/` | `run_search.py` (the Stage 1 entry point: `--scan` runs the ledger-backed snapshot scan (sample scans use a scratch `FLORA_CACHE_DIR`); a bare invocation never starts a 725 GB scan), `snapshot_scan.py` (the bulk-parquet scan: **the search gate** → the survivor pool; also `pool_fingerprint()`, the pool's identity in a Stage 2 release id, and the `_pool_provenance.json` sidecar it reads — the gate the pool's rows were ADMITTED under and the file count that completes it, written by the scan and by `--pull`, stamped onto an older pool with `--stamp-pool`), `pool_sync.py` (share the pool through a private HF dataset repo: `--push` / `--pull`), `fetch_abstracts.py` (the six abstract-source phase runners — a library now, whose one consumer is `filter/engine/backfill.py`). Stage 1 searches and does not filter: the non-snapshot discovery sources were retired to `wip/api-harvest-sources` (PR #158) because nothing downstream read `data/candidates.csv` |
 | `filter/` | `phrase_detection.py` — the token/stem vocabulary the **search gate** is built from. It is Stage 1's only keyword logic; Stage 2 does not call it. The old `rule_filter.py`/`run_filter.py` path is retired (#146) |
-| `filter/engine/` | The issue #146 filter engine, which IS Stage 2: declarative JSON specs in `filter/spec/` routed by precedence into piles (`discard` / `screen_expensive` / `screen_cheap` / `needs_human` / `pending`) over the survivor pool; claimed, budget-gated LLM tiers; `handoff` writes Stage 3's input. Rules route and discard; only LLMs admit. Design: [`docs/filter-engine.md`](docs/filter-engine.md); policy (precedence, pile→status mapping, measurement levels): `filter/spec/CONVENTIONS.md`. CLI: `python -m filter.engine specs\|route\|diagnose\|worklist\|screen\|export\|reconcile\|handoff\|release-claim\|status` |
+| `filter/engine/` | The issue #146 filter engine, which IS Stage 2: declarative JSON specs in `filter/spec/` routed by precedence into piles (`discard` / `screen_expensive` / `screen_cheap` / `needs_human` / `pending`) over the survivor pool; claimed, budget-gated LLM tiers; Stage 3 reads the screen verdicts from the store, and `export-csv` writes a release's screened rows as an ad-hoc record CSV. Rules route and discard; only LLMs admit. Design: [`docs/filter-engine.md`](docs/filter-engine.md); policy (precedence, pile→status mapping, measurement levels): `filter/spec/CONVENTIONS.md`. CLI: `python -m filter.engine specs\|route\|diagnose\|worklist\|screen\|export\|reconcile\|export-csv\|release-claim\|status` |
 | `db/migrations/` | The engine's Postgres state authority (claims, permanent verdicts, audit, validation lineage) — SQL the maintainer runs in Supabase |
 | `extract/` | `tier.py` (**the entry point**: Stage 3 as a claimed, budget-gated engine tier — worklist, claim + lease heartbeat, the judge, the stored result payload, `--redo`, and `supersede_targets()` for retroactive corrections), `export.py` (**the only writer of `data/extracted.csv`**: renders the stored payloads, sorted, atomic, partitioned into the set-aside CSVs, with a generation fallback and `--check`), `run_extract.py` (the per-row pipeline as a LIBRARY — `_process_row` and everything under it; its CLI is retired and parked on `wip/csv-runner`), `link_original.py` (resolution ladder), `code_outcome.py` (outcome coding; reproductions use the computation/robustness axes), `sanity_check.py` (the integrity REPORT over the exported CSV, plus the two `--deep` network buckets; it moves nothing), `audit_dois.py`, `audit_extracted.py` (read-only pre-validation audit), `backfill_authors.py` (retroactive `authors_o`/`ref_o` from OpenAlex), `clean_parse_cache.py` |
 | `validate/` | Read-only Flask dashboard: `app.py` registers the `dashboard` and `check` blueprints only. The `batch` blueprint is parked on `wip/batch-blueprint` |
@@ -214,7 +213,7 @@ at all: text that states the design outright (`hard_signal()`), rows from a
 Stage 2's own high-confidence `replication` verdict is deliberately not a bypass — 98%
 of rows reaching Stage 3 carry it, including every screen-confirmed negative. A cheap
 verdict never ADMITS: its `proceed` means "on to the expensive screen", so it settles
-nothing for the screened-only handoff, and a live discard simply drops the row there.
+nothing for the screened-only worklist, and a live discard simply drops the row there.
 `link_method = prescreen_discard` has no live writer for that reason; historical rows
 carry it and the export still partitions them into `data/prescreen_discard.csv`. Evidence: `analysis/prescreen_eval/REPORT.md`.
 
@@ -249,7 +248,7 @@ changing a voter or the prompt invalidates exactly those verdicts — and mints 
 SCREENING GENERATION, which is what makes those works claimable again — and, once
 they are re-screened, what puts them back in the extract tier's worklist.
 
-The verdict reaches Stage 3 through the handoff, in `SCREEN_COLS`:
+The verdict reaches Stage 3 on the worklist row, in `SCREEN_COLS`:
 `screen_verdict`, `screen_record_type`, `screen_categories`, `screen_votes`,
 `screen_evidence`, `screen_reasoning`. `screen_votes` carries each voter's
 classification and confidence because a summary of the gate is not enough — the
@@ -555,15 +554,15 @@ must never cache the empty one.
 
 **The big artifact is the survivor pool, not a CSV.** The pool is a few GB of parquet
 and is shared through Hugging Face; the OpenAlex snapshot it is scanned out of is
-725 GB. Nothing in `data/` is close to that: the engine handoff is a few thousand
-rows (its sibling `filtered.csv.manifest.json` names the exact count for the file
-on disk) and `data/extracted.csv` a few hundred KB.
+725 GB. Nothing in `data/` is close to that: `data/extracted.csv` is a few hundred
+KB, and an ad-hoc `export-csv` record of a release's screened rows a few thousand
+rows (its manifest sidecar names the exact count for the file on disk).
 
 The multi-GB `filtered.csv` this section was written for is the RETIRED pre-engine
 file — the DVC-tracked `filtered.zip` still holds it at 1.7 GB. Stage 3 never reads a
-CSV at all now: the tier builds its worklist in process, straight off the pool through
-`iter_export_rows` + `screen_columns` — the same two functions the handoff writes
-`data/filtered.csv` with — one batch of `EXTRACT_CLAIM_BATCH` works at a time, so
+CSV at all: the tier builds its worklist in process, straight off the pool through
+`iter_export_rows` + `screen_columns` — the same two functions `export-csv` writes
+its record file with — one batch of `EXTRACT_CLAIM_BATCH` works at a time, so
 nothing about the input's size reaches memory.
 
 Neither is resume a file any more. The checkpoint is the permanent verdict row, and
@@ -706,18 +705,21 @@ writes `api_error` so the row is not settled on a transient failure. Measured be
 wiring over all 63 settled keyed links in the evaluation samples: the one known-wrong
 link flagged, zero false positives (`analysis/stage3_eval/keyed_confirm_eval.py`).
 
-**The search-based links are GRADED, and the grade decides nothing yet** (issues #183
-and #186 shape 2). `_confirm_search_row()` in `extract/run_extract.py`, also inside
-`_finalise_row`, sends every accepted `llm_title_search` / `llm_author_year_search`
-link through `confirm_search_original()` — the same cold inputs as the keyed check —
-and gets one of four grades: `clearly_target` · `likely_target` · `unlikely_target` ·
-`clearly_not_target`. The grade is appended to `link_evidence` as
-`search_confirm: <grade> — <reasoning>` and changes no link, no confidence and no
-method; a provider failure records `search_confirm: api_error` and leaves the row
-settled. Graded rather than binary because the binary check was measured on this class
-at 0 flags in 200 rows. Which grade should gate what is a calibration to make from
-collected grades — `analysis/stage3_eval/search_confirm_plan.md` — which is why
-`build_search_confirm_prompt` is deliberately outside `_GENERATION_PROMPTS`.
+**The search-based links are GRADED, and the grade sets `link_confidence`** (issues
+#183 and #186 shape 2). `_confirm_search_row()` in `extract/run_extract.py`, also
+inside `_finalise_row`, sends every accepted `llm_title_search` /
+`llm_author_year_search` link through `confirm_search_original()` — the same cold
+inputs as the keyed check — and gets one of four grades: `clearly_target` ·
+`likely_target` · `unlikely_target` · `clearly_not_target`. The grade decides the
+row's `link_confidence` (`clearly_target` → high, `likely_target` → medium, the two
+negative grades → low) and is appended to `link_evidence` as
+`search_confirm: <grade> — <reasoning>`; it never changes the link or the method, and
+no grade drops a row. A provider failure records `search_confirm: api_error`, leaves
+the confidence at low and leaves the row settled. Graded rather than binary because
+the binary check was measured on this class at 0 flags in 200 rows. Because the grade
+decides a shipped field, `build_search_confirm_prompt` is in `_GENERATION_PROMPTS`;
+whether the negative grades should also gate a discard or a review queue is read off
+the campaign's collected grades (`analysis/stage3_eval/search_confirm_plan.md`).
 
 ## Further Reference
 

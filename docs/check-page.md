@@ -1,6 +1,6 @@
 # Check Page
 
-`/check` is a search-and-filter interface over any pipeline stage. It's useful for inspecting individual papers, cross-checking how the same DOI is classified at different stages, and downloading filtered subsets.
+`/check` is a search-and-filter interface over Stage 3's output CSVs (`extracted`, `extracted-test`). It's useful for inspecting individual papers, comparing a DOI's live and sandbox verdicts, and downloading filtered subsets. Stage 2's figures are on the dashboard, which reads the routing store; a row-level record of a release comes from `python -m filter.engine export-csv --out <file>`.
 
 ---
 
@@ -16,7 +16,7 @@ The page auto-searches on load and shows the first 25 rows of `extracted.csv`.
 
 ## Stage selection
 
-Select one or more stages using the pill buttons at the top. When multiple stages are selected, the results are unioned and a **stage badge** (`CAND`, `FILT`, `EXT`, `TEST`) appears in the table so you can see how the same paper appears at each stage.
+Select one or both stages using the pill buttons at the top. With both selected the results are unioned and a **stage badge** (`EXT`, `TEST`) appears in the table, so a paper the sandbox and the live run both hold is visible as two rows.
 
 ---
 
@@ -27,7 +27,7 @@ All filter controls support selecting one or many values. Multi-select dropdowns
 | Filter | Column(s) searched | Notes |
 | ------ | ----------------- | ----- |
 | Year range (From / To) | `year_r` | Handles float years like `2009.0` correctly |
-| Type / Status | `type` (extracted) or `paper_type` (filtered) | Options change based on which stages are selected |
+| Type / Status | `type` | Options change based on which stages are selected |
 | Outcome | `outcome` | Extracted/test stages only |
 | Link Method | `link_method` | Extracted/test stages only |
 | Match Type | `original_match_type` | Extracted/test stages only |
@@ -68,7 +68,7 @@ Default page size is 25 rows; maximum is 100 (via `per_page` URL param).
 
 **↓ Download CSV** in the filter bar downloads the current filtered results (all pages, not just the current page) to `data/dashboard/download/` and serves the file as an attachment.
 
-Filename format: `check_{stage}_{date}.csv`. For multiple stages: `check_extracted+filtered_2026-06-16.csv`.
+Filename format: `check_{stage}_{date}.csv`. For multiple stages: `check_extracted+extracted-test_2026-06-16.csv`.
 
 ### API endpoint
 
@@ -84,14 +84,14 @@ All filter params from the table above are supported. Multiple values for the sa
 # All failed extractions
 /api/check/download?stage=extracted&outcome=failure
 
-# Replications with no DOI (in filtered stage)
-/api/check/download?stage=filtered&type=replication&no_doi=1
+# Replications with no DOI
+/api/check/download?stage=extracted&type=replication&no_doi=1
 
 # Mismatched DOI verifications
 /api/check/download?stage=extracted&doi_verified=mismatch
 
 # Same paper across all stages
-/api/check/search?stage=candidates&stage=filtered&stage=extracted&q=10.1126/science.1255484
+/api/check/search?stage=extracted&stage=extracted-test&q=10.1126/science.1255484
 ```
 
 ---
