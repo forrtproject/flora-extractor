@@ -316,8 +316,16 @@ a first-person or qualifier construction.
 
 The engine reads the survivor pool parquet (`_POOL_SCHEMA`, year-sharded files in a
 flat directory) directly. Batches stream via `pq.ParquetFile(...).iter_batches()`
-as in `snapshot_scan.py`. `work_id` is the int64 OpenAlex id; aliases (merged
-works) resolve through `filter/spec/aliases.json` before any state is keyed.
+as in `snapshot_scan.py`. `work_id` is the int64 OpenAlex id; aliases resolve
+through `filter/spec/aliases.json` before any state is keyed.
+
+That file carries two kinds of entry. OpenAlex's own merges, and — since issue
+#193 — the merges it has NOT performed: one article deposited in a repository and
+published by its journal is two work records, both routed, both claimed, both
+extracted for the same answer. `analysis/doi_duplicates.py` derives those entries
+from the pool and rewrites the whole file, so the map is regenerated rather than
+edited. Two records are merged only when they share a DOI **and** agree on the
+title; the deposit aliases to the version of record.
 
 **Stage 1 searches; Stage 2 filters.** The scan's only keyword decision is the
 **search gate** — a broad token/stem alternation over the title and the raw

@@ -1,10 +1,15 @@
 """Work identity: the int64 OpenAlex id, and the alias map that canonicalises it.
 
 Everything the engine keys — routing rows, evaluations, claims — is keyed by the
-alias-resolved id, so a work that OpenAlex merged into another does not appear
-twice under two ids across releases. `filter/spec/aliases.json` is flat
-(`old_id → canonical_id`) and `resolve()` follows exactly one hop: a chain would
-mean the file needs re-flattening, not that the resolver needs a loop.
+alias-resolved id, so one article does not appear twice under two ids across
+releases. `filter/spec/aliases.json` is flat (`old_id → canonical_id`) and
+`resolve()` follows exactly one hop: a chain would mean the file needs
+re-flattening, not that the resolver needs a loop.
+
+The map covers the merges OpenAlex performed and the ones it did not: a repository
+deposit and the publisher's record of one article are two work ids upstream.
+`analysis/doi_duplicates.py` derives the second kind from the pool and rewrites the
+whole file; this module only reads it.
 """
 
 import json
