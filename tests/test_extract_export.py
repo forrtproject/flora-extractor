@@ -427,6 +427,30 @@ def test_the_set_asides_belong_to_the_csv_being_written(tmp_path):
     assert not (tmp_path / "target_pending.csv").exists()
 
 
+def test_a_set_aside_file_no_render_filled_is_removed(tmp_path):
+    """Each render is the whole answer, so a bucket that takes no rows must not keep
+    an earlier render's file: `data/api_error.csv` held two rows no verdict backed."""
+    out = tmp_path / "extracted-test.csv"
+    aside = tmp_path / "extracted-test-set-aside"
+    aside.mkdir()
+    stale = aside / "api_error.csv"
+    stale.write_text("doi_r\n10.1/gone\n", encoding="utf-8-sig")
+    lock = aside / "api_error.csv.lock"
+    lock.touch()
+    keeper = aside / "not-a-set-aside-file.csv"
+    keeper.write_text("mine\n", encoding="utf-8")
+
+    report = export_mod.render(_client(
+        [_verdict(31, verdict=TARGET_PENDING, row_id="v-31",
+                  rows=[_row(_PENDING)])]))
+    export_mod.write(report, out)
+
+    assert (aside / "target_pending.csv").exists()
+    assert not stale.exists()
+    assert not lock.exists()
+    assert keeper.exists(), "only the known set-aside names may be deleted"
+
+
 # ---------------------------------------------------------------------------
 # Retroactive corrections: the write path the two audit tools share
 # ---------------------------------------------------------------------------

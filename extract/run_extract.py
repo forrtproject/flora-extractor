@@ -1682,9 +1682,15 @@ def _confirm_keyed_row(row: dict) -> dict:
     return row
 
 
+_SEARCH_CONFIRM_CONFIDENCE = {"clearly_target": "high",
+                              "likely_target": "medium",
+                              "unlikely_target": "low",
+                              "clearly_not_target": "low"}
+
+
 def _confirm_search_row(row: dict) -> dict:
-    """Issue #183 / #186's second shape: grade a search-based link, and act on
-    nothing.
+    """Issue #183 / #186's second shape: grade a search-based link, and set its
+    confidence from the grade.
 
     `llm_title_search` and `llm_author_year_search` link a study to a record its own
     reference list never supplied — a search hit adjudicated by
@@ -1693,17 +1699,17 @@ def _confirm_search_row(row: dict) -> dict:
     resolves at all; the same measurement showed a BINARY re-check of it flagging
     nothing, so this asks for a four-value grade instead.
 
-    OBSERVE-ONLY, deliberately. The grade is appended to `link_evidence` as a labelled
-    segment and changes no link, no confidence and no method — which grade should gate
-    what is a calibration to make from collected grades, not a threshold to guess
-    (`analysis/stage3_eval/search_confirm_plan.md`). Because it concludes nothing, the
-    prompt is deliberately OUT of the extract generation fingerprint: editing it must
-    not reopen every settled work for an annotation.
+    The grade writes `link_confidence` (`_SEARCH_CONFIRM_CONFIDENCE`) and nothing
+    else: the link, the method and the row itself are exactly as the ladder made
+    them, and no grade drops a row. A validator reading `high` is being told a cold
+    second reading agreed, not that a different rung found the paper. Because the
+    grade decides a shipped field, `build_search_confirm_prompt` is in the extract
+    generation fingerprint (`extract/tier.py`).
 
-    A provider failure records `search_confirm: api_error` and leaves the row settled —
-    unlike the keyed check, where an unchecked link may not settle, here an ungraded
-    link is exactly as good as the ladder made it. An unreadable answer records
-    nothing at all.
+    A provider failure records `search_confirm: api_error`, leaves the confidence at
+    the class's low-by-policy default and leaves the row settled — an ungraded link is
+    exactly as good as the ladder made it. An unreadable answer records nothing at
+    all.
     """
     if str(row.get("link_method") or "") not in _SEARCH_CONFIRM_METHODS:
         return row
@@ -1733,6 +1739,7 @@ def _confirm_search_row(row: dict) -> dict:
     else:
         note = (f"search_confirm: {graded['verdict']}"
                 + (f" — {graded['reasoning']}" if graded["reasoning"] else ""))
+        row["link_confidence"] = _SEARCH_CONFIRM_CONFIDENCE[graded["verdict"]]
     prior = str(row.get("link_evidence", "") or "")
     row["link_evidence"] = f"{prior} | {note}" if prior else note
     return row

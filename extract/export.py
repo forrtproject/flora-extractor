@@ -302,12 +302,22 @@ def write(report: dict, out_csv: Path) -> dict:
     The set-asides go to `set_aside_dir(out_csv)`, so a render to a sandbox path
     quarantines into that sandbox's own directory and cannot settle a paper for the
     production resume (`shared/schema.py`).
+
+    A destination that took no rows this render is DELETED rather than left alone.
+    Each render is the whole answer, so a file left over from an earlier one reads as
+    a live quarantine that today's verdicts do not contain — `data/api_error.csv` sat
+    there with two rows no verdict backed. Only the names in `SET_ASIDE_DESTINATIONS`
+    and their `.lock` sidecars are removed: production's set-aside directory IS
+    `data/`, which holds `flora.csv`, the entry sheet and the DVC pointers.
     """
     out_csv = Path(out_csv)
     written = {out_csv.name: _write_csv(out_csv, report["main"])}
     out_dir = set_aside_dir(out_csv)
     for name, rows in sorted(report["aside"].items()):
         written[name] = _write_csv(out_dir / name, rows)
+    for name in set(SET_ASIDE_DESTINATIONS.values()) - set(report["aside"]):
+        (out_dir / name).unlink(missing_ok=True)
+        (out_dir / f"{name}.lock").unlink(missing_ok=True)
     return written
 
 

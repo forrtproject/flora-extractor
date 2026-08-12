@@ -3738,8 +3738,8 @@ class TestConfirmKeyedRow:
 
 class TestConfirmSearchRow:
     """Issues #183 and #186's second shape: a search-based link is GRADED on four
-    values and the grade acts on nothing — it is recorded on link_evidence so a
-    calibration can decide what any grade should gate."""
+    values. The grade is recorded on link_evidence and sets link_confidence; it
+    changes no link, no method, and drops no row."""
 
     _ROW = {"doi_r": "10.1/rep", "title_r": "A replication of Smith",
             "abstract_r": "We replicate Smith (2010).",
@@ -3756,17 +3756,22 @@ class TestConfirmSearchRow:
                 "llm_model": "m", "llm_error": error,
                 "provider_failure": provider_failure}
 
-    @pytest.mark.parametrize("verdict", ["clearly_target", "clearly_not_target"])
-    def test_the_grade_is_recorded_and_nothing_is_re_routed(self, verdict):
+    @pytest.mark.parametrize("verdict,confidence", [
+        ("clearly_target", "high"),
+        ("likely_target", "medium"),
+        ("unlikely_target", "low"),
+        ("clearly_not_target", "low"),
+    ])
+    def test_the_grade_sets_the_confidence_and_nothing_is_re_routed(
+            self, verdict, confidence):
         with patch("shared.llm_client.confirm_search_original",
                    return_value=self._graded(verdict)) as check:
             out = run_extract._confirm_search_row(dict(self._ROW))
         assert f"search_confirm: {verdict} — subject and author match" \
             in out["link_evidence"]
-        # Observe-only: even the worst grade leaves the link exactly as the ladder
-        # made it.
+        assert out["link_confidence"] == confidence
+        # Even the worst grade leaves the link itself exactly as the ladder made it.
         assert out["link_method"] == "llm_title_search"
-        assert out["link_confidence"] == "low"
         assert out["doi_o"] == "10.9/orig"
         # The quote reaches the call with the run notes stripped.
         assert check.call_args.args[3] == "we replicate Smith (2010)"
@@ -3778,7 +3783,9 @@ class TestConfirmSearchRow:
             out = run_extract._confirm_search_row(dict(self._ROW))
         assert out["link_evidence"].endswith("| search_confirm: api_error")
         assert out["link_method"] == "llm_title_search", \
-            "an ungraded link must still settle — the grade concludes nothing"
+            "an ungraded link must still settle — it is what the ladder made it"
+        assert out["link_confidence"] == "low", \
+            "no grade, so the class's low-by-policy default stands"
 
     def test_an_unreadable_answer_records_nothing(self):
         with patch("shared.llm_client.confirm_search_original",

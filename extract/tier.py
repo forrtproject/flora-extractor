@@ -79,7 +79,6 @@ import json
 import sys
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -126,22 +125,12 @@ API_ERROR = "api_error"
 RESULT_VERDICTS = (RESOLVED, PROVISIONAL, NOT_A_REPLICATION, NO_ORIGINAL_FOUND,
                    TARGET_PENDING, API_ERROR)
 
-# The two endings a re-run is MEANT to redo, mirroring `REOPENED_SET_ASIDE_FILES` in
-# `shared/schema.py` for the same reason: `target_pending` means "a re-run decides"
-# by construction, and `api_error` records a transient provider failure. Neither
-# settles the work, so neither takes it out of the worklist. Every other ending does.
+# The two endings that do not SETTLE a work. Every other ending does, and takes the
+# work out of the worklist for good. These two are reopenable, at two different
+# prices: `api_error` records a transient provider failure and re-offers on the next
+# run, while `target_pending` rests until something names it (`_resting`) — the same
+# evidence through the same code buys the same answer.
 UNSETTLING_VERDICTS = frozenset({TARGET_PENDING, API_ERROR})
-
-# How long a target_pending verdict rests before a run re-offers the work. Without
-# it, every run re-bought each unresolvable work's OpenAlex queries and stray fresh
-# calls — the 2026-08-09/10 campaign re-attempted ~830 such works on all five of its
-# runs. The delay mirrors the acquisition tiers' PDF_RETRY_AFTER_DAYS: what usually
-# unsticks these rows is the world changing (a deposited file, a registered DOI),
-# which is a weeks scale, while a CODE change reopens them immediately anyway — the
-# generation gate ignores old-generation rows, delay or no delay. `api_error` is
-# deliberately not rested: it marks a provider's bad minute, and the retry is cheap
-# and usually different.
-EXTRACT_PENDING_RETRY_DAYS = 14
 
 # ── Claims and the lease ─────────────────────────────────────────────────────
 # Works per claim. Small compared with a screen batch (which claims a whole pile)
@@ -199,11 +188,12 @@ _GENERATION_PROMPTS = ("build_target_outcome_prompt",
                        # The keyed-record confirm (issue #186 Shape 1) can demote a
                        # resolved row to keyed_link_disputed, so an edit to it changes
                        # what a row concludes and must reopen the works it decided.
-                       "build_keyed_confirm_prompt")
-# `build_search_confirm_prompt` is deliberately NOT in that tuple. Its grade on a
-# search-based link is recorded on link_evidence and changes no conclusion, so an
-# edit to it must not reopen every settled work. It joins the fingerprint on the day
-# a grade can gate a row — see analysis/stage3_eval/search_confirm_plan.md.
+                       "build_keyed_confirm_prompt",
+                       # The search-link grade (issues #183/#186 Shape 2) sets
+                       # `link_confidence` on every llm_title_search and
+                       # llm_author_year_search row, so an edit to it changes a
+                       # shipped field and must reopen the works it graded.
+                       "build_search_confirm_prompt")
 
 
 # ── Declared answer-preserving prompt edits (issue #171) ─────────────────────
@@ -261,17 +251,26 @@ def extract_generation() -> str:
 # `{prompts…, models…}` and matched none of them, so 3,025 settled works reopened at
 # once. That is the opposite of what dropping the key was for.
 #
-# The three listed generations are ladders 21, 22 and 23 over prompts and models
-# identical to today's — verified by rebuilding each digest from the current inputs
-# plus the one ladder key. The ladder is provenance and reaches a population its
-# author names (`--redo-status`), so a verdict produced under any of them still answers
-# what this tier asks.
+# Adding `build_search_confirm_prompt` to the fingerprint moved it the same way: the
+# wiring changes only `link_confidence` on the rows the grade touches, which are
+# exactly the search-linked rows — a population its author can name
+# (`--redo-status llm_title_search,llm_author_year_search`) — while reopening all
+# 3,000+ settled works would re-buy every verdict for a field that is advisory to
+# validators, not a conclusion.
+#
+# The four listed generations are the pre-search-confirm fingerprint and, before it,
+# ladders 21, 22 and 23 over prompts and models identical to today's — verified by
+# rebuilding each digest from the current inputs minus the search-confirm prompt, plus
+# the one ladder key. The ladder is provenance and reaches a population its author
+# names (`--redo-status`), so a verdict produced under any of them still answers what
+# this tier asks.
 #
 # Keyed by the CURRENT generation, which is what makes the declaration self-limiting: a
-# later prompt or model change produces a fourth digest, matches no key here, and every
+# later prompt or model change produces a fifth digest, matches no key here, and every
 # work reopens strictly, as it should.
 _GENERATION_EQUIVALENCES: dict[str, tuple[str, ...]] = {
-    "4e23d2dbb9d39029": ("d7908ff6851d3228",   # ladder 21 — the 2026-08-09 campaign
+    "d1dbd07e1b14440c": ("4e23d2dbb9d39029",   # the grade recorded, not yet shipped
+                         "d7908ff6851d3228",   # ladder 21 — the 2026-08-09 campaign
                          "4d875363a2410a67",   # ladder 22 — sandbox
                          "f2bdee845b792dbb"),  # ladder 23 — sandbox
 }
@@ -625,35 +624,29 @@ def _decide(rows: list[dict]) -> dict:
 
 
 def _resting(decision: dict) -> bool:
-    """True when a target_pending verdict is younger than its retry delay.
+    """True when a current-generation target_pending verdict holds the work back.
 
-    A rested work is subtracted from the worklist exactly as a settled one is,
-    but only for EXTRACT_PENDING_RETRY_DAYS: the row itself still does not
-    settle, so nothing else about its meaning changes — `--redo` reopens it, a
-    new generation reopens it (old-generation rows never reach this check), and
-    once the delay lapses the ordinary re-run semantics resume.
+    A rested work is subtracted from the worklist exactly as a settled one is, and
+    it stays there: re-running the same code over the same evidence buys the same
+    answer, so nothing re-offers the work by itself. The row still does not SETTLE,
+    which is what keeps the reopeners meaningful — `--redo`, `--redo-status
+    target_pending`, and a new generation, which changes what the pipeline asks and
+    puts every work back on the list. Without the hold, every run re-bought each
+    unresolvable work's OpenAlex queries: the 2026-08-09/10 campaign re-attempted
+    ~830 such works on all five of its runs.
+
+    `api_error` is deliberately not rested: it marks a provider's bad minute, and
+    the retry is cheap and usually different.
     """
-    if decision.get("outcome") != TARGET_PENDING:
-        return False
-    row = decision.get("row") or {}
-    stamp = str(row.get("created_at") or "")
-    try:
-        recorded = datetime.fromisoformat(stamp)
-    except ValueError:
-        return False
-    if recorded.tzinfo is None:
-        recorded = recorded.replace(tzinfo=timezone.utc)
-    age = datetime.now(timezone.utc) - recorded
-    return age < timedelta(days=EXTRACT_PENDING_RETRY_DAYS)
+    return decision.get("outcome") == TARGET_PENDING
 
 
 def settled_work_ids(client: ClaimsClient, mode: str = "live") -> set[int]:
     """Works whose latest current-generation *mode* result row SETTLES them —
-    plus the target_pending works still inside EXTRACT_PENDING_RETRY_DAYS.
+    plus the target_pending works, which rest (`_resting`).
 
     `api_error` is excluded on purpose: it is the ending a re-run is meant to
-    redo immediately (`UNSETTLING_VERDICTS`); `target_pending` re-runs too, but
-    only after its rest (`_resting`).
+    redo immediately (`UNSETTLING_VERDICTS`).
 
     The mode filter is what makes the sandbox promotable: a validation-mode
     shadow verdict must NOT settle the live worklist, or the work never gets the

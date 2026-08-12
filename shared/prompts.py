@@ -1203,19 +1203,17 @@ def build_search_confirm_prompt(title_r: str, abstract_snip: str,
     """How confidently is the record a SEARCH returned the paper the study names as
     its target — issue #183, and issue #186's second shape.
 
-    GRADED rather than binary, and the grades act on nothing yet. The binary form of
-    this question was measured over exactly this class and flagged nothing (0 flags on
-    200 fresh rows, both real wrongs passed;
-    analysis/stage3_eval/model_triage_2026-08-08.md): a yes/no gate over records the
-    same model already adjudicated in `pick_author_year_original` has no room to
-    disagree with itself. Four grades have that room, and what any of them should gate
-    is a calibration to make from collected answers
-    (analysis/stage3_eval/search_confirm_plan.md).
+    GRADED rather than binary. The binary form of this question was measured over
+    exactly this class and flagged nothing (0 flags on 200 fresh rows, both real
+    wrongs passed; analysis/stage3_eval/model_triage_2026-08-08.md): a yes/no gate
+    over records the same model already adjudicated in `pick_author_year_original` has
+    no room to disagree with itself. Four grades have that room, and the grade sets
+    the row's `link_confidence` — clearly_target high, likely_target medium, the two
+    negatives low (`extract/run_extract.py`). It drops no row and moves no link.
 
     Inputs are limited to what a stored result row can reconstruct — title_r,
     abstract_r, the link evidence, and the record's title/authors/year/citation/DOI —
-    exactly as build_keyed_confirm_prompt is, so the calibration measures the prompt
-    the ladder sends rather than a richer one.
+    exactly as build_keyed_confirm_prompt is.
     """
     lines = [f"Title: {record.get('title') or '(no title)'}",
              f"Authors: {record.get('authors') or '(unknown)'}",

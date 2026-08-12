@@ -334,10 +334,11 @@ SET_ASIDE_DESTINATIONS = {
     "unregistered_doi_o": "unregistered_original_doi.csv",
 }
 
-# The two destinations a re-run is MEANT to redo, so resume must not count them as
-# settled. target_pending is "re-run decides" by construction, and an api_error row
-# records a transient provider failure — checkpointing either as settled would turn a
-# 503 into a permanent hole in the corpus. They need no flag to reopen: every run does.
+# The two destinations whose verdicts do not settle, so resume must not count them as
+# settled outcomes. An api_error row records a transient provider failure and every
+# run retries it — checkpointing it as settled would turn a 503 into a permanent hole
+# in the corpus. A target_pending row is held instead: re-running the same evidence
+# re-buys the same answer, so only --redo/--redo-status or a generation bump reopens it.
 REOPENED_SET_ASIDE_FILES = ("target_pending.csv", "api_error.csv")
 
 # What resume treats as settled: every set-aside destination except those two. Each of

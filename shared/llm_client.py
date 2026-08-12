@@ -1606,8 +1606,9 @@ def confirm_search_original(doi_r: str, title_r: str, abstract_r: str,
     by `pick_author_year_original` over a pooled candidate list, and asking the same
     call to re-affirm its own choice grades nothing. The ANSWER is graded rather than
     binary — the binary question was measured over this class and produced 0 flags on
-    200 fresh rows — and no grade acts on a row yet; see
-    analysis/stage3_eval/search_confirm_plan.md.
+    200 fresh rows. The caller maps the grade to `link_confidence`
+    (`_SEARCH_CONFIRM_CONFIDENCE` in `extract/run_extract.py`) and changes nothing
+    else about the row.
 
     Returns {"verdict": str | None, "reasoning": str, "llm_model": str,
              "llm_error": str, "provider_failure": bool}. `verdict` is one of

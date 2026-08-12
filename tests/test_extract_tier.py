@@ -246,7 +246,9 @@ def test_the_generation_is_pinned_by_its_inputs():
         "build_author_year_pick_prompt",
         # The keyed-record confirm (issue #186 Shape 1) can demote a resolved row,
         # so it reopens works on the same grounds.
-        "build_keyed_confirm_prompt"}
+        "build_keyed_confirm_prompt",
+        # The search-link grade sets link_confidence on every search-linked row.
+        "build_search_confirm_prompt"}
     assert set(inputs["models"]) == {"linking", "outcome", "pdf_parse"}
     # The efforts are IN the model ids, or two runs at different reasoning levels
     # would share a generation (`cache_model_id`).
@@ -279,27 +281,41 @@ def test_an_undeclared_prompt_edit_still_moves_the_generation(monkeypatch):
             == prompt_version("build_outcome_prompt"))
 
 
-def test_the_ladder_keyed_generations_are_this_question_with_a_ladder_key():
-    """The declared equivalence for the removal of `EXTRACT_LADDER_VERSION`.
+def test_every_declared_generation_is_this_question_asked_earlier():
+    """The declared equivalences: the fingerprint's two shape changes, in order.
 
-    Each listed generation is rebuilt from TODAY's inputs plus the one key that used
-    to be in the dict, which is the whole claim being declared: ladders 21, 22 and 23
-    asked what this tier asks now. If a prompt or model ever moves, the current digest
-    moves with it, the declaration is keyed to a generation nobody is running, and
-    every work reopens strictly.
+    Each listed generation is rebuilt from TODAY's inputs — minus the search-confirm
+    prompt, which entered the fingerprint when its grade began writing
+    `link_confidence`, and for the three older ones plus the `ladder` key that used to
+    be in the dict. That rebuild IS the claim being declared: every one of those
+    fingerprints asked what this tier asks now. If a prompt or model ever moves, the
+    current digest moves with it, the declaration is keyed to a generation nobody is
+    running, and every work reopens strictly.
     """
     import hashlib
     import json as _json
 
-    declared = tier_mod._GENERATION_EQUIVALENCES[extract_generation()]
-    rebuilt = set()
-    for ladder in (21, 22, 23):
-        payload = dict(generation_inputs())
-        payload["ladder"] = ladder
-        rebuilt.add(hashlib.sha256(
+    def digest(payload: dict) -> str:
+        return hashlib.sha256(
             _json.dumps(payload, sort_keys=True, separators=(",", ":"))
-            .encode("utf-8")).hexdigest()[:16])
+            .encode("utf-8")).hexdigest()[:16]
+
+    before_search_confirm = dict(generation_inputs())
+    before_search_confirm["prompts"] = {
+        name: version for name, version
+        in before_search_confirm["prompts"].items()
+        if name != "build_search_confirm_prompt"}
+
+    rebuilt = {digest(before_search_confirm)}
+    for ladder in (21, 22, 23):
+        rebuilt.add(digest({**before_search_confirm, "ladder": ladder}))
+
+    declared = tier_mod._GENERATION_EQUIVALENCES[extract_generation()]
     assert set(declared) == rebuilt
+    # The works settled by the 2026-08-09/10 campaigns, named: a broken equivalence
+    # here reopens every one of them and the next run silently re-buys it.
+    assert {"4e23d2dbb9d39029", "d7908ff6851d3228",
+            "4d875363a2410a67", "f2bdee845b792dbb"} == set(declared)
 
 
 def test_a_declared_generation_still_settles_a_work():
@@ -637,24 +653,20 @@ def test_a_work_whose_targets_all_answered_still_settles():
     assert verdict == RESOLVED
 
 
-def test_a_fresh_target_pending_rests_and_a_stale_one_reopens():
-    """Five runs of the 2026-08-09/10 campaign each re-bought ~830 unresolvable
-    works' queries. A target_pending younger than EXTRACT_PENDING_RETRY_DAYS is
-    subtracted from the worklist like a settled work; older, it re-offers."""
+def test_a_target_pending_rests_however_old_it_is():
+    """Re-running the same code over the same evidence buys the same answer, so a
+    target_pending holds the work back until something reopens it by name. Five runs
+    of the 2026-08-09/10 campaign each re-bought ~830 unresolvable works' queries."""
     from datetime import datetime, timedelta, timezone
     now = datetime.now(timezone.utc)
     fresh = {"outcome": TARGET_PENDING, "settles": False,
              "row": {"created_at": (now - timedelta(days=1)).isoformat()}}
-    stale = {"outcome": TARGET_PENDING, "settles": False,
-             "row": {"created_at":
-                     (now - timedelta(days=tier_mod.EXTRACT_PENDING_RETRY_DAYS + 1)
-                      ).isoformat()}}
+    old = {"outcome": TARGET_PENDING, "settles": False,
+           "row": {"created_at": (now - timedelta(days=400)).isoformat()}}
     resolved = {"outcome": RESOLVED, "settles": True, "row": {"created_at": ""}}
     api_err = {"outcome": API_ERROR, "settles": False,
                "row": {"created_at": (now - timedelta(days=1)).isoformat()}}
     assert tier_mod._resting(fresh) is True
-    assert tier_mod._resting(stale) is False
+    assert tier_mod._resting(old) is True
     assert tier_mod._resting(resolved) is False   # settled rows never need the rest
     assert tier_mod._resting(api_err) is False    # api_error retries immediately
-    assert tier_mod._resting({"outcome": TARGET_PENDING, "settles": False,
-                              "row": {"created_at": "not-a-date"}}) is False
