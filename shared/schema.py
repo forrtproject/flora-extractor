@@ -332,6 +332,11 @@ SET_ASIDE_DESTINATIONS = {
     "self_link": "unresolved_self_links.csv",
     "doi_mismatch": "unresolved_doi_mismatch.csv",
     "unregistered_doi_o": "unregistered_original_doi.csv",
+    # The one bucket classify_row does not decide: a search-based link whose
+    # confirmation grade is anything short of clearly_target. The rule is
+    # extract/export.py's, because --include-unconfirmed-search can switch it off and
+    # a row the export deliberately shipped must not read as drift to sanity_check.
+    "search_link_unconfirmed": "search_link_unconfirmed.csv",
 }
 
 # The two destinations whose verdicts do not settle, so resume must not count them as

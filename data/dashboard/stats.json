@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-08-12T22:14:45",
+  "updated_at": "2026-08-12T23:49:35",
   "filtered": {
     "available": true,
     "store": "/Users/lukaswallrich/Documents/Coding/flora-extractor/cache/engine/engine.duckdb",
@@ -13,11 +13,11 @@
     }
   },
   "extracted": {
-    "total": 2335,
+    "total": 2279,
     "target_pending_count": 0,
     "by_match_type": {
-      "single_original": 2116,
-      "multiple_original": 219
+      "single_original": 2066,
+      "multiple_original": 213
     },
     "by_link_method": {
       "citation_context_match": 1,
@@ -32,41 +32,41 @@
       "no_original_found": 0,
       "target_pending": 0,
       "api_error": 0,
-      "_other": 2136
+      "_other": 2080
     },
     "by_model": {
-      "gpt": 2165,
-      "gemini": 131,
-      "none": 39
+      "gpt": 2119,
+      "gemini": 127,
+      "none": 33
     },
     "by_outcome": {
-      "successful": 924,
-      "failed": 421,
-      "mixed": 279,
-      "descriptive only": 27,
+      "successful": 912,
+      "failed": 410,
+      "mixed": 272,
+      "descriptive only": 26,
       "statistically successful but flawed": 6,
       "uninformative": 6,
-      "cannot_be_determined": 652,
+      "cannot_be_determined": 627,
       "not_a_replication": 0,
       "pending": 0,
       "api_error": 0,
       "_other": 20
     },
     "by_doi_verification": {
-      "verified": 2325,
+      "verified": 2269,
       "corrected": 10
     },
     "by_type": {
-      "replication": 2304,
+      "replication": 2248,
       "reproduction": 27,
       "": 4
     },
     "by_outcome_replication": {
-      "successful": 924,
-      "cannot_be_determined": 645,
-      "failed": 421,
-      "mixed": 279,
-      "descriptive only": 27,
+      "successful": 912,
+      "cannot_be_determined": 620,
+      "failed": 410,
+      "mixed": 272,
+      "descriptive only": 26,
       "uninformative": 6,
       "statistically successful but flawed": 6
     },
@@ -82,31 +82,31 @@
       "not checked, not checked": 1
     },
     "by_year": {
-      "2023": 208,
-      "2024": 193,
-      "2025": 191,
-      "2020": 187,
-      "2022": 175,
-      "2021": 174,
-      "2018": 164,
-      "2019": 142,
-      "2017": 111,
+      "2023": 205,
+      "2024": 191,
+      "2020": 183,
+      "2025": 182,
+      "2021": 172,
+      "2022": 169,
+      "2018": 161,
+      "2019": 140,
+      "2017": 108,
       "2016": 87,
-      "2026": 85,
-      "2015": 60,
-      "2014": 47,
+      "2026": 78,
+      "2015": 58,
+      "2014": 44,
       "2013": 34,
       "2012": 26,
-      "2004": 21,
       "2006": 20,
       "2003": 20,
-      "2010": 18,
-      "1985": 17,
+      "2004": 19,
+      "2010": 17,
       "2011": 16,
+      "1985": 15,
       "2008": 15,
-      "2009": 15,
       "2001": 15,
       "1986": 14,
+      "2009": 14,
       "1999": 14,
       "1997": 12,
       "1996": 12,
@@ -122,10 +122,10 @@
       "2002": 8,
       "1990": 8,
       "1980": 8,
-      "1992": 8,
-      "1972": 8,
       "1977": 7,
       "1983": 7,
+      "1992": 7,
+      "1972": 7,
       "1981": 6,
       "1995": 6,
       "1976": 6,
@@ -136,13 +136,12 @@
       "1987": 4,
       "1975": 4,
       "1979": 4,
-      "1978": 3,
       "1973": 3,
       "1965": 3,
+      "1978": 2,
       "1971": 2,
       "1970": 2,
       "1967": 1,
-      "1962": 1,
       "1969": 1,
       "1968": 1
     }

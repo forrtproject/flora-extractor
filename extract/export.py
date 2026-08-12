@@ -12,6 +12,7 @@ routing store is read, for one question only: which works the release admits.
     python -m extract.export --release bc38ddd787e0 --check  # diff against disk
     python -m extract.export --release bc38ddd787e0 --current-generation-only
     python -m extract.export --all-releases        # every stored verdict, unfiltered
+    python -m extract.export --release bc38ddd787e0 --include-unconfirmed-search
 
 The release may be omitted where the store holds exactly one; holding several, the
 export refuses rather than choosing, as `extract/tier.py` and `filter/engine/cli.py`
@@ -223,12 +224,51 @@ def _normalise(row: dict) -> dict:
     return out
 
 
-def partition(rows: list[dict]) -> tuple[list[dict], dict[str, list[dict]]]:
+# The two link methods `_confirm_search_row` grades (`extract/run_extract.py`), and
+# the grades that withhold a row from extracted.csv. `clearly_target` ships, and so
+# does anything else — `api_error`, an unrecognised token, or no note at all, which is
+# every row extracted before grading existed.
+_SEARCH_CONFIRM_METHODS = frozenset({"llm_title_search", "llm_author_year_search"})
+_WITHHELD_SEARCH_GRADES = frozenset({"likely_target", "unlikely_target",
+                                     "clearly_not_target"})
+_SEARCH_CONFIRM_NOTE = "search_confirm: "
+
+
+def search_confirm_grade(row: dict) -> str:
+    """The confirmation grade a search-based link carries, or "" for none.
+
+    The grade is not a column: `_confirm_search_row` appends it to `link_evidence` as
+    `search_confirm: <grade> — <reasoning>`, joined onto whatever was there on " | ".
+    The reasoning is free model prose and may itself contain " | " or " — ", so the
+    note is found by its prefix — the LAST one, a re-graded row having two — and only
+    the token up to the first " — " is read. The comparison is exact: `clearly_target`
+    is a prefix of nothing but itself, and a substring test would read
+    `clearly_not_target` as it.
+    """
+    if str(row.get("link_method") or "") not in _SEARCH_CONFIRM_METHODS:
+        return ""
+    evidence = str(row.get("link_evidence") or "")
+    cut = evidence.rfind(_SEARCH_CONFIRM_NOTE)
+    if cut < 0:
+        return ""
+    note = evidence[cut + len(_SEARCH_CONFIRM_NOTE):]
+    return note.split(" — ", 1)[0].split(" | ", 1)[0].strip()
+
+
+def partition(rows: list[dict], *, include_unconfirmed_search: bool = False
+              ) -> tuple[list[dict], dict[str, list[dict]]]:
     """Split rendered rows into the main CSV's and each set-aside file's.
 
     The malformed demotion runs first, exactly as in `sanity_check`: a resolved
     link_method with no doi_o is rewritten to `target_pending` BEFORE it is bucketed,
     so it is filed as what it is rather than as what it claimed to be.
+
+    `classify_row` decides every bucket but one. A search-based link the confirmation
+    call did not grade `clearly_target` is withheld here, and only here, because
+    `--include-unconfirmed-search` can ship it: a rule inside `classify_row` would
+    make `sanity_check` report the file that flag produced as drifted from the
+    verdicts. It is asked last, so a row that is already quarantined for what it IS —
+    pending, api_error, a self-link — keeps that file.
     """
     main: list[dict] = []
     aside: dict[str, list[dict]] = {}
@@ -236,6 +276,9 @@ def partition(rows: list[dict]) -> tuple[list[dict], dict[str, list[dict]]]:
         row = dict(row)
         row.update(demote_malformed(row) or {})
         bucket = classify_row(row)
+        if (bucket is None and not include_unconfirmed_search
+                and search_confirm_grade(row) in _WITHHELD_SEARCH_GRADES):
+            bucket = "search_link_unconfirmed"
         if bucket is None:
             main.append(row)
         else:
@@ -246,6 +289,7 @@ def partition(rows: list[dict]) -> tuple[list[dict], dict[str, list[dict]]]:
 def render(client: ClaimsClient, *, mode: str = "live",
            current_generation_only: bool = False,
            admitted: Optional[set[int]] = None,
+           include_unconfirmed_search: bool = False,
            data_dir: Path = DATA_DIR) -> dict:
     """The whole export, in memory: the main rows, the set-asides, and the counts.
 
@@ -284,7 +328,8 @@ def render(client: ClaimsClient, *, mode: str = "live",
     if suppressed:
         log.info("%d row(s) suppressed at render: their DOI is already in "
                  "FLoRA or the validation tables", suppressed)
-    main, aside = partition(rows)
+    main, aside = partition(rows,
+                            include_unconfirmed_search=include_unconfirmed_search)
     return {"works": len(results), "rows": len(rows), "main": main, "aside": aside,
             "already_in_flora": suppressed,
             "superseded_generation": stale, "not_admitted": not_admitted,
@@ -393,6 +438,11 @@ def main(argv: Optional[list[str]] = None) -> int:
                              "admitted pile (screen_expensive, screen_cheap, "
                              "needs_human). Works it discarded, left pending or never "
                              "routed are dropped. A release id or a unique prefix.")
+    parser.add_argument("--include-unconfirmed-search", action="store_true",
+                        help="Ship search-based links the confirmation call graded "
+                             "likely_target, unlikely_target or clearly_not_target "
+                             "in extracted.csv, instead of setting them aside in "
+                             "search_link_unconfirmed.csv.")
     parser.add_argument("--all-releases", action="store_true",
                         help="Render every stored verdict, whatever routing now says "
                              "about its work. The pre-2026-08-08 behaviour, kept for "
@@ -428,7 +478,8 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     report = render(client, mode=args.mode,
                     current_generation_only=args.current_generation_only,
-                    admitted=admitted)
+                    admitted=admitted,
+                    include_unconfirmed_search=args.include_unconfirmed_search)
     print(f"generation {extract_generation()}  mode {args.mode}")
     print(f"  {report['works']:,} work(s) → {report['rows']:,} row(s)")
     for ending, count in sorted(report["endings"].items()):

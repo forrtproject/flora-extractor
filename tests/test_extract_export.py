@@ -386,6 +386,38 @@ def test_set_aside_rows_leave_the_main_csv_through_the_shared_rules():
     assert len(aside["api_error.csv"]) == 1
 
 
+def test_only_a_graded_search_link_short_of_clearly_target_is_withheld():
+    """The search-confirm partition: the grade decides, and only for a search link.
+
+    Three rows, one method: graded `likely_target` (withheld), graded
+    `clearly_target` (ships — and is not read as `clearly_not_target` by a substring
+    test), and ungraded because it was extracted before grading existed (ships). The
+    flag restores the withheld one.
+    """
+    def _search(doi: str, note: str) -> dict:
+        evidence = "the paper names Smith (2009); stated_count=1"
+        return _row({**_SINGLE, "doi_r": doi, "doi_o": "10.1000/original",
+                     "link_method": "llm_title_search",
+                     "link_evidence": f"{evidence} | {note}" if note else evidence})
+
+    withheld = _search("10.1000/graded-likely",
+                       "search_confirm: likely_target — the topic matches | the year "
+                       "does not")
+    ships = _search("10.1000/graded-clearly", "search_confirm: clearly_target — same "
+                                              "sample, same measure")
+    legacy = _search("10.1000/ungraded", "")
+
+    main, aside = export_mod.partition([withheld, ships, legacy])
+    assert [r["doi_r"] for r in main] == [ships["doi_r"], legacy["doi_r"]]
+    assert set(aside) == {"search_link_unconfirmed.csv"}
+    assert [r["doi_r"] for r in aside["search_link_unconfirmed.csv"]] \
+        == [withheld["doi_r"]]
+
+    opened, opened_aside = export_mod.partition(
+        [withheld, ships, legacy], include_unconfirmed_search=True)
+    assert len(opened) == 3 and opened_aside == {}
+
+
 def test_a_resolved_method_with_no_doi_o_is_demoted_before_it_is_bucketed():
     """The malformed case: it claims a target it cannot name, so it is filed as
     pending rather than written into the validation-ready file."""

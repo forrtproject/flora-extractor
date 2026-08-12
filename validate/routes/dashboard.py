@@ -202,6 +202,17 @@ _SET_ASIDE_COPY: dict[str, dict] = {
                "so the link is provisional and never imported.",
         "action": "Confirm or reject each link by hand; confirmed ones can be promoted back.",
     },
+    "search_link_unconfirmed.csv": {
+        "title": "Search Link Unconfirmed",
+        "why": "The original was found by a search rung (llm_title_search or "
+               "llm_author_year_search) and the cold confirmation call graded the link "
+               "likely_target, unlikely_target or clearly_not_target rather than "
+               "clearly_target. The link, the outcome and the grade are all on the row; "
+               "only the import is withheld.",
+        "action": "Read the search_confirm grade and reasoning in link_evidence; confirmed "
+                  "links can be shipped with `python -m extract.export --release <id> "
+                  "--include-unconfirmed-search`.",
+    },
     "api_error.csv": {
         "title": "API Error",
         "why": "The row carries no verdict at all: a provider or registry call failed after its "
