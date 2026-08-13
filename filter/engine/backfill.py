@@ -459,25 +459,41 @@ def _scopus_fetcher():
     return fetch
 
 
-def _would_lose_text(row: dict, hit: tuple[str, str]) -> bool:
-    """Whether writing *hit* over this row's pool text would remove more than it adds.
+# Below this an OSF project's description is a label, not a description. Measured
+# 2026-08-13 over the 74 the first run wrote: everything under 50 characters was
+# "Replication", "Pre-registration", "PCI RR submission" — words the row's own title
+# already carries — while the band above names a study, an original or a venue
+# ("Direct Replication of Turri et al (2015) at Avila University for PY 627").
+_MIN_PROJECT_DESCRIPTION_CHARS = 50
 
-    One case, and it exists because an overlay row WINS over pool text rather than
-    filling a gap (`_apply_overlay` in pool_reader.py). The OSF phase is asked about
-    every admitted OSF row, text or no text, so that a registration's template line
-    reaches the two `osf-registration-*` specs — a line no abstract substitutes for,
-    which is why that arm ignores what other sources found.
 
-    A PROJECT has no template line. What its endpoint returns is an ordinary
-    description and a short one: median 252 characters, measured 2026-08-13, while 297
-    of the 752 admitted OSF projects carry a pool abstract past 500. For those, the
-    overlay would replace the record's abstract with a caption. So a project's text is
-    written only where the row has none — which is the population the backfill is for.
+def _refuses_osf_text(row: dict, hit: tuple[str, str]) -> str:
+    """Why a recovered OSF text is not written to the overlay, or "" to write it.
+
+    A registration's template line is always written: it is what the two
+    `osf-registration-*` specs read, no abstract substitutes for it, and that is why
+    the OSF phase is asked about every admitted OSF row rather than only the textless
+    ones. Everything below is about a PROJECT, which has no template line and returns
+    an ordinary description.
+
+    Two refusals, both measured on 2026-08-13:
+
+    * it would REPLACE pool text. An overlay row wins over the pool rather than filling
+      a gap (`_apply_overlay` in pool_reader.py), and 751 of the 752 admitted OSF
+      projects already carry a pool abstract — 297 of them past 500 characters, against
+      a median description of 252. The first run refused 652 of 726 on this.
+    * it says NOTHING. A description of "Replication" is not empty, so the `no_text`
+      downgrade does not catch it: the work routes into a screening pile and buys two
+      voter calls to read eleven characters its title already said.
     """
     text, source = hit
-    return (source == "osf"
-            and not text.startswith(OSF_TEMPLATE_PREFIX)
-            and bool(row.get("has_text")))
+    if source != "osf" or text.startswith(OSF_TEMPLATE_PREFIX):
+        return ""
+    if row.get("has_text"):
+        return "would replace pool text"
+    if len(text.strip()) < _MIN_PROJECT_DESCRIPTION_CHARS:
+        return "description too short"
+    return ""
 
 
 def _write_overlay(rows: list[dict], overlay_dir: Path,
@@ -491,13 +507,16 @@ def _write_overlay(rows: list[dict], overlay_dir: Path,
     fetched_at = datetime.now(timezone.utc).isoformat()
     chunk: list[dict] = []
     by_source: dict[str, int] = {}
+    refusals: dict[str, int] = {}
     for row in rows:
         if row["work_id"] in already:
             continue
         hit = _resolved(row)
         if hit is None:
             continue
-        if _would_lose_text(row, hit):
+        refused = _refuses_osf_text(row, hit)
+        if refused:
+            refusals[refused] = refusals.get(refused, 0) + 1
             continue
         already.add(row["work_id"])
         chunk.append({"work_id": row["work_id"], "abstract_text": hit[0],
@@ -507,6 +526,11 @@ def _write_overlay(rows: list[dict], overlay_dir: Path,
     path = write_chunk(overlay_dir, chunk)
     log.info("Backfill wrote %d overlay row(s)%s.", len(chunk),
              f" -> {path.name}" if path else " (nothing new)")
+    # Named, not silent: a recovered text nobody writes is the difference between
+    # "the source had nothing" and "we chose not to use it", and only one of those
+    # is a reason to go looking somewhere else.
+    for reason, count in sorted(refusals.items()):
+        log.info("Backfill refused %d recovered text(s): %s.", count, reason)
     return {"rows": len(chunk), "chunk": str(path) if path else "",
             "by_source": dict(sorted(by_source.items()))}
 

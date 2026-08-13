@@ -396,8 +396,10 @@ def test_a_project_description_never_replaces_a_pool_abstract(
     project has no template line — only a short description (median 252 chars, against
     297 of 752 admitted projects whose pool abstract passes 500) — so writing it over a
     real abstract would lose text. It is written only where the row has none."""
+    described = ("This project is a direct replication of the first experiment of "
+                 "Chartrand & Bargh (1999), run at Avila University.")
     monkeypatch.setattr(backfill, "_fetch_osf_registration",
-                        lambda ident: ("A replication attempt of Chartrand (1999).", "ok"))
+                        lambda ident: (described, "ok"))
 
     kept = backfill.run(_osf_worklist(tmp_path, has_text=False), tmp_path / "ov-a",
                         sources=("osf",), phase="targeted")
@@ -406,6 +408,19 @@ def test_a_project_description_never_replaces_a_pool_abstract(
     dropped = backfill.run(_osf_worklist(tmp_path, has_text=True), tmp_path / "ov-b",
                            sources=("osf",), phase="targeted")
     assert dropped["rows"] == 0
+
+
+def test_a_project_description_that_says_nothing_is_not_written(
+        isolated_cache, tmp_path, monkeypatch):
+    """"Replication" is not empty, so the no_text downgrade does not catch it: the
+    work would route into a screening pile and buy two voter calls to read eleven
+    characters its own title already carries. 17 of the 74 the first run wrote were
+    labels like this."""
+    monkeypatch.setattr(backfill, "_fetch_osf_registration",
+                        lambda ident: ("Replication", "ok"))
+    result = backfill.run(_osf_worklist(tmp_path, has_text=False), tmp_path / "ov-d",
+                          sources=("osf",), phase="targeted")
+    assert result["rows"] == 0
 
 
 def test_a_template_line_is_written_whatever_text_the_row_has(
