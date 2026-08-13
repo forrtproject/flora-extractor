@@ -38,14 +38,30 @@ from .utils import clean_citation_title, usable_title
 
 # ── pdfminer import (installed lazily) ───────────────────────────────────────
 
-def _extract_pdf_text(pdf_path: Path, max_pages: int = 40) -> str:
+def pdf_text_head_tail(pdf_path: Path, head: int = 40, tail: int = 20) -> str:
+    """Extract text with pdfminer.six; a long document is read head AND tail.
+
+    References and the discussion sit at the END of a paper, so a flat page cap
+    drops exactly the sections the reference splitter and the outcome coder's
+    discussion block need. A document up to head+tail pages is read whole; a
+    longer one is read as its first *head* and last *tail* pages in one pass.
+    Raises on failure — each caller keeps its own error contract.
     """
-    Extract raw text from *pdf_path* using pdfminer.six.
-    Falls back to an empty string on any failure.
-    """
+    from pdfminer.high_level import extract_text
+    from pdfminer.pdfpage import PDFPage
+
+    with open(pdf_path, "rb") as fh:
+        n_pages = sum(1 for _ in PDFPage.get_pages(fh))
+    if n_pages <= head + tail:
+        return extract_text(str(pdf_path)) or ""
+    wanted = set(range(head)) | set(range(n_pages - tail, n_pages))
+    return extract_text(str(pdf_path), page_numbers=wanted) or ""
+
+
+def _extract_pdf_text(pdf_path: Path) -> str:
+    """pdf_text_head_tail, falling back to an empty string on any failure."""
     try:
-        from pdfminer.high_level import extract_text
-        return extract_text(str(pdf_path), maxpages=max_pages) or ""
+        return pdf_text_head_tail(pdf_path)
     except Exception as e:
         log.warning("pdfminer failed for %s: %s", pdf_path.name, e)
         return ""

@@ -40,6 +40,11 @@ from .utils import cache_key
 # the PDF methods are the only ones a PDF gets. See parse_all.
 PARSE_METHODS: list[str] = ["openalex_xml", "pdfminer", "grobid", "docpluck", "opendataloader", "markitdown", "docx"]  # docling excluded (heavy deps)
 
+# Stored raw_text is what the outcome coder later splits for the discussion block,
+# which sits at the END of the text — a cap that bites cuts it off first. 200k chars
+# covers all but book-length documents while keeping parse cache entries bounded.
+_RAW_TEXT_CAP = 200_000
+
 _EMPTY: dict[str, Any] = {
     "source": "", "title": "", "abstract": "", "intro": "",
     "references": [], "raw_text": "", "error": None,
@@ -87,8 +92,8 @@ def parse_pdfminer(pdf_path) -> dict:
     if not pdf_path.exists():
         return _error_result("pdfminer", f"file not found: {pdf_path}")
     try:
-        from pdfminer.high_level import extract_text
-        raw_text = extract_text(str(pdf_path), maxpages=40) or ""
+        from .grobid import pdf_text_head_tail
+        raw_text = pdf_text_head_tail(pdf_path)
     except ImportError:
         return _error_result("pdfminer", "pdfminer not installed")
     except Exception as exc:
@@ -102,7 +107,7 @@ def parse_pdfminer(pdf_path) -> dict:
         "abstract":   sections.get("abstract", ""),
         "intro":      sections.get("intro", ""),
         "references": references,
-        "raw_text":   raw_text[:50000],
+        "raw_text":   raw_text[:_RAW_TEXT_CAP],
     })
 
 
@@ -148,7 +153,7 @@ def parse_docpluck(pdf_path) -> dict:
         abstract = getattr(doc, "abstract", "") or ""
         return _uniform_shape("docpluck", {
             "abstract": abstract,
-            "raw_text": raw_text[:50000],
+            "raw_text": raw_text[:_RAW_TEXT_CAP],
         })
     except Exception as exc:
         return _error_result("docpluck", str(exc))
@@ -226,7 +231,7 @@ def parse_opendataloader(pdf_path) -> dict:
         "abstract":   sections.get("abstract", ""),
         "intro":      sections.get("intro", ""),
         "references": references,
-        "raw_text":   raw_text[:50000],
+        "raw_text":   raw_text[:_RAW_TEXT_CAP],
     })
 
 
@@ -379,7 +384,7 @@ def parse_markitdown(pdf_path, doi_r: str) -> dict:
         "abstract":   abstract,
         "intro":      intro,
         "references": refs,
-        "raw_text":   raw_text[:50000],
+        "raw_text":   raw_text[:_RAW_TEXT_CAP],
     })
 
 
@@ -456,7 +461,7 @@ def parse_docx(docx_path) -> dict:
         "abstract":   sections.get("abstract", ""),
         "intro":      sections.get("intro", ""),
         "references": references,
-        "raw_text":   raw_text[:50000],
+        "raw_text":   raw_text[:_RAW_TEXT_CAP],
     })
 
 

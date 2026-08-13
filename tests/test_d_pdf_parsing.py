@@ -437,3 +437,26 @@ class TestReferenceHeadingForms:
         from shared.grobid import _split_sections
         text = f"{self.BODY}\n{heading}\n{first_entry}\n"
         assert "Smith" in _split_sections(text)["references_raw"]
+
+
+class TestLongDocumentsKeepTheirTail:
+    """References and the discussion sit at the END of a paper; a flat page cap
+    read only the head, so a >40-page paper lost exactly the sections the
+    reference splitter and the outcome coder need — and fell through to the
+    paid direct-PDF fallback."""
+
+    def test_a_70_page_pdf_still_yields_its_references(self, tmp_path):
+        fitz = pytest.importorskip("fitz")
+        from shared.pdf_parsing import parse_pdfminer
+        doc = fitz.open()
+        for i in range(69):
+            page = doc.new_page()
+            page.insert_text((72, 72), f"Body text of page {i + 1}.")
+        page = doc.new_page()
+        page.insert_text((72, 72), "References")
+        page.insert_text((72, 100), "Smith, J. (2010). A paper. Journal, 1, 1-2.")
+        path = tmp_path / "long.pdf"
+        doc.save(path)
+        out = parse_pdfminer(path)
+        assert out["error"] is None
+        assert any("Smith" in " ".join(r.get("authors", [])) for r in out["references"])
