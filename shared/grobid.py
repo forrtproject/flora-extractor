@@ -25,7 +25,7 @@ from typing import Optional
 
 import requests
 
-from .config import PDF_PARSE_MODEL, GROBID_CACHE_DIR, GROBID_SERVER, log
+from .config import PDF_PARSE_MODEL, PDF_PARSE_EFFORT, GROBID_CACHE_DIR, GROBID_SERVER, log
 
 # Seconds between GROBID calls. The public HuggingFace server is shared and slow to
 # anger; a local Docker GROBID does not need it, but paying 3s on a local server is
@@ -345,7 +345,7 @@ def _extract_refs_via_pdf_direct(doi_r: str, pdf_path: Path) -> list[dict]:
     # them and the previous answer's reference list stops being read back.
     cache_file = (GROBID_CACHE_DIR /
                   f"{pdf_path.stem}_direct_refs_{prompt_version('PDF_REFERENCES_PROMPT')}"
-                  f"_{PDF_PARSE_MODEL}_{_pdf_fingerprint(pdf_path)}.json")
+                  f"_{PDF_PARSE_MODEL}@effort={PDF_PARSE_EFFORT}_{_pdf_fingerprint(pdf_path)}.json")
     if cache_file.exists():
         try:
             with cache_file.open(encoding="utf-8") as fh:
@@ -416,7 +416,7 @@ def _extract_refs_via_pdf_images(doi_r: str, pdf_path: Path) -> list[dict]:
 
     cache_file = (GROBID_CACHE_DIR /
                   f"{pdf_path.stem}_img_refs_{prompt_version('PDF_IMAGE_REFERENCES_PROMPT')}"
-                  f"_{PDF_PARSE_MODEL}_{_pdf_fingerprint(pdf_path)}.json")
+                  f"_{PDF_PARSE_MODEL}@effort={PDF_PARSE_EFFORT}_{_pdf_fingerprint(pdf_path)}.json")
     if cache_file.exists():
         try:
             with cache_file.open(encoding="utf-8") as fh:

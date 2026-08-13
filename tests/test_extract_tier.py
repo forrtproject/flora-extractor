@@ -709,3 +709,14 @@ def test_a_target_pending_rests_however_old_it_is():
     assert tier_mod._resting(old) is True
     assert tier_mod._resting(resolved) is False   # settled rows never need the rest
     assert tier_mod._resting(api_err) is False    # api_error retries immediately
+
+
+def test_a_declared_generation_equivalence_is_keyed_by_the_current_generation():
+    """An entry whose key is not the current digest is dead: the fallback to strict
+    invalidation is the designed behaviour, but the stale declaration itself must be
+    removed or re-reviewed, not left implying a coverage it no longer provides."""
+    for key in tier_mod._GENERATION_EQUIVALENCES:
+        assert key == extract_generation(), (
+            f"_GENERATION_EQUIVALENCES entry {key!r} does not match the current "
+            f"generation {extract_generation()!r}; a generation input has moved "
+            f"since it was declared — re-review the equivalence or delete it")

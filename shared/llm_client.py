@@ -24,7 +24,7 @@ from typing import Optional
 import requests
 
 from .config import (
-    GEMINI_API_KEYS, PDF_PARSE_MODEL, SCREENING_MODEL_1, LINKING_MODEL,
+    GEMINI_API_KEYS, PDF_PARSE_MODEL, PDF_PARSE_EFFORT, SCREENING_MODEL_1, LINKING_MODEL,
     GEMINI_USE_FLEX, GEMINI_FLEX_TIMEOUT, GEMINI_PAID_KEY_SLOTS, GEMINI_RATE_SEC,
     LINKING_EFFORT, SCREENING_EFFORT_1, SCREENING_EFFORT_2,
     LLM_CACHE_DIR,
@@ -995,6 +995,9 @@ def call_gemini_with_images(prompt: str,
         "generationConfig": {
             "responseMimeType": "application/json",
             "maxOutputTokens" : JSON_MAX_OUTPUT_TOKENS,
+            # Reference extraction is transcription; default thinking spent ~85% of
+            # output tokens and produced the one broken answer in the 2026-08-13 eval.
+            "thinkingConfig"  : {"thinkingLevel": PDF_PARSE_EFFORT},
         },
     }
 
@@ -1039,6 +1042,7 @@ def call_gemini_with_pdf(prompt: str,
             "responseMimeType": "application/json",
             "maxOutputTokens" : JSON_MAX_OUTPUT_TOKENS,
             "mediaResolution" : "MEDIA_RESOLUTION_LOW",
+            "thinkingConfig"  : {"thinkingLevel": PDF_PARSE_EFFORT},
         },
     }
 

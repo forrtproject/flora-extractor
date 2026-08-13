@@ -201,8 +201,14 @@ OUTCOME_MODEL = "gpt-5.4-mini"
 
 # Reference extraction from a document (shared/grobid.py) — the only call that is sent
 # a PDF or page images rather than text. Its answers are cached under filenames that
-# name this id, so changing it re-parses rather than mis-reads.
-PDF_PARSE_MODEL = "gemini-3-flash-preview"
+# name this id and the effort, so changing either re-parses rather than mis-reads.
+# Reference extraction is transcription, not reasoning: measured over all 58 cached
+# fallback PDFs (2026-08-13), flash-lite at minimal thinking matched or bettered
+# gemini-3-flash-preview at its default thinking on every inspected disagreement,
+# while the default-thinking condition spent ~85% of its output tokens on thinking
+# and produced the one invalid-JSON answer in the sample.
+PDF_PARSE_MODEL = "gemini-3.1-flash-lite"
+PDF_PARSE_EFFORT = "minimal"
 
 # How hard the linking model is asked to think. One constant, not one per provider,
 # so it survives LINKING_MODEL being repointed: llm_client sends it as Gemini's

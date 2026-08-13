@@ -102,7 +102,8 @@ from shared import token_counter
 from filter.engine.overlay import chunk_paths
 from shared.config import (DATA_DIR, EXTRACT_WORKERS, LINKING_EFFORT,
                            LINKING_MODEL, OUTCOME_EFFORT, OUTCOME_MODEL,
-                           OVERLAY_DIR, PDF_PARSE_MODEL, SNAPSHOT_POOL_DIR, log)
+                           OVERLAY_DIR, PDF_PARSE_EFFORT, PDF_PARSE_MODEL,
+                           SNAPSHOT_POOL_DIR, log)
 from shared.flora_skip import (VALIDATED_SKIP_NAME,
                                default_flora_skip_dois as _flora_skip_dois,
                                load_validated_skip as _load_validated_skip,
@@ -231,7 +232,7 @@ def generation_inputs() -> dict:
         "models": {
             "linking": cache_model_id(LINKING_MODEL, LINKING_EFFORT),
             "outcome": cache_model_id(OUTCOME_MODEL, OUTCOME_EFFORT),
-            "pdf_parse": PDF_PARSE_MODEL,
+            "pdf_parse": cache_model_id(PDF_PARSE_MODEL, PDF_PARSE_EFFORT),
         },
     }
 
@@ -255,7 +256,16 @@ def extract_generation() -> str:
 # Keyed by the CURRENT generation, which is what makes a declaration self-limiting: a
 # later prompt or model change produces a digest that matches no key here, and every
 # work reopens strictly, as it should.
-_GENERATION_EQUIVALENCES: dict[str, tuple[str, ...]] = {}
+_GENERATION_EQUIVALENCES: dict[str, tuple[str, ...]] = {
+    # 2026-08-13: PDF_PARSE_MODEL gemini-3-flash-preview (default thinking) →
+    # gemini-3.1-flash-lite @ minimal. Reference extraction only — the linking and
+    # outcome models are untouched, and the swap was measured over all 58 cached
+    # fallback PDFs: the new model matched or bettered the old one on every
+    # inspected disagreement (shared/config.py carries the summary). The affected
+    # population, works whose parse used the direct-PDF/image fallback, is
+    # re-extractable by name if a spot-check ever warrants it.
+    "3b8515d95737952e": ("19033143a3acdcaa",),
+}
 
 
 def equivalent_generations() -> tuple[str, ...]:
