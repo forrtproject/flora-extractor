@@ -215,6 +215,28 @@ def load_overlay(overlay_dir: Optional[Path]) -> dict[int, str]:
     return overlay
 
 
+def overlay_fetched_at(overlay_dir: Optional[Path]) -> dict[int, str]:
+    """`work_id -> fetched_at` for every row an overlay supplied text for.
+
+    When this project wrote the text, which is what the screen checkpoint compares
+    against the verdict's own `created_at`: text that arrived after an answer was
+    bought was never shown to a voter (`_question_moved` in filter/engine/tiers.py).
+    The latest stamp wins where a work somehow appears twice, so the comparison is
+    against the text a run would actually send.
+    """
+    if not overlay_dir:
+        return {}
+    stamps: dict[int, str] = {}
+    for path in chunk_paths(Path(overlay_dir)):
+        table = pq.read_table(path, columns=["work_id", "fetched_at"])
+        for work, fetched in zip(table.column("work_id").to_pylist(),
+                                 table.column("fetched_at").to_pylist()):
+            stamp = str(fetched or "")
+            if stamp > stamps.get(int(work), ""):
+                stamps[int(work)] = stamp
+    return stamps
+
+
 def overlay_work_ids(overlay_dir: Optional[Path]) -> set[int]:
     """Every work id the overlay already holds a row for, text or not.
 

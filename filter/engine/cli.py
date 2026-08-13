@@ -385,7 +385,9 @@ def cmd_screen(args) -> int:
     # it validates unless told otherwise.
     mode = "live" if (args.live or args.tier == TIER_EXPENSIVE) else "validation"
     runner = run_screen_cheap if args.tier == TIER_CHEAP else run_screen_expensive
-    report = runner(con, client, release_id, mode=mode, batch_label=args.batch_label,
+    only = [int(w) for w in args.only.replace(",", " ").split()] or None
+    report = runner(con, client, release_id, only,
+                    mode=mode, batch_label=args.batch_label,
                     limit=args.limit, pool_dir=args.pool, overlay_dir=overlay_dir,
                     aliases=load_aliases(args.spec_dir / ALIASES_FILENAME),
                     run=args.run, cache_dir=args.store.parent)
@@ -718,6 +720,12 @@ def build_parser() -> argparse.ArgumentParser:
     screen.add_argument("--limit", type=int, default=None,
                         help="Stop after N works — how a first live batch stays "
                              "small enough to inspect.")
+    screen.add_argument("--only", default="",
+                        help="Comma-separated work ids to screen, instead of the "
+                             "whole pile. RESTRICTS: a work already settled on the "
+                             "text it would be sent today is still skipped. The "
+                             "manual override for when the checkpoint's own answer "
+                             "is not the one you want.")
     screen.add_argument("--run", action="store_true",
                         help="Claim and spend. Without it, nothing is claimed, "
                              "fetched or spent and an estimate is printed.")

@@ -1167,6 +1167,67 @@ def test_a_verdict_from_another_generation_neither_settles_nor_blocks(
     assert drop == {11} and set(screen) == {11}
 
 
+# ---------------------------------------------------------------------------
+# The question a verdict answered: the text, which the generation does not carry
+# ---------------------------------------------------------------------------
+
+
+def _asked(work: int, title: str, abstract: str) -> dict[int, str]:
+    return {work: tiers.question_hash(
+        tiers.Work(work_id=work, doi="10.1/x", title=title, abstract=abstract,
+                   pile="screen_expensive"))}
+
+
+def test_a_verdict_stands_while_the_text_it_was_bought_on_is_unchanged():
+    """The default has to be "still valid", or every backfill would reopen the pile."""
+    asked = _asked(11, "A replication", "We replicated Smith.")
+    votes = [{**v, "prompt_hash": asked[11]} for v in _expensive_votes()]
+    client = _decided_client("screen_expensive", "live", votes)
+    assert tiers.decided_work_ids(client, "screen_expensive", asked) == {11}
+
+
+def test_a_work_whose_text_changed_is_asked_again():
+    """The 2026-08-13 OSF backfill's whole point: a registration screened on a
+    one-line description, then given its template line and responses, was settled on
+    text no voter ever saw."""
+    before = _asked(11, "A replication", "Stage 1 IPA at PCI RR")
+    votes = [{**v, "prompt_hash": before[11]} for v in _expensive_votes()]
+    client = _decided_client("screen_expensive", "live", votes)
+
+    after = _asked(11, "A replication", "OSF registration template: Open-Ended…")
+    assert after[11] != before[11]
+    assert tiers.decided_work_ids(client, "screen_expensive", after) == set()
+
+
+def test_a_verdict_predating_the_record_stands_unless_the_text_is_newer():
+    """The backlog. Nothing recorded what these answered, so the timestamps decide:
+    overlay text that arrived after the verdict was never shown to a voter. Without
+    this the whole corpus would freeze exactly where a backfill had improved it."""
+    votes = [{**v, "created_at": "2026-08-01T00:00:00+00:00"}
+             for v in _expensive_votes()]          # no prompt_hash: pre-change rows
+    client = _decided_client("screen_expensive", "live", votes)
+    asked = _asked(11, "A replication", "text as it stands now")
+
+    older = {11: "2026-07-01T00:00:00+00:00"}      # text predates the verdict
+    assert tiers.decided_work_ids(client, "screen_expensive", asked, older) == {11}
+
+    newer = {11: "2026-08-13T12:13:59+00:00"}      # text arrived after it
+    assert tiers.decided_work_ids(client, "screen_expensive", asked, newer) == set()
+
+    # And with no overlay row at all the verdict stands: the pool's own text is what
+    # it was bought on and nothing says otherwise.
+    assert tiers.decided_work_ids(client, "screen_expensive", asked, {}) == {11}
+
+
+def test_the_checkpoint_is_text_blind_when_no_question_is_supplied():
+    """Every caller outside the screen batch — the handoff, the status report —
+    asks what has been DECIDED, not what is still true, and must not pay a pool
+    scan to find out."""
+    votes = [{**v, "prompt_hash": "some-other-question"} for v in _expensive_votes()]
+    client = _decided_client("screen_expensive", "live", votes)
+    assert tiers.decided_work_ids(client, "screen_expensive") == {11}
+
+
 def test_a_legacy_verdict_counts_when_its_models_are_todays(con, pool, tmp_path):
     """Rows written before the field exists: the prompt is unknowable, the model
     pair is recorded and is the dominant determinant, so it is grandfathered."""

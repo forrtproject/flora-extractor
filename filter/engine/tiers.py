@@ -81,6 +81,7 @@ from typing import Callable, Iterable, Optional
 
 from filter.engine.claims import (PENDING_UPLOAD, ClaimConflict, ClaimsClient,
                                   ClaimsError, UnknownRelease)
+from filter.engine.overlay import overlay_fetched_at
 from filter.engine.pool_reader import iter_pool_batches
 from filter.engine.release import read_release
 from filter.engine.workids import resolve, work_id
@@ -89,8 +90,10 @@ from shared.config import (ENGINE_CACHE_DIR, ENGINE_TIER_HF_UPLOAD,
                            ENGINE_TIER_WORKERS, FLORA_HF_COMMIT_BATCH,
                            FLORA_POOL_REPO, PRESCREEN_MODEL_1, PRESCREEN_MODEL_2,
                            SCREENING_MODEL_1, SCREENING_MODEL_2, SNAPSHOT_POOL_DIR)
+from shared.cache import content_key
 from shared.llm_client import (SCREEN_EVIDENCE_SEP, classify_replication,
                                screen_gate, screen_voters)
+from shared.prompts import prompt_version
 from shared.prescreen import prescreen_bypass, prescreen_vote, prescreen_voters
 from shared.token_usage import TokenBudgetExhausted, check_openai_budget
 from shared.utils import clean_doi
@@ -178,6 +181,49 @@ def screening_generation(tier: str) -> str:
                           "prompt": prompt_version(_TIER_PROMPT[tier])},
                          sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def question_hash(work: "Work") -> str:
+    """Fingerprint of what this work's voters are ASKED — the prompt, and the text.
+
+    The generation covers the models and the prompt VERSION, and stops there, so
+    nothing in the checkpoint noticed when a work's own text changed underneath a
+    settled verdict. That is not hypothetical: the 2026-08-13 OSF backfill recovered
+    427 registrations' template lines and responses, and every one of those works that
+    had already been screened would have kept a verdict bought on a one-line
+    description that the voters never saw replaced.
+
+    Per WORK, deliberately, rather than folded into `screening_generation()`. A global
+    hash over the corpus text would reopen all 7,593 screened works the moment one
+    row's text moved; this reopens the rows that moved and no others.
+    """
+    return content_key("screenquestion", work.doi or work.title,
+                       prompt_version(_TIER_PROMPT[TIER_EXPENSIVE]),
+                       work.title, work.abstract)
+
+
+def _question_moved(rows: list[dict], asked: str, text_fetched: str) -> bool:
+    """Whether *rows* answer a different question than the one being asked now.
+
+    Three cases, and the third is what makes this usable on verdicts that predate it:
+
+    * a row records the question it answered, and it is today's → the verdict stands;
+    * it records a different one → the text moved, so the work is asked again;
+    * it records none, because it was written before this was recorded → the verdict
+      stands UNLESS the work's overlay text arrived after the verdict did. Both
+      timestamps already exist (`fetched_at` on the overlay row, `created_at` on the
+      verdict), and text that landed after the answer was bought was, by definition,
+      never shown to a voter. Without this the whole backlog would be frozen exactly
+      where a backfill had just improved it.
+    """
+    recorded = {str(row.get("prompt_hash") or "") for row in rows}
+    recorded.discard("")
+    if recorded:
+        return asked not in recorded
+    if not text_fetched:
+        return False
+    newest = max((str(row.get("created_at") or "") for row in rows), default="")
+    return bool(newest) and text_fetched > newest
 
 
 def _screen_accepts_legacy(tier: str, rows: list[dict]) -> bool:
@@ -886,12 +932,21 @@ def checkpoint_decisions(client: ClaimsClient, tier: str) -> dict[int, dict]:
             for work, rows in _by_work(tier, client.verdicts(tier), generations).items()}
 
 
-def decided_work_ids(client: ClaimsClient, tier: str) -> set[int]:
+def decided_work_ids(client: ClaimsClient, tier: str,
+                     asked: Optional[dict[int, str]] = None,
+                     text_fetched: Optional[dict[int, str]] = None) -> set[int]:
     """Works this tier has SETTLED in the current generation — the checkpoint.
 
     A verdict is what one model pair, asked one prompt, said; change either and it
     stops answering the question this run asks, so the work becomes claimable
     again.
+
+    *asked* is `work_id -> question_hash()` for the works this run is considering, and
+    *text_fetched* `work_id -> fetched_at` for the ones an overlay supplied text for.
+    Given them, a work also becomes claimable when its own TEXT has moved since its
+    verdict was bought — the dimension the generation does not carry (`_question_moved`).
+    Omit both and the checkpoint is text-blind, which is what every caller outside the
+    screen batch wants: a report of what has been decided, not of what is still true.
 
     Verdict rows that do not add up to a decision do not count. They are written
     and they are permanent — a call was made and the evidence of it is not ours to
@@ -904,8 +959,24 @@ def decided_work_ids(client: ClaimsClient, tier: str) -> set[int]:
     is cheap where it can be: `classify_replication()` caches, so the voter that
     did answer is not re-bought.
     """
-    return {work for work, decision in checkpoint_decisions(client, tier).items()
-            if decision["outcome"] != INCOMPLETE}
+    if asked is None:
+        return {work for work, decision in checkpoint_decisions(client, tier).items()
+                if decision["outcome"] != INCOMPLETE}
+    # One fetch, read two ways: the decision the rows add up to, and the question they
+    # answered. Re-reading the verdict table for the second would double a paged read
+    # of every row this tier has ever written.
+    decide = tier_spec(tier).decide
+    generations = {c["id"]: (c.get("meta") or {}).get("generation")
+                   for c in client.claims(tier=tier)}
+    settled = set()
+    for work, rows in _by_work(tier, client.verdicts(tier), generations).items():
+        if decide(rows)["outcome"] == INCOMPLETE:
+            continue
+        if work in asked and _question_moved(rows, asked[work],
+                                             (text_fetched or {}).get(work, "")):
+            continue
+        settled.add(work)
+    return settled
 
 
 def incomplete_work_ids(client: ClaimsClient, tier: str) -> set[int]:
@@ -1235,10 +1306,16 @@ def _expensive_judge(work: Work) -> tuple[str, list[dict]]:
     joined = str(screen.get("llm_evidence") or "")
     legacy_quote = "" if SCREEN_EVIDENCE_SEP in joined else joined
 
+    # What these votes answered, so a later run can tell whether it is still the
+    # question being asked. The models and the prompt version are the generation's
+    # job; this carries the text, which nothing else recorded.
+    asked = question_hash(work)
+
     votes: list[dict] = []
     for index, vote in enumerate(votes_raw):
         votes.append({
             "model": models[index] if index < len(models) else UNKNOWN_MODEL,
+            "prompt_hash": asked,
             "verdict": vote.get("classification", ""),
             "confidence": "confident" if vote.get("confident") else "unconfident",
             "quote": str(vote.get("evidence") or (legacy_quote if index == 0 else "")),
@@ -1250,6 +1327,7 @@ def _expensive_judge(work: Work) -> tuple[str, list[dict]]:
         })
     if not votes:
         votes = [{"model": str(screen.get("llm_model") or "") or UNKNOWN_MODEL,
+                  "prompt_hash": asked,
                   "verdict": "no_answer",
                   "blob": {"tier": TIER_EXPENSIVE, "work_id": work.work_id,
                            "error": screen.get("llm_error", "")}}]
@@ -1297,14 +1375,28 @@ def _batch(con, client: ClaimsClient, release_id: str, tier: str,
     run's batch would answer a question nobody asked.
     """
     only = set(int(w) for w in work_ids) if work_ids is not None else None
-    if run:
-        held = client.claimed_work_ids(release_id, tier) | decided_work_ids(client, tier)
-        routed = {row[0] for row in con.execute(
-            "SELECT work_id FROM routing WHERE release_id = ? AND pile = ?",
-            [release_id, tier]).fetchall()}
-        only = (only if only is not None else routed) - held
-    return pile_works(con, release_id, tier, pool_dir, overlay_dir, aliases,
-                      only=only, limit=limit)
+    if not run:
+        return pile_works(con, release_id, tier, pool_dir, overlay_dir, aliases,
+                          only=only, limit=limit)
+
+    routed = {row[0] for row in con.execute(
+        "SELECT work_id FROM routing WHERE release_id = ? AND pile = ?",
+        [release_id, tier]).fetchall()}
+    candidates = (only if only is not None else routed) - client.claimed_work_ids(
+        release_id, tier)
+    # The text is loaded BEFORE the decided set is subtracted, because whether a
+    # verdict still answers today's question is a fact about the text. The pool scan
+    # is the same either way — `only` decides which rows are KEPT, not which are read
+    # — so this costs the pile's abstracts in memory and nothing else. `limit` applies
+    # after the subtraction, or it would cap the candidates and then discard most of
+    # them.
+    works = pile_works(con, release_id, tier, pool_dir, overlay_dir, aliases,
+                       only=candidates)
+    settled = decided_work_ids(client, tier,
+                               {w.work_id: question_hash(w) for w in works},
+                               overlay_fetched_at(overlay_dir))
+    works = [w for w in works if w.work_id not in settled]
+    return works[:limit] if limit else works
 
 
 # ---------------------------------------------------------------------------
