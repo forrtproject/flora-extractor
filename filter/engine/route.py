@@ -11,6 +11,10 @@ that reads the abstract has to refuse an empty one itself: `validate_spec()`
 requires `"abstract_missing": false` on any non-shadow discard whose match tree
 uses `abstract_regex` or `text_regex`.
 
+The downgrade has one exemption, for OSF records with a title
+(`_screenable_on_its_title`): their titles ARE their descriptions, and most of the
+missing text does not exist to be fetched.
+
 Shadow specs are evaluated (`eval_all()`) but never win a pile; store.py records
 their evaluations so an unmeasured rule can be measured before it is trusted.
 """
@@ -25,9 +29,39 @@ from filter.engine.backends import (
 )
 from filter.engine.spec import FilterSpec
 from filter.engine.workids import resolve, work_id
+from search.fetch_abstracts import osf_identifier
 
 # The piles the no-text downgrade applies to: only an LLM tier needs text.
 _TEXT_PILES = frozenset({"screen_expensive", "screen_cheap"})
+
+
+def _screenable_on_its_title(ctx: BatchContext, index: int) -> bool:
+    """Whether this textless row states its own design in its title.
+
+    The no-text downgrade exists so absence of evidence cannot become a proceed, and
+    for an ordinary paper an empty abstract really is absence: the title is a name.
+    An OSF record is the exception, and the exception is about the CORPUS rather than
+    about titles in general — these records are named the way a filename is, and the
+    name is the description: "Language of Lies: A direct replication of Suchotzki &
+    Gamer (2018)", "Exact Replication of Rinck & Becker (2007)". 849 of them sat in
+    `pending/no_text` on release 56076eb48fda, and probing OSF for the missing text
+    settled that most of it does not exist: 22% of them have no description, no files,
+    no wiki and no child components anywhere (measured 2026-08-13 over 40 sampled).
+
+    So the screen is asked to read what there is. It is built for this — the classify
+    prompt renders an absent abstract as "Abstract: (not available)" and tells the
+    voters to judge from the title and abstract below — and Stage 3's document
+    waterfall, which already reads OSF file storage, is what these rows need reaching.
+
+    Narrow on purpose, in two ways. It is the population `osf_identifier()` accepts —
+    a DOI on the OSF registrant, or an osf.io URL on a row with NO DOI, which is what
+    keeps a published article whose OA copy sits on OSF out of it. And a row with no
+    title either is still downgraded: there is no evidence to read.
+    """
+    if not str(ctx.title[index].as_py() or "").strip():
+        return False
+    return osf_identifier(str(ctx.doi[index].as_py() or ""),
+                          str(ctx.url[index].as_py() or "")) is not None
 
 # The piles a row costs money from: a screen call, or someone's reading time.
 # `discard` and `pending` spend nothing, which is what makes an unintended
@@ -101,7 +135,8 @@ def route_batch(specs: list[FilterSpec], batch: pa.RecordBatch,
             rule_ids.append("")
             precedences.append(0)
             continue
-        downgraded = spec.pile in _TEXT_PILES and bool(no_text[index])
+        downgraded = (spec.pile in _TEXT_PILES and bool(no_text[index])
+                      and not _screenable_on_its_title(ctx, index))
         piles.append("pending" if downgraded else spec.pile)
         reasons.append("no_text" if downgraded else "")
         rule_ids.append(spec.id)

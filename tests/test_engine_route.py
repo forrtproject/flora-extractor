@@ -28,7 +28,7 @@ from filter.engine.backends import (
     rows_to_batch,
 )
 from filter.engine.release import read_release, routing_release, write_release
-from filter.engine.route import eval_all, route_batch
+from filter.engine.route import _TEXT_PILES, eval_all, route_batch
 from filter.engine.spec import FilterSpec, load_specs
 from filter.engine.workids import load_aliases, resolve, work_id
 from filter.engine import cli
@@ -370,6 +370,45 @@ def test_an_empty_abstract_downgrades_a_screening_route_but_not_a_discard(syn_ro
         == ("pending", "no_text", "syn-replication")
     assert (discarding["pile"], discarding["pending_reason"], discarding["rule_id"]) \
         == ("discard", "", "syn-deposit")
+
+
+def _routed_one(syn, **over) -> dict:
+    """One row through the router, on the synthetic bundle."""
+    row = {**engine_bundle.POOL_ROWS[6], **over}     # the no-abstract screening row
+    batch = pa.Table.from_pylist([row], schema=_POOL_SCHEMA).to_batches()[0]
+    return route_batch(syn, batch).to_pylist()[0]
+
+
+class TestTheOsfTitleExemption:
+    """An OSF record's title IS its description, and most of the missing text does
+    not exist: 22% of the textless ones have no description, no files, no wiki and no
+    child components anywhere. So the screen is asked to read the title (issue #196)."""
+
+    def test_an_osf_registrant_doi_is_screened_on_its_title(self, syn):
+        row = _routed_one(syn, doi="https://doi.org/10.17605/osf.io/ab12d")
+        assert row["pile"] in _TEXT_PILES and row["pending_reason"] == ""
+
+    def test_an_osf_url_on_a_row_with_no_doi_is_screened_too(self, syn):
+        row = _routed_one(syn, doi=None,
+                          open_access=json.dumps({"oa_url": "https://osf.io/qp4h8"}))
+        assert row["pile"] in _TEXT_PILES and row["pending_reason"] == ""
+
+    def test_an_article_whose_oa_copy_sits_on_osf_is_still_downgraded(self, syn):
+        """The guard that keeps this narrow: a published paper is not an OSF record
+        just because its open copy lives there, and its empty abstract is real
+        absence."""
+        row = _routed_one(syn, doi="https://doi.org/10.1037/xhp0000556",
+                          open_access=json.dumps({"oa_url": "https://osf.io/ebv4q"}))
+        assert (row["pile"], row["pending_reason"]) == ("pending", "no_text")
+
+    def test_an_osf_record_with_no_title_either_is_still_downgraded(self, syn):
+        """Nothing to read is nothing to read."""
+        row = _routed_one(syn, doi="https://doi.org/10.17605/osf.io/ab12d",
+                          title="", display_name="")
+        assert row["pile"] == "pending"
+
+    def test_an_ordinary_textless_row_is_unaffected(self, syn):
+        assert _routed_one(syn)["pending_reason"] == "no_text"
 
 
 def test_the_winning_rule_reports_what_it_matched(syn_routed):
