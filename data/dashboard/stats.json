@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-08-13T10:01:01",
+  "updated_at": "2026-08-13T12:12:45",
   "filtered": {
     "available": true,
     "store": "/Users/lukaswallrich/Documents/Coding/flora-extractor/cache/engine/engine.duckdb",
@@ -149,11 +149,11 @@
     }
   },
   "extracted_test": {
-    "total": 724,
+    "total": 771,
     "target_pending_count": 0,
     "by_match_type": {
-      "single_original": 680,
-      "multiple_original": 44
+      "single_original": 704,
+      "multiple_original": 67
     },
     "by_link_method": {
       "citation_context_match": 1,
@@ -163,48 +163,48 @@
       "grobid_ref_match": 0,
       "author_year_match_legacy": 0,
       "author_year_match": 0,
-      "llm_cited_candidates": 86,
+      "llm_cited_candidates": 88,
       "llm_fulltext": 8,
       "no_original_found": 0,
       "target_pending": 0,
       "api_error": 0,
-      "_other": 629
+      "_other": 674
     },
     "by_model": {
-      "gpt": 697,
-      "gemini": 22,
-      "none": 5
+      "gpt": 720,
+      "gemini": 45,
+      "none": 6
     },
     "by_outcome": {
-      "successful": 193,
-      "failed": 171,
-      "mixed": 100,
+      "successful": 221,
+      "failed": 179,
+      "mixed": 104,
       "descriptive only": 5,
-      "statistically successful but flawed": 1,
+      "statistically successful but flawed": 2,
       "uninformative": 2,
-      "cannot_be_determined": 235,
+      "cannot_be_determined": 241,
       "not_a_replication": 0,
       "pending": 0,
       "api_error": 0,
       "_other": 17
     },
     "by_doi_verification": {
-      "verified": 719,
+      "verified": 766,
       "corrected": 5
     },
     "by_type": {
-      "replication": 701,
+      "replication": 745,
       "reproduction": 21,
-      "": 2
+      "": 5
     },
     "by_outcome_replication": {
-      "cannot_be_determined": 231,
-      "successful": 193,
-      "failed": 171,
-      "mixed": 100,
+      "cannot_be_determined": 237,
+      "successful": 221,
+      "failed": 179,
+      "mixed": 104,
       "descriptive only": 5,
       "uninformative": 2,
-      "statistically successful but flawed": 1
+      "statistically successful but flawed": 2
     },
     "by_outcome_reproduction": {
       "cannot_be_determined": 4,
@@ -217,40 +217,46 @@
       "computational issues, robust": 1
     },
     "by_year": {
-      "2025": 90,
-      "2024": 77,
+      "2025": 82,
+      "2024": 79,
       "2020": 76,
-      "2023": 73,
-      "2022": 71,
-      "2018": 61,
+      "2023": 75,
+      "2022": 68,
+      "2018": 67,
       "2021": 57,
-      "2026": 43,
-      "2019": 38,
-      "2017": 35,
-      "2016": 25,
-      "2014": 14,
-      "2015": 11,
-      "2013": 8,
+      "2019": 37,
+      "2026": 37,
+      "2017": 36,
+      "2016": 26,
+      "2014": 16,
+      "2015": 15,
+      "2013": 9,
+      "2004": 7,
+      "2009": 7,
+      "2008": 7,
+      "1982": 4,
+      "2012": 4,
+      "1999": 4,
       "2001": 4,
-      "2004": 3,
-      "2003": 3,
-      "2009": 2,
+      "1997": 4,
+      "2003": 4,
+      "1972": 4,
+      "1985": 2,
+      "2002": 2,
+      "2007": 2,
+      "2000": 2,
       "2011": 2,
+      "1998": 2,
       "1988": 2,
+      "1993": 2,
+      "2006": 2,
+      "1986": 2,
+      "1979": 2,
       "2010": 2,
-      "1999": 2,
-      "2002": 1,
-      "2007": 1,
-      "1998": 1,
-      "1986": 1,
-      "1979": 1,
+      "1991": 1,
+      "1994": 1,
       "1995": 1,
-      "2008": 1,
-      "1997": 1,
-      "2006": 1,
-      "2012": 1,
-      "2000": 1,
-      "1972": 1,
+      "1981": 1,
       "1992": 1
     }
   }
