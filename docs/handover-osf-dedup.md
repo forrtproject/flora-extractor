@@ -74,8 +74,19 @@ not write a regex.** My first scan carried a copy of the old pattern and produce
 "download" group holding 55 unrelated works — the totals in the issue body (10,818
 groups, 15,478 surplus) come from that contaminated run and must not be trusted.
 
-A clean re-scan is in `scratchpad/scan_osf_dupes.py` (rewritten to call the fixed
-function). Re-run it rather than reusing its numbers if any time has passed.
+The scan has been re-run with the fixed function (`scratchpad/scan_osf_dupes.py`), and
+these are the numbers to work from:
+
+| | Clean | Contaminated |
+| --- | ---: | ---: |
+| Pool works naming an OSF guid | 62,230 | 62,229 |
+| Distinct guids | 46,802 | 46,751 |
+| Guids with >1 work | 10,820 | 10,818 |
+| **Surplus works** | **15,428** | 15,478 |
+
+The bug moved about 50 works, so the issue body's totals were nearly right — but the
+shape it produced was a 55-member `download` group, and that is the kind of error worth
+catching before it becomes 55 merges. The largest group is now 12.
 
 Note the fixed extractor also strips a version suffix, so `d3x9p_v1` … `_v4` collapse
 to one guid. That is intended: the versions of one preprint are one record.
@@ -83,14 +94,36 @@ to one guid. That is intended: the versions of one preprint are one record.
 ## Validation before you write 15k aliases
 
 A wrong merge silently fuses two distinct studies, and nothing downstream will say so.
-Two checks are cheap and were already useful:
 
-1. **Title agreement within each group.** On the contaminated scan, 90% of groups had
-   an identical normalised title; the 10% that differed were truncation, SCORE-report
-   metadata drift, and preprint versions with edited titles — all still one record.
-   Re-run this on the clean groups and read a sample of the disagreements.
-2. **Group size.** A group with dozens of members is the shape a mis-parsed guid makes.
-   That is how #201 was found. Any large group deserves reading before it is trusted.
+1. **Title agreement within each group** — **93% of the 10,820 clean groups** have an
+   identical normalised title. Most of the 657 that differ are preprint versions
+   retitled between v1 and v4, or HTML-entity double-escaping in one record and not
+   another. Those are one record.
+2. **Group size.** A group with dozens of members is the shape a mis-parsed guid makes;
+   that is how #201 surfaced. The current maximum is 12 (Many Labs 4), which is
+   plausible for one OSF page.
+
+### The one class you must adjudicate, not assume
+
+Some SCORE-project groups carry titles that differ in a way that **encodes the
+replication type**:
+
+```
+hpgvj  W6999172155  (no doi)  'Carrillo_Vega_covid_wxQZ - Cheng/Méndez - Secondary Data Replication - …'
+hpgvj  W7008415331  (no doi)  'Carrillo_Vega_covid_wxQZ - Cheng/Méndez - Data Analytic Replication - …'
+
+nv6a3  W7060843948  (no doi)  'Pfattheicher_covid_yZD4 - Edlund - New Data Replication - y006'
+nv6a3  W6986344015  (no doi)  'Pfattheicher_covid_yZD4 - Edlund - Direct Replication - y006'
+```
+
+Same guid, same team, same target — but "Secondary Data" vs "Data Analytic", "New Data"
+vs "Direct". Either OpenAlex snapshotted one OSF page whose title changed over time, in
+which case merging is right, or these are genuinely distinct replication attempts that
+share one OSF container, in which case merging destroys a record FLoRA wants.
+
+**232 groups pair a non-OSF DOI with a differently-titled member**, and this class sits
+inside them. Read a sample against OSF before merging; if they turn out to be distinct
+attempts, they need excluding from the derivation rather than a different canonical.
 
 ## Sequencing, and one trap
 

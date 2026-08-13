@@ -20,10 +20,11 @@ Acquisition order:
   7. SerpAPI / Google Scholar      (consumes quota, last resort)
   8. Playwright headless Chromium  (bypasses JS-rendered paywalls)
 
-Three sources hand back a sections dict instead of a file, and each carries the
+Four sources hand back a sections dict instead of a file, and each carries the
 content check that says whether what came back is a document rather than a record of
 one (_STRUCTURED_SOURCES): Tier 0 OpenAlex GROBID XML and Tier 0b the OSF
 registration form, both above the download tiers because a hit there IS the document;
+Tier 7's Europe PMC JATS full text, which is tried before that tier's rendered PDF;
 and Tier 11, the row's own page as HTML, at the very bottom because it is the weakest
 evidence and the one result that has to be argued for rather than downloaded. A tier that comes
 back empty is timestamped and not re-probed for PDF_RETRY_AFTER_DAYS; so is a single
@@ -127,7 +128,7 @@ _PDF_MAGIC = b"%PDF"
 _ZIP_MAGIC = b"PK\x03\x04"
 _DOCUMENT_SUFFIXES = (".pdf", ".docx")
 
-# A Word file's content check — the counterpart of the three in _STRUCTURED_SOURCES,
+# A Word file's content check — the counterpart of the ones in _STRUCTURED_SOURCES,
 # asking the same question they do: is this the paper, or a wrapper around a title?
 # A ZIP with a word/document.xml is a Word document; a Word document carrying a title
 # page and an author line is no more a paper than a repository record page is. The
@@ -175,7 +176,7 @@ _MIN_TITLE_EVIDENCE_CHARS = 200
 # Sources that hand back a sections dict instead of a file. They are documents in
 # every sense the pipeline cares about, so the retry log is cleared for them exactly
 # as it is for a downloaded PDF.
-_STRUCTURED_SOURCES = {"openalex_xml", "osf_registration", "html_landing"}
+_STRUCTURED_SOURCES = {"openalex_xml", "epmc_xml", "osf_registration", "html_landing"}
 
 
 class DocumentSourceUnavailable(Exception):
@@ -523,8 +524,18 @@ def get_core_pdf_url(doi: str) -> Optional[str]:
 
 # ── Europe PMC ────────────────────────────────────────────────────────────────
 
-def get_europepmc_pdf_url(doi: str) -> Optional[str]:
-    """Query Europe PMC for a PMC full-text PDF URL."""
+def get_europepmc_pmcid(doi: str) -> Optional[str]:
+    """The PMC id Europe PMC holds *doi* under, or None when it holds none.
+
+    Both Europe PMC routes are keyed on this id — the JATS full text and the PDF —
+    so the search is made once and its answer serves both.
+
+    None means the search ANSWERED and named no PMC id, which is a fact about the
+    DOI and may suppress the tier for PDF_RETRY_AFTER_DAYS. A timeout, a dead
+    connection or any non-200 is no answer at all and raises
+    DocumentSourceUnavailable, so one bad minute cannot shut the tier for fourteen
+    days on a paper Europe PMC holds. Nothing is cached on that path.
+    """
     doi = clean_doi(doi)
     if not doi:
         return None
@@ -542,21 +553,130 @@ def get_europepmc_pdf_url(doi: str) -> Optional[str]:
                         "resultType": "core", "pageSize": 1},
                 timeout=15,
             )
-            if r.status_code != 200:
-                return None
-            data = r.json()
         except Exception as e:
-            log.debug("EuropePMC error for %s: %s", doi, e)
-            return None
+            raise DocumentSourceUnavailable(
+                f"Europe PMC search failed for {doi}: {e}") from e
+        # The search endpoint answers 200 with an empty result list for a DOI it does
+        # not hold, so anything else — 429, 5xx, a gateway page — is trouble, not an
+        # answer.
+        if r.status_code != 200:
+            raise DocumentSourceUnavailable(
+                f"Europe PMC search for {doi} → HTTP {r.status_code}")
+        try:
+            data = r.json()
+        except ValueError as e:
+            raise DocumentSourceUnavailable(
+                f"Europe PMC search for {doi} returned no JSON: {e}") from e
 
         write_json(cf, data)
 
     for item in ((data.get("resultList") or {}).get("result") or []):
-        pmc_id = item.get("pmcid", "")
+        pmc_id = str(item.get("pmcid", "") or "")
         if pmc_id:
-            return (f"https://europepmc.org/backend/ptpmcrender.fcgi"
-                    f"?accid={pmc_id}&blobtype=pdf")
+            return pmc_id
     return None
+
+
+def europepmc_pdf_url(pmc_id: str) -> str:
+    """The article-page render URL for *pmc_id*.
+
+    `europepmc.org/articles/<PMCID>?pdf=render` answers 200 with
+    `application/pdf` (probed 2026-08-13). The `backend/ptpmcrender.fcgi` endpoint
+    this used to build breaks the HTTP/2 stream instead, which download_pdf records
+    as a tier failure — 1,417 of the 1,492 acquisition retry logs on disk that day
+    carried an epmc failure against it.
+    """
+    return f"https://europepmc.org/articles/{pmc_id}?pdf=render"
+
+
+# The sections that only a full text can fill. JATS front matter carries the abstract
+# whenever the article has one, so an abstract is the one signal shared by a record and
+# a paper — which is why it is not on this list, and is the one way this check is
+# stricter than openalex_xml_has_content(). A row coded from an abstract the tier
+# labelled full text is the failure the structured-source checks exist to stop.
+_EPMC_BODY_SECTIONS = ("raw_text", "intro", "methods")
+
+
+def epmc_xml_has_content(document: "dict | None") -> bool:
+    """True when a parsed Europe PMC JATS result carries the paper, not a record of it.
+
+    The endpoint answers 200 for an article it holds front matter for, and a front
+    matter shell is truthy: without this test the ladder would read a title, an author
+    list and an abstract as full text.
+    """
+    sections = (document or {}).get("sections") or {}
+    if sections.get("references"):
+        return True
+    return any(str(sections.get(name) or "").strip()
+               for name in _EPMC_BODY_SECTIONS)
+
+
+def get_europepmc_fulltext(pmc_id: str) -> "dict | None":
+    """*pmc_id*'s JATS full text as a sections dict, or None when there is none.
+
+    The XML endpoint covers the OA-licensed subset only, and answers 404 for
+    everything else — an answer about this article, so the caller falls through to
+    the PDF route on it. A 5xx or a dead connection is no answer at all and raises
+    DocumentSourceUnavailable, so the tier is not suppressed for fourteen days over
+    a minute of provider trouble.
+
+    Returns {"source": "epmc_xml", "sections": {...}, "xml_url": str}. A result that
+    fails `epmc_xml_has_content()` is None and is never cached as a success.
+    """
+    if not pmc_id:
+        return None
+
+    cache_file = OA_XML_CACHE_DIR / f"epmc_xml_{cache_key(pmc_id)}.json"
+    if cache_file.exists():
+        try:
+            cached = json.loads(cache_file.read_text(encoding="utf-8"))
+        except Exception:
+            cached = None
+        if cached is not None:
+            if epmc_xml_has_content(cached):
+                return cached
+            log.warning("Europe PMC XML cache for %s is content-free — "
+                        "ignoring it and re-fetching", pmc_id)
+
+    xml_url = (f"https://www.ebi.ac.uk/europepmc/webservices/rest/"
+               f"{pmc_id}/fullTextXML")
+    throttle("europepmc", _EUROPEPMC_RATE_SEC)
+    try:
+        r = requests.get(xml_url, timeout=30,
+                         headers={"User-Agent": f"flora-extractor ({RESEARCHER_EMAIL})"})
+    except Exception as e:
+        raise DocumentSourceUnavailable(
+            f"Europe PMC XML fetch failed for {pmc_id}: {e}") from e
+    if r.status_code >= 500:
+        raise DocumentSourceUnavailable(
+            f"Europe PMC XML {pmc_id} → HTTP {r.status_code}")
+    if r.status_code != 200:
+        log.debug("Europe PMC XML %s → HTTP %s", pmc_id, r.status_code)
+        return None
+
+    try:
+        from .grobid import parse_jats_sections
+        sections = parse_jats_sections(r.content.decode("utf-8", errors="replace"))
+    except Exception as e:
+        log.debug("Europe PMC XML parse failed for %s: %s", pmc_id, e)
+        return None
+
+    document = {"source": "epmc_xml", "sections": sections, "xml_url": xml_url}
+    if not epmc_xml_has_content(document):
+        log.info("Europe PMC served XML for %s with no body and no references — "
+                 "treating it as no document", pmc_id)
+        return None
+
+    try:
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        cache_file.write_text(json.dumps(document, ensure_ascii=False),
+                              encoding="utf-8")
+    except Exception as e:
+        log.debug("Europe PMC XML cache write failed: %s", e)
+
+    log.info("Europe PMC XML acquired for %s (%d refs)", pmc_id,
+             len(sections.get("references", [])))
+    return document
 
 
 # ── OSF preprint ──────────────────────────────────────────────────────────────
@@ -2324,10 +2444,10 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
         pdf_path       str | None
         pdf_ok         bool
         pdf_url_tried  list[str]
-        openalex_xml   dict | None  — structured content, from OpenAlex GROBID XML,
-                                      an OSF registration form, or a parsed HTML page.
-                                      The key's name predates the other two; what it
-                                      carries is a sections dict, whatever produced it.
+        openalex_xml   dict | None  — structured content, from any of the sources in
+                                      _STRUCTURED_SOURCES. The key's name predates all
+                                      but the first of them; what it carries is a
+                                      sections dict, whatever produced it.
     """
     doi_r     = clean_doi(doi_r)
     url_r     = str(url_r or "").strip()
@@ -2464,11 +2584,11 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
             return _result()
 
     # Tier 0b — the OSF registration form. Same deal as Tier 0: it IS the document,
-    # so nothing below it can add anything. Some of those forms are PROSPECTIVE — an
-    # Open-Ended plan freeze, or a registration Stage 2 could route only on its title
-    # because the backfill never gave it a template line — and a plan reads like a
-    # result: "we predict a successful replication". Acquiring one is right, coding
-    # one is not, and the template guard in `_apply_outcome` is what draws that line.
+    # so nothing below it can add anything. Which registrations are worth reading is
+    # Stage 2's decision, taken on the template: `osf-registration-protocol` (live,
+    # discard) drops the preregistration forms and `osf-registration-completed` (live,
+    # screen_expensive) admits the post-completion ones. This tier acquires whatever
+    # reached it and judges nothing about the form.
     osf_guid = osf_registration_guid(doi_r) or osf_registration_guid(url_r)
 
     # Tier 0a — the manuscript in the OSF project's own file storage, which beats the
@@ -2639,11 +2759,43 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
         if not (core and _try(core, "core")):
             _failed("core")
 
-    # Tier 7 — Europe PMC
+    # Tier 7 — Europe PMC. The JATS full text first, the rendered PDF underneath it.
+    # The XML is structured content, so it needs no download, no parser stack and no
+    # title check on the bytes; it exists only for the OA-licensed subset, and Europe
+    # PMC answers 404 for the rest, which is what sends the row on to the PDF route.
+    # One tier, one retry slot: both routes are the same source saying the same thing.
     if not dl["success"] and not _held("europepmc"):
-        epmc = get_europepmc_pdf_url(doi_r)
-        if not (epmc and _try(epmc, "europepmc")):
-            _failed("europepmc")
+        try:
+            pmc_id = get_europepmc_pmcid(doi_r)
+        except DocumentSourceUnavailable as exc:
+            # Never recorded: the search did not answer, so nothing is known about
+            # whether Europe PMC holds this paper.
+            log.info("  [%s] Europe PMC search unavailable: %s", doi_r, exc)
+            pmc_id = None
+        else:
+            if not pmc_id:
+                _failed("europepmc")
+        if pmc_id:
+            epmc_xml = None
+            xml_outage = False
+            try:
+                epmc_xml = get_europepmc_fulltext(pmc_id)
+            except DocumentSourceUnavailable as exc:
+                # Never recorded: a source that did not answer has said nothing.
+                log.info("  [%s] Europe PMC XML unavailable: %s", doi_r, exc)
+                xml_outage = True
+            if epmc_xml is not None:
+                log.info("  [%s] Europe PMC XML acquired (source=epmc_xml) — "
+                         "skipping the download tiers below", doi_r)
+                oa_xml  = epmc_xml
+                pdf_src = "epmc_xml"
+                return _result()
+            # One tier, one retry slot, so it is suppressed only when BOTH routes
+            # answered: an unreached XML endpoint leaves half the tier unasked, and a
+            # download that only ever failed to connect is no answer either.
+            if (not _try(europepmc_pdf_url(pmc_id), "europepmc")
+                    and not (xml_outage or _only_transient("europepmc"))):
+                _failed("europepmc")
 
     # Tier 7b — the paper found by its own title in Crossref. The ONLY route for a row
     # with no DOI: every tier above is keyed on one, and 223 of the 2026-08-07

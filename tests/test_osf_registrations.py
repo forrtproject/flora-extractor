@@ -146,8 +146,52 @@ def test_a_project_private_to_this_token_is_not_recorded_as_absent(monkeypatch):
     def _get(url, *a, **k):
         return _Response(status_code=404 if "/registrations/" in url else 403)
 
+    monkeypatch.setattr(fa, "OSF_TOKEN", "a-token")
     monkeypatch.setattr(fa._SESSION, "get", _get)
     assert fa._fetch_osf_registration("10.17605/OSF.IO/AB12D") == (None, "transient")
+
+
+@pytest.mark.parametrize("node_status", [401, 403])
+def test_a_credential_refusal_at_the_projects_endpoint_stops_the_phase(
+        monkeypatch, node_status):
+    """A bad OSF_TOKEN reaches this arm on every row: a project GUID 404s at the
+    registrations endpoint whatever the credential is. Reading the refusal as one
+    more record's answer would spend ~1,700 identifiers x two endpoints x three
+    retries writing "no such project" for a whole corpus."""
+    def _get(url, *a, **k):
+        return _Response(status_code=404 if "/registrations/" in url
+                         else node_status)
+
+    monkeypatch.setattr(fa, "OSF_TOKEN", "")
+    monkeypatch.setattr(fa._SESSION, "get", _get)
+    assert fa._fetch_osf_registration("10.17605/OSF.IO/AB12D") == (None, "stop")
+
+
+def test_a_projects_endpoint_failure_that_is_not_a_404_is_transient(monkeypatch):
+    """`empty` means the source ANSWERED and holds nothing. A 400 or a 422 is the
+    request being refused, and checkpointing it would make a bad hour permanent."""
+    def _get(url, *a, **k):
+        return _Response(status_code=404 if "/registrations/" in url else 422)
+
+    monkeypatch.setattr(fa, "OSF_TOKEN", "a-token")
+    monkeypatch.setattr(fa._SESSION, "get", _get)
+    assert fa._fetch_osf_registration("10.17605/OSF.IO/AB12D") == (None, "transient")
+
+
+def test_a_row_that_already_has_text_never_reaches_the_projects_endpoint(monkeypatch):
+    """Its description would be refused at the overlay anyway (`_refuses_osf_text`),
+    so the second call is spent on an answer nothing can use — ~650 throttled calls
+    of the 2026-08-13 worklist."""
+    urls: list = []
+
+    def _get(url, *a, **k):
+        urls.append(url)
+        return _Response(status_code=404)
+
+    monkeypatch.setattr(fa._SESSION, "get", _get)
+    assert fa._fetch_osf_registration("10.17605/OSF.IO/AB12D",
+                                      node_fallback=False) == (None, "empty")
+    assert all("/registrations/" in url for url in urls)
 
 
 def _pool_row(work: int, doi: str = None, oa_url: str = None,

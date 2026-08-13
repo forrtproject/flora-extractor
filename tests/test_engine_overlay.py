@@ -360,7 +360,7 @@ def test_a_registration_identified_by_url_alone_reaches_the_overlay(
     wrote nothing, which is the failure this covers."""
     asked: list = []
 
-    def fetch(identifier):
+    def fetch(identifier, **kwargs):
         asked.append(identifier)
         return f"OSF registration template: Open-Ended Registration\n\n{identifier}", "ok"
 
@@ -399,7 +399,7 @@ def test_a_project_description_never_replaces_a_pool_abstract(
     described = ("This project is a direct replication of the first experiment of "
                  "Chartrand & Bargh (1999), run at Avila University.")
     monkeypatch.setattr(backfill, "_fetch_osf_registration",
-                        lambda ident: (described, "ok"))
+                        lambda ident, **kw: (described, "ok"))
 
     kept = backfill.run(_osf_worklist(tmp_path, has_text=False), tmp_path / "ov-a",
                         sources=("osf",), phase="targeted")
@@ -417,10 +417,45 @@ def test_a_project_description_that_says_nothing_is_not_written(
     characters its own title already carries. 17 of the 74 the first run wrote were
     labels like this."""
     monkeypatch.setattr(backfill, "_fetch_osf_registration",
-                        lambda ident: ("Replication", "ok"))
+                        lambda ident, **kw: ("Replication", "ok"))
     result = backfill.run(_osf_worklist(tmp_path, has_text=False), tmp_path / "ov-d",
                           sources=("osf",), phase="targeted")
     assert result["rows"] == 0
+
+
+def test_a_worklist_with_no_has_text_column_is_refused(
+        isolated_cache, tmp_path, monkeypatch):
+    """`has_text` is what keeps a recovered OSF project description off a row that
+    already has a pool abstract, and a worklist written before the column existed
+    reads as `has_text = False` for every row — the one value that turns the guard
+    off. 751 of the 752 admitted OSF projects have a pool abstract, so failing open
+    is silent and wide."""
+    path = tmp_path / "worklist-old.parquet"
+    pq.write_table(pa.Table.from_pylist([{"work_id": 9, "doi": "10.17605/osf.io/ab12d",
+                                          "title": "R", "year": 2023, "url": ""}]), path)
+    with pytest.raises(ValueError, match="has_text"):
+        backfill.run(path, tmp_path / "ov-e", sources=("osf",), phase="targeted")
+
+
+def test_a_row_with_pool_text_is_not_asked_about_at_the_projects_endpoint(
+        isolated_cache, tmp_path, monkeypatch):
+    """The guard would refuse the description, so the call that fetches it is spent
+    on nothing. The worklist row is the only place that knows."""
+    asked: list = []
+
+    def fetch(identifier, *, node_fallback=True):
+        asked.append((identifier, node_fallback))
+        return None, "empty"
+
+    monkeypatch.setattr(backfill, "_fetch_osf_registration", fetch)
+    rows = [{"doi_r": "10.17605/osf.io/ab12d", "url_r": "", "has_text": True},
+            {"doi_r": "10.17605/osf.io/cd34f", "url_r": "", "has_text": False}]
+    osf = backfill._osf_fetcher(rows)
+    osf("10.17605/osf.io/ab12d")
+    osf("10.17605/osf.io/cd34f")
+
+    assert asked == [("10.17605/osf.io/ab12d", False),
+                     ("10.17605/osf.io/cd34f", True)]
 
 
 def test_a_template_line_is_written_whatever_text_the_row_has(
@@ -430,7 +465,7 @@ def test_a_template_line_is_written_whatever_text_the_row_has(
     is the whole reason admitted rows are on the worklist at all."""
     monkeypatch.setattr(
         backfill, "_fetch_osf_registration",
-        lambda ident: (f"{fa.OSF_TEMPLATE_PREFIX}Open-Ended Registration\n\nsummary: x",
+        lambda ident, **kw: (f"{fa.OSF_TEMPLATE_PREFIX}Open-Ended Registration\n\nsummary: x",
                        "ok"))
     result = backfill.run(_osf_worklist(tmp_path, has_text=True), tmp_path / "ov-c",
                           sources=("osf",), phase="targeted")
@@ -458,7 +493,7 @@ def wl_osf(tmp_path) -> Path:
 def _trace(monkeypatch, calls: list, epmc_finds=()) -> None:
     """Record every source's fetch in call order; Europe PMC answers *epmc_finds*."""
     def _fake(name, result):
-        def fetch(arg, *rest):
+        def fetch(arg, *rest, **kwargs):
             calls.append((name, arg))
             return result(arg) if callable(result) else result
         return fetch

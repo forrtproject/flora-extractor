@@ -65,6 +65,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+import pyarrow.parquet as pq
+
 from filter.engine.overlay import (
     freeze, iter_worklist, overlay_work_ids, write_chunk,
 )
@@ -146,7 +148,21 @@ def _row_batches(worklist_path: Path, limit: Optional[int] = None,
     one slice of memory instead of the worklist plus every recovered abstract in
     it. Nothing about the ANSWER depends on the slicing: each row's sources, its
     checkpoint and its cache entry are per-identifier.
+
+    A worklist with no `has_text` column is REFUSED rather than read. That column is
+    what stops a recovered OSF project description from replacing a real pool
+    abstract (`_refuses_osf_text`), and a missing column reads as `has_text = False`
+    for every row — which is the one value that turns the guard off. 751 of the 752
+    admitted OSF projects have a pool abstract, so the failure is silent and wide.
     """
+    names = set(pq.ParquetFile(Path(worklist_path)).schema_arrow.names)
+    if "has_text" not in names:
+        raise ValueError(
+            f"{worklist_path} has no `has_text` column, so the guard that keeps a "
+            "recovered OSF description off a row that already has a pool abstract "
+            "cannot run. Regenerate the worklist:\n"
+            "  .venv/bin/python -m filter.engine worklist --release <id> "
+            f"--out {worklist_path}")
     rows: list[dict] = []
     dropped = 0
     taken = 0
@@ -436,7 +452,7 @@ def _run_source(source: str, rows: list[dict], done: set[str], found: set[str],
                          _fetch_epmc_batch, found)
     elif source == "osf":
         _run_item_phase(label, namespace, targets, OSF_RATE_SEC,
-                        _fetch_osf_registration, found, progress_every=200)
+                        _osf_fetcher(rows), found, progress_every=200)
     elif source == "s2":
         _run_batch_phase(label, namespace, targets, S2_BATCH_SIZE, S2_BATCH_RATE_SEC,
                          lambda batch: _fetch_s2_batch(batch, S2_API_KEY), found)
@@ -449,6 +465,26 @@ def _run_source(source: str, rows: list[dict], done: set[str], found: set[str],
         _run_item_phase(label, namespace, targets, SCOPUS_RATE_SEC,
                         _scopus_fetcher(), found, progress_every=500)
     return len(targets)
+
+
+def _osf_fetcher(rows: list[dict]):
+    """OSF on the phase runner's contract, carrying which rows already have text.
+
+    A row with a pool abstract never gets a project description written for it
+    (`_refuses_osf_text`), so the projects endpoint is not asked about it — the 404
+    from the registrations endpoint is the whole answer. That is ~650 throttled
+    calls of the 2026-08-13 worklist. A row the worklist does not cover keeps the
+    fallback: the identifier is asked about, so nothing here may assume otherwise.
+    """
+    has_text = {ident for ident, row in
+                ((osf_identifier(r.get("doi_r") or "", r.get("url_r") or ""), r)
+                 for r in rows)
+                if ident and row["has_text"]}
+
+    def fetch(identifier: str) -> tuple[Optional[str], str]:
+        return _fetch_osf_registration(identifier,
+                                       node_fallback=identifier not in has_text)
+    return fetch
 
 
 def _scopus_fetcher():
