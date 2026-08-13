@@ -169,11 +169,18 @@ PRESCREEN_MODEL_1 = "qwen/qwen3-30b-a3b-instruct-2507"
 PRESCREEN_MODEL_2 = "mistralai/mistral-small-24b-instruct-2501"
 
 # The front-door screen (classify_replication) — is this a replication at all? Two
-# independent voters on the validated v3.2 schema. On the v3.2 gate sweep this pair
-# discards 89% of adjudicated hard negatives with zero settled misses; Ministral via
-# OpenRouter in slot 2 reached 73% on the same gate. An id containing "/" is routed to
-# OpenRouter, anything else to OpenAI direct.
-SCREENING_MODEL_1 = "gemini-3.5-flash-lite"
+# independent voters on the validated v3.2 schema. An id containing "/" is routed to
+# OpenRouter, a leading "gemini" to Google, anything else to OpenAI direct.
+#
+# Voter 1 was gemini-3.5-flash-lite at "minimal" until 2026-08-13 (v3.2 gate sweep:
+# 89% hard-negative discard, zero settled misses; the v3.3 re-runs of that pair span
+# 0-1 misses at 84.3-88.6%). DeepSeek at reasoning effort "low" measured at parity on
+# the same 390 cases against the same cached gpt-5.4-mini votes — 1 settled miss,
+# 88.4% — at roughly half the price (analysis/screening_eval/cheap_voter_2026-08.md).
+# The same model at effort "none" missed 7 settled positives: the thinking is what
+# buys the confident-recall calibration the gate needs from this slot, so the effort
+# is part of the evaluated configuration, not a tunable.
+SCREENING_MODEL_1 = "deepseek/deepseek-v4-flash"
 SCREENING_MODEL_2 = "gpt-5.4-mini"
 
 # Linking (resolve_targets_and_outcomes) — WHICH original does this paper re-test? One
@@ -238,12 +245,13 @@ LINKING_EFFORT = "medium"
 #
 # One per voter, not one for the pair: these pin the configuration the screen was
 # EVALUATED at, and the two voters were evaluated at different rungs. Voter 1
-# (Gemini) ran with no thinking level in the request at all, i.e. at the model's own
-# default, which for gemini-3.5-flash-lite is "minimal". Naming it explicitly is the
-# point: Google has changed model defaults before, and an implicit default could
-# silently move the voter with no change to the cache key — every entry would keep
-# claiming to be the evaluated configuration. Voter 2 was evaluated at "low".
-SCREENING_EFFORT_1 = "minimal"
+# (DeepSeek, whose thinking is ON by default at "high") was evaluated at "low" —
+# and at "none" it discarded 7 settled positives, so the effort is load-bearing.
+# Naming it explicitly rather than trusting a provider default is the point: a
+# changed default could silently move the voter with no change to the cache key —
+# every entry would keep claiming to be the evaluated configuration. Voter 2 was
+# evaluated at "low".
+SCREENING_EFFORT_1 = "low"
 SCREENING_EFFORT_2 = "low"
 
 # How hard OUTCOME_MODEL is asked to think (extract/code_outcome.py, both passes).

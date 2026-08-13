@@ -35,7 +35,7 @@ from .config import (
     log,
 )
 from . import token_counter, token_usage
-from .cache import content_key, read_cache, read_cache_migrating, write_cache
+from .cache import content_key, read_cache, write_cache
 from .rate_limit import throttle
 from .prompts import (
     build_author_year_pick_prompt, build_classify_prompt, build_keyed_confirm_prompt,
@@ -574,6 +574,13 @@ def call_openrouter(prompt: str, model: str,
 
     use_model = model
     extra = {"reasoning_effort": reasoning_effort} if reasoning_effort else {}
+    # Cheapest host that can still sustain a working rate. A pure price sort routed
+    # DeepSeek reasoning calls to a host queuing them at 57-249 s each (measured
+    # 2026-08-13); require_parameters keeps hosts that cannot honour response_format
+    # or the reasoning effort out of the rotation rather than silently ignoring them.
+    extra["extra_body"] = {"provider": {"sort": "price",
+                                        "preferred_min_throughput": 40,
+                                        "require_parameters": True}}
     # The same three attempts with 1s/2s backoff call_openai runs, for the same
     # reason: a single transient failure at the provider must not be the answer a
     # row records. OpenRouter had one attempt, so the pre-screen's two voters and
@@ -1191,29 +1198,24 @@ def _classify_once(prompt: str, model: str, effort: str) -> "dict | None":
 
 
 def screen_gate(votes: list[dict]) -> "str | None":
-    """G-softqual, the gate the v3.2 sweep validated: 89% of adjudicated hard
-    negatives discarded with zero settled misses.
+    """G-unanimous: a paper is discarded only when every voter says "none".
 
     Returns "discard", "proceed", or None when fewer than two voters answered (an
     incomplete screen is an API failure, not a verdict).
 
-    Discard when every vote is "none" at any confidence, or when at least one voter
-    said "none" confidently and every other vote is a qualifying-or-unclear answer
-    the voter explicitly declined to stand behind. Everything else proceeds — a
-    confident "none" against a confident qualifying answer is a real split, and
-    false inclusions are cheap where false discards are not.
+    No single voter discards alone, whatever its confidence. The earlier G-softqual
+    gate also discarded on one confident "none" when the other vote was unconfident;
+    that extra rule leaned on the confident voter's calibration on true positives —
+    a per-model property a voter swap silently changes (measured 2026-08-13: 0.86 at
+    DeepSeek effort "none" against 0.90-0.94 for every evaluated voter at its shipped
+    effort). Unanimity buys back that exposure for about one extra pass-through per
+    70 hard negatives, and false inclusions are cheap where false discards are not.
     """
     if len(votes) < 2:
         return None
-    is_none = [v["classification"] == "none" for v in votes]
-    if all(is_none):
+    if all(v["classification"] == "none" for v in votes):
         return "discard"
-    if not any(n and v["confident"] for n, v in zip(is_none, votes)):
-        return "proceed"
-    soft = all(n or (v["classification"] in SCREEN_QUALIFYING + ("unclear",)
-                     and not v["confident"])
-               for n, v in zip(is_none, votes))
-    return "discard" if soft else "proceed"
+    return "proceed"
 
 
 def _screen_record_type(votes: list[dict]) -> str:
@@ -1267,60 +1269,118 @@ def format_screen_evidence(votes: list[dict]) -> str:
     return SCREEN_EVIDENCE_SEP.join(parts)
 
 
-# Declared cache equivalences for the classify key (issue #171). The declaration is a
-# statement about ONE pair of voters: the equivalence holds only while the screen is
-# still asking exactly the models and efforts whose answers are on disk. The equivalent
-# pair is therefore named explicitly, and the legacy keys are offered only when the
-# voter id this call built equals it. A wildcard here would be much worse than no
-# equivalence at all: swapping a voter or an effort to RE-SCREEN the corpus would serve
-# every legacy entry straight back from the old pair, re-filed under the new pair's key
-# with a cache_migrated note naming voters that never saw the row — a rescreen that
-# completes instantly, costs nothing and changes no verdict.
+# The screen's cache is one entry per VOTE, not per pair: a vote's key names the
+# prompt version, that voter's model@effort, and the prompt — nothing about the other
+# voter. Swapping one voter therefore re-buys exactly that voter's answers, while the
+# other voter's stay cache hits through a re-screen.
 #
-# Everything else about the key is unchanged, so an equivalence also stops matching by
-# itself the moment the prompt moves: the legacy key is rebuilt from the CURRENT prompt
-# version and prompt text, and only the voter component is substituted.
-_CLASSIFY_EQUIVALENT_VOTER_ID = ("gemini-3.5-flash-lite@effort=minimal"
-                                 "+gpt-5.4-mini@effort=low")
-
-# Both declared entries name the same computation as _CLASSIFY_EQUIVALENT_VOTER_ID: the
-# Gemini voter at the API default — no thinkingLevel in the request, which for
-# gemini-3.5-flash-lite is "minimal" — and the GPT voter at an explicit "low", which is
-# exactly what SCREENING_EFFORT_1 / SCREENING_EFFORT_2 send. Only the LABEL differed.
+# The entries the pair-keyed era left on disk are still read: _cached_vote() looks for
+# a joint entry under each pair id below, lifts out this voter's vote, and re-files it
+# under the per-vote key with a cache_migrated note. That is a read of an answer the
+# named model itself produced, so it holds whatever the OTHER slot is asking today —
+# unlike the old pair-level equivalence, no wildcard risk arises: a voter the joint
+# entry never heard from simply finds no vote with its model id and pays.
 #
+#   "…@effort=minimal+…@effort=low"  — the labelled pair id every joint entry was
+#   written under once the key named efforts.
 #   "gemini-3.5-flash-lite+gpt-5.4-mini"  — the unlabelled pair, before the key named
-#   an effort at all. This is what the entries on disk are under (4,767 of the 4,817
-#   local classify entries when this was written).
-#
-#   "…@effort=medium"  — the label dcc0ba6 briefly derived from the model id, because
-#   the voter id matched LINKING_MODEL. That value was never sent to any provider; it
-#   is registered because a collaborator's cache pulled from HF may carry it.
-_CLASSIFY_LEGACY_KEY_PARTS = (
+#   an effort at all (4,767 of the 4,817 local classify entries when this was
+#   written). Both voters ran at what the labels later said, so the votes carry over.
+#   "…@effort=medium"  — the label dcc0ba6 briefly derived from the model id; never
+#   sent to any provider, registered because an HF-pulled cache may carry it.
+_JOINT_CLASSIFY_VOTER_IDS = (
+    "gemini-3.5-flash-lite@effort=minimal+gpt-5.4-mini@effort=low",
     "gemini-3.5-flash-lite+gpt-5.4-mini",
     "gemini-3.5-flash-lite+gpt-5.4-mini@effort=medium",
 )
 
+# The effort each joint-era voter actually ran at. A vote is lifted out of a joint
+# entry only for a caller asking that model AT that effort — the same model at a new
+# effort is a different computation and must pay, exactly as a per-vote key miss.
+_JOINT_ERA_EFFORTS = {
+    "gemini-3.5-flash-lite": "minimal",
+    "gpt-5.4-mini": "low",
+}
 
-def _classify_keys(doi_r: str, study_r: str, abstract_r: str) -> tuple[str, list[str], dict]:
-    """`(key, legacy_keys, migrate_note)` for one classify call's cache entry.
 
-    Split out so the cache can be READ without any possibility of a call being
-    made — `cached_classification()` below — while the key stays defined exactly
-    once. The voter pair is part of the key because the two models disagree often
-    enough that this is the question the audit measured a model effect on.
-    """
-    voters = screen_voters()
-    cls_prompt = build_classify_prompt(study_r, abstract_r)
+def _vote_key(doi_r: str, study_r: str, cls_prompt: str,
+              model: str, effort: str) -> str:
+    """One vote's cache key: this voter's model@effort, nothing about the other."""
     pv = prompt_version("build_classify_prompt")
-    voter_id = "+".join(cache_model_id(model, effort)
-                        for _, model, _, effort in voters)
-    key = content_key("classify", doi_r or study_r, pv, voter_id, cls_prompt)
-    # The equivalence was declared for one pair of voters; a run screening any other
-    # pair is asking a question those cached answers do not answer, and must pay for it.
-    legacy = ([content_key("classify", doi_r or study_r, pv, part, cls_prompt)
-               for part in _CLASSIFY_LEGACY_KEY_PARTS]
-              if voter_id == _CLASSIFY_EQUIVALENT_VOTER_ID else [])
-    return key, legacy, {"prompt_version": pv, "voters": voter_id}
+    return content_key("classifyvote", doi_r or study_r, pv,
+                       cache_model_id(model, effort), cls_prompt)
+
+
+def _cached_vote(doi_r: str, study_r: str, cls_prompt: str,
+                 model: str, effort: str) -> "dict | None":
+    """This voter's cached vote, or None. Never calls.
+
+    A miss on the per-vote key falls back to the joint pair-keyed entries the old
+    scheme wrote (`_JOINT_CLASSIFY_VOTER_IDS`): a vote by this model found in one is
+    re-filed under the per-vote key with a `cache_migrated` note and returned. The
+    joint entry stays on disk for other checkouts and the shared HF cache.
+    """
+    key = _vote_key(doi_r, study_r, cls_prompt, model, effort)
+    hit = read_cache(LLM_CACHE_DIR, key)
+    if isinstance(hit, dict) and hit.get("classification"):
+        return hit
+    if _JOINT_ERA_EFFORTS.get(model) != effort:
+        return None
+    pv = prompt_version("build_classify_prompt")
+    for pair_id in _JOINT_CLASSIFY_VOTER_IDS:
+        joint = read_cache(LLM_CACHE_DIR,
+                           content_key("classify", doi_r or study_r, pv,
+                                       pair_id, cls_prompt))
+        if not (isinstance(joint, dict) and isinstance(joint.get("votes"), list)):
+            continue
+        for v in joint["votes"]:
+            if isinstance(v, dict) and v.get("model") == model and v.get("classification"):
+                vote = dict(v)
+                vote["cache_migrated"] = {"from_joint_pair": pair_id,
+                                          "prompt_version": pv}
+                write_cache(LLM_CACHE_DIR, key, vote)
+                return vote
+    return None
+
+
+def _screen_result_from_votes(cls_prompt: str, voters: list, votes: list[dict]) -> dict:
+    """The combined screen dict `classify_replication()` returns, derived from the
+    votes. Derived on every call rather than stored: the votes are the paid answers,
+    and the gate over them is free."""
+    out = {
+        "resolution_method": "llm_refscreen_declined",
+        "screen_verdict": "", "screen_classification": "unclear",
+        "record_type": "", "categories": [], "votes": [],
+        "llm_source": "", "llm_model": "", "llm_evidence": "",
+        "llm_reasoning": "", "llm_prompt": cls_prompt, "llm_error": "",
+    }
+    # Keep the individual votes: the gate's decision is not reviewable without
+    # knowing who said what, and neither `llm_evidence` nor a "+"-joined model
+    # string can be split back into whose quote was whose.
+    out["votes"] = [{k: v[k] for k in
+                     ("provider", "model", "classification", "confident", "categories",
+                      "evidence", "reasoning")}
+                    for v in votes]
+    out["llm_source"] = "+".join(v["provider"] for v in votes)
+    out["llm_model"]  = "+".join(v["model"] for v in votes)
+    out["llm_evidence"]  = format_screen_evidence(votes)
+    out["llm_reasoning"] = " | ".join(f"{v['provider']}: {v['reasoning']}" for v in votes)
+    # A missing vote is an API failure, not a verdict: report it as an incomplete
+    # screen so a re-run can screen the row properly.
+    if len(votes) < 2:
+        answered = {v["provider"] for v in votes}
+        out["resolution_method"] = ("llm_refscreen_partial" if votes
+                                    else "llm_refscreen_failed")
+        out["llm_error"] = "classifier failed: " + ", ".join(
+            p for p, _, _, _ in voters if p not in answered)
+        return out
+    out["screen_verdict"] = screen_gate(votes)
+    out["record_type"]    = _screen_record_type(votes)
+    out["categories"]     = _screen_categories(votes)
+    labels = {v["classification"] for v in votes}
+    out["screen_classification"] = (out["record_type"] or
+                                    (labels.pop() if len(labels) == 1 else "unclear"))
+    return out
 
 
 def cached_classification(doi_r: str, study_r: str, abstract_r: str) -> "dict | None":
@@ -1333,9 +1393,13 @@ def cached_classification(doi_r: str, study_r: str, abstract_r: str) -> "dict | 
     step over rows that were already paid for, and a cache miss there means the
     row travels with those two columns blank, not that the screen runs again.
     """
-    key, legacy, note = _classify_keys(doi_r, study_r, abstract_r)
-    cached = read_cache_migrating(LLM_CACHE_DIR, key, legacy, note)
-    return cached if isinstance(cached, dict) else None
+    voters = screen_voters()
+    cls_prompt = build_classify_prompt(study_r, abstract_r)
+    votes = [v for v in (_cached_vote(doi_r, study_r, cls_prompt, m, eff)
+                         for _p, m, _e, eff in voters) if v]
+    if len(votes) < 2:
+        return None
+    return _screen_result_from_votes(cls_prompt, voters, votes)
 
 
 def classify_replication(doi_r: str, study_r: str, abstract_r: str) -> dict:
@@ -1363,58 +1427,23 @@ def classify_replication(doi_r: str, study_r: str, abstract_r: str) -> dict:
     """
     voters     = screen_voters()
     cls_prompt = build_classify_prompt(study_r, abstract_r)
-    key, legacy, note = _classify_keys(doi_r, study_r, abstract_r)
-    cached = read_cache_migrating(LLM_CACHE_DIR, key, legacy, note)
-    if cached is not None:
-        return cached
 
-    out = {
-        "resolution_method": "llm_refscreen_declined",
-        "screen_verdict": "", "screen_classification": "unclear",
-        "record_type": "", "categories": [], "votes": [],
-        "llm_source": "", "llm_model": "", "llm_evidence": "",
-        "llm_reasoning": "", "llm_prompt": "", "llm_error": "",
-    }
+    # One cached answer per VOTE. A fresh vote is cached the moment it parses; a
+    # failed one is not — a transient provider failure must never freeze into a
+    # permanent non-answer, so an incomplete screen stays re-runnable while its
+    # successful votes are already paid for and kept.
+    votes = []
+    for _p, m, _e, eff in voters:
+        vote = _cached_vote(doi_r, study_r, cls_prompt, m, eff)
+        if vote is None:
+            vote = _classify_once(cls_prompt, m, eff)
+            if vote is not None:
+                write_cache(LLM_CACHE_DIR,
+                            _vote_key(doi_r, study_r, cls_prompt, m, eff), vote)
+        if vote is not None:
+            votes.append(vote)
 
-    out["llm_prompt"] = cls_prompt
-    votes = [v for v in (_classify_once(cls_prompt, m, eff)
-                         for _p, m, _e, eff in voters) if v]
-
-    # Keep the individual votes: the gate's decision is not reviewable without
-    # knowing who said what.
-    # The quote and the model ride along per vote: the evidence a reviewer reads is
-    # one line per voter, and neither `llm_evidence` nor a "+"-joined model string can
-    # be split back into whose quote was whose.
-    out["votes"] = [{k: v[k] for k in
-                     ("provider", "model", "classification", "confident", "categories",
-                      "evidence", "reasoning")}
-                    for v in votes]
-    out["llm_source"] = "+".join(v["provider"] for v in votes)
-    out["llm_model"]  = "+".join(v["model"] for v in votes)
-    out["llm_evidence"]  = format_screen_evidence(votes)
-    out["llm_reasoning"] = " | ".join(f"{v['provider']}: {v['reasoning']}" for v in votes)
-
-    # A missing vote is an API failure, not a verdict. Reporting it as a normal
-    # result would file the row as a screen outcome and corrupt the discard rate,
-    # and caching it would freeze one transient failure into a permanent one.
-    # Return uncached so a re-run can screen the row properly.
-    if len(votes) < 2:
-        answered = {v["provider"] for v in votes}
-        out["resolution_method"] = ("llm_refscreen_partial" if votes
-                                    else "llm_refscreen_failed")
-        out["llm_error"] = "classifier failed: " + ", ".join(
-            p for p, _, _, _ in voters if p not in answered)
-        return out
-
-    out["screen_verdict"] = screen_gate(votes)
-    out["record_type"]    = _screen_record_type(votes)
-    out["categories"]     = _screen_categories(votes)
-    labels = {v["classification"] for v in votes}
-    out["screen_classification"] = (out["record_type"] or
-                                    (labels.pop() if len(labels) == 1 else "unclear"))
-
-    write_cache(LLM_CACHE_DIR, key, out)
-    return out
+    return _screen_result_from_votes(cls_prompt, voters, votes)
 
 
 # The target-pick half of screen_references_with_llm's return value, before a

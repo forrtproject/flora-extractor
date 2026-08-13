@@ -1079,18 +1079,18 @@ def test_export_pile_still_writes_one_pile(con, pool, tmp_path):
 
 def test_the_gate_replayed_from_stored_rows_matches_the_live_votes():
     """`tier_decisions()` recomputes the gate so a stored outcome cannot disagree
-    with the votes — which only holds if the rows carry everything the gate reads.
-    The soft-discard branch reads `confidence`, so a replay that dropped it would
-    proceed where the live run discarded, silently and only on this shape."""
+    with the votes — which only holds if the rows carry everything the replay
+    reads. The G-unanimous gate reads classifications alone, but `confidence` must
+    still survive the round trip: the pre-PDF title-search rung is gated on both
+    voters qualifying AND confident, and only the rebuilt votes carry that."""
     from shared.llm_client import screen_gate
 
     voter1, voter2 = _voter_models()
-    # One confident "none" against an unconfident qualifying answer: the branch
-    # that exists ONLY because a voter declined to stand behind its answer.
+    # A lone confident "none" no longer discards: no single voter discards alone.
     live_votes = [{"classification": "none", "confident": True, "categories": []},
                   {"classification": "replication", "confident": False,
                    "categories": []}]
-    assert screen_gate(live_votes) == "discard"
+    assert screen_gate(live_votes) == "proceed"
 
     stored = [{"work_id": 11, "model": voter1, "verdict": "none",
                "confidence": "confident"},
@@ -1098,14 +1098,18 @@ def test_the_gate_replayed_from_stored_rows_matches_the_live_votes():
                "confidence": "unconfident"}]
     client = _decided_client("screen_expensive", "live", stored)
     replayed = tiers.tier_decisions(client, RELEASE, "screen_expensive")[11]
-    assert (replayed["outcome"], replayed["record_type"]) == ("discard", "replication")
+    assert (replayed["outcome"], replayed["record_type"]) == ("proceed", "replication")
+    # The confidence column is preserved on the rebuilt votes, per voter.
+    assert [v["confident"] for v in replayed["votes"]] == [True, False]
 
-    # The same votes, both stood behind, are a real split and proceed. Without the
-    # confidence column both cases would read as unconfident and both would
-    # discard, so this is the pair that pins the column down.
-    stood_behind = [dict(row, confidence="confident") for row in stored]
-    assert tiers._expensive_decision(stood_behind)["outcome"] == "proceed"
-    assert screen_gate([dict(v, confident=True) for v in live_votes]) == "proceed"
+    # Unanimous "none" is the one discard, at any confidence.
+    both_none = [{"work_id": 11, "model": voter1, "verdict": "none",
+                  "confidence": "confident"},
+                 {"work_id": 11, "model": voter2, "verdict": "none",
+                  "confidence": "unconfident"}]
+    assert tiers._expensive_decision(both_none)["outcome"] == "discard"
+    assert screen_gate([{"classification": "none", "confident": True},
+                        {"classification": "none", "confident": False}]) == "discard"
 
 
 def test_the_stored_verdict_read_carries_the_confidence_column():

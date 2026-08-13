@@ -219,34 +219,44 @@ carry it and the export still partitions them into `data/prescreen_discard.csv`.
 
 **Front-door screen** (`classify_replication()`, run by `screen --tier
 screen_expensive`): two voters — `SCREENING_MODEL_1`
-(default `gemini-3.5-flash-lite`) and `SCREENING_MODEL_2` (default `gpt-5.4-mini`);
+(default `deepseek/deepseek-v4-flash` at effort `low`; the effort is load-bearing —
+at `none` the same model discarded 7 settled positives) and `SCREENING_MODEL_2`
+(default `gpt-5.4-mini`);
 each id routes to its own provider through `provider_for()` — each answer the validated v3.2
 schema: `classification` ∈ {replication, reproduction, both, none, unclear}, boolean
 `confident`, `categories` (11-value enum), `evidence_quote`, `reasoning`. Prompt:
 `_CLASSIFY_PROMPT` in `shared/prompts.py`, now at v3.3 — v3.2 plus the
 partial-overlap rule (evaluated copy: `analysis/screening_eval/prompt_v33.txt`;
-evidence: `analysis/screening_eval/report_v33.md`; earlier generations are under
-`archive/analysis/screening_eval/`).
+evidence: `analysis/screening_eval/report_v33.md`; the DeepSeek voter eval and the
+gate change: `analysis/screening_eval/cheap_voter_2026-08.md`; earlier generations
+are under `archive/analysis/screening_eval/`).
 
-**The gate is `screen_gate()`, defined once** (G-softqual, 89% hard-negative discard,
-zero settled misses):
+**The gate is `screen_gate()`, defined once** (G-unanimous — no single voter
+discards alone; measured with the shipped pair at 1 settled miss and 86–90%
+hard-negative discard across two runs):
 
-- **discard** — all votes `none`, OR one confident `none` with every other vote
-  qualifying-or-unclear at `confident: false` → `not_a_replication`.
-- **proceed** — everything else, including confident splits. There is no
-  `screen_disagreement` terminal state any more (historical rows on disk are still
-  routed by the value in `schema.py`, `sanity_check.py` and `extract/export.py`).
+- **discard** — all votes `none`, at any confidence → `not_a_replication`.
+- **proceed** — everything else, including confident splits and a lone confident
+  `none`. There is no `screen_disagreement` terminal state any more (historical rows
+  on disk are still routed by the value in `schema.py`, `sanity_check.py` and
+  `extract/export.py`).
 - **no decision** — fewer than two votes: 1 vote → `target_pending` (re-run decides),
-  0 votes → `api_error`. Incomplete screens are never cached.
+  0 votes → `api_error`. An incomplete screen is never a verdict, but each vote that
+  did answer is cached on its own key (see below), so the re-run buys only the gap.
 
 On a pass, the screen's `record_type` (both voters agreeing wins; splits fall back to
 the first qualifying voter; `both` → replication) becomes `type` and overwrites
 `paper_type` (`filter_method = "screen"`); with no qualifying vote at all, Stage 2's
 values are kept and `type` stays empty. `screen_categories` (union of both voters) is
-written on every screened row. Voter models are folded into the classify cache key, so
-changing a voter or the prompt invalidates exactly those verdicts — and mints a new
-SCREENING GENERATION, which is what makes those works claimable again — and, once
-they are re-screened, what puts them back in the extract tier's worklist.
+written on every screened row. **The classify cache is one entry per VOTE**
+(`classifyvote_*`, keyed on the prompt version, that voter's `model@effort` and the
+prompt): swapping one voter re-buys exactly that voter's answers while the other's
+stay cache hits. Entries from the pair-keyed era are split on first read
+(`_cached_vote()` in `shared/llm_client.py` lifts a vote out of a joint entry for
+the model AT the effort the joint era ran, `_JOINT_ERA_EFFORTS`). A voter or prompt
+change still mints a new SCREENING GENERATION, which is what makes those works
+claimable again — and, once they are re-screened, what puts them back in the extract
+tier's worklist.
 
 The verdict reaches Stage 3 on the worklist row, in `SCREEN_COLS`:
 `screen_verdict`, `screen_record_type`, `screen_categories`, `screen_votes`,

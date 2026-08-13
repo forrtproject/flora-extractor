@@ -23,6 +23,21 @@ the command, pasteable from the project root, and what proves it worked.
 
 ## Open
 
+- [ ] **Re-screen every screened work under the new voter pair and gate** (voter 1
+      is now `deepseek/deepseek-v4-flash@low`, the gate G-unanimous; evidence:
+      `analysis/screening_eval/cheap_voter_2026-08.md`). The voter swap minted a new
+      screening generation, so every screened work is claimable again and **the
+      extract tier's worklist offers nothing until this runs** — it holds back every
+      work without a current-generation screen verdict, which makes this a
+      prerequisite of the issue #198 re-extract below.
+      `.venv/bin/python -m filter.engine screen --tier screen_expensive --run`
+      (against whichever release the campaign names — see the release note in the
+      Done entry below). Expect roughly $3–5 of DeepSeek spend for ~10k works
+      (halved off-peak outside 01:00–04:00 and 06:00–10:00 UTC from 2026-08-16); the
+      gpt-5.4-mini side re-reads the joint-era cache entries and costs nothing.
+      Done when `filter.engine status` shows the screen tier settled for the release
+      and the extract worklist is non-empty again.
+
 - [ ] **Re-run the OSF projects backfill** (issue #196). The nodes fallback is
       committed and reaches nothing yet: the 2026-08-13 run stopped on its own circuit
       breaker after 25 consecutive transient failures, having recovered 0 of 1,699

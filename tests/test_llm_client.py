@@ -80,6 +80,8 @@ def _screen(monkeypatch, tmp_path, gemini_ok: bool, voter2_ok: bool,
     """Run screen_references_with_llm with each voter either answering or failing."""
     monkeypatch.setattr(llm, "LLM_CACHE_DIR", tmp_path)
     monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+    monkeypatch.setattr(llm, "SCREENING_MODEL_1", "gemini-3.5-flash-lite")
+    monkeypatch.setattr(llm, "SCREENING_EFFORT_1", "minimal")
     monkeypatch.setattr(llm, "SCREENING_MODEL_2", "mistralai/ministral-14b-2512")
     vote = vote or _v()
 
@@ -107,21 +109,21 @@ def _screen(monkeypatch, tmp_path, gemini_ok: bool, voter2_ok: bool,
     return llm.screen_references_with_llm("10.1/x", "Title", "Abstract", refs or [])
 
 
-# ── screen_gate: G-softqual, mirroring analysis/screening_eval/gate_sweep_v32.py ──
+# ── screen_gate: G-unanimous — no single voter discards alone ─────────────────
 
 @pytest.mark.parametrize("votes,expected", [
     # Both "none", at any confidence → discard.
     ([_v("none", True),  _v("none", True)],  "discard"),
     ([_v("none", False), _v("none", False)], "discard"),
     ([_v("none", True),  _v("none", False)], "discard"),
-    # One confident "none" + an unconfident partner → discard (the softqual clause).
-    ([_v("none", True),  _v("unclear", False)],     "discard"),
-    ([_v("none", True),  _v("replication", False)], "discard"),
-    ([_v("unclear", False), _v("none", True)],      "discard"),
-    # A confident split is a real disagreement — it proceeds.
+    # One "none" — however confident — against any other answer proceeds. The
+    # G-softqual clause that discarded over an unconfident partner leaned on the
+    # confident voter's calibration, a per-model property a swap silently changes.
+    ([_v("none", True),  _v("unclear", False)],     "proceed"),
+    ([_v("none", True),  _v("replication", False)], "proceed"),
+    ([_v("unclear", False), _v("none", True)],      "proceed"),
     ([_v("none", True),  _v("replication", True)], "proceed"),
     ([_v("none", True),  _v("unclear", True)],     "proceed"),
-    # No confident "none" at all → proceed.
     ([_v("none", False), _v("replication", False)], "proceed"),
     ([_v("replication", True), _v("reproduction", True)], "proceed"),
     ([_v("unclear", False), _v("unclear", False)],  "proceed"),
@@ -183,6 +185,7 @@ def test_a_trailing_comma_still_parses():
 def test_the_voter_id_decides_which_provider_is_called(monkeypatch, voter_id, provider, other):
     """A slash in the voter id means an OpenRouter model; without one it is an
     OpenAI model. The wrong provider must never see the call."""
+    monkeypatch.setattr(llm, "SCREENING_MODEL_1", "gemini-3.5-flash-lite")
     monkeypatch.setattr(llm, "SCREENING_MODEL_2", voter_id)
     seen: dict = {}
 
@@ -213,8 +216,9 @@ def test_screen_attributes_each_vote_to_its_model(monkeypatch, tmp_path):
     assert calls == ["mistralai/ministral-14b-2512"]
     assert [v["provider"] for v in out["votes"]] == ["gemini", "openrouter"]
     assert out["llm_source"] == "gemini+openrouter"
-    assert out["llm_model"] == f"{llm.SCREENING_MODEL_1}+mistralai/ministral-14b-2512"
-    assert list(tmp_path.glob("classify_*.json"))   # a real verdict is cached
+    assert out["llm_model"] == "gemini-3.5-flash-lite+mistralai/ministral-14b-2512"
+    # Each VOTE is cached on its own key; the combined verdict is derived, not stored.
+    assert len(list(tmp_path.glob("classifyvote_*.json"))) == 2
 
 
 @pytest.mark.parametrize("gemini_ok,method,votes,model", [
@@ -234,8 +238,10 @@ def test_an_incomplete_screen_is_reported_not_cached(monkeypatch, tmp_path,
     if not gemini_ok:
         assert "gemini" in out["llm_error"]
     # Only the model that actually answered is named.
-    assert out["llm_model"] == (llm.SCREENING_MODEL_1 if model else "")
-    assert not list(tmp_path.glob("classify_*.json"))  # uncached: a retry must succeed
+    assert out["llm_model"] == ("gemini-3.5-flash-lite" if model else "")
+    # The incomplete SCREEN is not a verdict and nothing stores one — but the vote
+    # that did answer is already paid for and kept, so the retry buys only the gap.
+    assert len(list(tmp_path.glob("classifyvote_*.json"))) == votes
 
 
 @pytest.mark.parametrize("target_picked", [True, False],
@@ -282,6 +288,8 @@ def test_the_row_names_whoever_actually_decided_it(monkeypatch, tmp_path, target
 def _two_votes(monkeypatch, tmp_path, v1, v2):
     monkeypatch.setattr(llm, "LLM_CACHE_DIR", tmp_path)
     monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+    monkeypatch.setattr(llm, "SCREENING_MODEL_1", "gemini-3.5-flash-lite")
+    monkeypatch.setattr(llm, "SCREENING_EFFORT_1", "minimal")
     monkeypatch.setattr(llm, "SCREENING_MODEL_2", "mistralai/ministral-14b-2512")
     monkeypatch.setattr(llm, "call_gemini", lambda p, model=None, **kw: (dict(v1), None))
     monkeypatch.setattr(llm, "call_openrouter", lambda p, model="", **kw: (dict(v2), None))
@@ -326,6 +334,8 @@ def _classify(monkeypatch, tmp_path, calls: list, vote=None,
     pass the declared pair's voter 2 instead."""
     monkeypatch.setattr(llm, "LLM_CACHE_DIR", tmp_path)
     monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+    monkeypatch.setattr(llm, "SCREENING_MODEL_1", "gemini-3.5-flash-lite")
+    monkeypatch.setattr(llm, "SCREENING_EFFORT_1", "minimal")
     monkeypatch.setattr(llm, "SCREENING_MODEL_2", model_2)
     vote = vote or _v()
 
@@ -348,7 +358,7 @@ def test_classification_is_callable_without_the_target_pick(monkeypatch, tmp_pat
     assert out["screen_verdict"] == "proceed" and out["record_type"] == "replication"
     assert [c[0] for c in calls] == ["gemini", "openrouter"]   # two votes, nothing else
     assert "resolved" not in out                                # no target fields
-    assert list(tmp_path.glob("classify_*.json"))
+    assert list(tmp_path.glob("classifyvote_*.json"))
 
 
 def test_a_threaded_verdict_is_not_re_voted(monkeypatch, tmp_path):
@@ -761,27 +771,22 @@ def test_the_linking_key_format_is_unchanged():
 
 
 def test_the_screen_key_names_each_voters_own_effort(monkeypatch, tmp_path):
-    """The two voters were evaluated at different rungs, so each key component names
-    the effort ITS voter was called with — not one value stamped on the pair."""
+    """Each vote's key names the effort ITS voter was called with and nothing about
+    the other voter — which is what lets a swapped voter re-buy only its own side."""
     calls: list = []
     _classify(monkeypatch, tmp_path, calls)
     llm.classify_replication("10.1/x", "Title", "Abstract")
 
-    voters = "+".join(llm.cache_model_id(m, eff)
-                      for _, m, _, eff in llm.screen_voters())
-    assert (llm.SCREENING_EFFORT_1, llm.SCREENING_EFFORT_2) == ("minimal", "low")
-    assert voters.endswith("@effort=low") and "@effort=minimal+" in voters
-    expected = llm.content_key("classify", "10.1/x",
-                               llm.prompt_version("build_classify_prompt"),
-                               voters,
-                               llm.build_classify_prompt("Title", "Abstract"))
-    assert [f.stem for f in tmp_path.glob("classify_*.json")] == [expected]
+    prompt = llm.build_classify_prompt("Title", "Abstract")
+    expected = {llm._vote_key("10.1/x", "Title", prompt, m, eff)
+                for _p, m, _e, eff in llm.screen_voters()}
+    assert {f.stem for f in tmp_path.glob("classifyvote_*.json")} == expected
+    assert len(expected) == 2
 
 
-def test_the_gemini_voter_is_sent_minimal_rather_than_left_to_the_default(monkeypatch):
-    """Voter 1 ran at the model's own default, which today IS minimal. Sending it
-    explicitly is what stops a changed provider default from moving the voter without
-    moving the key."""
+def test_a_gemini_voter_is_sent_its_effort_rather_than_left_to_the_default(monkeypatch):
+    """Sending the effort explicitly is what stops a changed provider default from
+    moving a voter without moving its key."""
     monkeypatch.setattr(llm, "GEMINI_API_KEYS", ["k1"])
     monkeypatch.setattr(llm, "GEMINI_USE_FLEX", False)
     posts: list = []
@@ -789,77 +794,126 @@ def test_the_gemini_voter_is_sent_minimal_rather_than_left_to_the_default(monkey
                         lambda url, json=None, timeout=None: (posts.append(dict(json)),
                                                               _gemini_ok())[1])
 
-    _p, model, _e, effort = llm.screen_voters()[0]
-    llm._classify_once("prompt", model, effort)
+    llm._classify_once("prompt", "gemini-3.5-flash-lite", "minimal")
     assert posts[0]["generationConfig"]["thinkingConfig"]["thinkingLevel"] == "minimal"
 
 
-# ── Declared cache equivalences (issue #171) ─────────────────────────────────
-# Keys stay strict by default; a maintainer may register a legacy key that names the
-# same computation. The registered one is the classify key's old voter component,
-# whose "medium" label was never sent to any provider.
+def test_the_production_voter_pair_is_the_evaluated_configuration():
+    """The constants pin what the screen was EVALUATED at (2026-08-13 eval: DeepSeek
+    at effort "none" discarded 7 settled positives, at "low" it matched the incumbent
+    — the effort is load-bearing, not a tunable)."""
+    assert llm.SCREENING_MODEL_1 == "deepseek/deepseek-v4-flash"
+    assert llm.SCREENING_MODEL_2 == "gpt-5.4-mini"
+    assert (llm.SCREENING_EFFORT_1, llm.SCREENING_EFFORT_2) == ("low", "low")
+    assert [p for p, _m, _e, _eff in llm.screen_voters()] == ["openrouter", "openai"]
 
-def _classify_key(voter_component: str, prompt: str) -> str:
+
+# ── Joint-era classify entries are split, not re-bought ──────────────────────
+# The old scheme cached one entry per PAIR. Those entries hold both voters' full
+# votes, so a per-vote read lifts its voter's vote out rather than re-paying.
+
+def _joint_key(pair_id: str, prompt: str) -> str:
     return llm.content_key("classify", "10.1/x",
                            llm.prompt_version("build_classify_prompt"),
-                           voter_component, prompt)
+                           pair_id, prompt)
 
 
-def test_a_declared_legacy_key_is_migrated_onto_the_current_key(monkeypatch, tmp_path):
-    """An entry under the reviewed legacy key answers the call, is re-filed under the
-    current key with provenance, and is left where it is for other checkouts.
+def _joint_entry() -> dict:
+    votes = [{"provider": "gemini", "model": "gemini-3.5-flash-lite",
+              "classification": "replication", "confident": True,
+              "categories": ["clearly_declared"], "evidence": "q", "reasoning": "r"},
+             {"provider": "openai", "model": "gpt-5.4-mini",
+              "classification": "replication", "confident": True,
+              "categories": ["clearly_declared"], "evidence": "q", "reasoning": "r"}]
+    return dict(_VERDICT_YES, votes=votes)
 
-    Screened by the pair the equivalence is declared for — it is offered to no other."""
+
+def test_a_joint_entry_answers_both_voters_without_a_call(monkeypatch, tmp_path):
+    """Both votes come out of the pair-keyed entry: no call, each vote re-filed on
+    its own key with provenance, the joint file left for other checkouts."""
     calls: list = []
     _classify(monkeypatch, tmp_path, calls, model_2="gpt-5.4-mini")
-    monkeypatch.setattr(llm, "_CLASSIFY_LEGACY_KEY_PARTS", ("legacy-voters",))
-    legacy = _classify_key("legacy-voters", llm.build_classify_prompt("Title", "Abstract"))
-    llm.write_cache(tmp_path, legacy, dict(_VERDICT_YES))
+    monkeypatch.setattr(llm, "SCREENING_EFFORT_2", "low")
+    prompt = llm.build_classify_prompt("Title", "Abstract")
+    joint = _joint_key(llm._JOINT_CLASSIFY_VOTER_IDS[0], prompt)
+    llm.write_cache(tmp_path, joint, _joint_entry())
 
     out = llm.classify_replication("10.1/x", "Title", "Abstract")
 
     assert calls == []                       # nothing was re-asked
     assert out["screen_verdict"] == "proceed"
-    assert out["cache_migrated"]["from_key"] == legacy
-    assert out["cache_migrated"]["prompt_version"] == \
-        llm.prompt_version("build_classify_prompt")
-    assert "@effort=minimal" in out["cache_migrated"]["voters"]
-    # The legacy file is untouched and the answer is now also under the current key.
-    assert llm.read_cache(tmp_path, legacy) == _VERDICT_YES
-    assert len(list(tmp_path.glob("classify_*.json"))) == 2
+    per_vote = sorted(tmp_path.glob("classifyvote_*.json"))
+    assert len(per_vote) == 2
+    for f in per_vote:
+        note = llm.read_cache(tmp_path, f.stem)["cache_migrated"]
+        assert note["from_joint_pair"] == llm._JOINT_CLASSIFY_VOTER_IDS[0]
+    assert llm.read_cache(tmp_path, joint) == _joint_entry()   # untouched
 
 
-def test_the_equivalence_does_not_fire_across_a_prompt_change(monkeypatch, tmp_path):
-    """Only the declared component is substituted; every other component is shared
-    with the current key, so an entry from a different prompt cannot be claimed."""
+def test_the_split_does_not_fire_across_a_prompt_change(monkeypatch, tmp_path):
+    """The joint key is rebuilt from the CURRENT prompt, so an entry from a
+    different prompt cannot be claimed."""
     calls: list = []
     _classify(monkeypatch, tmp_path, calls)
-    monkeypatch.setattr(llm, "_CLASSIFY_LEGACY_KEY_PARTS", ("legacy-voters",))
-    stale = _classify_key("legacy-voters",
-                          llm.build_classify_prompt("Other title", "Other abstract"))
-    llm.write_cache(tmp_path, stale, dict(_VERDICT_YES))
+    stale = _joint_key(llm._JOINT_CLASSIFY_VOTER_IDS[0],
+                       llm.build_classify_prompt("Other title", "Other abstract"))
+    llm.write_cache(tmp_path, stale, _joint_entry())
 
     llm.classify_replication("10.1/x", "Title", "Abstract")
     assert [c[0] for c in calls] == ["gemini", "openrouter"]   # it voted for itself
 
 
-def test_the_registered_equivalences_are_the_two_older_labels(monkeypatch, tmp_path):
-    """Both declared parts name minimal+low under an older label: the unlabelled pair
-    the entries on disk are under, and the "@effort=medium" the key briefly derived
-    from a model id and never sent. Each must be a live legacy key, not a comment."""
-    assert llm._CLASSIFY_LEGACY_KEY_PARTS == (
+def test_the_split_does_not_fire_at_a_new_effort(monkeypatch, tmp_path):
+    """A joint vote is lifted only for the model AT the effort the joint era ran
+    (`_JOINT_ERA_EFFORTS`) — the same model asked to think differently is a
+    different computation and pays."""
+    calls: list = []
+    _classify(monkeypatch, tmp_path, calls, model_2="gpt-5.4-mini")
+    monkeypatch.setattr(llm, "SCREENING_EFFORT_2", "medium")
+    prompt = llm.build_classify_prompt("Title", "Abstract")
+    llm.write_cache(tmp_path, _joint_key(llm._JOINT_CLASSIFY_VOTER_IDS[0], prompt),
+                    _joint_entry())
+
+    llm.classify_replication("10.1/x", "Title", "Abstract")
+    assert "openai" in [c[0] for c in calls]       # the gpt vote was re-bought
+
+
+def test_a_swapped_voter_re_buys_only_its_own_side(monkeypatch, tmp_path):
+    """The point of per-vote keys: swapping voter 1 re-buys voter 1's answers while
+    the other voter's ride over from the joint era untouched."""
+    calls: list = []
+    _classify(monkeypatch, tmp_path, calls, model_2="gpt-5.4-mini")
+    monkeypatch.setattr(llm, "SCREENING_MODEL_1", "some/new-voter")
+    monkeypatch.setattr(llm, "SCREENING_EFFORT_1", "low")
+    monkeypatch.setattr(llm, "SCREENING_EFFORT_2", "low")
+    prompt = llm.build_classify_prompt("Title", "Abstract")
+    llm.write_cache(tmp_path, _joint_key(llm._JOINT_CLASSIFY_VOTER_IDS[0], prompt),
+                    _joint_entry())
+
+    out = llm.classify_replication("10.1/x", "Title", "Abstract")
+
+    assert [c[0] for c in calls] == ["openrouter"]  # one call: the new voter only
+    assert out["screen_verdict"] == "proceed"
+    assert {v["model"] for v in out["votes"]} == {"some/new-voter", "gpt-5.4-mini"}
+
+
+def test_the_registered_joint_pairs_are_all_live(monkeypatch, tmp_path):
+    """Every declared pair id must be a readable source, not a comment."""
+    assert llm._JOINT_CLASSIFY_VOTER_IDS == (
+        "gemini-3.5-flash-lite@effort=minimal+gpt-5.4-mini@effort=low",
         "gemini-3.5-flash-lite+gpt-5.4-mini",
         "gemini-3.5-flash-lite+gpt-5.4-mini@effort=medium")
 
     calls: list = []
     _classify(monkeypatch, tmp_path, calls, model_2="gpt-5.4-mini")
+    monkeypatch.setattr(llm, "SCREENING_EFFORT_2", "low")
     prompt = llm.build_classify_prompt("Title", "Abstract")
-    for part in llm._CLASSIFY_LEGACY_KEY_PARTS:
-        for f in tmp_path.glob("classify_*.json"):
+    for pair_id in llm._JOINT_CLASSIFY_VOTER_IDS:
+        for f in tmp_path.glob("classify*.json"):
             f.unlink()
-        llm.write_cache(tmp_path, _classify_key(part, prompt), dict(_VERDICT_YES))
+        llm.write_cache(tmp_path, _joint_key(pair_id, prompt), _joint_entry())
         out = llm.classify_replication("10.1/x", "Title", "Abstract")
-        assert out["cache_migrated"]["from_key"].startswith("classify_")
+        assert out["screen_verdict"] == "proceed"
         assert calls == []
 
 
@@ -926,15 +980,16 @@ def test_reference_pick_carries_the_study_numbers(monkeypatch, tmp_path):
 
 
 def test_classify_key_follows_the_voter_models(monkeypatch, tmp_path):
-    """PR #97's precedent: the voter pair is part of the verdict, so a swapped voter
-    must not read back the previous pair's answer."""
+    """PR #97's precedent: a vote belongs to the model that cast it, so a swapped
+    voter must not read back the previous voter's answer — while the unchanged
+    voter's vote is a cache hit, not a re-vote."""
     calls: list = []
     _classify(monkeypatch, tmp_path, calls)
     llm.classify_replication("10.1/x", "Title", "Abstract")
     assert len(calls) == 2
     monkeypatch.setattr(llm, "SCREENING_MODEL_2", "some/other-voter")
     llm.classify_replication("10.1/x", "Title", "Abstract")
-    assert len(calls) == 4                                   # re-voted, not replayed
+    assert len(calls) == 3                    # only the swapped slot re-voted
 
 
 def test_classify_key_follows_the_abstract(monkeypatch, tmp_path):
@@ -1589,36 +1644,25 @@ def test_an_empty_reference_list_is_still_an_answer(monkeypatch):
     assert llm.call_gemini_with_pdf("prompt", b"%PDF") == ({"references": []}, "")
 
 
-# ── The classify cache equivalence names ONE voter pair ──────────────────────
+# ── The read-only cache door sees split votes too ────────────────────────────
 
-def _legacy_keys(monkeypatch, model_2: str, effort_2: str) -> list[str]:
-    monkeypatch.setattr(llm, "SCREENING_MODEL_2", model_2)
-    monkeypatch.setattr(llm, "SCREENING_EFFORT_2", effort_2)
-    return llm._classify_keys("10.1/r", "", "an abstract")[1]
-
-
-def test_the_classify_equivalence_is_offered_only_to_the_pair_it_names(monkeypatch):
-    """Declared equivalences (issue #171) are a statement about one computation. Held
-    unconditionally, a re-screen at a new voter or effort would be served every legacy
-    entry from the OLD pair and re-file it under the new pair's key — a rescreen that
-    completes instantly, costs nothing and changes no verdict."""
-    assert llm._CLASSIFY_EQUIVALENT_VOTER_ID == ("gemini-3.5-flash-lite@effort=minimal"
-                                                 "+gpt-5.4-mini@effort=low")
-
-    offered = _legacy_keys(monkeypatch, "gpt-5.4-mini", "low")
-    assert len(offered) == len(llm._CLASSIFY_LEGACY_KEY_PARTS)
-
-    assert _legacy_keys(monkeypatch, "gpt-5.4-mini", "medium") == []     # effort moved
-    assert _legacy_keys(monkeypatch, "mistralai/ministral-14b-2512", "low") == []  # model moved
-
-
-def test_a_changed_voter_pair_does_not_read_the_old_pairs_verdict(monkeypatch, tmp_path):
-    """The same thing end to end: what the cache actually hands back."""
+def test_cached_classification_reads_a_joint_entry_and_stays_strict(monkeypatch, tmp_path):
+    """The read-only door derives the verdict from per-vote entries, lifting them
+    out of a joint-era entry when that is what disk holds — and goes strict the
+    moment a voter's effort moves off the joint era's configuration."""
     monkeypatch.setattr(llm, "LLM_CACHE_DIR", tmp_path)
-    legacy = _legacy_keys(monkeypatch, "gpt-5.4-mini", "low")
-    write_cache(tmp_path, legacy[0], {"screen_verdict": "discard"})
+    monkeypatch.setattr(llm, "SCREENING_MODEL_1", "gemini-3.5-flash-lite")
+    monkeypatch.setattr(llm, "SCREENING_EFFORT_1", "minimal")
+    monkeypatch.setattr(llm, "SCREENING_MODEL_2", "gpt-5.4-mini")
+    monkeypatch.setattr(llm, "SCREENING_EFFORT_2", "low")
+    prompt = llm.build_classify_prompt("", "an abstract")
+    joint = llm.content_key("classify", "10.1/r",
+                            llm.prompt_version("build_classify_prompt"),
+                            llm._JOINT_CLASSIFY_VOTER_IDS[0], prompt)
+    write_cache(tmp_path, joint, _joint_entry())
 
-    assert llm.cached_classification("10.1/r", "", "an abstract")["screen_verdict"] == "discard"
+    out = llm.cached_classification("10.1/r", "", "an abstract")
+    assert out is not None and out["screen_verdict"] == "proceed"
 
     monkeypatch.setattr(llm, "SCREENING_EFFORT_2", "medium")
     assert llm.cached_classification("10.1/r", "", "an abstract") is None
