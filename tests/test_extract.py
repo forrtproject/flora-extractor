@@ -889,6 +889,24 @@ class TestMakePairId:
         assert (make_pair_id("10.1/rep", "", "A5023888391", "T")
                 == make_pair_id("10.1/rep", "", "", "T"))
 
+    def test_two_doi_less_replications_of_one_original_are_distinct(self):
+        """The mirror of the doi_o collision: without the replication-side fallback,
+        two distinct DOI-less papers replicating the same original both hash to
+        "|10.2/orig" and the validation import silently drops one of them."""
+        a = make_pair_id("", "10.2/orig", "", "", "W1")
+        b = make_pair_id("", "10.2/orig", "", "", "W2")
+        assert a != b
+        collide = make_pair_id("", "10.2/orig")
+        assert a != collide
+        assert b != collide
+
+    def test_doi_r_row_pair_id_is_unchanged_by_the_new_fallback_arguments(self):
+        """A row that carries a doi_r is unaffected by oa_work_id_r/title_r: the
+        replication side of the hash is doi_r regardless, so a pair_id already
+        imported into the validation DB for a DOI-bearing row must not move."""
+        assert (make_pair_id("10.1/rep", "10.2/orig", "", "", "W1", "Some Title")
+                == make_pair_id("10.1/rep", "10.2/orig"))
+
 
 # ── Multi-original pair_id uniqueness + truthful link_method ──────────────────
 

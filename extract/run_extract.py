@@ -475,7 +475,9 @@ def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
     doi_r_clean = clean_doi(str(filter_row.get("doi_r", "")))
     doi_o_clean = clean_doi(link.get("resolved_doi_o", "") or "")
     row.update({
-        "pair_id":         make_pair_id(doi_r_clean, doi_o_clean),
+        "pair_id":         make_pair_id(doi_r_clean, doi_o_clean, "", "",
+                                        str(filter_row.get("openalex_id_r", "") or ""),
+                                        str(filter_row.get("title_r", "") or "")),
         "doi_o":           doi_o_clean,
         "title_o":         str(link.get("resolved_title_o", "") or ""),
         "year_o":          year_str(link.get("resolved_year_o")),
@@ -521,7 +523,9 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
     row.update({
         "pair_id":         make_pair_id(doi_r_clean, doi_o_clean,
                                         str(orig.get("openalex_id", "") or ""),
-                                        title_o),
+                                        title_o,
+                                        str(filter_row.get("openalex_id_r", "") or ""),
+                                        str(filter_row.get("title_r", "") or "")),
         "doi_o":           doi_o_clean,
         # The record's OWN work id, kept rather than used for the pair_id and thrown
         # away. An original that came from an OpenAlex reference record has an
@@ -572,7 +576,9 @@ def _empty_row(filter_row: pd.Series, match_type: str, match_conf: str,
                     _outcome_without_coding(link_method, {"llm_error": error}) or {},
                     screen)
     row.update({
-        "pair_id": make_pair_id(doi_r_clean, ""),
+        "pair_id": make_pair_id(doi_r_clean, "", "", "",
+                                str(filter_row.get("openalex_id_r", "") or ""),
+                                str(filter_row.get("title_r", "") or "")),
         "doi_o": "", "title_o": "", "year_o": "", "authors_o": "", "ref_o": "",
         "bibtex_ref_o": "",
         "link_method": link_method, "link_evidence": error,
@@ -1431,7 +1437,10 @@ def _guard_original_link(row: dict) -> dict:
                 return _reject(f"recovered DOI is a self-link — {reason}")
             log.info("[%s] recovered doi_o=%s from title search", doi_r, found)
             row["doi_o"] = found
-            row["pair_id"] = make_pair_id(doi_r, found)
+            row["pair_id"] = make_pair_id(doi_r, found, "", "",
+                                          str(row.get("oa_work_id_r", "")
+                                              or row.get("openalex_id_r", "") or ""),
+                                          title_r)
             # The work id the row arrived with came from the REFERENCE RECORD, and the
             # DOI just recovered came from a title search of that record's title. They
             # need not describe the same work, and a row exposing a DOI for one and an
@@ -1513,7 +1522,11 @@ def _verify_row(row: dict) -> dict:
         row["doi_o_verification"] = v["doi_o_verification"]
     if v["doi_o"] != old_doi:
         row["doi_o"]   = v["doi_o"]
-        row["pair_id"] = make_pair_id(clean_doi(str(row.get("doi_r", ""))), v["doi_o"])
+        row["pair_id"] = make_pair_id(clean_doi(str(row.get("doi_r", ""))), v["doi_o"],
+                                      "", "",
+                                      str(row.get("oa_work_id_r", "")
+                                          or row.get("openalex_id_r", "") or ""),
+                                      str(row.get("title_r", "") or ""))
         if v["doi_o"]:
             # The old work id was resolved from the old DOI (or from a title search
             # that produced it) and may describe a different work; _fill_work_ids
@@ -1542,7 +1555,11 @@ def _verify_row(row: dict) -> dict:
         # has just been shown to describe a different paper — so it goes too, and the
         # pair_id keys on the DOI pair alone rather than on a discredited work id.
         row["oa_work_id_o"] = ""
-        row["pair_id"] = make_pair_id(clean_doi(str(row.get("doi_r", ""))), "")
+        row["pair_id"] = make_pair_id(clean_doi(str(row.get("doi_r", ""))), "",
+                                      "", "",
+                                      str(row.get("oa_work_id_r", "")
+                                          or row.get("openalex_id_r", "") or ""),
+                                      str(row.get("title_r", "") or ""))
         row["link_confidence"] = "low"
     if v["evidence_note"]:
         existing = str(row.get("link_evidence", "") or "")

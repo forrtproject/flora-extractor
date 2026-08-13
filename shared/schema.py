@@ -724,7 +724,8 @@ def assert_no_float_years(row: dict) -> None:
 
 
 def make_pair_id(doi_r: str, doi_o: str, oa_work_id_o: str = "",
-                 title_o: str = "") -> str:
+                 title_o: str = "", oa_work_id_r: str = "",
+                 title_r: str = "") -> str:
     """MD5 of the replication-original pair. Full 32-char hex string.
 
     Some originals genuinely have no registered DOI (books, chapters, pre-DOI-era
@@ -745,19 +746,36 @@ def make_pair_id(doi_r: str, doi_o: str, oa_work_id_o: str = "",
     original, and rows for different replications already differ by doi_r. Only
     several DOI-less originals of ONE replication need disambiguating, and that is
     exactly the multi-original case.
+
+    The replication side gets the identical fallback, for the identical reason:
+    doi_r is blank for every DOI-less replication (a thesis, a conference paper, a
+    preprint that never registered one), and every one of them used to hash to the
+    same "" — so two distinct DOI-less replications of the same original collided
+    on one pair_id and the import kept only one. *oa_work_id_r* and *title_r* fall
+    back in the same order as *oa_work_id_o*/*title_o*, and as
+    `shared/row_key.py`'s doi → openalex id → title chain. Leaving both blank on a
+    row whose doi_r is also blank reproduces the pre-fallback "" component exactly,
+    which is what keeps a DOI-bearing row's pair_id — the vast majority of already
+    imported rows — untouched by this change.
     """
     import hashlib
     import re
     from shared.utils import bare_work_id
 
-    second = doi_o or ""
-    if not second:
-        work_id = bare_work_id(oa_work_id_o)
+    def _side(doi: str, oa_work_id: str, title: str) -> str:
+        doi = doi or ""
+        if doi:
+            return doi
+        work_id = bare_work_id(oa_work_id)
         if work_id:
-            second = f"oa:{work_id}"
-        elif str(title_o or "").strip():
-            second = "t:" + re.sub(r"\s+", " ", str(title_o).strip().lower())
-    return hashlib.md5(f"{doi_r}|{second}".encode()).hexdigest()
+            return f"oa:{work_id}"
+        if str(title or "").strip():
+            return "t:" + re.sub(r"\s+", " ", str(title).strip().lower())
+        return ""
+
+    first = _side(doi_r, oa_work_id_r, title_r)
+    second = _side(doi_o, oa_work_id_o, title_o)
+    return hashlib.md5(f"{first}|{second}".encode()).hexdigest()
 
 
 # ── Schema validation helper ──────────────────────────────────────────────────

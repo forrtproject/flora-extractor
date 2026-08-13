@@ -62,7 +62,9 @@ fallback hashes the TARGET RECORD's OpenAlex id, which is not on the row;
 (`_base_row` fills a blank `title_r` from `study_r`); and `screen_categories` is
 blank rather than copied on a row that reached no screen dict. They are stored.
 What IS copied from `input` at export is every FILTERED_COLS value the row did not
-change, which is the bulk of it.
+change, which is the bulk of it. `render_payload()`'s `_repair_pair_id()` is the one
+deliberate exception: a narrow, unambiguous repair of the replication-side fallback
+on payloads written before it existed, not a general recompute — see its docstring.
 
 **Claims and the lease.** One claim per batch of `EXTRACT_CLAIM_BATCH` works, with
 a `EXTRACT_CLAIM_TTL_MINUTES` lease renewed by a daemon heartbeat every third of it.
@@ -108,7 +110,7 @@ from shared.flora_skip import (VALIDATED_SKIP_NAME,
 from shared.llm_client import cache_model_id
 from shared.schema import (EXTRACTED_COLS, FILTERED_COLS, LINK_METHOD_VALUES,
                            PROVISIONAL_LINK_METHODS, RESOLVED_LINK_METHODS,
-                           SCREEN_COLS)
+                           SCREEN_COLS, make_pair_id)
 from shared.utils import clean_doi
 
 TIER_EXTRACT = "extract"
@@ -561,6 +563,41 @@ def _renamed_columns(stored: dict) -> dict:
     return row
 
 
+def _repair_pair_id(row: dict) -> None:
+    """Add the replication-side fallback to a `pair_id` frozen before it existed.
+
+    Every write path now calls `make_pair_id()` with `oa_work_id_r`/`title_r`, so a
+    result written today already carries the fallback (`shared/schema.py`). A
+    payload written before that fix hashed a blank `doi_r` as the literal "", so
+    two distinct DOI-less replications of the same original collided on one
+    `pair_id`. This repairs those stored payloads at render time, so the fix
+    reaches them without a re-extraction.
+
+    It cannot safely touch the doi_o side the same way: the single- and
+    multi-original writers differ in whether a blank `doi_o`'s own fallback
+    (`oa_work_id_o`/`title_o`) was used when the row was written, and that choice
+    is not recoverable from the row alone once both fields are populated — feeding
+    it in unconditionally would re-key a row the single-original writer
+    deliberately left alone (see `make_pair_id`'s docstring). So this only acts
+    when the doi_o side is unambiguous: `doi_o` present (the fallback fields are
+    irrelevant to the hash either way), or `doi_o`, `oa_work_id_o` and `title_o`
+    all blank (the second component is "" either way). Anything else is left for a
+    live re-extraction (`--redo`) to settle.
+    """
+    if row.get("doi_r"):
+        return
+    doi_o = row.get("doi_o", "") or ""
+    oa_work_id_o = row.get("oa_work_id_o", "") or ""
+    title_o = row.get("title_o", "") or ""
+    if not doi_o and (oa_work_id_o or title_o):
+        return
+    row["pair_id"] = make_pair_id(
+        clean_doi(str(row.get("doi_r", "") or "")), doi_o, oa_work_id_o, title_o,
+        str(row.get("oa_work_id_r", "") or row.get("openalex_id_r", "") or ""),
+        str(row.get("title_r", "") or ""),
+    )
+
+
 def render_payload(payload: dict) -> list[dict]:
     """A stored result payload back as its `EXTRACTED_COLS` rows.
 
@@ -570,7 +607,10 @@ def render_payload(payload: dict) -> list[dict]:
 
     Both halves of the payload go through `_renamed_columns`: the input row, and
     each target — a target carries a FILTERED_COLS value the run CHANGED, so a work
-    the screen retyped holds the paper type there and not in `input`.
+    the screen retyped holds the paper type there and not in `input`. `pair_id`
+    then goes through `_repair_pair_id`, the one deliberate exception to "nothing is
+    recomputed at export" (see the module docstring): a targeted repair for the
+    replication-side fallback, not a general recompute.
     """
     input_row = _renamed_columns(payload.get("input") or {})
     base = {col: str(input_row.get(col, "") or "") for col in INPUT_COLS
@@ -581,6 +621,7 @@ def render_payload(payload: dict) -> list[dict]:
         row = {col: "" for col in EXTRACTED_COLS}
         row.update(base)
         row.update({k: v for k, v in target.items() if k in EXTRACTED_COLS})
+        _repair_pair_id(row)
         rows.append(row)
     return rows
 
@@ -1378,11 +1419,16 @@ def supersede_targets(client: ClaimsClient, patches: dict[str, dict], *,
     from extract.export import latest_results
 
     results, _ = latest_results(client, mode=mode)
-    # pair_id → (work_id, target index). A work's targets are its payload's rows.
+    # pair_id → (work_id, target index). A work's targets are its payload's rows, in
+    # the same order `render_payload` renders them, so the index below is keyed off
+    # the RENDERED pair_id — the one the CSV and every audit patch actually carry —
+    # rather than the raw stored one. A payload written before `_repair_pair_id`
+    # existed still holds the legacy hash on disk; indexing on that would leave every
+    # such row unmatched the moment its patch arrives keyed by the repaired id.
     located: dict[str, tuple[int, int]] = {}
     for work, result in results.items():
-        for index, target in enumerate((result.get("payload") or {}).get("targets") or []):
-            pair = str(target.get("pair_id") or "")
+        for index, row in enumerate(render_payload(result.get("payload") or {})):
+            pair = str(row.get("pair_id") or "")
             if pair:
                 located.setdefault(pair, (int(work), index))
 

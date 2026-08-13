@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-08-13T01:28:01",
+  "updated_at": "2026-08-13T09:03:23",
   "filtered": {
     "available": true,
     "store": "/Users/lukaswallrich/Documents/Coding/flora-extractor/cache/engine/engine.duckdb",
@@ -13,10 +13,10 @@
     }
   },
   "extracted": {
-    "total": 2605,
+    "total": 2602,
     "target_pending_count": 0,
     "by_match_type": {
-      "single_original": 2312,
+      "single_original": 2309,
       "multiple_original": 293
     },
     "by_link_method": {
@@ -32,39 +32,39 @@
       "no_original_found": 0,
       "target_pending": 0,
       "api_error": 0,
-      "_other": 2386
+      "_other": 2383
     },
     "by_model": {
-      "gpt": 2373,
+      "gpt": 2374,
       "gemini": 193,
-      "none": 39
+      "none": 35
     },
     "by_outcome": {
-      "successful": 1024,
-      "failed": 505,
+      "successful": 1023,
+      "failed": 504,
       "mixed": 313,
       "descriptive only": 29,
       "statistically successful but flawed": 6,
       "uninformative": 6,
-      "cannot_be_determined": 696,
+      "cannot_be_determined": 695,
       "not_a_replication": 0,
       "pending": 0,
       "api_error": 0,
       "_other": 26
     },
     "by_doi_verification": {
-      "verified": 2595,
+      "verified": 2592,
       "corrected": 10
     },
     "by_type": {
-      "replication": 2566,
+      "replication": 2563,
       "reproduction": 33,
       "": 6
     },
     "by_outcome_replication": {
-      "successful": 1024,
-      "cannot_be_determined": 689,
-      "failed": 505,
+      "successful": 1023,
+      "cannot_be_determined": 688,
+      "failed": 504,
       "mixed": 313,
       "descriptive only": 29,
       "uninformative": 6,
@@ -85,10 +85,10 @@
     "by_year": {
       "2023": 223,
       "2025": 215,
-      "2024": 207,
+      "2024": 206,
       "2020": 198,
       "2021": 192,
-      "2018": 185,
+      "2018": 184,
       "2022": 180,
       "2019": 165,
       "2017": 119,
@@ -107,11 +107,11 @@
       "2009": 19,
       "2008": 18,
       "2001": 17,
-      "1985": 15,
       "2000": 15,
       "1986": 14,
       "1996": 14,
       "1994": 14,
+      "1985": 14,
       "1999": 14,
       "1997": 13,
       "2002": 13,

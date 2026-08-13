@@ -203,6 +203,38 @@ def test_the_csv_is_byte_identical_after_a_round_trip(tmp_path):
     assert round_tripped.read_bytes() == direct.read_bytes()
 
 
+# ── pair_id repair: the replication-side fallback reaching payloads written
+#    before it existed (see extract/tier.py's `_repair_pair_id`) ──────────────
+
+# Same doi_o, blank doi_r, distinct replication-side identities — the collision
+# render-time repair exists to separate. pair_id here is deliberately the
+# PRE-fallback md5("|10.1111/1467-6281.00073") for both, mimicking a stored
+# payload written before the fix.
+_LEGACY_A = {**_SINGLE, "doi_r": "", "pair_id": "b4f0a2d8b1c9e3f4a5d6c7b8e9f0a1b2",
+            "openalex_id_r": "https://openalex.org/W5000000001",
+            "oa_work_id_r": "W5000000001", "title_r": "DOI-less replication A"}
+_LEGACY_B = {**_SINGLE, "doi_r": "", "pair_id": "b4f0a2d8b1c9e3f4a5d6c7b8e9f0a1b2",
+            "openalex_id_r": "https://openalex.org/W5000000002",
+            "oa_work_id_r": "W5000000002", "title_r": "DOI-less replication B"}
+
+
+def test_a_stored_legacy_pair_id_is_repaired_at_render_for_a_blank_doi_r():
+    """Two payloads written under the old collision hash come back distinct once
+    rendered — the repair reaches already-stored verdicts without a re-extraction."""
+    rendered_a = render_payload(_payload([_row(_LEGACY_A)]))[0]
+    rendered_b = render_payload(_payload([_row(_LEGACY_B)]))[0]
+    assert rendered_a["pair_id"] != rendered_b["pair_id"]
+    assert rendered_a["pair_id"] != _LEGACY_A["pair_id"]
+    assert rendered_b["pair_id"] != _LEGACY_B["pair_id"]
+
+
+def test_a_doi_r_row_pair_id_is_untouched_by_the_repair():
+    """A row with a doi_r is not the repair's population: its stored pair_id must
+    round-trip exactly, which is what keeps already-imported rows stable."""
+    rendered = render_payload(_payload([_row(_SINGLE)]))[0]
+    assert rendered["pair_id"] == _SINGLE["pair_id"]
+
+
 def _write(path: Path, rows: list[dict]) -> None:
     with path.open("w", newline="", encoding="utf-8-sig") as handle:
         writer = csv.DictWriter(handle, fieldnames=EXTRACTED_COLS,
@@ -517,6 +549,25 @@ def test_a_correction_claims_writes_a_new_result_row_and_supersedes_the_old():
     assert written["payload"]["targets"][0]["doi_o"] == "10.9/right"
     client.supersede_verdict.assert_called_once_with("v-old", "v-new")
     client.release_claim.assert_called_once_with("c-fix", "complete")
+
+
+def test_a_correction_keyed_by_a_repaired_pair_id_reaches_the_stored_row():
+    """The stored payload for a blank-doi_r row still holds its pre-fallback pair_id
+    on disk — only render_payload repairs it. A correction from audit_dois.py is
+    keyed by the CSV's (repaired) pair_id, so supersede_targets must locate the
+    stored row by the same repaired id, not the raw one, or every such correction
+    reports unmatched and is silently never written."""
+    from extract.tier import supersede_targets
+
+    repaired_pair = render_payload(_payload([_row(_LEGACY_A)]))[0]["pair_id"]
+    assert repaired_pair != _LEGACY_A["pair_id"], "the fixture must need repair"
+    client = _correcting_client([_verdict(11, row_id="v-old", rows=[_row(_LEGACY_A)])])
+    report = supersede_targets(client, {repaired_pair: {"doi_o": "10.9/right"}},
+                               batch_label="audit-dois")
+
+    assert report == {"works": 1, "rows": 1, "unmatched": [], "claim": "c-fix"}
+    written = client.record_verdict.call_args[1]
+    assert written["payload"]["targets"][0]["doi_o"] == "10.9/right"
 
 
 def test_a_correction_naming_no_stored_row_is_reported_not_guessed():

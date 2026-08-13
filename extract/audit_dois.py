@@ -161,7 +161,10 @@ def audit_file(csv_path: Path,
 
         if v["doi_o"] != old_doi:
             df.at[idx, "doi_o"]    = v["doi_o"]
-            df.at[idx, "pair_id"]  = make_pair_id(clean_doi(str(row["doi_r"])), v["doi_o"])
+            df.at[idx, "pair_id"]  = make_pair_id(
+                clean_doi(str(row["doi_r"])), v["doi_o"], "", "",
+                str(row.get("oa_work_id_r", "") or row.get("openalex_id_r", "") or ""),
+                str(row.get("title_r", "") or ""))
             if v["doi_o"] and str(row.get("oa_work_id_o", "") or ""):
                 # The id was resolved from the DOI that just turned out to be wrong.
                 # This tool has no work-id refill pass, so clear it and say so — a
@@ -187,7 +190,10 @@ def audit_file(csv_path: Path,
             df.at[idx, "doi_o"]          = ""
             df.at[idx, "bibtex_ref_o"]   = ""
             df.at[idx, "oa_work_id_o"]   = ""
-            df.at[idx, "pair_id"]        = make_pair_id(clean_doi(str(row["doi_r"])), "")
+            df.at[idx, "pair_id"]        = make_pair_id(
+                clean_doi(str(row["doi_r"])), "", "", "",
+                str(row.get("oa_work_id_r", "") or row.get("openalex_id_r", "") or ""),
+                str(row.get("title_r", "") or ""))
             df.at[idx, "link_confidence"] = "low"
         if v["evidence_note"]:
             existing = str(row.get("link_evidence", "") or "")
