@@ -9,7 +9,7 @@ nothing to do with each other.
 import json
 from pathlib import Path
 
-from analysis.doi_duplicates import _agree, _canonical
+from analysis.doi_duplicates import _agree, _apply, _canonical
 from filter.engine.workids import load_aliases
 
 ALIASES = Path(__file__).resolve().parent.parent / "filter" / "spec" / "aliases.json"
@@ -50,6 +50,31 @@ class TestWhichCopyIsCanonical:
     def test_otherwise_the_lowest_work_id_wins(self):
         """Arbitrary, and deterministic — which is what the alias file needs."""
         assert _canonical([_work(9, "A study"), _work(4, "A study")])["work"] == 4
+
+
+class TestApplyAddsToWhatTheFileAlreadyHolds:
+    """The file carries the OSF-guid merges of issue #200 as well as these DOI ones."""
+
+    def _seed(self, tmp_path: Path) -> Path:
+        path = tmp_path / "aliases.json"
+        path.write_text(json.dumps(
+            {"version": 1, "aliases": {"W7070882364": "W2776696688"}}), encoding="utf-8")
+        return path
+
+    def test_an_entry_this_script_did_not_derive_survives(self, tmp_path):
+        path = self._seed(tmp_path)
+        added, total = _apply([("10.1/a", [_work(4, "A study"), _work(9, "A study")])],
+                              path)
+        assert (added, total) == (1, 2)
+        assert load_aliases(path) == {7070882364: 2776696688, 9: 4}
+
+    def test_a_group_the_file_contradicts_is_refused_whole(self, tmp_path):
+        """Merging it would chain: `resolve()` follows exactly one hop."""
+        path = self._seed(tmp_path)
+        added, total = _apply(
+            [("10.1/a", [_work(7070882364, "A study"), _work(9, "A study")])], path)
+        assert (added, total) == (0, 1)
+        assert load_aliases(path) == {7070882364: 2776696688}
 
 
 def test_the_shipped_alias_map_resolves_in_one_hop():

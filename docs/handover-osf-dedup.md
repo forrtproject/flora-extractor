@@ -61,8 +61,9 @@ as the dedup predicate.
 | Output | `filter/spec/aliases.json` | 3,205 entries already there |
 | Tests, if the canonical rule needs pinning | `tests/test_engine_workids.py` | `workids.resolve()` consumes aliases |
 
-`aliases.json` is `{"version": 1, "aliases": {"<superseded>": <canonical>}}` with bare
-integer work ids as JSON keys and values. JSON has no comments, so the provenance of a
+`aliases.json` is `{"version": 1, "aliases": {"<superseded>": <canonical>}}` with
+`W`-prefixed work-id strings as JSON keys and values (`"W123": "W456"`), and
+`alias_release()` is spelling-sensitive, so keep that spelling exactly. JSON has no comments, so the provenance of a
 batch of entries goes in the commit message — say which scan produced them, over which
 pool, and under which rule.
 

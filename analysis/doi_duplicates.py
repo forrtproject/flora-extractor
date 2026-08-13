@@ -36,8 +36,13 @@ DOI-less rows — are NOT merged here. Title is a last-resort identifier for a s
 reason (`shared/row_key.py`, issue #53): Reply/Commentary pairs and RRR stubs share
 titles without being one work. `--titles` reports them for a human to decide on.
 
+`--apply` ADDS these entries to `filter/spec/aliases.json`. The file carries entries
+derived elsewhere — the OSF-guid merges of issue #200 come from
+`analysis/build_osf_aliases.py` — so a group that would contradict an entry already
+there, or build a chain through one, is refused and reported rather than written over.
+
     .venv/bin/python -m analysis.doi_duplicates                 # report, the default
-    .venv/bin/python -m analysis.doi_duplicates --apply         # write aliases.json
+    .venv/bin/python -m analysis.doi_duplicates --apply         # add to aliases.json
     .venv/bin/python -m analysis.doi_duplicates --titles        # the DOI-less report
 
 Writing the file changes `alias_release`, which is an input to the routing release id,
@@ -54,6 +59,7 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
+from filter.engine.workids import load_aliases
 from shared.config import DATA_DIR, SNAPSHOT_POOL_DIR
 from shared.disambiguation import jaccard_similarity
 
@@ -141,30 +147,62 @@ def _report(groups: list[tuple[str, list[dict]]],
         print(f"\n  … {len(groups) - 10} more groups")
 
 
-def _apply(groups: list[tuple[str, list[dict]]]) -> int:
-    """Write the alias entries, replacing whatever the file held. Returns the count.
+def _merge(groups: list[tuple[str, list[dict]]],
+           existing: dict[int, int]) -> tuple[dict[int, int], dict[str, str]]:
+    """`(the entries to add, refused doi → reason)` for *groups* over *existing*.
 
-    Replacing rather than merging: the file's whole content is derived from the pool by
-    this script, so a second run over a re-scanned pool must not carry forward aliases
-    the pool no longer supports.
+    The file carries entries this script did not derive — the OSF-guid merges of issue
+    #200 come from `analysis/build_osf_aliases.py` — so every existing entry survives a
+    run and a group that cannot be added beside them is REFUSED rather than allowed to
+    overwrite one. A group is dropped whole, because `resolve()` follows exactly one hop
+    and a half-merged group leaves two ids for one work: the thing the file prevents.
     """
-    aliases: dict[str, str] = {}
-    for _, entries in groups:
-        canonical = _canonical(entries)
-        for entry in entries:
-            if entry is not canonical:
-                aliases[f"W{entry['work']}"] = f"W{canonical['work']}"
-    # `resolve()` follows exactly one hop, so a canonical id that is itself an alias
-    # would leave two ids for one work — the thing this is here to prevent. A work
-    # carries one DOI and the groups are one per DOI, so it cannot happen; assert it
-    # rather than trust it, because the file is written unread.
-    chained = set(aliases.values()) & set(aliases)
+    existing_values = set(existing.values())
+    aliases: dict[int, int] = {}
+    refused: dict[str, str] = {}
+    for doi, entries in groups:
+        target = _canonical(entries)["work"]
+        members = {e["work"] for e in entries} - {target}
+        reason = ""
+        if target in existing:
+            reason = f"canonical W{target} is already an alias of W{existing[target]}"
+        for old in sorted(members):
+            if old in existing and existing[old] != target:
+                reason = (f"W{old} is already an alias of W{existing[old]}, "
+                          f"not of W{target}")
+            elif old in existing_values:
+                reason = f"W{old} is already the canonical of another group"
+        if reason:
+            refused[doi] = reason
+            continue
+        aliases.update({old: target for old in members if existing.get(old) != target})
+    return aliases, refused
+
+
+def _apply(groups: list[tuple[str, list[dict]]], path: Path = ALIASES) -> tuple[int, int]:
+    """Add the derived entries to *path*. Returns `(entries added, file total)`."""
+    existing = load_aliases(path)
+    aliases, refused = _merge(groups, existing)
+    if refused:
+        print(f"\nrefused {len(refused)} group(s) that the file already contradicts:")
+        for doi, reason in list(refused.items())[:5]:
+            print(f"  {doi}: {reason}")
+        if len(refused) > 5:
+            print(f"  … {len(refused) - 5} more")
+
+    merged = {**existing, **aliases}
+    self_alias = {k for k, v in merged.items() if k == v}
+    if self_alias:
+        raise AssertionError(f"self-alias: {sorted(self_alias)[:5]}")
+    chained = set(merged.values()) & set(merged)
     if chained:
         raise AssertionError(f"alias chain: {sorted(chained)[:5]}")
-    ALIASES.write_text(json.dumps(
-        {"version": 1, "aliases": dict(sorted(aliases.items()))},
+
+    path.write_text(json.dumps(
+        {"version": 1,
+         "aliases": dict(sorted((f"W{old}", f"W{new}") for old, new in merged.items()))},
         indent=2) + "\n", encoding="utf-8")
-    return len(aliases)
+    return len(aliases), len(merged)
 
 
 def _title_groups() -> None:
@@ -211,8 +249,8 @@ def main(argv: "list[str] | None" = None) -> int:
     rejected = [(doi, works) for doi, works in found if not _agree(works)]
     _report(groups, rejected)
     if args.apply:
-        written = _apply(groups)
-        print(f"\nwrote {written} aliases to {ALIASES}")
+        added, total = _apply(groups)
+        print(f"\nadded {added} aliases to {ALIASES}, which now holds {total}")
         print("run `.venv/bin/python -m filter.engine route` — the alias file is an "
               "input to the routing release id")
     return 0

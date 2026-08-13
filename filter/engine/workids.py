@@ -8,8 +8,9 @@ re-flattening, not that the resolver needs a loop.
 
 The map covers the merges OpenAlex performed and the ones it did not: a repository
 deposit and the publisher's record of one article are two work ids upstream.
-`analysis/doi_duplicates.py` derives the second kind from the pool and rewrites the
-whole file; this module only reads it.
+`analysis/doi_duplicates.py` derives the second kind from the pool and adds them to
+the file, and `analysis/build_osf_aliases.py` derives the same-OSF-guid merges;
+this module only reads the file.
 """
 
 import json
