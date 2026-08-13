@@ -289,31 +289,42 @@ def _provenance_path(doi: str) -> Path:
 
 
 def _read_provenance(doi: str) -> dict:
-    """{"source": tier label, "url": the URL it came from} for a saved PDF, or {}."""
+    """What was recorded for a saved PDF, or {}.
+
+    {"source": tier label, "url": the URL it came from, "name": the file's own name
+    where the tier knew one — see `osf_document_name`}.
+    """
     try:
         path = _provenance_path(doi)
         if path.exists():
             data = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 return {"source": str(data.get("source") or ""),
-                        "url": str(data.get("url") or "")}
+                        "url": str(data.get("url") or ""),
+                        "name": str(data.get("name") or "")}
     except Exception as e:
         log.debug("PDF provenance unreadable for %s: %s", doi, e)
     return {}
 
 
 def _write_provenance(doi: str, source: str, url: str, title_check: str = "",
-                      title_coverage: "float | None" = None) -> None:
+                      title_coverage: "float | None" = None,
+                      name: str = "") -> None:
     """Record which tier supplied the saved PDF, so a later run can report it.
 
     The title check's verdict rides along so an accepted-but-weak document ("low", or
     "no_text" for a file that carries no title at all) can be audited afterwards
     without re-reading it. Nothing reads these two fields; they are the audit trail.
+
+    *name* is the file's own name where the tier has one. Stage 3's outcome guard does
+    read it: a document named as a plan reports no results.
     """
     if not (doi and source):
         return
     path = _provenance_path(doi)
     record = {"source": source, "url": url}
+    if name:
+        record["name"] = name
     if title_check:
         record["title_check"] = title_check
         record["title_coverage"] = round(float(title_coverage or 0.0), 3)
@@ -322,6 +333,23 @@ def _write_provenance(doi: str, source: str, url: str, title_check: str = "",
         _atomic_write_text(path, json.dumps(record, ensure_ascii=False))
     except Exception as e:
         log.debug("PDF provenance write failed (%s): %s", path, e)
+
+
+def _amend_provenance(doi: str, **fields: str) -> None:
+    """Add *fields* to an existing provenance record, keeping everything else.
+
+    For a fact recovered after the download — the file's name, which `osf_document_name`
+    reads off a listing cache that expires while the sidecar does not. A record that
+    does not exist is not created: there is no document to describe.
+    """
+    path = _provenance_path(doi)
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(record, dict):
+            return
+        _atomic_write_text(path, json.dumps({**record, **fields}, ensure_ascii=False))
+    except Exception as e:
+        log.debug("PDF provenance amend failed (%s): %s", path, e)
 
 
 def verified_cached_document(doi_or_url: str, title: str,
@@ -1006,6 +1034,48 @@ def rank_osf_files(files: list[dict], title: str = "") -> list[dict]:
                        -int(entry.get("size") or 0), name, entry))
     scored.sort(key=lambda row: row[:5])
     return [row[5] for row in scored]
+
+
+def osf_document_name(doi_or_url: str) -> str:
+    """The filename of the OSF file this row's document came from, or "".
+
+    Never fetches. The saved document's provenance sidecar records the URL the file
+    came from, and `list_osf_files` keeps the name beside that URL in its own cache;
+    matching the two recovers the name. It is written back into the sidecar on the
+    first lookup, because the listing cache expires after PDF_RETRY_AFTER_DAYS and the
+    sidecar does not — after which the name is read straight off the sidecar.
+
+    "" whenever anything is missing, which is what the caller wants: the outcome guard
+    that reads this refuses on what a name SAYS, so an unknown name refuses nothing.
+    """
+    prov = _read_provenance(doi_or_url)
+    if prov.get("name"):
+        return str(prov["name"])
+    guid = osf_registration_guid(doi_or_url)
+    if not (guid and prov.get("url")):
+        return ""
+    try:
+        listing = json.loads(
+            (OA_CACHE_DIR / f"osffiles_{cache_key(guid)}.json").read_text("utf-8"))
+    except Exception:
+        return ""
+    name = next((str(f.get("name") or "") for f in (listing.get("files") or [])
+                 if f.get("download") == prov["url"]), "")
+    if name:
+        _amend_provenance(doi_or_url, name=name)
+    return name
+
+
+def is_plan_document_name(name: str) -> bool:
+    """True when *name* is a file an OSF project deposits BEFORE the study runs.
+
+    The same test `rank_osf_files` ranks by, asked as a question. A preregistration, a
+    protocol or an analysis plan states a design and its authors' background, and both
+    read as results — the 2026-08-13 audit (issue #196) found `successful` coded from
+    `Extension-Analytic plan for mere ownership_20180628-G.docx`, off a sentence about
+    the authors' own earlier studies.
+    """
+    return bool(_OSF_NAME_PREREG.search(str(name or "")))
 
 
 # ── HTML as a document ────────────────────────────────────────────────────────
@@ -2369,7 +2439,8 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
         tried = attempts.get(tier) or []
         return bool(tried) and all(r.startswith("download_error") for r in tried)
 
-    def _try(url: str, label: str, referer: str = "", want_title: str = "") -> bool:
+    def _try(url: str, label: str, referer: str = "", want_title: str = "",
+             name: str = "") -> bool:
         nonlocal dl, pdf_url, pdf_src
         all_tried.append(url)
         # A tier fetching ANOTHER paper's document checks the bytes against that
@@ -2380,7 +2451,7 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
             # Also written on a download_pdf cache hit, which is how a PDF saved
             # before this record existed acquires one.
             _write_provenance(doi_r or url_r, label, url, dl.get("title_check", ""),
-                              dl.get("title_coverage"))
+                              dl.get("title_coverage"), name=name)
             return True
         attempts.setdefault(label, []).append(str(dl.get("reason") or ""))
         log.debug("  %s failed (%s): %s", label, dl.get("reason"), url)
@@ -2486,7 +2557,8 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
             log.info("  [%s] OSF file listing unavailable: %s", doi_r or url_r, exc)
         else:
             ranked = rank_osf_files(osf_files, title)[:_OSF_MAX_DOWNLOADS]
-            if any(_try(entry["download"], "osf_files") for entry in ranked):
+            if any(_try(entry["download"], "osf_files",
+                        name=str(entry.get("name") or "")) for entry in ranked):
                 return _result()
             if not _only_transient("osf_files"):
                 _failed("osf_files")

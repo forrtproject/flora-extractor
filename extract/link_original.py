@@ -521,7 +521,14 @@ OUTCOME_DESCENT = True
 #      project's file storage also rank behind every other candidate file
 #      (2026-08-13)
 #      reopen: .venv/bin/python -m extract.tier --run --redo 6962150035,6962671413
-EXTRACT_LADDER_VERSION: int = 25
+#  26  the same refusal for a row whose only document is a plan-named FILE in the
+#      OSF project's storage (`osf_document_name` in shared/pdf_sources.py, issue
+#      #196): a project that deposited nothing but its preregistration hands the
+#      ladder a document whose background passages read as results. 106 of the 331
+#      OSF-file works in the 2026-08-13 export are on such a file; 101 already
+#      settled cannot_be_determined and 5 had been coded an outcome (2026-08-13)
+#      reopen: .venv/bin/python -m extract.tier --run --redo 6925263306,6925305059,6925552412,6944082684,7043480225,7112297948
+EXTRACT_LADDER_VERSION: int = 26
 
 
 # Columns to pass through from the input row (no renaming). Only columns

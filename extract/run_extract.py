@@ -44,9 +44,10 @@ from shared.openalex_client import fetch_openalex_full_metadata as _oa_full_meta
 from shared.openalex_client import (
     _TitleSearchUnavailable, _search_crossref_by_title, _search_openalex_by_title,
 )
-from shared.pdf_sources import (cached_pdf, is_prospective_registration_template,
-                                openalex_xml_has_content, osf_registration_template,
-                                verified_cached_document)
+from shared.pdf_sources import (cached_pdf, is_plan_document_name,
+                                is_prospective_registration_template,
+                                openalex_xml_has_content, osf_document_name,
+                                osf_registration_template, verified_cached_document)
 from shared.pdf_parsing import (
     best_parse_result,
     outcome_text,
@@ -770,30 +771,50 @@ _PROSPECTIVE_REGISTRATION_REASON = (
     "It states a plan, and its success criteria and prior-work descriptions read as "
     "results without being any.")
 
+_PLAN_DOCUMENT_REASON = (
+    "outcome not coded: the only document for this row is the OSF file {name!r}, "
+    "deposited before the study ran. It states a plan, and its background and "
+    "prior-work passages read as results without being any.")
+
 
 def _prospective_registration_reason(row: dict, outcome: dict) -> str:
     """Why this row's outcome must be refused, or "" when it may stand.
 
-    A registration form is a document and Stage 3 codes it like one, which for a
-    PROSPECTIVE registration invents a result: the 2026-08-13 audit (issue #196) found
+    An OSF record that reports no results is still a document, and Stage 3 codes it
+    like one — which invents a result: the 2026-08-13 audit (issue #196) found
     `successful` coded off a Replication Recipe pre-registration's planned success
-    criterion and off another's description of the ORIGINAL study's finding. Stage 2
-    discards those templates where it can see them, and two doors leave it blind — an
+    criterion, off another's description of the ORIGINAL study's finding, and off an
+    analysis plan's sentence about its authors' own earlier studies. Stage 2 discards
+    prospective registrations where it can see them, and two doors leave it blind — an
     Open-Ended plan freeze, and a record whose overlay carries no template line at all.
-    So the template is read again here, from the form the row was actually coded from.
+    So what the row was actually coded from is read again here, in the two shapes it
+    reaches Stage 3 as.
 
-    Post-Completion forms and Open-Ended registrations stay codeable: the first reports
-    a finished study, and the second is as often a retrospective data deposit as a plan.
+    The FORM the registration itself is, named by its template. Post-Completion forms
+    and Open-Ended registrations stay codeable: the first reports a finished study, and
+    the second is as often a retrospective data deposit as a plan.
+
+    A FILE from the project's storage, named as a plan. `rank_osf_files` already ranks
+    those behind every other candidate, so one is the row's document only where the
+    project deposited nothing else — 106 of the 331 OSF-file works in the 2026-08-13
+    export, of which 5 had been coded an outcome and the rest were already
+    cannot_be_determined. A file whose name says nothing is codeable: this reads what a
+    name asserts, and asserts nothing itself.
     """
     if str(outcome.get("outcome", "") or "") in _UNCODED_OUTCOMES:
         return ""
-    if str(row.get("pdf_source", "") or "") != "osf_registration":
-        return ""
-    template = (osf_registration_template(str(row.get("doi_r", "") or ""))
-                or osf_registration_template(str(row.get("url_r", "") or "")))
-    if not is_prospective_registration_template(template):
-        return ""
-    return _PROSPECTIVE_REGISTRATION_REASON.format(template=template)
+    source = str(row.get("pdf_source", "") or "")
+    doi_r, url_r = str(row.get("doi_r", "") or ""), str(row.get("url_r", "") or "")
+    if source == "osf_registration":
+        template = (osf_registration_template(doi_r)
+                    or osf_registration_template(url_r))
+        if is_prospective_registration_template(template):
+            return _PROSPECTIVE_REGISTRATION_REASON.format(template=template)
+    if source == "osf_files":
+        name = osf_document_name(doi_r) or osf_document_name(url_r)
+        if is_plan_document_name(name):
+            return _PLAN_DOCUMENT_REASON.format(name=name)
+    return ""
 
 
 def _apply_outcome(row: dict, outcome: dict) -> dict:
@@ -834,8 +855,8 @@ def _apply_outcome(row: dict, outcome: dict) -> dict:
 
     reason = _prospective_registration_reason(row, outcome)
     if reason:
-        log.info("[%s] outcome refused: coded from a prospective OSF registration",
-                 row.get("doi_r") or row.get("url_r"))
+        log.info("[%s] outcome refused: %s",
+                 row.get("doi_r") or row.get("url_r"), reason)
         # High confidence, and no model named: the refusal is the pipeline's, read off
         # the template, and no verdict of the coder's survives it. A reproduction's two
         # axes are reset as well — outcome_is_settled() reads THEM for a reproduction,

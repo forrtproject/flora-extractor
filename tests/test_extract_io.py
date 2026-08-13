@@ -61,13 +61,23 @@ _CODED = {"outcome": "successful", "outcome_confidence": "high",
           "out_quote_source": "fulltext", "llm_model": "gemini-outcome"}
 
 
+def _guarded(row: dict, template: str = "", name: str = "") -> dict:
+    """`_apply_outcome` over a coded outcome, with the guard told what the cache holds.
+
+    Both halves read this machine's cache directory, so every test says what its own
+    half found there rather than depending on what happens to be on disk.
+    """
+    with patch.object(run_extract, "osf_registration_template",
+                      return_value=template), \
+            patch.object(run_extract, "osf_document_name", return_value=name):
+        return _apply_outcome(dict(row), dict(_CODED))
+
+
 def test_a_prospective_registration_form_settles_no_outcome():
     """A pre-data-collection form states a plan; its planned success criteria read as
     results (issue #196). The row is refused rather than coded from one."""
-    with patch.object(run_extract, "osf_registration_template",
-                      return_value="Replication Recipe (Brandt et al., 2013): "
-                                   "Pre-Registration"):
-        row = _apply_outcome(dict(_REGISTRATION_ROW), dict(_CODED))
+    row = _guarded(_REGISTRATION_ROW,
+                   template="Replication Recipe (Brandt et al., 2013): Pre-Registration")
     assert row["outcome"] == "cannot_be_determined"
     assert row["outcome_phrase"] == ""
     assert row["outcome_llm_model"] == ""
@@ -79,20 +89,33 @@ def test_a_post_completion_registration_is_coded_normally():
     an OSF registration FOR, and Open-Ended deposits stay codeable beside it."""
     for template in ("Replication Recipe (Brandt et al., 2013): Post-Completion",
                      "Open-Ended Registration"):
-        with patch.object(run_extract, "osf_registration_template",
-                          return_value=template):
-            row = _apply_outcome(dict(_REGISTRATION_ROW), dict(_CODED))
+        row = _guarded(_REGISTRATION_ROW, template=template)
         assert row["outcome"] == "successful", template
         assert row["outcome_llm_model"] == "gemini-outcome", template
 
 
-def test_the_guard_does_not_touch_a_row_coded_from_a_document():
-    """It fires on the registration form alone: a row whose outcome came from the
-    manuscript in the same project's storage is coded from results."""
-    with patch.object(run_extract, "osf_registration_template",
-                      return_value="OSF Preregistration"):
-        row = _apply_outcome({**_REGISTRATION_ROW, "pdf_source": "osf_files"},
-                             dict(_CODED))
+def test_a_plan_named_osf_file_settles_no_outcome():
+    """The second door: a project that deposited only a plan hands the ladder a
+    document whose background passages read as results (issue #196, zya9n)."""
+    row = _guarded({**_REGISTRATION_ROW, "pdf_source": "osf_files"},
+                   name="Extension-Analytic plan for mere ownership_20180628-G.docx")
+    assert row["outcome"] == "cannot_be_determined"
+    assert row["outcome_phrase"] == ""
+    assert "Analytic plan" in row["outcome_reasoning"]
+
+
+def test_a_manuscript_in_the_same_project_is_coded_normally():
+    """A file the project deposited AFTER the study reports results, and the
+    registration's own template says nothing about it."""
+    row = _guarded({**_REGISTRATION_ROW, "pdf_source": "osf_files"},
+                   template="OSF Preregistration", name="manuscript_final.pdf")
+    assert row["outcome"] == "successful"
+
+
+def test_an_unnamed_osf_file_is_coded_normally():
+    """The guard refuses on what a name asserts. A file whose name was never recorded
+    asserts nothing, so it settles nothing — the row keeps its coded outcome."""
+    row = _guarded({**_REGISTRATION_ROW, "pdf_source": "osf_files"}, name="")
     assert row["outcome"] == "successful"
 
 
