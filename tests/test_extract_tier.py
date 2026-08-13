@@ -248,7 +248,10 @@ def test_the_generation_is_pinned_by_its_inputs():
         # so it reopens works on the same grounds.
         "build_keyed_confirm_prompt",
         # The search-link grade sets link_confidence on every search-linked row.
-        "build_search_confirm_prompt"}
+        "build_search_confirm_prompt",
+        # The reference list these two produce IS the key namespace the
+        # reference-list rung picks a target out of.
+        "PDF_REFERENCES_PROMPT", "PDF_IMAGE_REFERENCES_PROMPT"}
     assert set(inputs["models"]) == {"linking", "outcome", "pdf_parse"}
     # The efforts are IN the model ids, or two runs at different reasoning levels
     # would share a generation (`cache_model_id`).
@@ -291,6 +294,19 @@ def test_a_declared_generation_still_settles_a_work(monkeypatch):
                         {extract_generation(): (older,)})
     assert _generation_current(tier_mod.TIER_EXTRACT, older, []) is True
     assert _generation_current(tier_mod.TIER_EXTRACT, "0" * 16, []) is False
+
+
+def test_the_reference_extraction_prompts_are_in_the_fingerprint():
+    """The two PDF reference prompts (`shared/grobid.py`) produce the reference list
+    the reference-list rung picks a target out of, so an edit to either changes which
+    originals a row can name — and must reopen the works it named them for."""
+    for name in ("PDF_REFERENCES_PROMPT", "PDF_IMAGE_REFERENCES_PROMPT"):
+        assert name in tier_mod._GENERATION_PROMPTS
+        # A version, not a digest: prompt_version raises KeyError on a name
+        # shared.prompts does not carry, which is the failure this guards.
+        assert len(prompt_version(name)) == 12
+    assert all(name in generation_inputs()["prompts"]
+               for name in ("PDF_REFERENCES_PROMPT", "PDF_IMAGE_REFERENCES_PROMPT"))
 
 
 def test_a_changed_prompt_mints_a_new_generation(monkeypatch):

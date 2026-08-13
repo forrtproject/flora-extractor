@@ -192,11 +192,12 @@ def screen_columns(row: dict, decision: dict) -> dict:
     from shared.llm_client import cached_classification, format_screen_evidence
 
     votes = decision.get("votes") or []
-    # One probe per exported row, which is the floor: every row is a different
-    # work, so there is nothing to share between them. The probe costs one stat on
-    # a hit — `read_cache_migrating()` tries the declared legacy keys only after the
-    # current key misses — so the three-key cost falls on unscreened-cache rows
-    # alone, and those are exactly the rows the two columns would be blank for.
+    # Two probes per exported row — the classify cache holds one entry per VOTE, and
+    # `cached_classification()` rebuilds the pair's answer from both. Each probe is one
+    # stat on a hit. A voter whose per-vote entry is missing costs a second read of the
+    # pair-keyed entries the joint era wrote, and only for the model/effort combination
+    # that era ran; a row with neither on disk is exactly the row these two columns
+    # would be blank for.
     detail = cached_classification(str(row.get("doi_r") or ""),
                                    str(row.get("title_r") or ""),
                                    str(row.get("abstract_r") or "")) or {}

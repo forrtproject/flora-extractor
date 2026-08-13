@@ -196,7 +196,13 @@ _GENERATION_PROMPTS = ("build_target_outcome_prompt",
                        # `link_confidence` on every llm_title_search and
                        # llm_author_year_search row, so an edit to it changes a
                        # shipped field and must reopen the works it graded.
-                       "build_search_confirm_prompt")
+                       "build_search_confirm_prompt",
+                       # The two reference-extraction prompts (`shared/grobid.py`).
+                       # The reference list they produce IS the key namespace the
+                       # reference-list rung picks a target out of, so an edit to
+                       # either changes which originals a row can name.
+                       "PDF_REFERENCES_PROMPT",
+                       "PDF_IMAGE_REFERENCES_PROMPT")
 
 
 # ── Declared answer-preserving prompt edits (issue #171) ─────────────────────
@@ -256,16 +262,7 @@ def extract_generation() -> str:
 # Keyed by the CURRENT generation, which is what makes a declaration self-limiting: a
 # later prompt or model change produces a digest that matches no key here, and every
 # work reopens strictly, as it should.
-_GENERATION_EQUIVALENCES: dict[str, tuple[str, ...]] = {
-    # 2026-08-13: PDF_PARSE_MODEL gemini-3-flash-preview (default thinking) →
-    # gemini-3.1-flash-lite @ minimal. Reference extraction only — the linking and
-    # outcome models are untouched, and the swap was measured over all 58 cached
-    # fallback PDFs: the new model matched or bettered the old one on every
-    # inspected disagreement (shared/config.py carries the summary). The affected
-    # population, works whose parse used the direct-PDF/image fallback, is
-    # re-extractable by name if a spot-check ever warrants it.
-    "3b8515d95737952e": ("19033143a3acdcaa",),
-}
+_GENERATION_EQUIVALENCES: dict[str, tuple[str, ...]] = {}
 
 
 def equivalent_generations() -> tuple[str, ...]:

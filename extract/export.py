@@ -31,7 +31,10 @@ the `discard` pile; without `--release` the export would still ship them to the
 validation import. With it, a verdict renders only if its work sits in an ADMITTED pile
 of the named release (`ADMITTED_PILES` in `filter/engine/route.py`), and the count
 dropped is printed whether or not it is zero. The default is unchanged, because most
-renders are not asking a routing question.
+renders are not asking a routing question. The named release is checked against the
+rule book on disk first (`check_binding`), so a release routed under a bundle that has
+since changed refuses instead of shipping the admissions of a rule book nobody is
+running. `--all-releases` asks no routing question and is exempt.
 
 **Two generations, and why the older one still counts.** A verdict belongs to a
 generation — the ladder, the prompts and the models it was produced by
@@ -78,6 +81,8 @@ from pathlib import Path
 from typing import Optional
 
 from filter.engine.claims import ClaimsClient, ClaimsNotConfigured
+from filter.engine.export import SPEC_DIR, StaleBundleError, check_release_binding
+from filter.engine.release import read_release
 from extract.sanity_check import classify_row, demote_malformed
 from extract.tier import (RESULT_VERDICTS, TIER_EXTRACT, equivalent_generations,
                           extract_generation, render_payload)
@@ -164,8 +169,37 @@ def latest_results(client: ClaimsClient, *, mode: str = "live",
     return {**stale, **current}, len(stale)
 
 
+def check_binding(release_id: str, spec_dir: Path, cache_dir: Path) -> None:
+    """Refuse a release the rule book on disk has moved away from.
+
+    The tier refuses the same way before it spends (`extract/tier.py`), and for the
+    same reason the export needs it: `--release` decides which works reach the
+    validation import, and a release routed under a different bundle names a set of
+    admitted works today's rules never produced. Every verdict outside that set is
+    still rendered by the carry-forward path, so the drift is silent — a shorter or
+    longer file with no statement in its own output.
+
+    Two of the three components are checked. The bundle and the aliases decide what a
+    release admitted, which is exactly what this module reads. The OVERLAY is not: it
+    supplies the abstract text a voter reads, and this render reads no text at all —
+    the same reasoning `filter/engine/cli.py:cmd_screen` applies in reverse, checking
+    the overlay alone because that is what its money buys.
+
+    A release with no record on disk — or one this process cannot read — is not
+    checked: there is nothing to compare against, and refusing to render would make a
+    missing sidecar fatal.
+    """
+    try:
+        record = read_release(release_id, cache_dir=cache_dir)
+    except (FileNotFoundError, OSError, ValueError):
+        return
+    check_release_binding(spec_dir, release_id, record.get("bundle_hash"),
+                          record.get("alias_release"))
+
+
 def admitted_work_ids(release: "str | None",
-                      store_path: Optional[Path] = None) -> tuple[str, set[int]]:
+                      store_path: Optional[Path] = None,
+                      spec_dir: Path = SPEC_DIR) -> tuple[str, set[int]]:
     """`(the full release id, the works it routed into an admitted pile)`.
 
     The one place this module touches the routing store, and it is skipped entirely
@@ -199,6 +233,7 @@ def admitted_work_ids(release: "str | None",
             [release_id, sorted(ADMITTED_PILES)]).fetchall()
     finally:
         con.close()
+    check_binding(release_id, spec_dir, store.parent)
     return release_id, {int(row[0]) for row in rows}
 
 
@@ -464,6 +499,9 @@ def main(argv: Optional[list[str]] = None) -> int:
                              "likely_target, unlikely_target or clearly_not_target "
                              "in extracted.csv, instead of setting them aside in "
                              "search_link_unconfirmed.csv.")
+    parser.add_argument("--spec-dir", type=Path, default=SPEC_DIR,
+                        help="The rule book the release is checked against "
+                             "(bundle and aliases). Ignored under --all-releases.")
     parser.add_argument("--all-releases", action="store_true",
                         help="Render every stored verdict, whatever routing now says "
                              "about its work. The pre-2026-08-08 behaviour, kept for "
@@ -487,8 +525,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         # applied to the file the validation import reads.
         from filter.engine.store import StoreUnavailable
         try:
-            release_id, admitted = admitted_work_ids(args.release or None)
+            release_id, admitted = admitted_work_ids(args.release or None,
+                                                     spec_dir=args.spec_dir)
         except StoreUnavailable as exc:
+            raise SystemExit(str(exc))
+        except StaleBundleError as exc:
             raise SystemExit(str(exc))
 
     try:

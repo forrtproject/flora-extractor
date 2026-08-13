@@ -558,10 +558,11 @@ def clear_pipeline_caches(doi_r: str) -> list[str]:
     for prefix in ("llm", "classify", "reftarget", "outcome"):
         deleted += clear_content_keys(LLM_CACHE_DIR, prefix, doi_r)
     deleted += clear_content_keys(OA_CACHE_DIR, "candidates", doi_r)
-    targets = [GROBID_CACHE_DIR / f"{key}.json",
-               PARSE_CACHE_DIR / f"parse_{key}.json"]
-    targets += GROBID_CACHE_DIR.glob(f"{key}_direct_refs_*.json")
-    targets += GROBID_CACHE_DIR.glob(f"{key}_img_refs_*.json")
+    # Globbed, not literal: the grobid and parse filenames carry the
+    # TEXT_EXTRACTION_VERSION suffix, and a force-clear must catch every version.
+    # The grobid glob also covers the _direct_refs_ and _img_refs_ entries.
+    targets = list(GROBID_CACHE_DIR.glob(f"{key}*.json"))
+    targets += PARSE_CACHE_DIR.glob(f"parse_{key}*.json")
     for path in targets:
         if path.exists():
             try:
@@ -1137,6 +1138,10 @@ def run_for_doi(doi_r:              str,
     # it. So the ladder keeps descending and carries the resolution with it, to be
     # returned at whichever exit is reached if nothing better answers (OUTCOME_DESCENT).
     carried: dict = {}
+    # The pre-PDF title search's hit on a paper already known to re-test several
+    # originals, as a target entry. It JOINS the target set instead of ending the row —
+    # see Stage 4.6 — so every union below has to carry it.
+    prepdf_hit: dict = {}
 
     def _settled(answer: dict) -> bool:
         return outcome_is_settled(answer.get("outcome_block") or {}, record_type)
@@ -1226,7 +1231,11 @@ def run_for_doi(doi_r:              str,
         the per-target adapter writes every original including this one.
         """
         if seen_certain >= 2:
+            # The title-search hit goes in ahead of this resolution's own targets: it
+            # carries no outcome, and _union_targets keeps the later reading of a work
+            # seen twice.
             merged = _union_targets(seen.get("targets"),
+                                    [prepdf_hit] if prepdf_hit else [],
                                     _certain_targets(resolution) or [_as_target(resolution)],
                                     record_type=record_type)
             log.info("[%s] %s resolved one original, but an earlier call named %d — "
@@ -1411,7 +1420,20 @@ def run_for_doi(doi_r:              str,
             if hit:
                 log.info("[%s] Resolved by pre-PDF title search: %s", doi_r,
                          hit["resolved_title_o"])
-                return _exit_resolved(hit, {}, {}, ref_sections)
+                if seen_certain >= 2:
+                    # A paper an earlier rung already saw several originals in states
+                    # one verdict per original, in its own text. Returning here ended
+                    # such rows above the PDF waterfall: 39 of 58 document-less
+                    # multi-target papers never reached it, 25 of them open access. The
+                    # hit joins the target set and the ladder descends to the full-text
+                    # rung, which is where the per-target outcomes can be settled.
+                    prepdf_hit = _as_target(hit)
+                    carried    = hit
+                    log.info("[%s] descent: %d originals already named — the title "
+                             "search joins them and the ladder reads on", doi_r,
+                             seen_certain)
+                else:
+                    return _exit_resolved(hit, {}, {}, ref_sections)
 
     # ── Stage 5: PDF acquisition ─────────────────────────────────────────────
     if no_pdf:
@@ -1536,6 +1558,12 @@ def run_for_doi(doi_r:              str,
             pdf, grobid, sections)
 
     token_counter.set_stage("extract_fulltext")
+    # A paper an earlier rung named several originals in is sent the parsed body whole
+    # rather than the intro/methods/closing slices: it states one verdict per original,
+    # where that original's re-test is reported, and the slices are cut for the places
+    # a single-target paper states its one verdict. The body reaches the cache key
+    # through the rendered prompt, so only these calls miss.
+    full_body = (str(best.get("raw_text") or "").strip() if seen_certain >= 2 else "")
     llm = _stamp_stage(resolve_targets_and_outcomes(
         doi_r, study_r, abstract_r, candidates, sections.get("references") or [],
         record_type    = record_type,
@@ -1545,16 +1573,22 @@ def run_for_doi(doi_r:              str,
         methods        = sections.get("methods",    ""),
         discussion     = sections.get("discussion", ""),
         discussion_provenance = sections.get("discussion_provenance", ""),
+        full_body      = full_body,
     ))
     log.info("[%s] LLM: resolved=%s source=%s", doi_r,
              llm["resolved"], llm["llm_source"])
     _keep(llm)
 
-    if held and not llm["resolved"] and _enumerated(llm) and _uncontradicted():
+    if (held and not carried and not llm["resolved"]
+            and _enumerated(llm) and _uncontradicted()):
         # The call the gate was waiting for ran, and it did not contradict the rule:
         # it named nothing, or it named the same work. A provider failure is NOT that
         # answer — it goes out as llm_failed so a re-run can ask again, rather than
         # freezing an unconfirmed rule pick into a resolved row.
+        #
+        # A carried resolution outranks a withheld one, as it does at every other exit:
+        # an LLM rung ACCEPTED that link, so restoring a deterministic pick over it
+        # would drop the better-evidenced link for the weaker one.
         log.info("[%s] gate: restoring the withheld %s pick — the target prompt did "
                  "not contradict it", doi_r, held["resolution_method"])
         return emit({**held,
@@ -1577,7 +1611,20 @@ def run_for_doi(doi_r:              str,
         return _exit_resolved({**carried,
                                "llm_error": str(llm.get("llm_error", "") or ""),
                                }, pdf, grobid, sections)
-    return emit({**llm, **seen}, pdf, grobid, sections)
+    # No accepted link anywhere: the row is written from every target any rung named.
+    # `seen` carries the richest earlier answer, and merging its keys over the
+    # full-text answer used to replace that answer's target list wholesale — a
+    # reference-rung reading of two originals dropped the full-text reading of a
+    # third. The union keeps both lists, deduplicated by key and by the mapped
+    # record's DOI, with the later reading winning per target except where it is
+    # unsettled and the earlier one is not (`_union_targets`).
+    merged = _union_targets(seen.get("targets"),
+                            [prepdf_hit] if prepdf_hit else [],
+                            llm.get("targets"),
+                            record_type=record_type)
+    return emit({**llm, **seen,
+                 "targets": merged,
+                 "multi_target": len(merged) > 1}, pdf, grobid, sections)
 
 
 # ── Output builder ────────────────────────────────────────────────────────────

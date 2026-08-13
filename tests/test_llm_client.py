@@ -234,9 +234,11 @@ def test_an_incomplete_screen_is_reported_not_cached(monkeypatch, tmp_path,
     assert out["resolution_method"] == method
     assert out["screen_verdict"] == ""
     assert len(out["votes"]) == votes
-    assert "openrouter" in out["llm_error"]
+    # The failure names the MODEL that did not answer: two slots may share one
+    # provider, and then a provider name names neither of them.
+    assert "mistralai/ministral-14b-2512" in out["llm_error"]
     if not gemini_ok:
-        assert "gemini" in out["llm_error"]
+        assert "gemini-3.5-flash-lite" in out["llm_error"]
     # Only the model that actually answered is named.
     assert out["llm_model"] == ("gemini-3.5-flash-lite" if model else "")
     # The incomplete SCREEN is not a verdict and nothing stores one — but the vote
@@ -915,6 +917,110 @@ def test_the_registered_joint_pairs_are_all_live(monkeypatch, tmp_path):
         out = llm.classify_replication("10.1/x", "Title", "Abstract")
         assert out["screen_verdict"] == "proceed"
         assert calls == []
+
+
+def _joint_entry_without_models() -> dict:
+    """The older joint vote shape, as it really sits on the maintainer's cache: a
+    provider and a verdict, no `model` and no `evidence` (6,339 of 10,456 entries)."""
+    votes = [{"provider": "gemini", "classification": "replication",
+              "confident": True, "categories": ["clearly_declared"], "reasoning": "r"},
+             {"provider": "openai", "classification": "replication",
+              "confident": True, "categories": ["clearly_declared"], "reasoning": "r"}]
+    return dict(_VERDICT_YES, votes=votes)
+
+
+def test_a_model_less_joint_vote_is_lifted_by_its_provider(monkeypatch, tmp_path):
+    """The pair id in the key names both models, so the provider on the vote is
+    enough attribution — and the re-filed entry carries the model it was lifted for."""
+    calls: list = []
+    _classify(monkeypatch, tmp_path, calls, model_2="gpt-5.4-mini")
+    monkeypatch.setattr(llm, "SCREENING_EFFORT_2", "low")
+    prompt = llm.build_classify_prompt("Title", "Abstract")
+    llm.write_cache(tmp_path, _joint_key(llm._JOINT_CLASSIFY_VOTER_IDS[0], prompt),
+                    _joint_entry_without_models())
+
+    out = llm.classify_replication("10.1/x", "Title", "Abstract")
+
+    assert calls == []                                   # nothing was re-asked
+    assert out["screen_verdict"] == "proceed"
+    assert {v["model"] for v in out["votes"]} == {"gemini-3.5-flash-lite",
+                                                  "gpt-5.4-mini"}
+    assert out["llm_evidence"] == ""                     # the era stored no quotes
+    lifted = llm.read_cache(tmp_path, llm._vote_key("10.1/x", "Title", prompt,
+                                                    "gpt-5.4-mini", "low"))
+    assert (lifted["model"], lifted["provider"]) == ("gpt-5.4-mini", "openai")
+
+
+def test_a_model_less_vote_is_not_lifted_for_a_model_the_pair_never_held(
+        monkeypatch, tmp_path):
+    """Provider is attribution only because the pair id pins the models. A voter the
+    pair never named gets nothing from it, whatever provider serves it."""
+    calls: list = []
+    _classify(monkeypatch, tmp_path, calls, model_2="gpt-5.4-nano")
+    monkeypatch.setattr(llm, "SCREENING_EFFORT_2", "low")
+    monkeypatch.setitem(llm._JOINT_ERA_EFFORTS, "gpt-5.4-nano", "low")
+    prompt = llm.build_classify_prompt("Title", "Abstract")
+    llm.write_cache(tmp_path, _joint_key(llm._JOINT_CLASSIFY_VOTER_IDS[0], prompt),
+                    _joint_entry_without_models())
+
+    llm.classify_replication("10.1/x", "Title", "Abstract")
+    assert "openai" in [c[0] for c in calls]   # gpt-5.4-nano paid for its own vote
+
+
+def test_the_screen_result_survives_votes_missing_the_joint_eras_fields():
+    """`run_tier` aborts a whole batch on any exception, so a lifted vote's missing
+    fields must read as empty rather than raise."""
+    votes = [{"provider": "gemini", "classification": "none", "confident": True},
+             {"provider": "openai", "classification": "none", "confident": False}]
+    out = llm._screen_result_from_votes("p", llm.screen_voters(), votes)
+
+    assert out["screen_verdict"] == "discard"
+    assert out["votes"][0]["categories"] == [] and out["votes"][0]["evidence"] == ""
+
+
+def test_a_missing_voter_is_named_by_model(monkeypatch):
+    """Two slots can share one provider; only the model tells them apart. A vote
+    with no model of its own still answers for its provider."""
+    monkeypatch.setattr(llm, "SCREENING_MODEL_1", "gpt-5.4-mini")
+    monkeypatch.setattr(llm, "SCREENING_MODEL_2", "gpt-5.4-nano")
+    voters = llm.screen_voters()
+    assert [p for p, _m, _e, _eff in voters] == ["openai", "openai"]
+
+    out = llm._screen_result_from_votes(
+        "p", voters, [{"provider": "openai", "model": "gpt-5.4-mini",
+                       "classification": "replication", "confident": True}])
+    assert out["llm_error"] == "classifier failed: gpt-5.4-nano"
+
+
+def test_an_openrouter_vote_records_the_host_that_served_it(monkeypatch):
+    """Provenance for a model OpenRouter routes to several hosts. Best-effort: a
+    response that names none still produces a vote."""
+    response = MagicMock()
+    response.provider = "Fireworks"
+    response.choices = [MagicMock()]
+    response.choices[0].message.content = json.dumps(_v())
+    response.choices[0].finish_reason = "stop"
+    response.usage = None
+    monkeypatch.setattr(llm, "OPENROUTER_API_KEY", "k")
+    monkeypatch.setattr(llm, "_throttle", lambda service: None)
+    import openai as openai_sdk
+    monkeypatch.setattr(openai_sdk, "OpenAI", lambda **kw: MagicMock(
+        **{"chat.completions.create.return_value": response}))
+
+    vote = llm._classify_once("p", "deepseek/deepseek-v4-flash", "low")
+    assert vote["served_by"] == "Fireworks"
+
+    del response.provider
+    response.model_extra = {}
+    assert "served_by" not in llm._classify_once("p", "deepseek/deepseek-v4-flash", "low")
+
+
+def test_the_serving_host_is_not_in_the_cache_key():
+    """OpenRouter picks a host per call; keying on it would make every vote a miss."""
+    key = llm._vote_key("10.1/x", "T", "prompt", "deepseek/deepseek-v4-flash", "low")
+    assert "Fireworks" not in key
+    assert key == llm._vote_key("10.1/x", "T", "prompt",
+                                "deepseek/deepseek-v4-flash", "low")
 
 
 # ── Cache keys (audit E3) ────────────────────────────────────────────────────
@@ -1772,12 +1878,58 @@ def test_the_accepted_link_carries_the_outcome_it_was_coded_with(monkeypatch, tm
     assert out["outcome_block"]["outcome"] == "mixed"
 
 
-class TestAPickThatIsNotOneOfTheCandidates:
-    """A title, a DOI, or a number outside the list is the model answering a different
-    question. That is not a decline, and caching it as one would file "we could not
-    read the reply" as "none of these is the paper", for ever."""
+class TestTheFullBodyBlock:
+    """A paper the ladder already knows re-tests several originals is sent the parsed
+    document whole, because it states one verdict per original where that original is
+    re-tested — not in the closing slices a single-target paper states its one in."""
 
-    _CANDS = [{"doi": "10.1/a", "title": "A", "authors": [], "journal": "J",
+    def test_the_body_replaces_the_sliced_sections_and_moves_the_key(self, monkeypatch,
+                                                                     tmp_path):
+        calls: list = []
+        _targets(monkeypatch, tmp_path, {"targets": [_target()], "reasoning": "r"},
+                 calls)
+        llm.resolve_targets_and_outcomes("10.1/x", "T", "A", _CAND, [], rung="fulltext",
+                                         intro="INTRO", discussion="CLOSING")
+        llm.resolve_targets_and_outcomes("10.1/x", "T", "A", _CAND, [], rung="fulltext",
+                                         intro="INTRO", discussion="CLOSING",
+                                         full_body="THE WHOLE PAPER")
+
+        assert "INTRO" in calls[0] and "CLOSING" in calls[0]
+        assert "THE WHOLE PAPER" in calls[1]
+        assert "INTRO" not in calls[1] and "CLOSING" not in calls[1]
+        # Two calls, two entries: the body is in the rendered prompt, which is a key
+        # component, so a full-body call cannot read a sliced call's answer.
+        assert len(list(tmp_path.glob("targetoutcome_*.json"))) == 2
+
+    def test_the_body_is_capped(self, monkeypatch, tmp_path):
+        from shared.prompts import TARGET_FULL_BODY_CHARS
+        calls: list = []
+        _targets(monkeypatch, tmp_path, {"targets": [_target()], "reasoning": "r"},
+                 calls)
+        llm.resolve_targets_and_outcomes("10.1/x", "T", "A", _CAND, [], rung="fulltext",
+                                         full_body="x" * (TARGET_FULL_BODY_CHARS + 500))
+        assert "x" * TARGET_FULL_BODY_CHARS in calls[0]
+        assert "x" * (TARGET_FULL_BODY_CHARS + 1) not in calls[0]
+
+    def test_the_body_is_read_as_the_paper_stating_its_own_methods(self, monkeypatch,
+                                                                   tmp_path):
+        """record_type_check is a judgment about the methods. The whole document holds
+        them, so a full-body call is asked it even with no closing-sections block."""
+        calls: list = []
+        _targets(monkeypatch, tmp_path, {"targets": [_target()], "reasoning": "r"},
+                 calls)
+        llm.resolve_targets_and_outcomes("10.1/x", "T", "A", _CAND, [], rung="fulltext",
+                                         full_body="THE WHOLE PAPER")
+        assert "record_type_check" in calls[0]
+
+
+class TestAPickThatIsNotOneOfTheCandidates:
+    """The candidates are listed under citation keys and one of those keys is the only
+    answer. A title, a DOI, a number or a key the list does not hold is the model
+    answering a different question. That is not a decline, and caching it as one would
+    file "we could not read the reply" as "none of these is the paper", for ever."""
+
+    _CANDS = [{"doi": "10.1/a", "title": "A", "authors": ["Ada Smith"], "journal": "J",
                "year": 2010, "openalex_id": "W1"}]
 
     def _ask(self, tmp_path, reply):
@@ -1786,8 +1938,16 @@ class TestAPickThatIsNotOneOfTheCandidates:
             return llm.pick_author_year_original(
                 "10.9/rep", "T", "A", "Smith (2010)", "q", self._CANDS)
 
-    def test_an_out_of_range_number_is_an_error_and_is_not_cached(self, tmp_path):
-        out = self._ask(tmp_path, {"pick": "7", "confident": True, "reasoning": ""})
+    def test_a_key_the_list_does_not_hold_is_an_error_and_is_not_cached(self, tmp_path):
+        out = self._ask(tmp_path, {"pick": "@jones1998", "confident": True,
+                                   "reasoning": ""})
+        assert out["pick"] is None and out["llm_error"]
+        assert list(tmp_path.glob("*.json")) == []
+
+    def test_a_number_is_no_longer_an_answer(self, tmp_path):
+        """The list is keyed, so a bare number names no candidate — reading it as a
+        position is how the wrong original gets linked."""
+        out = self._ask(tmp_path, {"pick": "1", "confident": True, "reasoning": ""})
         assert out["pick"] is None and out["llm_error"]
         assert list(tmp_path.glob("*.json")) == []
 
@@ -1802,10 +1962,35 @@ class TestAPickThatIsNotOneOfTheCandidates:
         assert out["pick"] is None and out["llm_error"] == ""
         assert list(tmp_path.glob("*.json"))
 
-    def test_a_valid_pick_is_returned_and_cached(self, tmp_path):
-        out = self._ask(tmp_path, {"pick": "1", "confident": True, "reasoning": "yes"})
+    def test_a_listed_key_is_returned_and_cached(self, tmp_path):
+        out = self._ask(tmp_path, {"pick": "@smith2010", "confident": True,
+                                   "reasoning": "yes"})
         assert out["pick"]["doi"] == "10.1/a" and out["confident"] is True
         assert list(tmp_path.glob("*.json"))
+
+    def test_the_key_is_read_without_its_at_sign_and_in_any_case(self, tmp_path):
+        """The key printed in the prompt is what a reply is matched against; a model
+        that drops the "@" or capitalises has still named a candidate in the list."""
+        out = self._ask(tmp_path, {"pick": "Smith2010", "confident": True,
+                                   "reasoning": "yes"})
+        assert out["pick"]["doi"] == "10.1/a"
+
+    def test_the_prompt_prints_the_key_the_parser_reads(self, tmp_path):
+        """One derivation for both halves: a key the model is shown and a key the
+        reply is checked against can never disagree."""
+        from shared.prompts import (author_year_candidate_keys,
+                                    build_author_year_pick_prompt)
+        keys = author_year_candidate_keys(self._CANDS)
+        assert keys == ["@smith2010"]
+        assert "@smith2010  A" in build_author_year_pick_prompt(
+            "T", "A", "Smith (2010)", "q", self._CANDS)
+
+    def test_two_candidates_of_one_author_and_year_get_distinct_keys(self):
+        from shared.prompts import author_year_candidate_keys
+        pair = [dict(self._CANDS[0]), {**self._CANDS[0], "doi": "10.1/b"}]
+        # The suffix follows assign_target_keys' convention: the first collision is
+        # "b", so two candidates never share a key.
+        assert author_year_candidate_keys(pair) == ["@smith2010", "@smith2010b"]
 
 
 class TestSearchConfirmGrading:

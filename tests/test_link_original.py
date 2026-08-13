@@ -712,6 +712,24 @@ class TestTheRichestAnswerSurvives:
         assert row["n_targets"] == 3
         assert row["resolved_doi_o"] == ""
 
+    def test_an_unresolved_full_text_answer_is_merged_not_replaced(self):
+        """Neither rung accepted a link, so the row is written from every target any
+        rung named. Merging the richest earlier answer OVER the full-text answer
+        replaced its target list wholesale, and the original only the full text saw
+        was lost."""
+        row = _run_gate(
+            "A study", _TWO_PAIRS, [],
+            abstract_answer=_answer(
+                resolution_method="llm_multi_target", multi_target=True,
+                targets=[_gate_target("10.9/a", "A"),
+                         _gate_target("10.9/b", "B", author="Jones", year=2011)]),
+            llm_answer=_answer(targets=[_gate_target("10.9/c", "C", author="Kim",
+                                                     year=2012)]))
+        assert row["n_targets"] == 3
+        assert row["multi_target"] is True
+        assert {t["record"]["doi"] for t in row["targets"]} == {"10.9/a", "10.9/b",
+                                                               "10.9/c"}
+
     def test_the_union_does_not_write_one_original_twice(self):
         """The same work reached through two rungs carries two keys — the namespaces
         are per call — and two rows for it would share one pair_id."""
@@ -726,6 +744,96 @@ class TestTheRichestAnswerSurvives:
                                targets=[_gate_target("10.9/a", "A",
                                                      key="@smith2010_again")]))
         assert row["n_targets"] == 2
+
+
+class TestAMultiTargetPaperReadsOn:
+    """A paper an earlier rung named several originals in is coded per original, and
+    each verdict is stated where that original's re-test is reported. Two consequences
+    at the bottom of the ladder: the pre-PDF title search joins the target set instead
+    of ending the row, and the full-text call is sent the document whole."""
+
+    _MULTI = dict(abstract_answer=_answer(
+        resolution_method="llm_multi_target", multi_target=True,
+        targets=[_gate_target("10.9/a", "A"),
+                 _gate_target("10.9/b", "B", author="Jones", year=2011)]))
+    _SCREEN = _screen_result(
+        screen_verdict="proceed", screen_classification="replication",
+        record_type="replication",
+        target_description="Kim (2012), A third original",
+        votes=[{"provider": "gemini", "classification": "replication",
+                "confident": True, "categories": [], "reasoning": "r"},
+               {"provider": "openai", "classification": "replication",
+                "confident": True, "categories": [], "reasoning": "r"}])
+    _HIT = {"resolved": True, "resolution_method": "llm_title_search_prepdf",
+            "resolved_doi_o": "10.9/c", "resolved_title_o": "A third original",
+            "resolved_year_o": 2012, "resolved_author_o": "Kim",
+            "resolution_score": 1.0}
+
+    def _run(self, **over) -> dict:
+        with patch.object(link_original, "_search_title_for_original",
+                          return_value=self._HIT):
+            return _run_gate("A study", _TWO_PAIRS, [], screen=self._SCREEN, **over)
+
+    def test_the_title_search_hit_joins_the_targets_and_the_ladder_descends(self):
+        """39 of 58 document-less multi-target papers never reached the PDF waterfall
+        because this exit returned above it."""
+        row = self._run(**self._MULTI)
+        assert row["pdf_source"] == "unpaywall", "the ladder stopped above the PDF"
+        assert {t["record"]["doi"] for t in row["targets"]} == {"10.9/a", "10.9/b",
+                                                               "10.9/c"}
+
+    def test_the_hit_survives_a_full_text_call_that_resolves_one_original(self):
+        row = self._run(**self._MULTI,
+                        llm_answer=_answer(resolved=True,
+                                           resolution_method="llm_gemini",
+                                           resolved_doi_o="10.9/a",
+                                           resolved_title_o="A",
+                                           targets=[_gate_target("10.9/a", "A")]))
+        assert {t["record"]["doi"] for t in row["targets"]} == {"10.9/a", "10.9/b",
+                                                               "10.9/c"}
+
+    def test_the_hit_survives_an_exit_with_no_document(self):
+        row = self._run(**self._MULTI, pdf_ok=False)
+        assert row["resolution_method"] == "llm_multi_target"
+        assert {t["record"]["doi"] for t in row["targets"]} == {"10.9/a", "10.9/b",
+                                                               "10.9/c"}
+
+    def test_a_single_target_paper_still_ends_at_the_title_search(self):
+        row = self._run()
+        assert row["resolution_method"] == "llm_title_search_prepdf"
+        assert row["resolved_doi_o"] == "10.9/c"
+        assert row["pdf_source"] == "none", "the single-target row acquired a PDF"
+
+    def test_the_full_text_call_is_sent_the_body_whole(self):
+        sent: list = []
+
+        def _identify(*a, **kw):
+            sent.append(kw.get("full_body", ""))
+            return (_answer(resolution_method="llm_multi_target", multi_target=True,
+                            targets=[_gate_target("10.9/a", "A"),
+                                     _gate_target("10.9/b", "B", author="Jones",
+                                                  year=2011)])
+                    if len(sent) == 1 else _answer())
+
+        parse = {"grobid": {"source": "grobid", "abstract": "", "intro": "i",
+                            "references": [], "raw_text": "THE WHOLE BODY"}}
+        self._run(identify=_identify, parse=parse)
+        assert sent == ["", "THE WHOLE BODY"]
+
+    def test_a_single_target_paper_is_sent_the_slices(self):
+        sent: list = []
+
+        def _identify(*a, **kw):
+            sent.append(kw.get("full_body", ""))
+            return _answer()
+
+        parse = {"grobid": {"source": "grobid", "abstract": "", "intro": "i",
+                            "references": [], "raw_text": "THE WHOLE BODY"}}
+        with patch.object(link_original, "_search_title_for_original",
+                          return_value=None):
+            _run_gate("A study", _TWO_PAIRS, [], screen=self._SCREEN,
+                      identify=_identify, parse=parse)
+        assert sent == ["", ""]
 
 
 _LONE_CAND  = [{"title": "Time flies from left to right", "year": 2010,
@@ -844,9 +952,9 @@ class TestLadderReadsTheParseCache:
                             "references": [], "raw_text": "body", "error": None}}
 
     def _cache(self, tmp_path, monkeypatch, results):
-        from shared.utils import cache_key
+        from shared.pdf_parsing import parse_cache_path
         monkeypatch.setattr(link_original, "PARSE_CACHE_DIR", tmp_path)
-        (tmp_path / f"parse_{cache_key('10.1/rep')}.json").write_text(
+        parse_cache_path("10.1/rep", tmp_path).write_text(
             json.dumps(results), encoding="utf-8")
 
     def test_a_cache_hit_skips_the_six_parsers(self, tmp_path, monkeypatch):

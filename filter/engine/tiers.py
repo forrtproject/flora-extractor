@@ -89,6 +89,7 @@ from shared import token_counter
 from shared.config import (ENGINE_CACHE_DIR, ENGINE_TIER_HF_UPLOAD,
                            ENGINE_TIER_WORKERS, FLORA_HF_COMMIT_BATCH,
                            FLORA_POOL_REPO, PRESCREEN_MODEL_1, PRESCREEN_MODEL_2,
+                           SCREENING_EFFORT_1, SCREENING_EFFORT_2,
                            SCREENING_MODEL_1, SCREENING_MODEL_2, SNAPSHOT_POOL_DIR)
 from shared.cache import content_key
 from shared.llm_client import (SCREEN_EVIDENCE_SEP, classify_replication,
@@ -169,21 +170,46 @@ def _tier_models(tier: str) -> tuple[str, str]:
             else (SCREENING_MODEL_1, SCREENING_MODEL_2))
 
 
-def screening_generation(tier: str) -> str:
-    """Fingerprint of the models and prompt *tier* screens with right now.
+def _tier_efforts(tier: str) -> tuple[str, str]:
+    """How hard each of the tier's voters is asked to think, in slot order.
 
-    Sorted models: which slot a model sits in reroutes the call but not the
+    The cheap tier sends no effort at all, so its slots are empty strings — the
+    same value its cache keys carry through `cache_model_id(model, "")`.
+    """
+    return (("", "") if tier == TIER_CHEAP
+            else (SCREENING_EFFORT_1, SCREENING_EFFORT_2))
+
+
+def screening_generation(tier: str) -> str:
+    """Fingerprint of the voters and prompt *tier* screens with right now.
+
+    A voter is `model@effort`, not a model: how hard a voter thinks changes what it
+    answers (measured 2026-08-13 — DeepSeek at effort "none" discarded 7 settled
+    positives that the same model at "low" kept), so an effort change must reopen
+    the works screened under the old one.
+
+    The pairs are hashed as sorted `model@effort` strings, so the effort travels
+    with the voter that ran at it and cannot be re-paired by the sort. Sorting
+    itself stays: which slot a voter sits in reroutes the call but not the
     question, and a swap of the two would otherwise read as a new generation.
+
+    The payload's shape is part of the hash, so writing the voters this way moved
+    BOTH tiers' generations, the cheap tier's for a configuration that did not
+    change — it sends no effort at all. Accepted: the cheap tier is dormant (all
+    three `screen_cheap` specs are shadow), so the reopened works are works no
+    live row reaches.
     """
     from shared.prompts import prompt_version
 
-    payload = json.dumps({"models": sorted(_tier_models(tier)),
+    voters = sorted(f"{m}@{eff}" for m, eff
+                    in zip(_tier_models(tier), _tier_efforts(tier)))
+    payload = json.dumps({"voters": voters,
                           "prompt": prompt_version(_TIER_PROMPT[tier])},
                          sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
-def question_hash(work: "Work") -> str:
+def question_hash(work: "Work", tier: str) -> str:
     """Fingerprint of what this work's voters are ASKED — the prompt, and the text.
 
     The generation covers the models and the prompt VERSION, and stops there, so
@@ -196,9 +222,12 @@ def question_hash(work: "Work") -> str:
     Per WORK, deliberately, rather than folded into `screening_generation()`. A global
     hash over the corpus text would reopen all 7,593 screened works the moment one
     row's text moved; this reopens the rows that moved and no others.
+
+    Per TIER, because each asks its own prompt: a value computed under one tier's
+    prompt and compared against another's would read every work as moved.
     """
     return content_key("screenquestion", work.doi or work.title,
-                       prompt_version(_TIER_PROMPT[TIER_EXPENSIVE]),
+                       prompt_version(_TIER_PROMPT[tier]),
                        work.title, work.abstract)
 
 
@@ -220,10 +249,40 @@ def _question_moved(rows: list[dict], asked: str, text_fetched: str) -> bool:
     recorded.discard("")
     if recorded:
         return asked not in recorded
-    if not text_fetched:
+    fetched = _as_utc(text_fetched)
+    if fetched is None:
         return False
-    newest = max((str(row.get("created_at") or "") for row in rows), default="")
-    return bool(newest) and text_fetched > newest
+    stamps = [s for s in (_as_utc(row.get("created_at")) for row in rows)
+              if s is not None]
+    return bool(stamps) and fetched > max(stamps)
+
+
+def _as_utc(stamp) -> Optional[datetime.datetime]:
+    """A timestamp string as an aware UTC datetime, or None if it is not one.
+
+    The two stamps compared here are written by different producers in different
+    formats — `fetched_at` is `datetime.isoformat()` from this codebase, `created_at`
+    is PostgREST's rendering of a `timestamptz` — and PostgREST trims trailing zeros
+    from the fraction. So `…:07+00:00` and `…:07.123456+00:00` are the same second
+    with the earlier one sorting LAST as text, and comparing the strings is not an
+    ordering at all.
+
+    A stamp that will not parse reads as absent, which leaves the verdict standing.
+    That is the fail-safe direction: this branch exists only for rows written before
+    the question hash was recorded, and treating an unreadable stamp as movement
+    would reopen the whole settled backlog — a campaign's spend — on one malformed
+    value.
+    """
+    text = str(stamp or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        log.warning("Unreadable verdict/overlay timestamp %r — read as absent.", text)
+        return None
+    return (parsed.replace(tzinfo=datetime.timezone.utc) if parsed.tzinfo is None
+            else parsed.astimezone(datetime.timezone.utc))
 
 
 def _screen_accepts_legacy(tier: str, rows: list[dict]) -> bool:
@@ -235,13 +294,17 @@ def _screen_accepts_legacy(tier: str, rows: list[dict]) -> bool:
     why it hangs off their specs rather than off `_generation_current`: it is only
     sound because the two screens have always recorded a model per vote, and a tier
     with no such history has no legacy to grandfather.
+
+    Rows that name no model at all are NOT grandfathered. An empty recorded set is
+    the absence of attribution, not evidence that today's pair produced the verdict,
+    and a subset test reads the two the same way. Such works are screened again.
     """
     # An expensive-tier placeholder row records the "+"-joined pair rather than
     # one voter, which is why this splits before comparing.
     recorded = {part for row in rows
                 for part in str(row.get("model") or "").split("+")
                 if part not in _NON_MODEL_MARKERS}
-    return recorded <= set(_tier_models(tier))
+    return bool(recorded) and recorded <= set(_tier_models(tier))
 
 
 def _generation_current(tier: str, generation: Optional[str],
@@ -1189,6 +1252,11 @@ def _cheap_judge(work: Work) -> tuple[str, list[dict]]:
 
     token_counter.set_stage("engine_screen_cheap")
     version = prompt_version("build_prescreen_prompt")
+    # What these votes answered, in the form the checkpoint reads: prompt AND text
+    # (`_question_moved`). The prompt version alone is a different kind of value,
+    # and a checkpoint comparing it against a question hash reads every settled
+    # work as moved. The version stays in the blob, where it is provenance.
+    asked = question_hash(work, TIER_CHEAP)
 
     # The three rows prescreen refuses to let a small model end: text that states
     # the design outright, text too short to judge, and a curated-list row. The
@@ -1197,7 +1265,7 @@ def _cheap_judge(work: Work) -> tuple[str, list[dict]]:
     bypass = prescreen_bypass(work.title, work.abstract, work.source)
     if bypass:
         return PROCEED, [{
-            "model": "prescreen_bypass", "verdict": PROCEED, "prompt_hash": version,
+            "model": "prescreen_bypass", "verdict": PROCEED, "prompt_hash": asked,
             "quote": bypass[:200],
             "blob": {"tier": TIER_CHEAP, "work_id": work.work_id, "bypass": bypass},
         }]
@@ -1210,7 +1278,7 @@ def _cheap_judge(work: Work) -> tuple[str, list[dict]]:
         votes.append({
             "model": model,
             "verdict": verdict or "no_answer",
-            "prompt_hash": version,
+            "prompt_hash": asked,
             "blob": {"tier": TIER_CHEAP, "work_id": work.work_id, "provider": provider,
                      "model": model, "prompt_version": version, "prompt": prompt,
                      "verdict": verdict},
@@ -1309,7 +1377,7 @@ def _expensive_judge(work: Work) -> tuple[str, list[dict]]:
     # What these votes answered, so a later run can tell whether it is still the
     # question being asked. The models and the prompt version are the generation's
     # job; this carries the text, which nothing else recorded.
-    asked = question_hash(work)
+    asked = question_hash(work, TIER_EXPENSIVE)
 
     votes: list[dict] = []
     for index, vote in enumerate(votes_raw):
@@ -1384,19 +1452,29 @@ def _batch(con, client: ClaimsClient, release_id: str, tier: str,
         [release_id, tier]).fetchall()}
     candidates = (only if only is not None else routed) - client.claimed_work_ids(
         release_id, tier)
-    # The text is loaded BEFORE the decided set is subtracted, because whether a
-    # verdict still answers today's question is a fact about the text. The pool scan
-    # is the same either way — `only` decides which rows are KEPT, not which are read
-    # — so this costs the pile's abstracts in memory and nothing else. `limit` applies
-    # after the subtraction, or it would cap the candidates and then discard most of
-    # them.
+    fetched = overlay_fetched_at(overlay_dir)
+
+    # Whether a verdict still answers today's question is a fact about the TEXT, so
+    # a work cannot be subtracted before its text is read. The whole-pile run loads
+    # every candidate's text for exactly that reason, and pays one pool scan for it.
+    #
+    # `limit` is the smoke-test path, and there a whole pool scan is the cost being
+    # avoided. So it narrows the scan first with the text-BLIND checkpoint, and adds
+    # back the settled works whose text an overlay has since supplied — the only
+    # ones a bounded scan can afford to reconsider. A pool whose own text moved is
+    # not reconsidered under `limit`; with no limit it still is.
+    if limit:
+        blind = decided_work_ids(client, tier)
+        candidates = (candidates - blind) | (candidates & blind & set(fetched))
     works = pile_works(con, release_id, tier, pool_dir, overlay_dir, aliases,
-                       only=candidates)
+                       only=candidates, limit=limit)
     settled = decided_work_ids(client, tier,
-                               {w.work_id: question_hash(w) for w in works},
-                               overlay_fetched_at(overlay_dir))
-    works = [w for w in works if w.work_id not in settled]
-    return works[:limit] if limit else works
+                               {w.work_id: question_hash(w, tier) for w in works},
+                               fetched)
+    # `limit` bounds what a run is OFFERED, not what it screens: the question check
+    # above can still drop some of the works the bounded scan loaded, so a limited
+    # batch is at most `limit` works and sometimes fewer.
+    return [w for w in works if w.work_id not in settled]
 
 
 # ---------------------------------------------------------------------------

@@ -18,6 +18,7 @@ Public API:
 import base64
 import json
 import re
+import threading
 import time
 from typing import Optional
 
@@ -38,6 +39,7 @@ from . import token_counter, token_usage
 from .cache import content_key, read_cache, write_cache
 from .rate_limit import throttle
 from .prompts import (
+    author_year_candidate_keys,
     build_author_year_pick_prompt, build_classify_prompt, build_keyed_confirm_prompt,
     build_repro_target_outcome_prompt, build_search_confirm_prompt,
     build_target_outcome_prompt, prompt_version, SEARCH_CONFIRM_GRADES,
@@ -549,6 +551,37 @@ def call_openai(prompt: str, model: str,
 
 # ── OpenRouter (OpenAI-compatible alternative LLMs) ──────────────────────────
 
+# Which HOST behind OpenRouter served the last call on this thread. OpenRouter
+# routes one model id to several hosts and reports the one it picked; two hosts of
+# the same model can answer differently, so a vote is worth more with the host on
+# it. Provenance only — it never reaches a cache key, and it is per thread because
+# the extract pool runs several calls at once.
+_last_openrouter_host = threading.local()
+
+
+def last_openrouter_host() -> str:
+    """The host that served this thread's most recent OpenRouter call, or ""."""
+    return getattr(_last_openrouter_host, "host", "")
+
+
+def _served_by(response: object) -> str:
+    """The serving host OpenRouter names on a response, or "".
+
+    `provider` is not in the OpenAI SDK's typed response, so where it lands depends
+    on the SDK version — a plain attribute on some, `model_extra` on others, absent
+    on a stub. Best-effort by construction: this is provenance, and no shape of
+    response may fail a call that was already paid for.
+    """
+    try:
+        host = getattr(response, "provider", None)
+        if host is None:
+            extra = getattr(response, "model_extra", None) or {}
+            host = extra.get("provider") if isinstance(extra, dict) else None
+        return str(host) if isinstance(host, str) else ""
+    except Exception:
+        return ""
+
+
 def call_openrouter(prompt: str, model: str,
                     reasoning_effort: str = "") -> tuple[Optional[dict], str]:
     """
@@ -587,6 +620,7 @@ def call_openrouter(prompt: str, model: str,
     # any OpenRouter-served screen slot gave up where the OpenAI slot retried —
     # a difference in how hard the pipeline tried, not in what the model thought.
     last_error = "no attempts made"
+    _last_openrouter_host.host = ""
     for attempt in range(3):
         try:
             _throttle("openrouter")
@@ -597,6 +631,7 @@ def call_openrouter(prompt: str, model: str,
                 max_tokens=JSON_MAX_OUTPUT_TOKENS,
                 **extra,
             )
+            _last_openrouter_host.host = _served_by(response)
             # Before the truncation check: a response cut off at the cap was served
             # and billed in full, and it is the most expensive shape there is.
             if response.usage:
@@ -728,6 +763,8 @@ def _validate_targets(raw: list, key_map: dict[str, dict], prompt: str,
     return targets, notes
 
 
+
+
 def resolve_targets_and_outcomes(doi_r:       str,
                                  study_r:     str,
                                  abstract_r:  str,
@@ -740,7 +777,8 @@ def resolve_targets_and_outcomes(doi_r:       str,
                                  intro:       str = "",
                                  methods:     str = "",
                                  discussion:  str = "",
-                                 discussion_provenance: str = "") -> dict:
+                                 discussion_provenance: str = "",
+                                 full_body:   str = "") -> dict:
     """Ask which previously published study or studies this paper re-tests, and what
     it concluded about each.
 
@@ -759,6 +797,11 @@ def resolve_targets_and_outcomes(doi_r:       str,
     key: a reproduction gets a different prompt and a different outcome vocabulary,
     so it must not read back a replication-coded entry.
 
+    *full_body* sends the whole parsed document instead of the intro/methods/closing
+    slices — what the ladder does at the full-text rung for a paper it already knows
+    re-tests several originals. It reaches the key through the rendered prompt, so
+    only the calls that use it miss.
+
     LINKING_MODEL answers all three rungs, and only it: a wrong original is worse
     than an unresolved one, so an outage at its provider ends the row at llm_failed
     rather than handing the pick to whatever else was reachable.
@@ -774,7 +817,8 @@ def resolve_targets_and_outcomes(doi_r:       str,
     prompt = build(study_r, abstract_r, entries,
                    pdf_abstract=pdf_abstract, intro=intro, methods=methods,
                    discussion=discussion,
-                   discussion_provenance=discussion_provenance)
+                   discussion_provenance=discussion_provenance,
+                   full_body=full_body)
     # The prompt shows the model a key, authors, a year and a title — but the answer
     # is converted to a link through the record that key maps to, and the DOI it
     # carries is not on the page. Two runs whose lists render identically can still
@@ -1186,7 +1230,7 @@ def _classify_once(prompt: str, model: str, effort: str) -> "dict | None":
     categories = [c for c in (str(x).strip().lower()
                               for x in (raw_categories if isinstance(raw_categories, list) else []))
                   if c in SCREEN_CATEGORIES]
-    return {
+    vote = {
         "classification": classification,
         "confident":      confident,
         "categories":     categories,
@@ -1195,6 +1239,15 @@ def _classify_once(prompt: str, model: str, effort: str) -> "dict | None":
         "provider":       provider,
         "model":          model,
     }
+    # Which host behind OpenRouter answered. Provenance, not identity: it is on the
+    # vote so a re-read can tell two hosts of one model apart, and it is deliberately
+    # not in the cache key — OpenRouter picks the host per call, so keying on it
+    # would make every vote a miss.
+    if provider == "openrouter":
+        host = last_openrouter_host()
+        if host:
+            vote["served_by"] = host
+    return vote
 
 
 def screen_gate(votes: list[dict]) -> "str | None":
@@ -1222,21 +1275,22 @@ def _screen_record_type(votes: list[dict]) -> str:
     """The paper type the screen settled on, for the `type` column and the outcome
     vocabulary. Both voters agreeing on a qualifying label wins; a "both" answer or
     a replication-vs-reproduction split falls back to the first qualifying voter in
-    call order (Gemini). "both" maps to "replication" because such a paper collects
-    new data, and replication outcome vocabulary applies to it; the raw
-    classifications stay visible in the votes.
+    call order. "both" maps to "replication" because such a paper collects new data,
+    and replication outcome vocabulary applies to it; the raw classifications stay
+    visible in the votes.
     """
     quals = [v["classification"] for v in votes if v["classification"] in SCREEN_QUALIFYING]
     if not quals:
         return ""
-    # Agreement and the fallback pick the same element: quals is in call order, so
-    # quals[0] is Gemini's answer whenever Gemini gave a qualifying one.
+    # Agreement and the fallback pick the same element: quals is in the order
+    # screen_voters() lists the voters, so quals[0] is voter 1's answer whenever
+    # voter 1 gave a qualifying one.
     return "replication" if quals[0] == "both" else quals[0]
 
 
 def _screen_categories(votes: list[dict]) -> list[str]:
     """Deduplicated union of both voters' categories, in the prompt's enum order."""
-    seen = {c for v in votes for c in v["categories"]}
+    seen = {c for v in votes for c in (v.get("categories") or [])}
     return [c for c in SCREEN_CATEGORIES if c in seen]
 
 
@@ -1311,6 +1365,21 @@ def _vote_key(doi_r: str, study_r: str, cls_prompt: str,
                        cache_model_id(model, effort), cls_prompt)
 
 
+def _joint_pair_providers(pair_id: str) -> dict[str, str]:
+    """provider → model, for the two voters a joint pair id names.
+
+    The id is `<voter>+<voter>`, each voter a model id optionally carrying its
+    effort (`gemini-3.5-flash-lite@effort=minimal`). A pair whose two models share
+    one provider maps to nothing: the provider would not say which vote is whose,
+    and a guess here mislabels a paid answer.
+    """
+    models = [part.split("@", 1)[0] for part in pair_id.split("+")]
+    providers = [provider_for(m) for m in models]
+    if len(set(providers)) != len(providers):
+        return {}
+    return dict(zip(providers, models))
+
+
 def _cached_vote(doi_r: str, study_r: str, cls_prompt: str,
                  model: str, effort: str) -> "dict | None":
     """This voter's cached vote, or None. Never calls.
@@ -1319,6 +1388,14 @@ def _cached_vote(doi_r: str, study_r: str, cls_prompt: str,
     scheme wrote (`_JOINT_CLASSIFY_VOTER_IDS`): a vote by this model found in one is
     re-filed under the per-vote key with a `cache_migrated` note and returned. The
     joint entry stays on disk for other checkouts and the shared HF cache.
+
+    Two vote shapes live in those entries, and the older one names no model — only a
+    `provider`, `classification`, `confident`, `categories` and `reasoning` (6,339 of
+    10,456 joint entries on the maintainer's cache, measured 2026-08-13). For those
+    the pair id in the key is the attribution: it names the two models the entry was
+    bought from, and `provider_for()` says which of them each provider served. A
+    lifted model-less vote is re-filed carrying the model and provider it was lifted
+    FOR, so the per-vote entry is complete whatever the joint one held.
     """
     key = _vote_key(doi_r, study_r, cls_prompt, model, effort)
     hit = read_cache(LLM_CACHE_DIR, key)
@@ -1326,6 +1403,7 @@ def _cached_vote(doi_r: str, study_r: str, cls_prompt: str,
         return hit
     if _JOINT_ERA_EFFORTS.get(model) != effort:
         return None
+    provider = provider_for(model)
     pv = prompt_version("build_classify_prompt")
     for pair_id in _JOINT_CLASSIFY_VOTER_IDS:
         joint = read_cache(LLM_CACHE_DIR,
@@ -1333,13 +1411,21 @@ def _cached_vote(doi_r: str, study_r: str, cls_prompt: str,
                                        pair_id, cls_prompt))
         if not (isinstance(joint, dict) and isinstance(joint.get("votes"), list)):
             continue
+        by_provider = _joint_pair_providers(pair_id)
         for v in joint["votes"]:
-            if isinstance(v, dict) and v.get("model") == model and v.get("classification"):
-                vote = dict(v)
-                vote["cache_migrated"] = {"from_joint_pair": pair_id,
-                                          "prompt_version": pv}
-                write_cache(LLM_CACHE_DIR, key, vote)
-                return vote
+            if not (isinstance(v, dict) and v.get("classification")):
+                continue
+            named = v.get("model")
+            if named:
+                if named != model:
+                    continue
+            elif by_provider.get(str(v.get("provider") or "")) != model:
+                continue
+            vote = dict(v, model=model, provider=provider)
+            vote["cache_migrated"] = {"from_joint_pair": pair_id,
+                                      "prompt_version": pv}
+            write_cache(LLM_CACHE_DIR, key, vote)
+            return vote
     return None
 
 
@@ -1357,22 +1443,30 @@ def _screen_result_from_votes(cls_prompt: str, voters: list, votes: list[dict]) 
     # Keep the individual votes: the gate's decision is not reviewable without
     # knowing who said what, and neither `llm_evidence` nor a "+"-joined model
     # string can be split back into whose quote was whose.
-    out["votes"] = [{k: v[k] for k in
-                     ("provider", "model", "classification", "confident", "categories",
-                      "evidence", "reasoning")}
+    #
+    # Read with `.get`: a vote lifted out of a joint-era entry carries only the
+    # fields that era stored, and a KeyError here aborts the tier's whole batch.
+    out["votes"] = [{k: v.get(k, [] if k == "categories" else "")
+                     for k in ("provider", "model", "classification", "confident",
+                               "categories", "evidence", "reasoning")}
                     for v in votes]
-    out["llm_source"] = "+".join(v["provider"] for v in votes)
-    out["llm_model"]  = "+".join(v["model"] for v in votes)
+    out["llm_source"] = "+".join(str(v.get("provider") or "") for v in votes)
+    out["llm_model"]  = "+".join(str(v.get("model") or "") for v in votes)
     out["llm_evidence"]  = format_screen_evidence(votes)
-    out["llm_reasoning"] = " | ".join(f"{v['provider']}: {v['reasoning']}" for v in votes)
+    out["llm_reasoning"] = " | ".join(
+        f"{v.get('provider', '')}: {v.get('reasoning', '')}" for v in votes)
     # A missing vote is an API failure, not a verdict: report it as an incomplete
-    # screen so a re-run can screen the row properly.
+    # screen so a re-run can screen the row properly. Which voter is missing is a
+    # question about MODELS: the two slots can share one provider, and then a
+    # provider name names neither of them. A vote with no model of its own — the
+    # joint-era shape — still answers for its provider.
     if len(votes) < 2:
-        answered = {v["provider"] for v in votes}
+        by_model    = {v["model"] for v in votes if v.get("model")}
+        by_provider = {v.get("provider") for v in votes if not v.get("model")}
         out["resolution_method"] = ("llm_refscreen_partial" if votes
                                     else "llm_refscreen_failed")
         out["llm_error"] = "classifier failed: " + ", ".join(
-            p for p, _, _, _ in voters if p not in answered)
+            m for p, m, _, _ in voters if m not in by_model and p not in by_provider)
         return out
     out["screen_verdict"] = screen_gate(votes)
     out["record_type"]    = _screen_record_type(votes)
@@ -1468,7 +1562,7 @@ def pick_author_year_original(doi_r: str, title_r: str, abstract_r: str,
              "reasoning": str, "llm_model": str, "llm_error": str}.
 
     A pick is used only when the model both named a candidate IN the list and stood
-    behind it: an index the list does not hold, an unparseable reply and a `null` are
+    behind it: a key the list does not hold, an unparseable reply and a `null` are
     all "no pick", and none of them resolves anything. The row that results is
     provisional whatever the answer, because this resolver has no measured precision
     yet — see `link_method = llm_author_year_search`.
@@ -1517,24 +1611,25 @@ def pick_author_year_original(doi_r: str, title_r: str, abstract_r: str,
     raw = result.get("pick")
     index = None
     if raw is not None:
-        # The prompt numbers the candidates from 1 and asks for that key back. A
-        # model that answers with a title or a DOI is answering a different question,
-        # and guessing which candidate it meant is how the wrong original gets linked:
-        # a DOI "10.1234/abc" read as digits picks candidate 1, and "Study 3" picks
-        # candidate 3. So the whole answer must BE the number, bare or bracketed.
-        text = str(raw).strip()
-        m = re.fullmatch(r"\[?\s*(\d{1,3})\s*\]?", text)
-        if m and 1 <= int(m.group(1)) <= len(candidates):
-            index = int(m.group(1)) - 1
+        # The prompt prints a citation key against each candidate and asks for one of
+        # them back. The key is matched against the printed list, with or without its
+        # leading "@" and regardless of case; anything else — a title, a DOI, a
+        # number, a key the list does not hold — is the model answering a different
+        # question. Guessing which candidate it meant is how the wrong original gets
+        # linked, so an unmatched reply is no answer at all.
+        text = str(raw).strip().lstrip("@").lower()
+        listed = [k.lstrip("@").lower()
+                  for k in author_year_candidate_keys(candidates)]
+        if text in listed:
+            index = listed.index(text)
         else:
-            # A title, a DOI, or a number outside the list. The model answered a
-            # different question, and that is not a decline: caching it as one would
-            # file "we could not read the reply" as "none of these is the paper", for
-            # ever. Not cached, so a re-run asks again.
+            # Not a decline: caching it as one would file "we could not read the
+            # reply" as "none of these is the paper", for ever. Not cached, so a
+            # re-run asks again.
             return {"pick": None, "confident": False, "reasoning": "",
                     "llm_model": "",
-                    "llm_error": f"pick {text[:60]!r} is not one of the "
-                                 f"{len(candidates)} candidates"}
+                    "llm_error": f"pick {str(raw)[:60]!r} is not one of the "
+                                 f"{len(candidates)} candidate keys"}
     confident = bool(result.get("confident"))
     reasoning = str(result.get("reasoning", "") or "")[:500]
     write_cache(LLM_CACHE_DIR, key, {"pick_index": index, "confident": confident,

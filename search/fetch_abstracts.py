@@ -682,7 +682,8 @@ def _osf_registration_text(attributes: dict) -> str:
     return "\n\n".join(blocks)
 
 
-def _fetch_osf_registration(identifier: str) -> tuple[Optional[str], str]:
+def _fetch_osf_registration(identifier: str, *,
+                            node_fallback: bool = True) -> tuple[Optional[str], str]:
     """Fetch an OSF registration's template and responses.
 
     *identifier* is whatever `osf_identifier()` produced for the row — a
@@ -706,6 +707,13 @@ def _fetch_osf_registration(identifier: str) -> tuple[Optional[str], str]:
     inert. It is reported as transient rather than empty because the answer is
     about our access, not about the record: a later token with more scope should
     ask again rather than read a checkpointed miss.
+
+    *node_fallback* is the caller's answer to "would I write a project description
+    for this row?". A row that already carries pool text would not — the backfill
+    refuses it (`_refuses_osf_text` in `filter/engine/backfill.py`) — so the second
+    call buys nothing, and a 404 here is simply `empty`. That checkpoint entry
+    outlives the pool row it was decided against; it is safe because pool text does
+    not regress, not because the record was fully asked about.
     """
     guid = _osf_guid(identifier)
     if not guid:
@@ -730,7 +738,7 @@ def _fetch_osf_registration(identifier: str) -> tuple[Optional[str], str]:
         # Not a registration. 1,696 of the OSF identifiers in the 2026-08-13 worklist
         # answer this way: they are PROJECTS and components, which the registrations
         # endpoint does not serve and which can never have a template line.
-        return _fetch_osf_node(guid, headers)
+        return _fetch_osf_node(guid, headers) if node_fallback else (None, "empty")
     if resp.status_code >= 400:
         return None, "transient"
     attributes = (resp.json().get("data") or {}).get("attributes") or {}
@@ -753,6 +761,12 @@ def _fetch_osf_node(guid: str, headers: dict) -> tuple[Optional[str], str]:
     this returns is an ordinary abstract, and is written only where the row has none —
     the caller's job, because a 252-char description must not displace a real one
     (`_write_overlay` in filter/engine/backfill.py).
+
+    Same error contract as the registration arm, because this arm answers the same
+    identifiers: a project GUID 404s at the registrations endpoint whatever the
+    credential is, so every bad-token run arrives here. 404 and 410 are the record
+    saying it holds nothing; everything else is about our access or the host, and is
+    never written as a miss.
     """
     resp, status = _request_with_retry(
         f"OSF node {guid}",
@@ -760,12 +774,18 @@ def _fetch_osf_node(guid: str, headers: dict) -> tuple[Optional[str], str]:
                              headers=headers))
     if status == "transient":
         return None, "transient"
-    if resp.status_code in (401, 403):
-        # Private to this token, not absent: the same reading the registration arm
-        # gives a 403, and for the same reason.
+    if resp.status_code == 401 or (resp.status_code == 403 and not OSF_TOKEN):
+        log.warning("OSF refused the credential for node %s (HTTP %d) — stopping "
+                    "the phase; check OSF_TOKEN.", guid, resp.status_code)
+        return None, "stop"
+    if resp.status_code == 403:
+        log.info("OSF project %s is private to this token — skipped, not "
+                 "checkpointed", guid)
         return None, "transient"
-    if resp.status_code >= 400:
+    if resp.status_code in (404, 410):
         return None, "empty"
+    if resp.status_code >= 400:
+        return None, "transient"
     description = str(((resp.json().get("data") or {}).get("attributes")
                        or {}).get("description") or "").strip()
     return (description, "ok") if description else (None, "empty")

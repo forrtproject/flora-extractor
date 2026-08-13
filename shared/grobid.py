@@ -13,12 +13,16 @@ Public API:
     run_grobid(doi_r, pdf_path)  → dict
         keys: grobid_status, sections, n_refs_parsed
 
+    parse_jats_sections(jats_xml)  → dict
+        The same sections dict, from Europe PMC's JATS full text.
+
     # Legacy GROBID wrappers (kept for import compatibility):
     process_pdf_with_grobid(pdf_path) → str | None
     parse_tei_sections(tei_xml)       → dict
 """
 import base64
 import hashlib
+import json
 import re
 from pathlib import Path
 from typing import Optional
@@ -37,6 +41,22 @@ from .prompts import PDF_IMAGE_REFERENCES_PROMPT, PDF_REFERENCES_PROMPT, prompt_
 from .utils import clean_citation_title, usable_title
 
 # ── pdfminer import (installed lazily) ───────────────────────────────────────
+
+# The identity of the TEXT this repo extracts from a document: the pdfminer page
+# window (`pdf_text_head_tail`), the section splitter (`_split_sections`) and the
+# stored raw_text cap (`_RAW_TEXT_CAP` in pdf_parsing). Both caches that hold
+# extracted text name it — this module's section cache and the parse cache
+# (`parse_cache_path` in shared/pdf_parsing.py) — so a bump re-derives every
+# document once instead of serving text that older logic produced.
+#
+# A bump costs local compute only: the paid reference extractors file their answers
+# under the prompt version, the model and the PDF's content hash, so they are read
+# back unchanged by a re-parse.
+#
+# 2 — head+tail page window, 200k raw_text cap, references heading tightened
+#     against in-text prose (2026-08-13).
+TEXT_EXTRACTION_VERSION = 2
+
 
 def pdf_text_head_tail(pdf_path: Path, head: int = 40, tail: int = 20) -> str:
     """Extract text with pdfminer.six; a long document is read head AND tail.
@@ -69,6 +89,22 @@ def _extract_pdf_text(pdf_path: Path) -> str:
 
 # ── Section splitter ──────────────────────────────────────────────────────────
 
+# How a bibliography entry opens, for a heading that carries its first entry on the
+# same line: a "[1]" or "1." marker, an unpunctuated Vancouver number in front of an
+# author ("9 Esterman, M."), or a "Surname, I" author. Prose does not open this way,
+# which is what keeps an in-text mention of the word out of the heading set — "12 and
+# 13 report a null effect" has the number but never the author that follows it.
+_REF_ENTRY_START = (r"(?:\[\d+\]"
+                    r"|\d+\.[^\S\n]"
+                    r"|\d+[^\S\n]+[^\W\d_]{2,},"
+                    r"|[^\W\d_]{2,},[^\S\n]*[^\W\d_])")
+
+# Words a real heading may carry after the keyword: "References Cited",
+# "REFERENCES AND SUPPLEMENTS", "Reference list:". Bare letters only and at most four
+# of them, so a sentence — which runs longer and carries punctuation — is not a
+# heading.
+_REF_HEADING_TAIL = r"(?:[^\S\n]+[^\W\d_]+){0,4}"
+
 # Section header keywords (case-insensitive, must appear near start of a line)
 _SECTION_HEADERS = {
     "abstract"  : re.compile(r"(?i)^\s*abstract\s*$", re.MULTILINE),
@@ -79,8 +115,17 @@ _SECTION_HEADERS = {
     # The heading may be numbered ("7. References") or carry a colon ("References:"),
     # and the first entry after it may start with an author, a "[1]" marker or a
     # "1." number — all observed in the fallback corpus.
-    "references": re.compile(r"(?i)^\s*(?:\d+[\.\s]+)?(?:references?|bibliography|"
-                              r"works\s+cited)\s*:?(?:\s*\n|\s*$|\s+[A-Z0-9\[])",
+    #
+    # What follows on the same line must LOOK like a bibliography entry, because
+    # _split_sections takes the LAST references match: a sentence that merely uses the
+    # word ("References 12 and 13 report a null effect") sits after the real
+    # bibliography and would truncate it to nothing. The case-insensitivity is scoped
+    # to the heading word for the same reason — applied to the whole pattern it also
+    # loosened the entry test, which then accepted any prose continuation.
+    "references": re.compile(r"^[^\S\n]*(?:\d+[\.\s]+)?"
+                              r"(?i:references?|bibliography|works[^\S\n]+cited)"
+                              r"(?:" + _REF_HEADING_TAIL + r"[^\S\n]*:?[^\S\n]*(?:\n|$)"
+                              r"|[^\S\n]*:?[^\S\n]*(?=" + _REF_ENTRY_START + r"))",
                               re.MULTILINE),
 }
 
@@ -253,7 +298,7 @@ def parse_pdf_sections(pdf_path: Path) -> dict:
     Extract and return the key sections from *pdf_path*.
 
     Uses pdfminer.six for local text extraction — no external server needed.
-    Caches the result in GROBID_CACHE_DIR/<stem>.json.
+    Caches the result in GROBID_CACHE_DIR/<stem>_v<TEXT_EXTRACTION_VERSION>.json.
 
     Returns a dict matching the shape used by lib/llm.py:
         abstract   str
@@ -261,8 +306,6 @@ def parse_pdf_sections(pdf_path: Path) -> dict:
         methods    str
         references list[dict]  — each: {authors, year, title, raw_ref}
     """
-    import json
-
     empty = {"abstract": "", "intro": "", "methods": "", "references": []}
 
     if not pdf_path or not Path(pdf_path).exists():
@@ -271,7 +314,7 @@ def parse_pdf_sections(pdf_path: Path) -> dict:
     pdf_path = Path(pdf_path)
 
     # JSON cache (faster than re-parsing)
-    cache_file = GROBID_CACHE_DIR / f"{pdf_path.stem}.json"
+    cache_file = GROBID_CACHE_DIR / f"{pdf_path.stem}_v{TEXT_EXTRACTION_VERSION}.json"
     if cache_file.exists() and cache_file.stat().st_size > 50:
         try:
             with cache_file.open(encoding="utf-8") as fh:
@@ -327,6 +370,40 @@ class ReferenceExtractionUnavailable(RuntimeError):
     """
 
 
+def _cached_refs(cache_file: Path) -> "list[dict] | None":
+    """The reference list filed under *cache_file*, or None when nothing is filed.
+
+    The two are different answers and the caller acts on them differently: `[]` is
+    "this document has no reference list", which ends the rung, while None is "nobody
+    has asked yet", which buys the call. A file holding anything but a list is
+    treated as absent — a truncated or hand-edited entry must not stand in for a
+    model's answer.
+    """
+    if not cache_file.exists():
+        return None
+    try:
+        with cache_file.open(encoding="utf-8") as fh:
+            entry = json.load(fh)
+    except Exception:
+        return None
+    return entry if isinstance(entry, list) else None
+
+
+def _cache_refs(cache_file: Path, refs: list) -> None:
+    """File *refs* as this document's answer, the empty list included.
+
+    An empty list is what the model said, so it is stored like any other answer:
+    otherwise a paper that genuinely carries no reference list re-buys both Gemini
+    rungs on every run, for ever. Only a call that never got an answer stays
+    uncached, and those never reach here — they raise
+    ReferenceExtractionUnavailable, or return before this point.
+    """
+    try:
+        write_json(cache_file, refs, indent=2)
+    except Exception as e:
+        log.debug("Reference cache write failed (%s): %s", cache_file, e)
+
+
 def _extract_refs_via_pdf_direct(doi_r: str, pdf_path: Path) -> list[dict]:
     """
     Send the full PDF directly to Gemini with MEDIA_RESOLUTION_LOW for reference
@@ -339,19 +416,14 @@ def _extract_refs_via_pdf_direct(doi_r: str, pdf_path: Path) -> list[dict]:
     Falls back silently (returning []) when the PDF exceeds 45 MB or cannot be read:
     those are settled facts about this document, not failures to reach a model.
     """
-    import json
-
     # Prompt version, model and PDF content are all in the filename: change any of
     # them and the previous answer's reference list stops being read back.
     cache_file = (GROBID_CACHE_DIR /
                   f"{pdf_path.stem}_direct_refs_{prompt_version('PDF_REFERENCES_PROMPT')}"
                   f"_{PDF_PARSE_MODEL}@effort={PDF_PARSE_EFFORT}_{_pdf_fingerprint(pdf_path)}.json")
-    if cache_file.exists():
-        try:
-            with cache_file.open(encoding="utf-8") as fh:
-                return json.load(fh)
-        except Exception:
-            pass
+    cached = _cached_refs(cache_file)
+    if cached is not None:
+        return cached
 
     pdf_size = pdf_path.stat().st_size
     if pdf_size > _MAX_PDF_BYTES:
@@ -371,7 +443,9 @@ def _extract_refs_via_pdf_direct(doi_r: str, pdf_path: Path) -> list[dict]:
     if err:
         raise ReferenceExtractionUnavailable(f"direct-PDF Gemini: {err}")
     if not result or not isinstance(result.get("references"), list):
-        log.info("[%s] Direct-PDF Gemini returned no references", doi_r)
+        # A reply with no `references` list is not the model saying "none" — it is a
+        # reply this code cannot read, so it is not filed as this document's answer.
+        log.info("[%s] Direct-PDF Gemini returned no references list", doi_r)
         return []
 
     refs = []
@@ -391,13 +465,7 @@ def _extract_refs_via_pdf_direct(doi_r: str, pdf_path: Path) -> list[dict]:
         refs.append({"authors": authors, "year": year, "title": title, "raw_ref": ""})
 
     log.info("[%s] Direct-PDF Gemini: extracted %d refs", doi_r, len(refs))
-
-    if refs:
-        try:
-            write_json(cache_file, refs, indent=2)
-        except Exception:
-            pass
-
+    _cache_refs(cache_file, refs)
     return refs
 
 
@@ -412,17 +480,12 @@ def _extract_refs_via_pdf_images(doi_r: str, pdf_path: Path) -> list[dict]:
     settled without asking anyone). Raises ReferenceExtractionUnavailable when the
     provider never answered — see _extract_refs_via_pdf_direct.
     """
-    import json
-
     cache_file = (GROBID_CACHE_DIR /
                   f"{pdf_path.stem}_img_refs_{prompt_version('PDF_IMAGE_REFERENCES_PROMPT')}"
                   f"_{PDF_PARSE_MODEL}@effort={PDF_PARSE_EFFORT}_{_pdf_fingerprint(pdf_path)}.json")
-    if cache_file.exists():
-        try:
-            with cache_file.open(encoding="utf-8") as fh:
-                return json.load(fh)
-        except Exception:
-            pass
+    cached = _cached_refs(cache_file)
+    if cached is not None:
+        return cached
 
     try:
         import fitz  # PyMuPDF
@@ -462,7 +525,8 @@ def _extract_refs_via_pdf_images(doi_r: str, pdf_path: Path) -> list[dict]:
     if err:
         raise ReferenceExtractionUnavailable(f"image-based Gemini: {err}")
     if not result or not isinstance(result.get("references"), list):
-        log.info("[%s] Image-based ref extraction returned nothing", doi_r)
+        # As in the direct rung: an unreadable reply is not an answer to file.
+        log.info("[%s] Image-based ref extraction returned no references list", doi_r)
         return []
 
     refs = []
@@ -483,13 +547,7 @@ def _extract_refs_via_pdf_images(doi_r: str, pdf_path: Path) -> list[dict]:
 
     log.info("[%s] Image LLM: extracted %d refs from %d page(s)",
              doi_r, len(refs), len(images))
-
-    if refs:
-        try:
-            write_json(cache_file, refs, indent=2)
-        except Exception:
-            pass
-
+    _cache_refs(cache_file, refs)
     return refs
 
 
@@ -796,4 +854,115 @@ def parse_tei_sections(tei_xml: str) -> dict:
                 out["references"].append(ref)
     except Exception as e:
         log.warning("TEI parse error: %s", e)
+    return out
+
+
+# ── JATS (Europe PMC full-text XML) ───────────────────────────────────────────
+
+# The bibliography is parsed separately into `references`, and <back> also carries
+# acknowledgements, funding statements and appendices. Same reasoning as
+# _TEI_SKIP_IN_TEXT: outcome_text() reads the TAIL of raw_text, so a bibliography
+# left in it becomes the "closing pages" a verdict is coded from.
+_JATS_SKIP_IN_TEXT = {"back", "front", "ref-list", "floats-group"}
+
+# Block-level JATS elements. _split_sections() and outcome_text() find headings at
+# the start of a line, so <title> must end up on a line of its own.
+_JATS_BLOCK_TAGS = {"sec", "p", "title", "abstract", "fig", "table-wrap", "caption",
+                    "list", "list-item", "disp-quote", "disp-formula", "boxed-text"}
+
+
+def _jats_structured_text(el) -> str:
+    """JATS element text with newline markers around block elements (unnormalised)."""
+    if _tei_localname(el) in _JATS_SKIP_IN_TEXT:
+        return ""
+    parts: list[str] = [el.text or ""]
+    for child in el:
+        chunk = _jats_structured_text(child)
+        if chunk:
+            if _tei_localname(child) in _JATS_BLOCK_TAGS:
+                parts.append(f"\n{chunk}\n")
+            else:
+                parts.append(chunk)
+        parts.append(child.tail or "")
+    return "".join(parts)
+
+
+def _jats_body_text(el) -> str:
+    """Readable body text of *el*: line breaks kept, other whitespace normalised."""
+    lines = [re.sub(r"[^\S\n]+", " ", ln).strip()
+             for ln in _jats_structured_text(el).split("\n")]
+    return "\n".join(ln for ln in lines if ln)
+
+
+def parse_jats_sections(jats_xml: str) -> dict:
+    """Parse Europe PMC JATS full-text XML into the sections dict every reader expects.
+
+    Same shape and same keys as ``parse_tei_sections()`` — abstract, intro, methods,
+    references, raw_text — because everything downstream (``parse_openalex_xml()``,
+    the ladder's full-text rung) reads the dict and never asks which markup produced
+    it. JATS carries real headings, so intro and methods are picked out by ``<title>``
+    exactly as the local GROBID dialect's are picked out by ``<head>``.
+    """
+    out: dict = {"abstract": "", "intro": "", "methods": "", "references": [],
+                 "raw_text": ""}
+    if not jats_xml:
+        return out
+    try:
+        from lxml import etree
+
+        def _text_of(node) -> str:
+            return re.sub(r"\s+", " ", "".join(node.itertext())).strip()
+
+        root = etree.fromstring(jats_xml.encode("utf-8"))
+
+        ab = _tei_find(root, "abstract")
+        if ab is not None:
+            out["abstract"] = _text_of(ab)
+
+        body = _tei_find(root, "body")
+        if body is not None:
+            out["raw_text"] = _jats_body_text(body)
+            for sec in _tei_findall(body, "sec"):
+                title_el = next((c for c in sec
+                                 if _tei_localname(c) == "title"), None)
+                if title_el is None:
+                    continue
+                head_text = _text_of(title_el).lower()
+                text = _jats_body_text(sec)
+                if any(k in head_text for k in ("introduction", "intro", "background")):
+                    if not out["intro"]:
+                        out["intro"] = text
+                elif any(k in head_text for k in ("method", "material", "procedure",
+                                                  "participant", "design")):
+                    if not out["methods"]:
+                        out["methods"] = text
+
+        for ref_el in _tei_findall(root, "ref"):
+            ref: dict = {"authors": [], "year": None, "title": "", "raw_ref": ""}
+            # `or` is not available here: an lxml element with no children is falsy,
+            # so an empty <article-title> would silently hand over to <source>.
+            for tag in ("article-title", "chapter-title", "source"):
+                title_el = _tei_find(ref_el, tag)
+                if title_el is not None and _text_of(title_el):
+                    ref["title"] = _text_of(title_el)
+                    break
+            for name_el in _tei_findall(ref_el, "name"):
+                sn = _tei_find(name_el, "surname")
+                if sn is None:
+                    continue
+                surname  = _text_of(sn)
+                gn       = _tei_find(name_el, "given-names")
+                forename = _text_of(gn) if gn is not None else ""
+                ref["authors"].append(
+                    f"{surname}, {forename[0]}." if forename else surname)
+            year_el = _tei_find(ref_el, "year")
+            if year_el is not None:
+                m = re.search(r"(\d{4})", _text_of(year_el))
+                if m:
+                    ref["year"] = int(m.group(1))
+            ref["raw_ref"] = _text_of(ref_el)
+            if ref["title"] or ref["year"] or ref["raw_ref"]:
+                out["references"].append(ref)
+    except Exception as e:
+        log.warning("JATS parse error: %s", e)
     return out

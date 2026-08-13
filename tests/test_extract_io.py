@@ -101,3 +101,29 @@ class TestReferenceBuilders:
         assert ref == "Smith · 1935"
         assert authors == "Smith"
         assert bibtex == ""
+
+
+# ── normalise_outcome_block: the reproduction axes ───────────────────────────
+
+def test_a_capitalised_axis_value_is_the_value_it_was_offered():
+    """Both axis vocabularies are lower case, and a model that capitalises its own
+    sentence still means the value it picked. Coercing "Computationally reproducible"
+    to cannot_be_determined throws away a settled verdict the run paid for; case is
+    settled here rather than by spending prompt tokens on it."""
+    block = normalise_outcome_block(
+        {"outcome_computation": " Computationally Reproducible ",
+         "outcome_robustness": "ROBUST", "confident": True},
+        record_type="reproduction", has_text=True)
+    assert block["outcome_computation"] == "computationally reproducible"
+    assert block["outcome_robustness"] == "robust"
+    assert block["outcome"] == "computationally reproducible, robust"
+
+
+def test_an_axis_value_outside_the_vocabulary_is_still_unsettled():
+    """Lower-casing widens what is recognised, not what is accepted: a value the
+    pipeline cannot act on is recorded as unsettled."""
+    block = normalise_outcome_block(
+        {"outcome_computation": "Mostly Fine", "outcome_robustness": "robust",
+         "confident": True},
+        record_type="reproduction", has_text=True)
+    assert block["outcome_computation"] == "cannot_be_determined"

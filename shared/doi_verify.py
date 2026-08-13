@@ -12,9 +12,12 @@ book chapters).
 
 Cost: the three search tiers of verify_and_correct issue up to three OpenAlex
 free-text `search` queries per row, each billed at 10× a filter query. That makes
-this module the dominant OpenAlex line of a long Stage 3 run, which is why
-run_extract does not re-verify a carried-forward row whose verification already
-settled (see _needs_verification there) and why the searches run through
+this module the dominant OpenAlex line of a long Stage 3 run. Verification
+therefore happens exactly once per row, inside the extract tier's judge and before
+the result payload is written, and the answer is stored on the row: the export
+renders what the verdict already holds and never re-verifies. The one thing that
+re-verifies a settled row is `python -m extract.audit_dois`, which under `--apply`
+supersedes it with a corrected verdict. The searches run through
 openalex_client._oa_get, which throttles them, rotates keys, counts them
 (search_query_count()) and raises OpenAlexQuotaExhausted rather than letting an
 unaffordable request read as "no match".

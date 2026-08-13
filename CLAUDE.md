@@ -153,15 +153,21 @@ Never change a column name without updating `schema.py` and notifying all teams.
   is a contradiction.
 
   **A document need not be a PDF, but every source has a content check that
-  a record page fails.** Three sources hand back a sections dict instead of a file
+  a record page fails.** Four sources hand back a sections dict instead of a file
   (`_STRUCTURED_SOURCES` in `shared/pdf_sources.py`), and each is paired with the
   test that says whether what came back is a document:
 
   | `pdf_source` | What it is | The check it must pass |
   | ------------ | ---------- | ---------------------- |
   | `openalex_xml` | OpenAlex GROBID XML | `openalex_xml_has_content()` — any section text or any reference |
+  | `epmc_xml` | Europe PMC JATS full text (`parse_jats_sections()` in `shared/grobid.py`) | `epmc_xml_has_content()` — any section text or any reference |
   | `osf_registration` | The OSF registration form, from the API | `osf_registration_has_content()` — ≥ 1,000 chars of description + form fields |
   | `html_landing` | The row's own page, parsed with lxml | `html_document_has_content()` — ≥ 10,000 chars BEYOND the abstract, or a ≥ 2,000-char reference block |
+
+  Europe PMC is ONE tier with two routes: the JATS full text, which exists for the
+  OA-licensed subset only, and — when that answers 404 — the article page's rendered
+  PDF (`europepmc.org/articles/<PMCID>?pdf=render`). Both are keyed on the PMC id the
+  tier's one search returns, and both share the tier's single retry slot.
 
   A result that fails its check is no document: it ends the row at
   `no_fulltext_available` and is never cached as a success. Each guard lives in
@@ -459,8 +465,9 @@ decline is an answer; a 503 is not). Plain API responses keyed by identifier use
 moved but the answer provably did not — a mislabelled key component, or a prompt edit
 reviewed and judged answer-preserving. The default is unchanged: invalidation is
 automatic and strict. A call site that wants otherwise registers the LEGACY key parts
-in a module-level constant with the rationale in a comment (`_CLASSIFY_LEGACY_KEY_PARTS`
-in `shared/llm_client.py` is the first) and reads through
+in a module-level constant with the rationale in a comment
+(`_TITLE_SEARCH_LEGACY_SHAPES` in `shared/openalex_client.py`, and the `doisearch_v2`
+key in `shared/doi_verify.py`) and reads through
 `read_cache_migrating(cache_dir, key, legacy_keys, migrate_note)`. Only the declared
 component is substituted, so an equivalence stops matching by itself once anything else
 about the call changes. A legacy hit is re-stored under the current key carrying a

@@ -63,6 +63,11 @@ class TestChangeDetection:
         # Editing the reproduction axes moves the two reproduction prompts only.
         ("_REPRO_AXIS_RULES", "\n- axis note",
          {"build_repro_outcome_prompt", "build_repro_target_outcome_prompt"}),
+        # Which targets a verdict covers is a question only a paper with several
+        # targets raises, so it is spliced into the two combined builders and into
+        # neither standalone coder, which is handed one original.
+        ("_MULTI_TARGET_SCOPE", "\n- scope note",
+         {"build_target_outcome_prompt", "build_repro_target_outcome_prompt"}),
     ])
     def test_template_edit_reaches_its_own_prompt_only(self, monkeypatch, attr, suffix, expected):
         before = self._versions()

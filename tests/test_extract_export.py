@@ -672,3 +672,49 @@ def test_a_row_on_the_skip_list_is_suppressed_at_render(monkeypatch):
     report = export_mod.render(_client([_verdict(61, row_id="v-61")]))
     assert report["main"] == []
     assert report["already_in_flora"] == 1
+
+
+def test_a_release_the_rule_book_moved_away_from_refuses(tmp_path):
+    """The tier refuses a stale release before it spends; the export refuses before
+    it ships. `--release` decides which works reach the validation import, so a
+    release routed under a bundle that has since changed names an admitted set
+    today's rules never produced — and the carry-forward path renders every verdict
+    outside it regardless, which makes the drift silent."""
+    import json
+
+    from filter.engine.export import SPEC_DIR, StaleBundleError, bundle_hash
+    from filter.engine.release import releases_dir
+
+    records = releases_dir(tmp_path)
+    records.mkdir(parents=True, exist_ok=True)
+    (records / "rel-a.json").write_text(
+        json.dumps({"bundle_hash": "deadbeefdeadbeef", "alias_release": None}),
+        encoding="utf-8")
+    with pytest.raises(StaleBundleError) as exc:
+        export_mod.check_binding("rel-a", SPEC_DIR, tmp_path)
+    assert "bundle_hash" in str(exc.value)
+
+    # The bundle it was routed under: nothing to refuse.
+    (records / "rel-a.json").write_text(
+        json.dumps({"bundle_hash": bundle_hash(SPEC_DIR), "alias_release": None}),
+        encoding="utf-8")
+    export_mod.check_binding("rel-a", SPEC_DIR, tmp_path)
+
+    # No record on disk is not a mismatch: there is nothing to compare against, and
+    # a missing sidecar must not be fatal.
+    export_mod.check_binding("rel-unknown", SPEC_DIR, tmp_path)
+
+
+def test_all_releases_asks_no_routing_question_and_is_not_bound(tmp_path,
+                                                               monkeypatch):
+    """It renders every stored verdict whatever routing says, so there is no release
+    for a bundle to have moved away from."""
+    def _boom(*a, **k):
+        raise AssertionError("--all-releases must not check a release binding")
+
+    monkeypatch.setattr(export_mod, "check_binding", _boom)
+    monkeypatch.setattr(export_mod, "admitted_work_ids", _boom)
+    monkeypatch.setattr(export_mod, "ClaimsClient",
+                        lambda *a, **k: _client([_verdict(81, row_id="v-81")]))
+    assert export_mod.main(["--all-releases", "--out",
+                            str(tmp_path / "extracted.csv")]) == 0

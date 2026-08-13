@@ -32,12 +32,15 @@ from typing import Any
 
 import json
 
-from .grobid import run_grobid
+from .grobid import TEXT_EXTRACTION_VERSION, run_grobid
 from .config import PARSE_CACHE_DIR, log
 from .utils import cache_key
 
 # "docx" is not one of the PDF methods — it is the only method a Word file gets, and
 # the PDF methods are the only ones a PDF gets. See parse_all.
+# The KEYS parse_all returns. The `openalex_xml` slot carries whichever structured
+# source supplied the document, and the result's own `source` field names it — so a
+# row's parse_method can read `epmc_xml` while the key here stays `openalex_xml`.
 PARSE_METHODS: list[str] = ["openalex_xml", "pdfminer", "grobid", "docpluck", "opendataloader", "markitdown", "docx"]  # docling excluded (heavy deps)
 
 # Stored raw_text is what the outcome coder later splits for the discussion block,
@@ -70,11 +73,22 @@ def _uniform_shape(source: str, partial: dict) -> dict:
 # ── Method 1: OpenAlex GROBID XML ────────────────────────────────────────────
 
 def parse_openalex_xml(oa_xml_data: dict | None) -> dict:
-    """Parse a cached OpenAlex GROBID XML result dict."""
+    """Parse a structured-source result dict — sections, not a file.
+
+    Every source in `_STRUCTURED_SOURCES` (shared/pdf_sources.py) arrives through
+    this one channel, so the `source` field of the result — which becomes the row's
+    `parse_method` — is taken from the document rather than stamped: Europe PMC JATS
+    is `epmc_xml`, and calling it `openalex_xml` would contradict the `pdf_source`
+    written beside it. A document that names no source is OpenAlex's, which is the
+    only one that predates the field.
+
+    The dict KEY `parse_all` files this under stays `openalex_xml` whatever the
+    source is (PARSE_METHODS), so cached parse results keep one shape.
+    """
     if not oa_xml_data:
         return _error_result("openalex_xml", "no openalex_xml data")
     sections = oa_xml_data.get("sections", {})
-    return _uniform_shape("openalex_xml", {
+    return _uniform_shape(str(oa_xml_data.get("source") or "openalex_xml"), {
         "abstract":   sections.get("abstract", ""),
         "intro":      sections.get("intro", ""),
         "references": sections.get("references", []),
@@ -625,6 +639,11 @@ def parse_result_is_empty(results: "dict[str, dict] | None") -> bool:
 def parse_cache_path(cache_id: str, cache_dir: "Path | None" = None) -> "Path":
     """Where the parse_all() results for *cache_id* live.
 
+    The filename carries `TEXT_EXTRACTION_VERSION` as well as the identity, because
+    the ladder reads a cached parse INSTEAD of parsing: without it, a change to what
+    the parsers extract never reaches a document already on disk, and the campaign
+    re-codes outcomes over text the previous logic produced.
+
     *cache_id* is the row's identity, not necessarily its DOI: 30% of the
     2026-08-06 handoff carries no DOI, and keying those on `doi_r` filed every one
     of them under `cache_key("") = d41d8cd9…` — a single bucket in which the first
@@ -636,7 +655,8 @@ def parse_cache_path(cache_id: str, cache_dir: "Path | None" = None) -> "Path":
         raise ValueError(
             "parse cache needs a row identity (doi_r, or url:/oa:/title: from "
             "primary_key) — an empty one collides across every identity-less row")
-    return (cache_dir or PARSE_CACHE_DIR) / f"parse_{cache_key(cache_id)}.json"
+    return ((cache_dir or PARSE_CACHE_DIR) /
+            f"parse_{cache_key(cache_id)}_v{TEXT_EXTRACTION_VERSION}.json")
 
 
 def read_parse_cache(cache_id: str, cache_dir: "Path | None" = None) -> "dict | None":

@@ -33,7 +33,7 @@ from typing import Optional
 import pandas as pd
 
 from shared.config import (
-    OA_XML_CACHE_DIR, PARSE_CACHE_DIR, PDF_CACHE_DIR, log,
+    OA_CACHE_DIR, OA_XML_CACHE_DIR, PARSE_CACHE_DIR, PDF_CACHE_DIR, log,
 )
 from shared.cache import write_json
 from shared.llm_client import _clean_study_numbers, provider_for
@@ -44,7 +44,8 @@ from shared.openalex_client import fetch_openalex_full_metadata as _oa_full_meta
 from shared.openalex_client import (
     _TitleSearchUnavailable, _search_crossref_by_title, _search_openalex_by_title,
 )
-from shared.pdf_sources import (cached_pdf, openalex_xml_has_content,
+from shared.pdf_sources import (cached_pdf, epmc_xml_has_content,
+                                openalex_xml_has_content,
                                 verified_cached_document)
 from shared.pdf_parsing import (
     best_parse_result,
@@ -626,6 +627,60 @@ def _cached_oa_xml(openalex_id: str) -> "dict | None":
     return cached if openalex_xml_has_content(cached) else None
 
 
+def _cached_epmc_xml(doi_r: str) -> "dict | None":
+    """The cached Europe PMC JATS document for *doi_r*, or None when there is none.
+
+    Two files, both written by shared/pdf_sources.py: `get_europepmc_pmcid()` files
+    the DOI's search response under `epmc_<key(doi)>` in OA_CACHE_DIR, and
+    `get_europepmc_fulltext()` files the document under `epmc_xml_<key(pmcid)>` in
+    OA_XML_CACHE_DIR. The PMC id is not on the row, so it is read back out of the
+    first file — which every epmc_xml row has, because the id is what bought the
+    document. Read rather than re-derived: `get_europepmc_pmcid()` searches Europe
+    PMC on a cache miss, and this runs on every row of a re-parse pass.
+
+    The content test is the one the acquisition tier applies (`epmc_xml_has_content`),
+    for the reason `_cached_oa_xml` states: a front-matter shell must not count as
+    full text here while ending the row at no_fulltext_available there.
+    """
+    doi = clean_doi(doi_r)
+    if not doi:
+        return None
+    search_file = OA_CACHE_DIR / f"epmc_{cache_key(doi)}.json"
+    if not search_file.exists():
+        return None
+    try:
+        with search_file.open(encoding="utf-8") as fh:
+            data = json.load(fh)
+        pmc_id = next(
+            (str(item.get("pmcid", "") or "")
+             for item in ((data.get("resultList") or {}).get("result") or [])
+             if item.get("pmcid")), "")
+    except Exception:
+        return None
+    if not pmc_id:
+        return None
+
+    doc_file = OA_XML_CACHE_DIR / f"epmc_xml_{cache_key(pmc_id)}.json"
+    if not doc_file.exists():
+        return None
+    try:
+        with doc_file.open(encoding="utf-8") as fh:
+            cached = json.load(fh)
+    except Exception:
+        return None
+    return cached if epmc_xml_has_content(cached) else None
+
+
+def _cached_structured_document(doi_r: str, openalex_id: str = "") -> "dict | None":
+    """The cached structured document for this row, from any source that has one.
+
+    Both readers answer with the sections dict `parse_all(oa_xml=…)` takes, and the
+    order is the acquisition waterfall's: OpenAlex XML sits above Europe PMC, so a
+    row that has both is read the way it was acquired.
+    """
+    return _cached_oa_xml(openalex_id) or _cached_epmc_xml(doi_r)
+
+
 def _has_document(doi_r: str, link: dict, openalex_id: str = "") -> bool:
     """True when there is something for the parsers to read.
 
@@ -636,9 +691,10 @@ def _has_document(doi_r: str, link: dict, openalex_id: str = "") -> bool:
     cached by an earlier run still counts — that is what --recalibrate-outcomes reads.
 
     The document is looked up by DOI because that is what `download_pdf()` keys it on;
-    the XML by OpenAlex id, for the same reason (`_cached_oa_xml`). A DOI-less row
-    simply has no document to find here, which is what it had before too. `cached_pdf`
-    does the looking, so a Word file counts as much as a PDF.
+    a structured source by whatever ITS writer keyed it on — the OpenAlex id, or the
+    DOI's Europe PMC search (`_cached_structured_document`). A DOI-less row simply has
+    no document to find here, which is what it had before too. `cached_pdf` does the
+    looking, so a Word file counts as much as a PDF.
     """
     if bool(link.get("pdf_ok")):
         return True
@@ -646,7 +702,7 @@ def _has_document(doi_r: str, link: dict, openalex_id: str = "") -> bool:
         return True
     if doi_r and cached_pdf(doi_r, cache_dir=PDF_CACHE_DIR) is not None:
         return True
-    return _cached_oa_xml(openalex_id) is not None
+    return _cached_structured_document(doi_r, openalex_id) is not None
 
 
 def _cache_id(row: pd.Series, doi_r: str = "") -> str:
@@ -688,7 +744,8 @@ def _save_parse_cache(cache_id: str, doi_r: str = "", openalex_id: str = "",
     pdf_path = (verified_cached_document(doi_r, title_r, cache_dir=PDF_CACHE_DIR)
                 if doi_r else None)
 
-    results = _parse_all(doi_r, pdf_path, oa_xml=_cached_oa_xml(openalex_id))
+    results = _parse_all(doi_r, pdf_path,
+                         oa_xml=_cached_structured_document(doi_r, openalex_id))
     if parse_result_is_empty(results):
         log.debug("[%s] parse produced no text — not caching", cache_id)
         return
@@ -1252,6 +1309,17 @@ def _target_entry(target: dict, doi_r: str, context: dict) -> "dict | None":
     }
 
 
+def _group_doi(doi: str) -> str:
+    """A DOI reduced to the form two spellings of one original share.
+
+    `clean_doi()` strips the URL prefix, lower-cases and drops a trailing slash; it
+    leaves an internal run of slashes alone. Publishers register both
+    `10.1037//0022-3514.63.4.596` and `10.1037/0022-3514.63.4.596` for one paper, and
+    a paper's reference list can cite each once.
+    """
+    return re.sub(r"/{2,}", "/", clean_doi(doi))
+
+
 def _collapse_same_paper_originals(originals: list[dict]) -> list[dict]:
     """Merge targeted studies that belong to the SAME original paper into one entry.
 
@@ -1267,11 +1335,19 @@ def _collapse_same_paper_originals(originals: list[dict]) -> list[dict]:
     Entries are grouped by resolved DOI; those without one fall back to their
     normalised title, so an unresolved paper's studies still group together. Order is
     preserved and ranks are renumbered 1..N over the groups.
+
+    The grouping DOI is normalised further than `clean_doi()` takes it: a doubled
+    internal slash (`10.1037//0022-3514.63.4.596`, the APA legacy form) is a variant
+    spelling of one DOI, and two references to the same original spelled both ways
+    produced two rows with one pair_id. Only the key is normalised — the row keeps the
+    DOI its record carried, which is the string that resolves. `clean_doi()` itself is
+    left alone: it is read by every stage, and a shared normalisation change is not
+    what this row-grouping question needs.
     """
     groups: dict[str, list[dict]] = {}
     order: list[str] = []
     for orig in originals:
-        doi = clean_doi(str(orig.get("doi", "") or ""))
+        doi = _group_doi(str(orig.get("doi", "") or ""))
         if doi:
             key = doi
         else:
@@ -1943,6 +2019,7 @@ def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | Non
         rows.append(_apply_outcome(result_row, outcome))
 
     rows = _merge_duplicate_originals(rows, doi_r)
+    _demote_reference_only_multi(rows)
 
     # Everything that describes the GROUP is settled here, after the guard's demotions
     # and --resolved-only's drops: a paper whose second target was rejected is not a
@@ -1956,6 +2033,39 @@ def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | Non
                                              else "single_original")
         result_row["original_match_confidence"] = _match_confidence(result_row)
     return rows
+
+
+_MULTI_TARGET_NO_DOCUMENT_NOTE = ("multi_target_no_document: reference-list link "
+                                  "without full text")
+
+
+def _demote_reference_only_multi(rows: list[dict]) -> None:
+    """Mark every row of a multi-original paper linked from the reference list alone.
+
+    The reference-list rung picks its targets out of the paper's citations, and a
+    citation says only that the paper mentions the work. On a paper that names one
+    original that is usually the original; on a paper that names several, one of them
+    is routinely a comment on the original, an earlier meta-analysis or the method
+    paper. Audited on the multi-target `llm_references` rows that acquired no document
+    (blank `pdf_source`): the original is wrong on about 40% of them.
+
+    So the rows keep their links and their outcomes — the evidence is still what it
+    was — and say what they rest on: `link_confidence` low, and the marker in
+    `link_evidence` a validator can filter on. Runs before the group's
+    `original_match_confidence` is computed, which reads `link_confidence`.
+
+    Single-target rows are untouched, and so is any paper whose rung read a document.
+    """
+    if len(rows) < 2:
+        return
+    for row in rows:
+        if (str(row.get("link_method") or "") != "llm_references"
+                or str(row.get("pdf_source") or "").strip()):
+            continue
+        row["link_confidence"] = "low"
+        prior = str(row.get("link_evidence", "") or "")
+        row["link_evidence"] = (f"{prior} | {_MULTI_TARGET_NO_DOCUMENT_NOTE}"
+                                if prior else _MULTI_TARGET_NO_DOCUMENT_NOTE)
 
 
 def _observe_link(observed: "dict | None", link: dict) -> None:

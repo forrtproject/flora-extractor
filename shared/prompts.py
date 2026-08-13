@@ -141,6 +141,13 @@ What counts as a target:
   cited for background, motivation or context is NOT a target.
 - Do NOT include a study because it is topically similar, prominent, frequently
   cited, or the only option offered.
+- A listed reference is a target only when THIS paper itself re-tests its finding. A
+  work cited as background, as commentary, or as an earlier replication attempt that
+  this paper does not itself re-test is NOT a target, even when its title names the
+  same effect, gene or phenomenon. An earlier replication attempt CAN be the target —
+  when this paper re-tests IT. What decides is what this paper does with the work, not
+  what kind of work the citation is. The evidence_quote for a target must show the
+  paper stating that it re-tests that work.
 - Replication chains: when the finding has already been re-tested by others, the
   target is the study closest to this paper in the chain — the one it actually
   re-tests — not the chain's original source.
@@ -279,6 +286,28 @@ _TARGET_RTC_FIELD = """
   does not check that original at all, "unclear" if the text does not say. Answer it
   from the methods, independently of the outcome fields."""
 
+# Which targets a verdict covers, for the papers that re-test several different
+# originals. Spliced into the two COMBINED builders only: the standalone coder is given
+# one original and has no set to scope a verdict over.
+_MULTI_TARGET_SCOPE_SRC = """SEVERAL ORIGINALS: WHICH TARGETS A VERDICT COVERS
+
+Where this paper re-tests several different originals, each target carries its own
+outcome, and the paper's own words decide which targets a verdict speaks about:
+
+- A verdict phrased over a SET covers every member of that set. "None of them
+  replicated", "these effects did not hold", "all eleven original findings were
+  supported" state an outcome about each target in the set they name.
+- A verdict that names particular originals covers those originals only, and says
+  nothing about the rest.
+- A target the paper's words never place inside such a verdict, and never discuss on
+  its own, is "«cannot_be_determined»" — on every outcome field asked for above. Do
+  not carry one target's outcome across to another.
+- An unattributed count is not a verdict about any single target: "six of the ten
+  effects replicated", without saying WHICH six, leaves each of the ten
+  "«cannot_be_determined»" unless the paper says elsewhere how that one came out."""
+
+_MULTI_TARGET_SCOPE = _vocab(_MULTI_TARGET_SCOPE_SRC, OUTCOME_LABELS)
+
 _WS_RE = re.compile(r"\s+")
 
 # How much of each evidence block the combined prompts send. link_original stores the
@@ -290,6 +319,14 @@ TARGET_METHODS_CHARS    = 800
 # The closing sections, which is where a paper states its own verdict — the block
 # that makes the outcome answerable at the full-text rung.
 TARGET_DISCUSSION_CHARS = 6000
+# How much of the parsed body a MULTI-target paper is sent at the full-text rung, in
+# place of the intro/methods/closing slices above. One paper re-testing several
+# originals states each verdict where that study is reported — in its results, one
+# section per original — so the closing 6,000 characters carry at most the last of
+# them, and the rest of the row is coded `cannot_be_determined` from evidence the
+# document holds. 60,000 characters is a whole journal article of body text (~15,000
+# tokens), so a multi-target paper is normally sent entire.
+TARGET_FULL_BODY_CHARS  = 60000
 
 
 def _target_line(entry: dict) -> str:
@@ -384,12 +421,18 @@ def _paper_blocks(study_r:      str,
                   intro:        str,
                   methods:      str,
                   discussion:   str,
-                  discussion_provenance: str) -> list[str]:
+                  discussion_provenance: str,
+                  full_body:    str = "") -> list[str]:
     """The per-row evidence blocks, in the order the model reads them.
 
     Every block is omitted entirely, header included, when it is empty: an
     "(not available)" placeholder is a line the model has to read and rule out. Which
     blocks exist is the only thing that distinguishes the three ladder rungs.
+
+    *full_body* replaces the intro/methods/closing slices with the whole parsed
+    document, for a paper the ladder already knows re-tests several originals: its
+    verdicts are stated per original, throughout the paper, and the slices are chosen
+    for the places a single-target paper states one.
     """
     blocks: list[str] = []
 
@@ -400,14 +443,19 @@ def _paper_blocks(study_r:      str,
     tail = _abstract_tail(abstract_r, pdf_abstract)
     if tail:
         blocks.append("ABSTRACT CONTINUED (from the PDF, beyond what is above):\n" + tail)
-    body = (intro or "")[:TARGET_INTRO_CHARS]
-    if body:
-        blocks.append("INTRODUCTION:\n" + body)
-    if methods:
-        blocks.append("METHODS:\n" + methods[:TARGET_METHODS_CHARS])
-    if discussion:
-        blocks.append(_discussion_block(discussion[:TARGET_DISCUSSION_CHARS],
-                                        discussion_provenance))
+    if full_body:
+        blocks.append("THE PAPER, as parsed from the document (its own sections, in "
+                      "order, including where each result is reported):\n"
+                      + full_body[:TARGET_FULL_BODY_CHARS])
+    else:
+        body = (intro or "")[:TARGET_INTRO_CHARS]
+        if body:
+            blocks.append("INTRODUCTION:\n" + body)
+        if methods:
+            blocks.append("METHODS:\n" + methods[:TARGET_METHODS_CHARS])
+        if discussion:
+            blocks.append(_discussion_block(discussion[:TARGET_DISCUSSION_CHARS],
+                                            discussion_provenance))
 
     cited = [_target_line(e) for e in entries if e.get("in_candidates")]
     if cited:
@@ -429,23 +477,26 @@ def build_target_outcome_prompt(study_r:      str,
                                 intro:        str = "",
                                 methods:      str = "",
                                 discussion:   str = "",
-                                discussion_provenance: str = "") -> str:
+                                discussion_provenance: str = "",
+                                full_body:    str = "") -> str:
     """Targets and their replication outcomes, one prompt for all three LLM rungs.
 
     entries come from shared.target_keys.assign_target_keys — the keys shown here are
     only meaningful against the key_map from that same call.
 
-    Supplying *discussion* is what makes the outcome answerable and is the only thing
-    that adds record_type_check: it is a judgment about the methods, and a rung that
-    has read no closing sections has not seen them.
+    Reading the paper's own account of its results is what makes the outcome
+    answerable, and is the only thing that adds record_type_check: it is a judgment
+    about the methods, and a rung sent neither the closing sections (*discussion*) nor
+    the whole document (*full_body*) has not seen them.
     """
-    rtc = _TARGET_RTC_FIELD if discussion else ""
+    rtc = _TARGET_RTC_FIELD if (discussion or full_body) else ""
     return (EVIDENCE_POLICY + _TARGET_TASK + "\n\n" + _TARGET_RESPONSE_HEAD
             + _fill(_TARGET_OUTCOME_FIELDS, {"record_type_check_field": rtc})
-            + "\n\n" + _OUTCOME_RULES + "\n\nPAPER\n\n"
+            + "\n\n" + _OUTCOME_RULES
+            + "\n\n" + _MULTI_TARGET_SCOPE + "\n\nPAPER\n\n"
             + "\n\n".join(_paper_blocks(study_r, abstract_r, entries, pdf_abstract,
                                         intro, methods, discussion,
-                                        discussion_provenance))
+                                        discussion_provenance, full_body))
             + "\n\nRespond with the JSON object only.")
 
 
@@ -457,19 +508,21 @@ def build_repro_target_outcome_prompt(study_r:      str,
                                       intro:        str = "",
                                       methods:      str = "",
                                       discussion:   str = "",
-                                      discussion_provenance: str = "") -> str:
+                                      discussion_provenance: str = "",
+                                      full_body:    str = "") -> str:
     """Targets and their reproduction outcomes — the same task, the other vocabulary.
 
     The two axes are returned separately and joined on our side, so nothing here asks
     the model for the combined `outcome` string.
     """
-    rtc = _TARGET_RTC_FIELD if discussion else ""
+    rtc = _TARGET_RTC_FIELD if (discussion or full_body) else ""
     return (EVIDENCE_POLICY + _TARGET_TASK + "\n\n" + _TARGET_RESPONSE_HEAD
             + _fill(_REPRO_TARGET_OUTCOME_FIELDS, {"record_type_check_field": rtc})
-            + "\n\n" + _REPRO_AXIS_RULES + "\n\nPAPER\n\n"
+            + "\n\n" + _REPRO_AXIS_RULES
+            + "\n\n" + _MULTI_TARGET_SCOPE + "\n\nPAPER\n\n"
             + "\n\n".join(_paper_blocks(study_r, abstract_r, entries, pdf_abstract,
                                         intro, methods, discussion,
-                                        discussion_provenance))
+                                        discussion_provenance, full_body))
             + "\n\nRespond with the JSON object only.")
 
 
@@ -735,7 +788,8 @@ _OUTCOME_RULES_SRC = """HOW TO DECIDE, IN ORDER
    built to re-test the original's effect that reports "the predicted effect was found" has
    compared, even without naming the original in that sentence. Two tests before you code
    from an implicit comparison, and both must pass:
-     (a) the evidence states what THE ORIGINAL NAMED ABOVE found. You cannot compare against
+     (a) the evidence states what THE ORIGINAL THIS OUTCOME IS ABOUT found. You cannot
+         compare against
          a finding the evidence never states, however positive this paper's own results
          sound;
      (b) you can name this paper's result that corresponds to it.
@@ -769,6 +823,10 @@ OUTCOME CATEGORIES
   results with no stated or implied bearing on the original's finding.
 - "«failure»" — the authors conclude the original finding was not supported, was contradicted,
   or failed to replicate.
+
+These two verdicts are about AGREEMENT with what the original reported, not about this
+paper's own statistical significance: finding no effect where the original also found none is
+"«success»", and finding an effect where the original found none is "«failure»".
 - "«mixed»" — the authors themselves present their evidence as partly supporting and partly not,
   for example when some of several tested findings replicated and others did not. Use «mixed»
   only when the paper frames its own result that way; do not infer it from a reduced effect
@@ -806,11 +864,13 @@ our verdict about our evidence.
 
 CODING RULES
 
-- A manipulation check or preliminary test that failed, so that the hypothesis could not be
-  tested, is "«failure»" — not "«uninformative»" and not "«cannot_be_determined»". A manipulation
-  check that succeeded followed by a failed main test is also "«failure»".
-- If the paper's title focuses on one specific effect and that effect did not replicate, code
-  "«failure»", whatever other checks succeeded.
+- Where the authors state no verdict of their own: a manipulation check or preliminary test
+  that failed, so that the hypothesis could not be tested, is "«failure»" — not
+  "«uninformative»" and not "«cannot_be_determined»". A manipulation check that succeeded
+  followed by a failed main test is also "«failure»".
+- Where the authors state no verdict of their own: if the paper's title focuses on one
+  specific effect and that effect did not replicate, code "«failure»", whatever other checks
+  succeeded.
 - A close replication that works alongside a conceptual replication that does not is "«mixed»".
 - Code the central finding the replication was designed to test. Robustness checks and
   exploratory analyses around it may be left out of the verdict; a tested finding the paper
@@ -850,7 +910,8 @@ _OUTCOME_CHECK_MEANING = """
   re-analysed the original study's own data, "neither" if it does not check the named original
   at all, "unclear" if the text does not say. Answer it from the methods, independently of the
   outcome fields.
-- "target_check" — whether the text bears out the link stated above: "this_original" if the
+- "target_check" — whether the text bears out the link given with the evidence below, under
+  "AN EARLIER STAGE OF THE PIPELINE LINKED THIS PAPER TO": "this_original" if the
   paper re-tests the named original, "other_original" if it re-tests some other published
   finding instead, "no_original" if it re-tests no earlier published finding at all,
   "unclear" if the text does not say. Judge the link on the paper's own words, not on how
@@ -983,6 +1044,10 @@ Rules that apply to both axes:
 - Where the paper reports several of its own re-analyses against the original this verdict is
   about, settle each axis over them together rather than picking one, following the authors'
   own judgment where they state one.
+- Never answer "not checked" on BOTH axes. A paper that examined neither the original numbers
+  nor their robustness has checked the original in no way at all, so that pair of answers
+  describes no reproduction. Where the evidence does not settle an axis, that axis is
+  "cannot_be_determined".
 
 Judge this paper's own reproduction attempt, not results it reports for other studies in its
 background or literature review."""
@@ -993,7 +1058,8 @@ _REPRO_CHECK_FIELDS = """
   data, "replication" if it collected new data or used a different sample, "neither" if it does
   not check the named original at all, "unclear" if the text does not say.
 - "target_check": one of "this_original", "other_original", "no_original", "unclear" — whether
-  the text bears out the link stated above: the paper re-analyses the named original, some
+  the text bears out the link given with the evidence below, under "AN EARLIER STAGE OF THE
+  PIPELINE LINKED THIS PAPER TO": the paper re-analyses the named original, some
   other published finding instead, no earlier published finding at all, or the text does not
   say. Judge the link on the paper's own words, not on how plausible the named original looks."""
 
@@ -1035,6 +1101,41 @@ def _fill(template: str, values: dict[str, str]) -> str:
     return pattern.sub(lambda m: values[m.group(1)], template)
 
 
+_KEY_CHARS_RE = re.compile(r"[^a-z0-9]")
+
+
+def author_year_candidate_keys(candidates: list[dict]) -> list[str]:
+    """One `@surname2010` key per pooled candidate, in the order the prompt lists them.
+
+    The same citation-key convention the target prompts use (`assign_target_keys` in
+    shared/target_keys.py), derived per candidate instead of over a deduplicated
+    namespace: the caller maps a returned key back to ITS candidate by position, so
+    the list has to stay one key per candidate. Two candidates that would merge in
+    that namespace — a CrossRef and an OpenAlex record of one work — are two entries
+    here, told apart by the collision suffix.
+
+    The parser reads these back, so the derivation lives in one place: a key the
+    prompt printed and a key the reply is checked against can never disagree.
+    """
+    keys: list[str] = []
+    used: dict[str, int] = {}
+    for c in candidates:
+        authors = c.get("authors") or []
+        first = (str(authors[0]) if isinstance(authors, list) and authors
+                 else str(c.get("first_author") or ""))
+        first = first.strip()
+        head = (first.split(",")[0] if "," in first
+                else (first.split()[-1] if first.split() else ""))
+        surname = _KEY_CHARS_RE.sub("", head.lower())
+        year = str(c.get("year") or "").strip()
+        base = f"@{surname or 'anon'}{year}"
+        n = used.get(base, 0)
+        used[base] = n + 1
+        keys.append(base if n == 0 else
+                    f"{base}{chr(ord('a') + n) if n < 26 else n}")
+    return keys
+
+
 _AUTHOR_YEAR_PICK_TEMPLATE = """You are identifying which published paper a replication study re-tested.
 
 The replication named its target in a way that matched no record it was offered, so
@@ -1067,19 +1168,24 @@ Abstract: {abstract_r}
 HOW THE REPLICATION NAMED ITS TARGET: {target_as_named}
 WHAT IT SAID ABOUT IT: {evidence_quote}
 
-CANDIDATES — {candidate_count}. A flag is a reason to doubt a candidate, not a reason
-it was excluded; judge it yourself.
+CANDIDATES — {candidate_count}. Each begins with its key, in the form @surname2010. A
+flag is a reason to doubt a candidate, not a reason it was excluded; judge it yourself.
 {candidate_block}
 
 Answer with JSON and nothing else:
 {
-  "pick": "<the key of the one candidate that is the target, or null>",
+  "pick": "<the key of the one candidate that is the target, copied exactly as it is
+            printed above (for example @smith2010), or null>",
   "confident": <true|false>,
   "reasoning": "<one sentence: what in the subject matter decided it>"
 }
 
 "confident" is false when the subject matter is merely compatible rather than a
 match. A pick that is not confident is not used.
+
+A title, a DOI, a number or anything else that is not one of the keys printed above
+is not an answer: it is read as no answer at all, and the question is asked again.
+Where none of the candidates is the target, "pick": null is the answer.
 """
 
 
@@ -1105,10 +1211,10 @@ def build_author_year_pick_prompt(title_r: str, abstract_snip: str,
     ordinary answer (measured for the pre-screen voters: `analysis/prescreen_eval`).
     """
     lines = []
-    for i, c in enumerate(candidates, 1):
+    for key, c in zip(author_year_candidate_keys(candidates), candidates):
         authors = ", ".join(str(a) for a in list(c.get("authors") or [])[:4])
         flags = "; ".join(c.get("flags") or [])
-        lines.append(f"[{i}] {c.get('title') or '(no title)'}\n"
+        lines.append(f"{key}  {c.get('title') or '(no title)'}\n"
                      f"    {authors or '(authors unknown)'} — "
                      f"{c.get('journal') or 'venue unknown'}, {c.get('year') or '?'}"
                      + (f"\n    found by: {c.get('source')}" if c.get("source") else "")
@@ -1128,8 +1234,7 @@ def build_author_year_pick_prompt(title_r: str, abstract_snip: str,
 _KEYED_CONFIRM_TEMPLATE = """You are checking a link between a study and the paper an earlier stage identified as the original work it re-tests or re-analyses.
 
 The identification was made by picking one entry from the study's own reference and
-candidate list. That pick is usually right; this check exists for when it is not. The
-failure it looks for is the wrong entry picked from the right list — the linked record
+candidate list. This check exists for when that pick is wrong. The failure it looks for is the wrong entry picked from the right list — the linked record
 is then a real, correctly described paper that has nothing to do with what the study
 re-tested.
 
@@ -1241,8 +1346,7 @@ The four grades mean:
 Grade what the evidence supports, and use the middle two grades for what it leaves
 open. Thin information is never a low grade: "unlikely" and "clearly not" are claims
 about the RECORD being wrong, not about your evidence being poor. Nothing is removed
-on this answer — the grades are being collected to measure how well they separate
-correct links from wrong ones.
+on this answer — the grade is recorded as the link's confidence.
 """
 
 

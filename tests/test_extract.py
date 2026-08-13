@@ -2050,8 +2050,8 @@ _FULL_PARSE = {**_EMPTY_PARSE,
 class TestEmptyParseCache:
     def _cache(self, tmp_path, monkeypatch, results):
         monkeypatch.setattr(run_extract, "PARSE_CACHE_DIR", tmp_path)
-        from shared.utils import cache_key
-        path = tmp_path / f"parse_{cache_key('10.1/x')}.json"
+        from shared.pdf_parsing import parse_cache_path
+        path = parse_cache_path("10.1/x", tmp_path)
         path.write_text(json.dumps(results), encoding="utf-8")
         return path
 
@@ -2172,6 +2172,58 @@ class TestParseCacheOnlyAfterTheDocument:
         assert not run_extract._has_document("10.1/x", self._link())
 
 
+class TestEuropePmcXmlIsFoundFromTheRow:
+    """A Europe PMC JATS document is cached under its PMC id, which the row does not
+    carry. Looked up by the OpenAlex id alone, an epmc_xml row reads as "no document"
+    on every re-parse, and its outcome is coded from the abstract."""
+
+    _link = TestParseCacheOnlyAfterTheDocument._link
+
+    def _epmc(self, tmp_path, monkeypatch, sections: dict,
+              doi: str = "10.1/x", pmcid: str = "PMC42") -> None:
+        """Both cache entries, under the names shared/pdf_sources.py writes them by."""
+        monkeypatch.setattr(run_extract, "PDF_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(run_extract, "OA_XML_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(run_extract, "OA_CACHE_DIR", tmp_path)
+        from shared.utils import cache_key
+        (tmp_path / f"epmc_{cache_key(doi)}.json").write_text(
+            json.dumps({"resultList": {"result": [{"pmcid": pmcid}]}}),
+            encoding="utf-8")
+        (tmp_path / f"epmc_xml_{cache_key(pmcid)}.json").write_text(
+            json.dumps({"source": "epmc_xml", "sections": sections,
+                        "xml_url": "u"}), encoding="utf-8")
+
+    def test_epmc_xml_with_body_is_a_document(self, tmp_path, monkeypatch):
+        self._epmc(tmp_path, monkeypatch,
+                   {"abstract": "a", "raw_text": "We replicated the original."})
+        assert run_extract._has_document("10.1/x", self._link())
+
+    def test_a_front_matter_shell_is_no_document(self, tmp_path, monkeypatch):
+        """Europe PMC answers 200 with front matter for articles it holds no body
+        for; an abstract alone must not count as full text here."""
+        self._epmc(tmp_path, monkeypatch, {"abstract": "a", "raw_text": ""})
+        assert not run_extract._has_document("10.1/x", self._link())
+
+    def test_another_rows_doi_finds_nothing(self, tmp_path, monkeypatch):
+        self._epmc(tmp_path, monkeypatch, {"raw_text": "body"})
+        assert not run_extract._has_document("10.2/other", self._link())
+        assert not run_extract._has_document("", self._link())
+
+    def test_the_parse_cache_is_built_from_the_epmc_sections(self, tmp_path, monkeypatch):
+        """The re-parse must read the document, not re-run six parsers over None."""
+        monkeypatch.setattr(run_extract, "PARSE_CACHE_DIR", tmp_path)
+        self._epmc(tmp_path, monkeypatch,
+                   {"abstract": "a", "intro": "We replicated Smith (2009).",
+                    "raw_text": "We replicated Smith (2009). " * 20})
+        run_extract._save_parse_cache("10.1/x", doi_r="10.1/x")
+        from shared.pdf_parsing import parse_cache_path
+        cached = json.loads(
+            parse_cache_path("10.1/x", tmp_path).read_text(encoding="utf-8"))
+        assert "We replicated Smith" in cached["openalex_xml"]["raw_text"]
+        # ...and it says which source supplied it, so parse_method matches pdf_source.
+        assert cached["openalex_xml"]["source"] == "epmc_xml"
+
+
 class TestParseCacheIdentity:
     """Two rows without a DOI must not share one parse cache entry.
 
@@ -2211,9 +2263,9 @@ class TestOutcomeReadsTheDiscussion:
 
     def _cache(self, tmp_path, monkeypatch, results):
         import json
-        from shared.utils import cache_key
+        from shared.pdf_parsing import parse_cache_path
         monkeypatch.setattr(run_extract, "PARSE_CACHE_DIR", tmp_path)
-        (tmp_path / f"parse_{cache_key('10.1/x')}.json").write_text(
+        parse_cache_path("10.1/x", tmp_path).write_text(
             json.dumps(results), encoding="utf-8")
 
     def test_escalation_text_is_the_discussion(self, tmp_path, monkeypatch):
@@ -3845,3 +3897,83 @@ class TestConfirmSearchRow:
             out = run_extract._confirm_search_row({**self._ROW, **row_change})
         check.assert_not_called()
         assert out == {**self._ROW, **row_change}
+
+
+class TestMultiTargetReferenceRowsWithoutADocument:
+    """A citation says the paper MENTIONS a work. On a paper that names one original
+    that is usually the original; on a paper that names several, one of them is
+    routinely a comment on it, a meta-analysis, or the method paper. Audited on the
+    multi-target `llm_references` rows that acquired no document: the original is
+    wrong on about 40%."""
+
+    def _target(self, doi: str, title: str, author: str) -> dict:
+        return {"match_certain": True, "target_as_named": title, "study_numbers": "",
+                "replication_study_numbers": "", "evidence_quote": "q",
+                "record": {"doi": doi, "title": title, "first_author": author,
+                           "year": 2010}}
+
+    def _rows(self, targets: list[dict], *, target_stage: str = "llm_references",
+              pdf_source: str = "") -> list[dict]:
+        link = {"targets": targets, "target_stage": target_stage,
+                "unidentified_count": 0, "llm_model": "m",
+                "pdf_source": pdf_source, "parse_method": "", "pdf_ok": False}
+        row = pd.Series({"doi_r": "10.1/repl", "title_r": "R",
+                         "paper_type": "replication"})
+        with patch("extract.run_extract._build_ref_o", return_value=("", "", "")), \
+             patch.object(run_extract, "_has_document", return_value=False), \
+             patch.object(run_extract, "_get_outcome", return_value={}), \
+             patch.object(run_extract, "_verify_row", side_effect=lambda r: r):
+            return run_extract._per_target_rows(row, "10.1/repl", link, None,
+                                                no_llm=True, no_pdf=True,
+                                                resolved_only=False)
+
+    def test_every_row_says_what_it_rests_on(self):
+        rows = self._rows([self._target("10.2/a", "Original A", "Smith"),
+                           self._target("10.2/b", "Original B", "Jones")])
+        assert len(rows) == 2
+        for out in rows:
+            assert out["link_method"] == "llm_references"
+            assert out["link_confidence"] == "low"
+            assert "multi_target_no_document" in out["link_evidence"]
+            # Settled after the demotion, not before: it reads link_confidence.
+            assert out["original_match_confidence"] == "low"
+
+    def test_a_single_target_row_is_untouched(self):
+        rows = self._rows([self._target("10.2/a", "Original A", "Smith")])
+        assert len(rows) == 1
+        assert rows[0]["link_confidence"] == "high"
+        assert "multi_target_no_document" not in rows[0]["link_evidence"]
+
+    def test_a_paper_whose_rung_read_the_document_is_untouched(self):
+        rows = self._rows([self._target("10.2/a", "Original A", "Smith"),
+                           self._target("10.2/b", "Original B", "Jones")],
+                          target_stage="llm_gemini", pdf_source="unpaywall")
+        assert len(rows) == 2
+        assert all(r["link_method"] == "llm_fulltext" for r in rows)
+        assert all(r["link_confidence"] == "high" for r in rows)
+
+
+class TestOneOriginalSpelledTwoWays:
+    """~5% of multi-target papers cite one original twice under DOI variants, chiefly
+    the APA legacy doubled slash. Two rows for one original share a pair_id —
+    md5(doi_r|doi_o) — which is the identifier every other system joins on."""
+
+    def _entry(self, doi: str, title: str = "Original A") -> dict:
+        return {"rank": 0, "doi": doi, "title": title, "year": 1992,
+                "first_author": "Smith", "openalex_id": "", "study_number": "",
+                "study_r": "", "evidence": "q", "confidence": "high",
+                "provisional": False, "outcome_block": {}}
+
+    def test_the_doubled_slash_variant_collapses(self):
+        collapsed = run_extract._collapse_same_paper_originals([
+            self._entry("10.1037//0022-3514.63.4.596"),
+            self._entry("10.1037/0022-3514.63.4.596")])
+        assert len(collapsed) == 1
+        assert collapsed[0]["doi"] == "10.1037//0022-3514.63.4.596", \
+            "the key is normalised; the row keeps the DOI its record carried"
+
+    def test_two_different_originals_stay_two_rows(self):
+        collapsed = run_extract._collapse_same_paper_originals([
+            self._entry("10.1037/0022-3514.63.4.596"),
+            self._entry("10.1037/0022-3514.63.4.597", title="Original B")])
+        assert [c["rank"] for c in collapsed] == [1, 2]

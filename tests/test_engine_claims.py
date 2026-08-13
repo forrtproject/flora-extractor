@@ -252,6 +252,20 @@ def test_verdicts_selects_payload_only_when_asked():
     assert "payload" in select and "prompt_hash" in select
 
 
+def test_every_verdict_read_selects_the_question_it_answered():
+    """`prompt_hash` is what the screen checkpoint compares (`_question_moved`).
+
+    The column contract, asserted on the query rather than on rows, because every
+    fake client in the tier tests hands back whole dicts: a column left out of the
+    select is invisible to them, and the checkpoint silently falls back to comparing
+    timestamps for every work.
+    """
+    with patch("filter.engine.claims.requests.get",
+               return_value=_response(200, [])) as get:
+        _client().verdicts("screen_expensive")
+    assert "prompt_hash" in get.call_args.kwargs["params"]["select"]
+
+
 class TestNulsNeverReachPostgres:
     """Postgres text/jsonb cannot hold U+0000; PostgREST answers 22P05.
 

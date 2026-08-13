@@ -183,6 +183,47 @@ def test_the_pile_reader_stops_scanning_once_it_has_every_wanted_work(
     assert not exhausted
 
 
+def test_a_limited_live_batch_bounds_the_pool_scan(con, pool, monkeypatch):
+    """`--limit 20` is the smoke test, and a smoke test that streams 5.1M pool rows
+    is not one. The limit reaches the reader, which stops there."""
+    seen: list = []
+    real = tiers.pile_works
+
+    def recording(*args, **kwargs):
+        seen.append(kwargs.get("limit"))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(tiers, "pile_works", recording)
+    works = tiers._batch(con, _client([]), RELEASE, "screen_expensive", None, 1,
+                         pool, None, None, run=True)
+    assert seen == [1]
+    assert len(works) == 1
+
+
+def test_a_limited_batch_still_reopens_a_work_whose_overlay_text_arrived_later(
+        con, pool, monkeypatch, tmp_path):
+    """The bounded scan narrows itself with the text-BLIND checkpoint, so it has to
+    add the settled works an overlay has since supplied text for — or `--limit`
+    would be the one path that cannot see a backfill."""
+    votes = [{"work_id": 11, "verdict": "none", "model": m,
+              "confidence": "confident", "created_at": "2026-08-01T00:00:00+00:00"}
+             for m in _voter_models()]
+    client = _decided_client("screen_expensive", "live", votes)
+    client.claimed_work_ids.return_value = set()
+    monkeypatch.setattr(tiers, "overlay_fetched_at",
+                        lambda _dir: {11: "2026-08-13T00:00:00+00:00"})
+
+    works = tiers._batch(con, client, RELEASE, "screen_expensive", {11}, 5,
+                         pool, None, None, run=True)
+    assert [w.work_id for w in works] == [11]
+
+    # Text that predates the verdict leaves it settled, limit or no limit.
+    monkeypatch.setattr(tiers, "overlay_fetched_at",
+                        lambda _dir: {11: "2026-07-01T00:00:00+00:00"})
+    assert tiers._batch(con, client, RELEASE, "screen_expensive", {11}, 5,
+                        pool, None, None, run=True) == []
+
+
 # ---------------------------------------------------------------------------
 # The dry run (issue #146 §6)
 # ---------------------------------------------------------------------------
@@ -1145,6 +1186,52 @@ def test_the_generation_moves_with_a_voter_model_and_with_the_prompt(monkeypatch
     assert tiers.screening_generation("screen_expensive") != before
 
 
+def test_the_generation_moves_with_a_voters_effort(monkeypatch):
+    """How hard a voter thinks changes what it answers, so an effort change must
+    reopen the works screened under the old one."""
+    before = tiers.screening_generation("screen_expensive")
+
+    monkeypatch.setattr(tiers, "SCREENING_EFFORT_1", "high")
+    assert tiers.screening_generation("screen_expensive") != before
+
+    monkeypatch.undo()
+    monkeypatch.setattr(tiers, "SCREENING_EFFORT_2", "high")
+    assert tiers.screening_generation("screen_expensive") != before
+
+
+def test_an_effort_belongs_to_its_voter_across_the_sort(monkeypatch):
+    """The pair is sorted so a slot swap is not a new generation. That must not
+    re-pair the efforts: two voters at swapped efforts is a different question."""
+    monkeypatch.setattr(tiers, "SCREENING_MODEL_1", "a-model")
+    monkeypatch.setattr(tiers, "SCREENING_MODEL_2", "b-model")
+    monkeypatch.setattr(tiers, "SCREENING_EFFORT_1", "low")
+    monkeypatch.setattr(tiers, "SCREENING_EFFORT_2", "high")
+    a_low_b_high = tiers.screening_generation("screen_expensive")
+
+    # Swapping both slots together is the same pair, so the same generation.
+    monkeypatch.setattr(tiers, "SCREENING_MODEL_1", "b-model")
+    monkeypatch.setattr(tiers, "SCREENING_MODEL_2", "a-model")
+    monkeypatch.setattr(tiers, "SCREENING_EFFORT_1", "high")
+    monkeypatch.setattr(tiers, "SCREENING_EFFORT_2", "low")
+    assert tiers.screening_generation("screen_expensive") == a_low_b_high
+
+    # Swapping only the efforts is a different question.
+    monkeypatch.setattr(tiers, "SCREENING_EFFORT_1", "low")
+    monkeypatch.setattr(tiers, "SCREENING_EFFORT_2", "high")
+    assert tiers.screening_generation("screen_expensive") != a_low_b_high
+
+
+def test_verdict_rows_that_name_no_model_are_not_grandfathered():
+    """No attribution is not evidence that today's pair produced the verdict. Such
+    works are screened again."""
+    voter1, _voter2 = _voter_models()
+    assert tiers._screen_accepts_legacy("screen_expensive", []) is False
+    assert tiers._screen_accepts_legacy("screen_expensive",
+                                        [{"model": ""}, {"model": None}]) is False
+    assert tiers._screen_accepts_legacy("screen_expensive",
+                                        [{"model": voter1}]) is True
+
+
 def _expensive_votes(work: int = 11) -> list[dict]:
     voter1, voter2 = _voter_models()
     return [{"work_id": work, "verdict": "none", "model": voter1,
@@ -1179,7 +1266,7 @@ def test_a_verdict_from_another_generation_neither_settles_nor_blocks(
 def _asked(work: int, title: str, abstract: str) -> dict[int, str]:
     return {work: tiers.question_hash(
         tiers.Work(work_id=work, doi="10.1/x", title=title, abstract=abstract,
-                   pile="screen_expensive"))}
+                   pile="screen_expensive"), tiers.TIER_EXPENSIVE)}
 
 
 def test_a_verdict_stands_while_the_text_it_was_bought_on_is_unchanged():
@@ -1221,6 +1308,60 @@ def test_a_verdict_predating_the_record_stands_unless_the_text_is_newer():
     # And with no overlay row at all the verdict stands: the pool's own text is what
     # it was bought on and nothing says otherwise.
     assert tiers.decided_work_ids(client, "screen_expensive", asked, {}) == {11}
+
+
+def test_the_timestamp_branch_compares_instants_not_strings():
+    """The two stamps come from different producers in different formats: the
+    overlay's is `datetime.isoformat()`, the verdict's is PostgREST's rendering of a
+    timestamptz, which trims the fraction and can carry any offset. Comparing them
+    as text is not an ordering — an hour of offset outranks a whole day."""
+    asked = _asked(11, "A replication", "text as it stands now")
+
+    # 12:13:59Z, written by a server reporting +02:00. Text that arrived an hour
+    # later sorts BEFORE it as a string.
+    votes = [{**v, "created_at": "2026-08-13T14:13:59+02:00"}
+             for v in _expensive_votes()]
+    client = _decided_client("screen_expensive", "live", votes)
+    assert tiers.decided_work_ids(client, "screen_expensive", asked,
+                                  {11: "2026-08-13T13:13:59+00:00"}) == set()
+
+    # The same instant, written twice: PostgREST trims the trailing zeros the
+    # overlay's isoformat keeps. Nothing moved, so the verdict stands.
+    trimmed = [{**v, "created_at": "2026-08-13T12:13:59.5+00:00"}
+               for v in _expensive_votes()]
+    assert tiers.decided_work_ids(
+        _decided_client("screen_expensive", "live", trimmed), "screen_expensive",
+        asked, {11: "2026-08-13T12:13:59.500000+00:00"}) == {11}
+
+
+def test_an_unreadable_timestamp_leaves_the_verdict_standing():
+    """The fail-safe direction. This branch covers only rows written before the
+    question was recorded, and reading garbage as movement would reopen the settled
+    backlog — a whole campaign's spend — on one malformed value."""
+    votes = [{**v, "created_at": "2026-08-01T00:00:00+00:00"}
+             for v in _expensive_votes()]
+    client = _decided_client("screen_expensive", "live", votes)
+    asked = _asked(11, "A replication", "text as it stands now")
+    assert tiers.decided_work_ids(client, "screen_expensive", asked,
+                                  {11: "not a timestamp"}) == {11}
+
+
+def test_each_tier_asks_its_own_question(con, pool):
+    """A question hash is the prompt AND the text, and the two tiers do not share a
+    prompt. Computed under one and compared against the other, every settled work
+    reads as moved — which is what would reopen the cheap tier the day it wakes."""
+    work = tiers.Work(21, "10.1/x", "A replication", "We replicated Smith.",
+                      "screen_cheap")
+    assert (tiers.question_hash(work, tiers.TIER_CHEAP)
+            != tiers.question_hash(work, tiers.TIER_EXPENSIVE))
+
+    # And the cheap judge records that value, not the prompt version string it used
+    # to write — a different kind of value, which the checkpoint reads as a question
+    # nobody is asking any more.
+    with patch("filter.engine.tiers.prescreen_vote", return_value="yes"):
+        _, votes = tiers._cheap_judge(work)
+    assert {v["prompt_hash"] for v in votes} == {
+        tiers.question_hash(work, tiers.TIER_CHEAP)}
 
 
 def test_the_checkpoint_is_text_blind_when_no_question_is_supplied():

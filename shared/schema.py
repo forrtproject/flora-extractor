@@ -147,12 +147,14 @@ EXTRACT_ADDED_COLS = [
     "pdf_source",          # str   — acquisition tier that supplied the document
                            #         (row_url | arxiv | osf | openalex_oa | unpaywall_pdf |
                            #          semanticscholar | core | europepmc | landing_* |
-                           #          serpapi | playwright | openalex_xml |
+                           #          serpapi | playwright | openalex_xml | epmc_xml |
                            #          osf_registration | html_landing); blank when none
     "parse_method",        # str   — winning parser from best_parse_result()
-                           #         (openalex_xml | pdfminer | grobid | docpluck |
-                           #          opendataloader | markitdown | docx); blank when
-                           #          nothing parsed. `docx` is a Word file, which a
+                           #         (openalex_xml | epmc_xml | pdfminer | grobid |
+                           #          docpluck | opendataloader | markitdown | docx);
+                           #          blank when nothing parsed. A structured source
+                           #          names itself here, so parse_method and pdf_source
+                           #          agree on it. `docx` is a Word file, which a
                            #          preprint server serves as readily as a PDF; the
                            #          format is not a tier, so pdf_source is unaffected
 
@@ -570,8 +572,11 @@ def normalise_outcome_block(result: dict, record_type: str,
 
     axes = dict(EMPTY_OUTCOME_AXES)
     if is_repro:
-        computation = _outcome_text(result.get("outcome_computation")).strip()
-        robustness = _outcome_text(result.get("outcome_robustness")).strip()
+        # Both vocabularies are lower case, and a model that capitalises its own
+        # sentence ("Computationally reproducible") means the value it was offered.
+        # Case is settled here rather than by spending prompt tokens on it.
+        computation = _outcome_text(result.get("outcome_computation")).strip().lower()
+        robustness = _outcome_text(result.get("outcome_robustness")).strip().lower()
         # An unrecognised axis value is a value the pipeline cannot act on; recording
         # it as unsettled is honest, recording it verbatim is not.
         if computation not in COMPUTATION_OUTCOME_VALUES:

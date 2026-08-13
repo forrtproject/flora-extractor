@@ -44,7 +44,8 @@ def _ago(days: float) -> str:
 _ALL_TIERS = [
     "get_openalex_fulltext", "get_arxiv_pdf_url", "get_osf_pdf_url",
     "get_openalex_locations", "get_datacite_urls", "get_all_unpaywall_pdf_urls",
-    "get_semanticscholar_pdf_url", "get_core_pdf_url", "get_europepmc_pdf_url",
+    "get_semanticscholar_pdf_url", "get_core_pdf_url", "get_europepmc_pmcid",
+    "get_europepmc_fulltext",
     "scrape_pdf_from_landing_page", "get_serpapi_pdf_url",
     "list_osf_files", "crossref_reviewed_doi", "crossref_title_matches",
     "crossref_title",
@@ -147,7 +148,7 @@ def test_a_tier_that_failed_inside_the_ttl_is_not_re_probed():
     assert out2["pdf_ok"] is False
     for name in ("get_openalex_locations", "get_all_unpaywall_pdf_urls",
                  "get_semanticscholar_pdf_url", "get_core_pdf_url",
-                 "get_europepmc_pdf_url", "get_serpapi_pdf_url",
+                 "get_europepmc_pmcid", "get_serpapi_pdf_url",
                  "get_pdf_via_playwright"):
         mocks2[name].assert_not_called()
 
@@ -219,6 +220,8 @@ class _Resp:
     def __init__(self, status: int, body: bytes = b""):
         self.status_code = status
         self._body = body
+        self.content = body
+        self.text = body.decode("utf-8", errors="replace")
 
     def raise_for_status(self):
         if self.status_code >= 400:
@@ -1153,3 +1156,202 @@ def test_a_document_on_disk_keeps_the_tier_that_really_supplied_it():
     assert out["pdf_url"] == "https://scholar.example/paper.pdf"
     started["list_osf_files"].assert_not_called()
     reg.assert_not_called()
+
+
+# ── Europe PMC ────────────────────────────────────────────────────────────────
+# The tier asks for the JATS full text first and falls back to the article page's
+# rendered PDF. `backend/ptpmcrender.fcgi`, which the URL used to be built on, breaks
+# the HTTP/2 stream; `europepmc.org/articles/<PMCID>?pdf=render` answers 200 with a
+# PDF (both probed 2026-08-13).
+
+_JATS = """<article>
+  <front><article-meta><abstract><p>We replicated Smith (2009).</p></abstract>
+  </article-meta></front>
+  <body><sec><title>Introduction</title><p>The original reported a large effect.</p>
+  </sec><sec><title>Discussion</title><p>The effect did not replicate.</p></sec></body>
+  <back><ref-list><ref><element-citation>
+    <person-group><name><surname>Smith</surname><given-names>J</given-names></name>
+    </person-group><article-title>Attitudes toward HIV</article-title>
+    <year>2009</year></element-citation></ref></ref-list></back>
+</article>"""
+
+# What the endpoint serves for an article it holds a RECORD of and no body: front
+# matter, abstract included. It is truthy and it is not a document.
+_JATS_RECORD_ONLY = ("<article><front><article-meta><title-group><article-title>"
+                     "A paper</article-title></title-group>"
+                     "<abstract><p>We replicated Smith (2009).</p></abstract>"
+                     "</article-meta></front></article>")
+
+
+@pytest.fixture()
+def _epmc_cache_in_tmp(tmp_path, monkeypatch):
+    monkeypatch.setattr(ps, "OA_XML_CACHE_DIR", tmp_path)
+    return tmp_path
+
+
+def test_the_europepmc_pdf_url_is_the_article_render_route():
+    assert ps.europepmc_pdf_url("PMC123") == \
+        "https://europepmc.org/articles/PMC123?pdf=render"
+
+
+def test_epmc_jats_with_a_body_is_a_document(_epmc_cache_in_tmp):
+    with patch.object(ps.requests, "get",
+                      return_value=_Resp(200, _JATS.encode())):
+        doc = ps.get_europepmc_fulltext("PMC123")
+
+    assert doc["source"] == "epmc_xml"
+    assert "did not replicate" in doc["sections"]["raw_text"]
+    assert doc["sections"]["intro"].startswith("Introduction")
+    assert doc["sections"]["references"][0]["title"] == "Attitudes toward HIV"
+    assert ps.epmc_xml_has_content(doc) is True
+    # Cached, so the second read costs no request.
+    with patch.object(ps.requests, "get", side_effect=AssertionError) as get:
+        assert ps.get_europepmc_fulltext("PMC123") == doc
+        get.assert_not_called()
+
+
+def test_a_record_shaped_epmc_xml_is_no_document_and_is_not_cached(_epmc_cache_in_tmp):
+    """Front matter and an abstract are what a RECORD carries. Reading one as full
+    text is what every structured source's content check exists to stop."""
+    with patch.object(ps.requests, "get",
+                      return_value=_Resp(200, _JATS_RECORD_ONLY.encode())):
+        assert ps.get_europepmc_fulltext("PMC404") is None
+    assert list(_epmc_cache_in_tmp.glob("epmc_xml_*.json")) == []
+
+
+def test_an_epmc_5xx_is_an_outage_and_a_404_is_an_answer(_epmc_cache_in_tmp):
+    with patch.object(ps.requests, "get", return_value=_Resp(503)):
+        with pytest.raises(ps.DocumentSourceUnavailable):
+            ps.get_europepmc_fulltext("PMC500")
+    with patch.object(ps.requests, "get", return_value=_Resp(404)):
+        assert ps.get_europepmc_fulltext("PMC404") is None
+
+
+def test_the_epmc_xml_ends_the_waterfall_and_clears_the_retry_record():
+    doi = "10.1016/j.example.2020.01.009"
+    _write_retry_log(doi, {"core": _ago(1)})
+    doc = {"source": "epmc_xml", "xml_url": "u",
+           "sections": {"abstract": "We replicated it.", "intro": "", "methods": "",
+                        "references": [{"title": "r"}]}}
+    patchers = _mock_all_tiers()
+    started = {name: p.start() for name, p in patchers.items()}
+    started["get_europepmc_pmcid"].return_value = "PMC123"
+    started["get_europepmc_fulltext"].return_value = doc
+    try:
+        with patch.object(ps, "download_pdf", return_value=_NO_PDF) as dl:
+            out = ps.acquire_pdf(doi, _TITLE)
+    finally:
+        for p in patchers.values():
+            p.stop()
+
+    assert out["pdf_source"] == "epmc_xml"
+    assert out["openalex_xml"] == doc
+    assert _retry_log(doi) == {}
+    dl.assert_not_called()
+
+
+def test_no_epmc_xml_falls_back_to_the_rendered_pdf():
+    doi = "10.1016/j.example.2020.01.010"
+    patchers = _mock_all_tiers()
+    started = {name: p.start() for name, p in patchers.items()}
+    started["get_europepmc_pmcid"].return_value = "PMC123"
+    started["get_europepmc_fulltext"].return_value = None
+    tried = []
+
+    def _download(url, **kwargs):
+        tried.append(url)
+        return {"success": True, "path": "/tmp/x.pdf", "source": "download",
+                "reason": ""}
+
+    try:
+        with patch.object(ps, "download_pdf", side_effect=_download), \
+             patch.object(ps, "_write_provenance"):
+            out = ps.acquire_pdf(doi, _TITLE)
+    finally:
+        for p in patchers.values():
+            p.stop()
+
+    assert out["pdf_source"] == "europepmc"
+    assert tried[-1] == "https://europepmc.org/articles/PMC123?pdf=render"
+
+
+# ── Europe PMC: an outage is not a fourteen-day suppression ───────────────────
+
+def test_the_epmc_search_raises_on_trouble_and_answers_on_an_empty_result(tmp_path,
+                                                                          monkeypatch):
+    """The search endpoint answers 200 with an empty result list for a DOI it does
+    not hold. Anything else — a timeout, a 429, a gateway page — is no answer, and a
+    None there would suppress the tier for fourteen days on a paper Europe PMC has."""
+    monkeypatch.setattr(ps, "OA_CACHE_DIR", tmp_path)
+    empty = json.dumps({"resultList": {"result": []}}).encode()
+
+    with patch.object(ps.requests, "get", return_value=_Resp(200, empty)):
+        assert ps.get_europepmc_pmcid("10.1/empty") is None
+
+    with patch.object(ps.requests, "get", return_value=_Resp(429)):
+        with pytest.raises(ps.DocumentSourceUnavailable):
+            ps.get_europepmc_pmcid("10.1/busy")
+    with patch.object(ps.requests, "get", side_effect=TimeoutError("timed out")):
+        with pytest.raises(ps.DocumentSourceUnavailable):
+            ps.get_europepmc_pmcid("10.1/slow")
+    # Only the answer is filed; a run that reaches the same DOI tomorrow re-asks.
+    assert len(list(tmp_path.glob("epmc_*.json"))) == 1
+
+
+def _acquire_with_epmc(doi: str, *, pmcid, fulltext, download_reason: str):
+    """acquire_pdf with every other tier missing; `pmcid`/`fulltext` may be
+    exceptions to raise. Returns the retry log written for *doi*."""
+    patchers = _mock_all_tiers()
+    started = {name: p.start() for name, p in patchers.items()}
+    for name, value in (("get_europepmc_pmcid", pmcid),
+                        ("get_europepmc_fulltext", fulltext)):
+        if isinstance(value, Exception):
+            started[name].side_effect = value
+        else:
+            started[name].return_value = value
+    try:
+        with patch.object(ps, "get_pdf_via_playwright", return_value=_NO_PLAYWRIGHT), \
+             patch.object(ps, "download_pdf",
+                          return_value={"success": False, "path": None,
+                                        "source": "", "reason": download_reason}):
+            ps.acquire_pdf(doi, _TITLE)
+    finally:
+        for p in patchers.values():
+            p.stop()
+    return _retry_log(doi)
+
+
+def test_an_epmc_search_outage_records_no_retry_stamp():
+    log = _acquire_with_epmc("10.1016/j.example.2020.01.020",
+                             pmcid=ps.DocumentSourceUnavailable("timeout"),
+                             fulltext=None, download_reason="not_a_pdf")
+    assert "europepmc" not in log
+
+
+def test_an_empty_epmc_search_result_records_the_stamp():
+    log = _acquire_with_epmc("10.1016/j.example.2020.01.021",
+                             pmcid=None, fulltext=None,
+                             download_reason="not_a_pdf")
+    assert "europepmc" in log
+
+
+def test_an_epmc_pdf_that_only_failed_to_download_records_no_stamp():
+    log = _acquire_with_epmc("10.1016/j.example.2020.01.022",
+                             pmcid="PMC123", fulltext=None,
+                             download_reason="download_error: 503")
+    assert "europepmc" not in log
+
+
+def test_an_epmc_xml_outage_leaves_half_the_tier_unasked_so_no_stamp():
+    log = _acquire_with_epmc("10.1016/j.example.2020.01.023",
+                             pmcid="PMC123",
+                             fulltext=ps.DocumentSourceUnavailable("503"),
+                             download_reason="not_a_pdf")
+    assert "europepmc" not in log
+
+
+def test_both_epmc_routes_answering_nothing_records_the_stamp():
+    log = _acquire_with_epmc("10.1016/j.example.2020.01.024",
+                             pmcid="PMC123", fulltext=None,
+                             download_reason="not_a_pdf")
+    assert "europepmc" in log

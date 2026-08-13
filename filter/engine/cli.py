@@ -718,8 +718,10 @@ def build_parser() -> argparse.ArgumentParser:
     screen.add_argument("--release", default=None,
                         help="Release to screen (default: the store's only one).")
     screen.add_argument("--limit", type=int, default=None,
-                        help="Stop after N works — how a first live batch stays "
-                             "small enough to inspect.")
+                        help="Offer at most N works — how a first live batch stays "
+                             "small enough to inspect, and what keeps it off a "
+                             "whole-pool scan. Sometimes fewer: a work whose text "
+                             "moved is checked after the scan.")
     screen.add_argument("--only", default="",
                         help="Comma-separated work ids to screen, instead of the "
                              "whole pile. RESTRICTS: a work already settled on the "

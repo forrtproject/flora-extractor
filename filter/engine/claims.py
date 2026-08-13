@@ -570,18 +570,24 @@ class ClaimsClient:
         "latest" is a fact only this column carries: the primary key is a uuid, so
         row order is not time order.
 
+        `prompt_hash` is selected because the screen checkpoint reads it: it records
+        the question a vote answered, text included, and a work whose text has moved
+        since is asked again (`_question_moved` in `filter/engine/tiers.py`). Left
+        out of the select, every work falls back to the timestamp branch and a
+        recorded hash decides nothing.
+
         `quote` is selected for the same kind of reason one step further on: it is
         that voter's justifying passage, and the handoff joins the pair's quotes onto
         the row Stage 3 reads (`screen_evidence`), so a set-aside row still names the
         evidence the screen acted on.
         """
         select = ("id,claim_id,work_id,tier,model,verdict,confidence,quote,"
-                  "response_state,created_at")
+                  "prompt_hash,response_state,created_at")
         if with_payload:
-            # Only the extract export pays for payloads (and the prompt_hash
-            # that carries a result row's generation); the screen's read stays
-            # its lean self.
-            select += ",prompt_hash,payload"
+            # Only the extract export pays for the payload — a whole rendered
+            # result row per verdict. Every other column is small enough that
+            # every reader gets it.
+            select += ",payload"
         rows = self._get_paged("engine_verdicts", {
             "select": select,
             "tier": f"eq.{tier}",

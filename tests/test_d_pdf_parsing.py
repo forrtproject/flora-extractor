@@ -84,6 +84,19 @@ class TestParseOpenAlexXml:
         assert len(r["references"]) == 1
         assert r["error"] is None
 
+    def test_the_document_names_its_own_source(self):
+        """Every structured source arrives through this one channel, and `source`
+        becomes the row's parse_method — so a Europe PMC JATS document must not be
+        reported as OpenAlex XML beside a pdf_source that says otherwise."""
+        r = parse_openalex_xml({"source": "epmc_xml",
+                                "sections": {"raw_text": "body"}})
+        assert r["source"] == "epmc_xml"
+        assert r["raw_text"] == "body"
+
+    def test_a_document_naming_no_source_is_openalex(self):
+        r = parse_openalex_xml({"sections": {"raw_text": "body"}})
+        assert r["source"] == "openalex_xml"
+
 
 class TestParseGrobid:
     def test_calls_run_grobid_and_maps_sections(self, tmp_path):
@@ -460,3 +473,202 @@ class TestLongDocumentsKeepTheirTail:
         out = parse_pdfminer(path)
         assert out["error"] is None
         assert any("Smith" in " ".join(r.get("authors", [])) for r in out["references"])
+
+
+class TestAnEmptyReferenceListIsAnAnswer:
+    """A paper that genuinely carries no reference list used to be uncacheable: both
+    Gemini rungs were only written `if refs`, so every run re-bought both calls for
+    it. An empty list is what the model said; only a call that got no answer at all
+    stays uncached."""
+
+    def test_an_empty_answer_is_cached_and_replayed(self, tmp_path):
+        from shared import grobid
+        pdf = _fake_pdf(tmp_path)
+        with patch.object(grobid, "GROBID_CACHE_DIR", tmp_path), \
+             patch("shared.llm_client.call_gemini_with_pdf",
+                   return_value=({"references": []}, "")) as call:
+            assert grobid._extract_refs_via_pdf_direct("10.1/x", pdf) == []
+            assert grobid._extract_refs_via_pdf_direct("10.1/x", pdf) == []
+        assert call.call_count == 1
+
+    def test_the_image_rung_caches_its_empty_answer_too(self, tmp_path):
+        from shared import grobid
+        fitz = pytest.importorskip("fitz")
+        pdf = tmp_path / "rendered.pdf"
+        doc = fitz.open()
+        doc.new_page()
+        doc.save(str(pdf))
+        doc.close()
+
+        with patch.object(grobid, "GROBID_CACHE_DIR", tmp_path), \
+             patch("shared.llm_client.call_gemini_with_images",
+                   return_value=({"references": []}, "")) as call:
+            assert grobid._extract_refs_via_pdf_images("10.1/x", pdf) == []
+            assert grobid._extract_refs_via_pdf_images("10.1/x", pdf) == []
+        assert call.call_count == 1
+
+    def test_a_provider_failure_is_still_not_cached(self, tmp_path):
+        from shared import grobid
+        pdf = _fake_pdf(tmp_path)
+        with patch.object(grobid, "GROBID_CACHE_DIR", tmp_path), \
+             patch("shared.llm_client.call_gemini_with_pdf",
+                   return_value=(None, "quota exhausted on key 1 (429)")):
+            with pytest.raises(grobid.ReferenceExtractionUnavailable):
+                grobid._extract_refs_via_pdf_direct("10.1/x", pdf)
+        assert list(tmp_path.glob("*_direct_refs_*.json")) == []
+
+    def test_a_reply_with_no_references_list_is_not_an_answer(self, tmp_path):
+        """Not the model saying "none" — a reply this code cannot read. Filing it
+        would freeze a parse bug onto the document."""
+        from shared import grobid
+        pdf = _fake_pdf(tmp_path)
+        with patch.object(grobid, "GROBID_CACHE_DIR", tmp_path), \
+             patch("shared.llm_client.call_gemini_with_pdf",
+                   return_value=({"refs": []}, "")):
+            assert grobid._extract_refs_via_pdf_direct("10.1/x", pdf) == []
+        assert list(tmp_path.glob("*_direct_refs_*.json")) == []
+
+    def test_a_cached_empty_ends_the_chain_where_a_fresh_empty_does(self, tmp_path):
+        """run_grobid falls from the direct rung to the image rung on an empty answer,
+        and must do the same on a cached one — the cache replaces the call, not the
+        control flow."""
+        from shared import grobid
+        pdf = _fake_pdf(tmp_path)
+        sections = {"abstract": "An abstract.", "intro": "", "methods": "",
+                    "references": []}
+        with patch.object(grobid, "GROBID_CACHE_DIR", tmp_path), \
+             patch.object(grobid, "parse_pdf_sections", return_value=dict(sections)), \
+             patch.object(grobid, "_extract_refs_via_grobid", return_value=[]), \
+             patch("shared.llm_client.call_gemini_with_pdf",
+                   return_value=({"references": []}, "")) as call, \
+             patch.object(grobid, "_extract_refs_via_pdf_images",
+                          return_value=[]) as images:
+            first = grobid.run_grobid("10.1/x", pdf)
+            second = grobid.run_grobid("10.1/x", pdf)
+
+        assert call.call_count == 1, "the second run replayed the cached empty answer"
+        assert images.call_count == 2, "a cached empty still hands on to the image rung"
+        assert first["grobid_status"] == second["grobid_status"] == "success"
+        assert first["n_refs_parsed"] == second["n_refs_parsed"] == 0
+
+
+class TestJatsSections:
+    """Europe PMC serves JATS. parse_jats_sections() must fill the same dict
+    parse_tei_sections() does, because every reader downstream takes the dict and
+    never asks which markup produced it."""
+
+    _XML = """<article>
+      <front><article-meta><abstract><p>We replicated Smith (2009).</p></abstract>
+      </article-meta></front>
+      <body>
+        <sec><title>Introduction</title><p>The original reported a large effect.</p></sec>
+        <sec><title>Materials and Methods</title><p>We ran 200 participants.</p></sec>
+        <sec><title>Discussion</title><p>The effect did not replicate.</p></sec>
+      </body>
+      <back><ref-list>
+        <ref><element-citation>
+          <person-group><name><surname>Smith</surname><given-names>Jane</given-names></name></person-group>
+          <article-title>Attitudes toward HIV</article-title><year>2009</year>
+        </element-citation></ref>
+      </ref-list></back>
+    </article>"""
+
+    def _sections(self) -> dict:
+        from shared.grobid import parse_jats_sections
+        return parse_jats_sections(self._XML)
+
+    def test_it_fills_the_same_keys_as_the_tei_parser(self):
+        from shared.grobid import parse_tei_sections
+        assert set(self._sections()) == set(parse_tei_sections(""))
+
+    def test_headings_pick_out_intro_and_methods(self):
+        s = self._sections()
+        assert s["abstract"] == "We replicated Smith (2009)."
+        assert "large effect" in s["intro"]
+        assert "200 participants" in s["methods"]
+
+    def test_the_bibliography_is_parsed_and_kept_out_of_the_body(self):
+        s = self._sections()
+        assert s["references"] == [{"authors": ["Smith, J."], "year": 2009,
+                                    "title": "Attitudes toward HIV",
+                                    "raw_ref": s["references"][0]["raw_ref"]}]
+        # outcome_text() reads the TAIL of raw_text: a bibliography left in it becomes
+        # the "closing pages" a verdict is coded from.
+        assert "Attitudes toward HIV" not in s["raw_text"]
+        assert s["raw_text"].rstrip().endswith("The effect did not replicate.")
+
+    def test_unreadable_xml_is_empty_rather_than_an_exception(self):
+        from shared.grobid import parse_jats_sections
+        assert parse_jats_sections("<article><body>")["raw_text"] == ""
+        assert parse_jats_sections("")["references"] == []
+
+
+class TestReferenceHeadingIsNotProse:
+    """_split_sections takes the LAST references match, so a sentence that merely uses
+    the word — always after the bibliography — would truncate the reference list to a
+    paragraph of prose. What follows the heading has to look like a bibliography."""
+
+    TEXT = ("References\nSmith, J. (2010). A paper. Journal, 1, 1-2.\n"
+            "Jones, B. (2011). Another. Journal, 2, 3-4.\n\n")
+
+    @pytest.mark.parametrize("prose", [
+        "References 12 and 13 report a null effect.",
+        "7. References were checked against the registry.",
+        "References to the original are sparse.",
+        "Reference groups on the treatment of eccentric individuals differ.",
+    ])
+    def test_prose_after_the_bibliography_does_not_move_the_split(self, prose):
+        from shared.grobid import _split_sections
+        block = _split_sections(self.TEXT + prose + "\n")["references_raw"]
+        assert "Smith" in block and "Jones" in block
+
+    @pytest.mark.parametrize("heading", [
+        "References Cited",
+        "REFERENCES AND SUPPLEMENTS",
+        "Reference list:",
+    ])
+    def test_a_heading_carrying_extra_words_is_still_a_heading(self, heading):
+        from shared.grobid import _split_sections
+        text = f"Introduction\nWe replicated Smith.\n\n{heading}\nSmith, J. (2010). A paper.\n"
+        assert "Smith, J." in _split_sections(text)["references_raw"]
+
+    @pytest.mark.parametrize("first_entry", [
+        "Smith, J. (2010). A paper. Journal, 1, 1-2.",
+        "[1] Smith, J. (2010). A paper.",
+        "1. Smith J, Jones B (2010) A paper.",
+        "9 Esterman, M., Rosenberg, M. D. Intrinsic fluctuations.",
+    ])
+    def test_the_first_entry_may_share_the_heading_line(self, first_entry):
+        from shared.grobid import _split_sections
+        text = f"Introduction\nWe replicated Smith.\n\nReferences {first_entry}\n"
+        assert first_entry[-20:] in _split_sections(text)["references_raw"]
+
+
+class TestExtractionVersionInvalidatesCachedText:
+    """Both caches that hold extracted text — this module's section cache and the
+    parse cache the ladder reads INSTEAD of parsing — name TEXT_EXTRACTION_VERSION, so
+    a change to what the parsers extract reaches documents already on disk."""
+
+    def test_the_parse_cache_path_names_the_version(self, tmp_path):
+        from shared import pdf_parsing
+        from shared.pdf_parsing import parse_cache_path
+        before = parse_cache_path("10.1/x", tmp_path)
+        assert f"_v{pdf_parsing.TEXT_EXTRACTION_VERSION}.json" in before.name
+        with patch.object(pdf_parsing, "TEXT_EXTRACTION_VERSION",
+                          pdf_parsing.TEXT_EXTRACTION_VERSION + 1):
+            assert parse_cache_path("10.1/x", tmp_path) != before
+
+    def test_a_bumped_version_re_extracts_the_sections(self, tmp_path, monkeypatch):
+        from shared import grobid
+        monkeypatch.setattr(grobid, "GROBID_CACHE_DIR", tmp_path)
+        pdf = tmp_path / "paper.pdf"
+        pdf.write_bytes(b"%PDF-1.4 stub")
+        with patch.object(grobid, "_extract_pdf_text",
+                          return_value="Abstract\nOne.\n") as extract:
+            grobid.parse_pdf_sections(pdf)
+            grobid.parse_pdf_sections(pdf)          # cache hit
+            assert extract.call_count == 1
+            monkeypatch.setattr(grobid, "TEXT_EXTRACTION_VERSION",
+                                grobid.TEXT_EXTRACTION_VERSION + 1)
+            grobid.parse_pdf_sections(pdf)
+            assert extract.call_count == 2
