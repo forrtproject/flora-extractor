@@ -1258,6 +1258,19 @@ def test_a_verdict_from_another_generation_neither_settles_nor_blocks(
     assert drop == {11} and set(screen) == {11}
 
 
+def test_a_validation_verdict_settles_the_sandbox_and_not_the_live_worklist():
+    """The extract tier's sandbox semantics, mirrored: a validation-mode screen
+    verdict must not hide the work from the live run that still owes its real
+    verdict — the handoff ignores it, so counting it as decided would strand the
+    work. Scoped the other way, a live verdict is not what the sandbox re-checks.
+    Unscoped, the checkpoint stays a whole-store report."""
+    sandbox = _decided_client("screen_expensive", "validation", _expensive_votes())
+    assert tiers.decided_work_ids(sandbox, "screen_expensive", mode="live") == set()
+    assert tiers.decided_work_ids(
+        sandbox, "screen_expensive", mode="validation") == {11}
+    assert tiers.decided_work_ids(sandbox, "screen_expensive") == {11}
+
+
 # ---------------------------------------------------------------------------
 # The question a verdict answered: the text, which the generation does not carry
 # ---------------------------------------------------------------------------

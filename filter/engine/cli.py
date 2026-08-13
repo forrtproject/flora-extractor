@@ -352,6 +352,15 @@ def cmd_screen(args) -> int:
     from filter.engine.tiers import (TIER_CHEAP, TIER_EXPENSIVE, run_screen_cheap,
                                      run_screen_expensive)
 
+    # screen_expensive IS the validated front door, so its verdicts count by
+    # default; screen_cheap has to earn that on this distribution first (§2), so
+    # it validates unless told otherwise. An explicit --mode overrides either
+    # default — the sandbox for exercising changed screen code.
+    if args.mode and args.live and args.mode == "validation":
+        raise SystemExit("--live and --mode validation contradict each other")
+    mode = args.mode or (
+        "live" if (args.live or args.tier == TIER_EXPENSIVE) else "validation")
+
     con = open_store(args.store, read_only=True)
     release_id = _resolve_release(con, args.release, cache_dir=args.store.parent)
     overlay_dir = _overlay(args)
@@ -380,10 +389,6 @@ def cmd_screen(args) -> int:
                              "drop --run for a dry run.")
         client = None
 
-    # screen_expensive IS the validated front door, so its verdicts count by
-    # default; screen_cheap has to earn that on this distribution first (§2), so
-    # it validates unless told otherwise.
-    mode = "live" if (args.live or args.tier == TIER_EXPENSIVE) else "validation"
     runner = run_screen_cheap if args.tier == TIER_CHEAP else run_screen_expensive
     only = [int(w) for w in args.only.replace(",", " ").split()] or None
     report = runner(con, client, release_id, only,
@@ -413,6 +418,10 @@ def cmd_screen(args) -> int:
             print(f"    {pile:<18} {count:,}")
         print("  Nothing was discarded: validation mode. Re-run with --live once "
               "these numbers have been adjudicated.")
+    elif report.get("mode") == "validation":
+        print("  Validation mode: verdicts recorded, but the handoff and the "
+              "live checkpoint ignore them. Re-running without --mode is the "
+              "promotion.")
     _print_cache_push_reminder(report)
     return 0
 
@@ -738,6 +747,12 @@ def build_parser() -> argparse.ArgumentParser:
                              "live either way — it is the validated screen.")
     screen.add_argument("--batch-label", default="",
                         help="A name for this batch, recorded on the claim.")
+    screen.add_argument("--mode", choices=["live", "validation"], default=None,
+                        help="Override the tier's default mode. 'validation' is "
+                             "the same sandbox as the extract tier's: verdicts "
+                             "are recorded, but the handoff and the live "
+                             "checkpoint ignore them, so re-running live is the "
+                             "promotion (near-free — the votes are cached).")
     _add_overlay_flags(screen, "It must match the one the release was routed under.")
     screen.set_defaults(func=cmd_screen)
 

@@ -986,23 +986,49 @@ def _by_work(tier: str, rows: list[dict],
     return by_work
 
 
-def checkpoint_decisions(client: ClaimsClient, tier: str) -> dict[int, dict]:
+def _mode_rows(client: ClaimsClient, tier: str, mode: Optional[str]
+               ) -> tuple[list[dict], dict]:
+    """Verdict rows and claim generations, restricted to one claim *mode*.
+
+    The mode lives on the claim (`meta.mode`, absent = live), so restricting the
+    generations map alone is not enough: a row whose claim was filtered out would
+    read as generation-less and could re-enter through `accepts_legacy`. The rows
+    themselves are filtered by claim membership. `mode=None` reads everything —
+    what the report readers want.
+    """
+    claims = client.claims(tier=tier)
+    rows = client.verdicts(tier)
+    if mode is not None:
+        claims = [c for c in claims
+                  if ((c.get("meta") or {}).get("mode") or "live") == mode]
+        allowed = {c["id"] for c in claims}
+        rows = [r for r in rows if r.get("claim_id") in allowed]
+    generations = {c["id"]: (c.get("meta") or {}).get("generation") for c in claims}
+    return rows, generations
+
+
+def checkpoint_decisions(client: ClaimsClient, tier: str,
+                         mode: Optional[str] = None) -> dict[int, dict]:
     """Every work this tier holds current-generation verdict rows for, decided.
 
     The checkpoint's raw material, read once and split two ways by the two
     functions below: a work whose rows add up to a decision must not be re-bought,
     and a work whose rows do not must not be treated as if they did.
+
+    *mode* restricts to one claim mode: a validation-mode verdict must not settle
+    the live worklist (the work would be skipped as decided yet held back by the
+    handoff, and strand), and a live verdict does not settle the sandbox.
     """
     decide = tier_spec(tier).decide
-    generations = {c["id"]: (c.get("meta") or {}).get("generation")
-                   for c in client.claims(tier=tier)}
-    return {work: decide(rows)
-            for work, rows in _by_work(tier, client.verdicts(tier), generations).items()}
+    rows, generations = _mode_rows(client, tier, mode)
+    return {work: decide(claim_rows)
+            for work, claim_rows in _by_work(tier, rows, generations).items()}
 
 
 def decided_work_ids(client: ClaimsClient, tier: str,
                      asked: Optional[dict[int, str]] = None,
-                     text_fetched: Optional[dict[int, str]] = None) -> set[int]:
+                     text_fetched: Optional[dict[int, str]] = None,
+                     mode: Optional[str] = None) -> set[int]:
     """Works this tier has SETTLED in the current generation — the checkpoint.
 
     A verdict is what one model pair, asked one prompt, said; change either and it
@@ -1028,16 +1054,16 @@ def decided_work_ids(client: ClaimsClient, tier: str,
     did answer is not re-bought.
     """
     if asked is None:
-        return {work for work, decision in checkpoint_decisions(client, tier).items()
+        return {work for work, decision
+                in checkpoint_decisions(client, tier, mode).items()
                 if decision["outcome"] != INCOMPLETE}
     # One fetch, read two ways: the decision the rows add up to, and the question they
     # answered. Re-reading the verdict table for the second would double a paged read
     # of every row this tier has ever written.
     decide = tier_spec(tier).decide
-    generations = {c["id"]: (c.get("meta") or {}).get("generation")
-                   for c in client.claims(tier=tier)}
+    all_rows, generations = _mode_rows(client, tier, mode)
     settled = set()
-    for work, rows in _by_work(tier, client.verdicts(tier), generations).items():
+    for work, rows in _by_work(tier, all_rows, generations).items():
         if decide(rows)["outcome"] == INCOMPLETE:
             continue
         if work in asked and _question_moved(rows, asked[work],
@@ -1311,7 +1337,7 @@ def run_screen_cheap(con, client: ClaimsClient, release_id: str,
     effect where the rows leave the engine, in `handoff.py`.
     """
     works = _batch(con, client, release_id, TIER_CHEAP, work_ids, limit,
-                   pool_dir, overlay_dir, aliases, run)
+                   pool_dir, overlay_dir, aliases, run, mode)
     report = run_tier(SCREEN_CHEAP, client, release_id, works, mode=mode,
                       batch_label=batch_label, run=run, cache_dir=cache_dir)
     if run and mode == "validation":
@@ -1424,7 +1450,7 @@ def run_screen_expensive(con, client: ClaimsClient, release_id: str,
     letting the discards reach the handoff.
     """
     works = _batch(con, client, release_id, TIER_EXPENSIVE, work_ids, limit,
-                   pool_dir, overlay_dir, aliases, run)
+                   pool_dir, overlay_dir, aliases, run, mode)
     return run_tier(SCREEN_EXPENSIVE, client, release_id, works, mode=mode,
                     batch_label=batch_label, run=run, cache_dir=cache_dir)
 
@@ -1435,8 +1461,14 @@ def run_screen_expensive(con, client: ClaimsClient, release_id: str,
 def _batch(con, client: ClaimsClient, release_id: str, tier: str,
            work_ids: Optional[Iterable[int]], limit: Optional[int],
            pool_dir: Path, overlay_dir: Optional[Path],
-           aliases: Optional[dict[int, int]], run: bool) -> list[Work]:
+           aliases: Optional[dict[int, int]], run: bool,
+           mode: str = "live") -> list[Work]:
     """The works this run will send: the pile, minus what is claimed or decided.
+
+    "Decided" is mode-scoped, like the extract tier's `settled_work_ids`: a
+    validation-mode run subtracts only validation-settled works and a live run
+    only live-settled ones, so a sandbox verdict never hides a work from the
+    live run that must still buy its real verdict.
 
     Asked before the claim so the common case is a clean claim rather than a
     rejected one; the check that makes claiming SAFE is inside the RPC. "Claimed"
@@ -1469,13 +1501,13 @@ def _batch(con, client: ClaimsClient, release_id: str, tier: str,
     # ones a bounded scan can afford to reconsider. A pool whose own text moved is
     # not reconsidered under `limit`; with no limit it still is.
     if limit:
-        blind = decided_work_ids(client, tier)
+        blind = decided_work_ids(client, tier, mode=mode)
         candidates = (candidates - blind) | (candidates & blind & set(fetched))
     works = pile_works(con, release_id, tier, pool_dir, overlay_dir, aliases,
                        only=candidates, limit=limit)
     settled = decided_work_ids(client, tier,
                                {w.work_id: question_hash(w, tier) for w in works},
-                               fetched)
+                               fetched, mode=mode)
     # `limit` bounds what a run is OFFERED, not what it screens: the question check
     # above can still drop some of the works the bounded scan loaded, so a limited
     # batch is at most `limit` works and sometimes fewer.

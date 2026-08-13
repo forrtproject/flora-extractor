@@ -312,6 +312,10 @@ python -m filter.engine screen --tier screen_expensive --run --limit 500 \
 python -m filter.engine screen --tier screen_cheap --run
 python -m filter.engine screen --tier screen_cheap --run --live
 
+# The sandbox, same semantics as the extract tier's: verdicts recorded, the
+# handoff and the live checkpoint ignore them; re-running live is the promotion
+python -m filter.engine screen --tier screen_expensive --run --limit 20 --mode validation
+
 # The pending/no_text rows, as a worklist for the abstract backfill
 python -m filter.engine worklist --out data/no_text_worklist.csv --pool cache/snapshot_pool
 
