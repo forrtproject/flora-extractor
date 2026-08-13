@@ -30,31 +30,56 @@ the command, pasteable from the project root, and what proves it worked.
       extract tier's worklist offers nothing until this runs** — it holds back every
       work without a current-generation screen verdict, which makes this a
       prerequisite of the issue #198 re-extract below.
-      `.venv/bin/python -m filter.engine screen --tier screen_expensive --run`
-      (against whichever release the campaign names — see the release note in the
-      Done entry below). Expect roughly $3–5 of DeepSeek spend for ~10k works
-      (halved off-peak outside 01:00–04:00 and 06:00–10:00 UTC from 2026-08-16); the
-      gpt-5.4-mini side re-reads the joint-era cache entries and costs nothing.
+      `.venv/bin/python -m filter.engine screen --tier screen_expensive --run --release 56076eb`
+      — `--release` is required, and release `8b3d` refuses on the rebuilt overlay.
+      If the OSF projects backfill below runs first, its re-route mints a newer
+      release; name THAT one here and in the extract entry instead, or the OSF works
+      whose text it recovers are screened twice.
+      Expect roughly $1.80 of DeepSeek spend for ~10k works (measured
+      $0.070/390 calls at effort low; halved off-peak outside 01:00–04:00 and
+      06:00–10:00 UTC from 2026-08-16); the gpt-5.4-mini side reads the joint-era
+      cache entries — including the model-less majority shape, lifted by provider —
+      and costs nothing.
+      Before the full run: the 20-work smoke test
+      (`… screen --tier screen_expensive --run --limit 20 --mode validation --release 56076eb`)
+      must show no missing votes and a sane per-call wall clock — it is what checks
+      the OpenRouter provider pinning (`require_parameters` + throughput floor)
+      leaves an eligible host for every model.
       Done when `filter.engine status` shows the screen tier settled for the release
       and the extract worklist is non-empty again.
 
-- [ ] **Re-run the OSF projects backfill** (issue #196). The nodes fallback is
-      committed and reaches nothing yet: the 2026-08-13 run stopped on its own circuit
-      breaker after 25 consecutive transient failures, having recovered 0 of 1,699
-      targets. The cause is OSF, not the code — every request failed from the first
-      one, including the registrations call the fallback does not touch, and a guid
-      that answered HTTP 200 with a description 25 minutes earlier was answering 500 by
-      then. Probably our own load: ~2,500 OSF calls in the preceding hour, and the
-      fallback costs two calls per project rather than one.
-      Nothing was checkpointed — the phase records a transient failure as nothing at
-      all — so the run resumes with no state to repair and no misses to reopen.
-      `.venv/bin/python -m filter.engine worklist --release 56076eb --out cache/engine/worklist-osf-nodes.parquet`
-      then `.venv/bin/python -m filter.engine.backfill --worklist cache/engine/worklist-osf-nodes.parquet --source osf --run`.
-      Check `https://api.osf.io/v2/nodes/7weum/` answers 200 first, and consider
-      `OSF_RATE_SEC=2` for the re-run. Expect roughly 87% of ~1,700 to recover a
-      description (26 of 30 measured by hand before the outage).
-      Done when the run reports a non-zero "Abstracts found" and writes a chunk; then
-      freeze the overlay and re-route, as the 2026-08-13 entry below records.
+- [ ] **Reopen the 55 works that shared one OSF identifier** (issue #201). Until
+      `681556a`, `osf_registration_guid()` read the path segment in front of a guid as
+      the guid, so every pool work with a download-shaped URL keyed
+      `osf:osf.io/download`. That key is on disk as a definitive miss: the 55 were
+      asked about once, between them, and all still wear that one answer. The code is
+      fixed; the checkpoint is not.
+      `.venv/bin/python -c "import shared.config; from shared import abstract_store; print(abstract_store.drop_misses(['osf']))"`
+      then re-run the OSF backfill phase as the Done entry below records.
+      Done when no work resolves to a guid of `download`, `preprints` or `project`, and
+      the re-run reports a non-zero "Abstracts found".
+
+- [ ] **Freeze and re-route, carrying the OSF text and the no-text exemption**
+      (issue #196). Two committed changes reach nothing until a route reads them:
+      `overlay-0007.parquet` (57 project descriptions) is written but not frozen, and
+      `e0feb7d` exempts titled OSF records from the `no_text` downgrade.
+      `.venv/bin/python -c "import shared.config as c; from filter.engine.overlay import freeze; print(freeze(c.OVERLAY_DIR)['overlay_hash'])"`
+      then `.venv/bin/python -m filter.engine route`.
+      Expect roughly 849 works to move out of `pending/no_text` into a screening pile.
+      **Carry the issue #200 aliases in the SAME route if they are ready** — each
+      re-route mints a release, and screening between two of them pays twice for works
+      about to be merged.
+      Done when the route report shows `pending` down by ~849 and the new release id is
+      recorded in the re-screen entry above.
+
+- [ ] **Deduplicate OpenAlex works that name one OSF record** (issue #200). One OSF
+      record ships as several rows: 117 records in `data/extracted.csv` are reached by
+      more than one work id, 296 of 2,602 rows (11%). `filter/spec/aliases.json` is the
+      seam and holds none of them. Nothing is written yet — the derivation script does
+      not exist, and the plan plus the canonical rule are in the issue. See
+      `docs/handover-osf-dedup.md` for the brief.
+      Done when the aliases are in `filter/spec/aliases.json`, a re-route has collapsed
+      the duplicates, and the export's row count falls by the surplus.
 
 - [ ] **Re-extract every settled work under the new outcome policy** (issue #198).
       The outcome prompt now codes as the authors report: an overall author verdict
@@ -63,18 +88,48 @@ the command, pasteable from the project root, and what proves it worked.
       «descriptive» needs the authors' own account of reusing the methods. Editing it
       minted a new extract generation, so every settled work is already reopened and
       the shipped CSV still carries verdicts coded under the old policy.
-      `.venv/bin/python -m extract.tier --release 8b3d --run` then
-      `.venv/bin/python -m extract.export --release 8b3d`.
-      Costs a full campaign: the LLM calls are re-bought and every resolved row pays
-      DOI verification again, which is the OpenAlex daily credit budget, so expect more
-      than one budget day. Sandbox-measured on 25 works before commit: 17 of the 20
+      `.venv/bin/python -m extract.tier --release 56076eb --run` then
+      `.venv/bin/python -m extract.export --release 56076eb`
+      (release `8b3d` refuses on the rebuilt overlay; if the OSF backfill re-routes
+      first, name its release instead — the export now refuses a stale release too).
+      Before the run: `.venv/bin/python -m analysis.purge_osf_docs --apply` (re-rank
+      the cached OSF storage files under the plan-file demotion) and
+      `.venv/bin/python -m analysis.purge_epmc_retries --apply` (unsuppress the fixed
+      Europe PMC tier), plus `.venv/bin/python -m shared.cache_sync --pull --parts doi_verify`.
+      Both purges print what they would do without `--apply`.
+      Expect the run to re-parse the ~900 cached documents: `TEXT_EXTRACTION_VERSION`
+      is at 2, so every parse entry written under the old page window and section
+      splitter is a miss. That is local compute (~7.5 s per document, ~30 min at
+      `EXTRACT_WORKERS=4`) and buys no LLM call — the reference extractors are keyed
+      on the prompt, the model and the PDF's content hash.
+      The outcome-family LLM calls are re-bought; the link picks, keyed confirms and
+      search grades are cache hits, and DOI verification is ≈0 OpenAlex credits (its
+      caches carry no generation — check `print_search_summary()` at the end came out
+      near zero). Sandbox-measured on 25 works before commit: 17 of the 20
       stratified rows unchanged, no `successful` or `failed` row pushed to
       `cannot_be_determined`.
-      Done when `data/extracted.csv` renders wholly from current-generation verdicts
-      (`extract.export --check` reports no carry-forward) and section 2 of
+      Done when the export prints NO `rows from a superseded generation:` line —
+      `--check` alone does not test carry-forward — and section 2 of
       `handover.html` is re-read off the new render.
 
 ## Done
+
+- [x] **The OSF projects backfill** (issue #196), 2026-08-13. 1,699 targets, **726
+      descriptions recovered**, **57 written** to `overlay-0007.parquet`. The gap is
+      the two write guards doing their job: 625 refused because the row already had a
+      pool abstract an overlay row would have REPLACED (751 of 752 admitted OSF
+      projects carry one, 297 past 500 chars against a median description of 252), and
+      17 refused as labels — "Replication", "PCI RR submission" — that the row's own
+      title already carries.
+      An earlier attempt the same day recovered 0 of 1,699: OSF was down, every request
+      failed from the first one, and the circuit breaker stopped the phase at 25
+      consecutive transient failures without checkpointing any of them. The re-run
+      waited for two consecutive healthy probes and ran at `OSF_RATE_SEC=2`.
+      Read afterwards, and it changed the plan: 941 targets still have no text, but
+      only 93 of those are admitted and 92 of THOSE already have a pool abstract — so
+      the honest yield is one admitted textless work, plus 57 rows that were
+      unroutable. That is what sent the fix to the `no_text` policy instead of to more
+      text sources.
 
 - [x] **Re-route after the OSF overlay backfill** (issue #196), 2026-08-13.
       Release **`56076eb48fda`**, overlay hash `a3ccbfb18a38` (7 chunks, 3,159 rows).
