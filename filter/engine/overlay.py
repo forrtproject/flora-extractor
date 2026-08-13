@@ -52,6 +52,13 @@ WORKLIST_SCHEMA = pa.schema([
     # derives `url_r`. It is here for the OSF phase: a third of the OSF records
     # in the pool have no DOI and are identified by an osf.io URL alone.
     ("url", pa.string()),
+    # Whether the pool already holds text for this row. Only the OSF phase reads it,
+    # and only for a PROJECT: a registration's template line is worth having whatever
+    # else the row carries, but a project's description is an ordinary abstract and a
+    # short one — median 252 chars, against 297 of the 752 admitted OSF projects whose
+    # pool abstract runs past 500. An overlay row wins over pool text, so writing one
+    # of those over a real abstract would lose text rather than add it.
+    ("has_text", pa.bool_()),
 ])
 
 CHUNK_GLOB = "overlay-*.parquet"
@@ -117,7 +124,7 @@ def worklist(con, release_id: str, pool_dir: Path, out_path: Path,
         for batch in pq.ParquetFile(path).iter_batches(
                 batch_size=50_000,
                 columns=["id", "doi", "title", "display_name", "publication_year",
-                         "open_access", "primary_location"]):
+                         "open_access", "primary_location", "abstract_text"]):
             for record in batch.to_pylist():
                 resolved = resolve(work_id(record["id"]), aliases or {})
                 if resolved in seen:
@@ -137,6 +144,7 @@ def worklist(con, release_id: str, pool_dir: Path, out_path: Path,
                     "title": record.get("display_name") or record.get("title") or "",
                     "year": record.get("publication_year"),
                     "url": url,
+                    "has_text": bool(str(record.get("abstract_text") or "").strip()),
                 })
 
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)

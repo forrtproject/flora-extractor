@@ -613,6 +613,8 @@ OSF_TEMPLATE_PREFIX = "OSF registration template: "
 OSF_TEMPLATE_UNSPECIFIED = "unspecified"
 
 _OSF_API = "https://api.osf.io/v2/registrations/{guid}/"
+# The projects/components endpoint, tried when the registrations one says 404.
+_OSF_NODE_API = "https://api.osf.io/v2/nodes/{guid}/"
 
 
 def _osf_guid(identifier: str) -> Optional[str]:
@@ -722,14 +724,51 @@ def _fetch_osf_registration(identifier: str) -> tuple[Optional[str], str]:
         log.info("OSF registration %s is private or embargoed to this token — "
                  "skipped, not checkpointed", identifier)
         return None, "transient"
-    if resp.status_code == 410 or resp.status_code == 404:
+    if resp.status_code == 410:
         return None, "empty"
+    if resp.status_code == 404:
+        # Not a registration. 1,696 of the OSF identifiers in the 2026-08-13 worklist
+        # answer this way: they are PROJECTS and components, which the registrations
+        # endpoint does not serve and which can never have a template line.
+        return _fetch_osf_node(guid, headers)
     if resp.status_code >= 400:
         return None, "transient"
     attributes = (resp.json().get("data") or {}).get("attributes") or {}
     if not attributes:
         return None, "empty"
     return _osf_registration_text(attributes), "ok"
+
+
+def _fetch_osf_node(guid: str, headers: dict) -> tuple[Optional[str], str]:
+    """The OSF PROJECT's own description, for a guid that is not a registration.
+
+    Its description is the only text these records have — measured 2026-08-13 over 30
+    admitted OSF misses, 26 carry one (median 252 chars) and it is the record's own
+    account: "This study is a replication attempt of the first experiment of ... the
+    chameleon effect ...". That names the original, which is what both the screen and
+    the linking rungs need and neither can get from a title.
+
+    No template line, deliberately: a project HAS no template, and prefixing one would
+    make `osf-registration-protocol` discard a record whose own words nobody read. What
+    this returns is an ordinary abstract, and is written only where the row has none —
+    the caller's job, because a 252-char description must not displace a real one
+    (`_write_overlay` in filter/engine/backfill.py).
+    """
+    resp, status = _request_with_retry(
+        f"OSF node {guid}",
+        lambda: _SESSION.get(_OSF_NODE_API.format(guid=guid), timeout=30,
+                             headers=headers))
+    if status == "transient":
+        return None, "transient"
+    if resp.status_code in (401, 403):
+        # Private to this token, not absent: the same reading the registration arm
+        # gives a 403, and for the same reason.
+        return None, "transient"
+    if resp.status_code >= 400:
+        return None, "empty"
+    description = str(((resp.json().get("data") or {}).get("attributes")
+                       or {}).get("description") or "").strip()
+    return (description, "ok") if description else (None, "empty")
 
 
 # ---------------------------------------------------------------------------

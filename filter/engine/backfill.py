@@ -73,7 +73,7 @@ from search.fetch_abstracts import (
     _fetch_epmc_batch, _fetch_openalex_batch, _fetch_osf_registration,
     _fetch_s2_batch, _fetch_scopus_abstract, _load_checkpoint,
     _load_found_index, _phase_targets, _read_abstract_cache, _run_batch_phase,
-    _run_item_phase, osf_identifier,
+    _run_item_phase, OSF_TEMPLATE_PREFIX, osf_identifier,
 )
 from shared.config import (
     CROSSREF_RATE_SEC, ELSEVIER_API_KEY, EPMC_BATCH_SIZE, EPMC_RATE_SEC,
@@ -162,6 +162,7 @@ def _row_batches(worklist_path: Path, limit: Optional[int] = None,
             # `.get`: a worklist parquet written before the url column existed has
             # no such key, and only the OSF phase reads it.
             "url_r": str(record.get("url") or ""),
+            "has_text": bool(record.get("has_text")),
         })
         taken += 1
         if len(rows) >= batch_size:
@@ -458,6 +459,27 @@ def _scopus_fetcher():
     return fetch
 
 
+def _would_lose_text(row: dict, hit: tuple[str, str]) -> bool:
+    """Whether writing *hit* over this row's pool text would remove more than it adds.
+
+    One case, and it exists because an overlay row WINS over pool text rather than
+    filling a gap (`_apply_overlay` in pool_reader.py). The OSF phase is asked about
+    every admitted OSF row, text or no text, so that a registration's template line
+    reaches the two `osf-registration-*` specs — a line no abstract substitutes for,
+    which is why that arm ignores what other sources found.
+
+    A PROJECT has no template line. What its endpoint returns is an ordinary
+    description and a short one: median 252 characters, measured 2026-08-13, while 297
+    of the 752 admitted OSF projects carry a pool abstract past 500. For those, the
+    overlay would replace the record's abstract with a caption. So a project's text is
+    written only where the row has none — which is the population the backfill is for.
+    """
+    text, source = hit
+    return (source == "osf"
+            and not text.startswith(OSF_TEMPLATE_PREFIX)
+            and bool(row.get("has_text")))
+
+
 def _write_overlay(rows: list[dict], overlay_dir: Path,
                    already: set[int]) -> dict:
     """Write one slice's recovered text as a chunk; *already* is read AND grown.
@@ -474,6 +496,8 @@ def _write_overlay(rows: list[dict], overlay_dir: Path,
             continue
         hit = _resolved(row)
         if hit is None:
+            continue
+        if _would_lose_text(row, hit):
             continue
         already.add(row["work_id"])
         chunk.append({"work_id": row["work_id"], "abstract_text": hit[0],

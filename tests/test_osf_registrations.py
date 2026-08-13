@@ -90,11 +90,43 @@ def test_a_missing_template_still_gets_a_template_line(monkeypatch):
     assert text.startswith(fa.OSF_TEMPLATE_PREFIX + fa.OSF_TEMPLATE_UNSPECIFIED)
 
 
-def test_a_project_doi_is_a_definitive_miss_not_a_transient_one(monkeypatch):
-    """26 of 60 sampled rows were plain `nodes`, which the registrations endpoint
-    404s on. Cached as a miss so no later run re-buys the answer."""
+def test_a_project_neither_endpoint_answers_is_a_definitive_miss(monkeypatch):
+    """A 404 from the registrations endpoint means "not a registration", so the
+    projects endpoint is asked next. A project that has no description either is a
+    real absence — cached as a miss so no later run re-buys the answer."""
     monkeypatch.setattr(fa._SESSION, "get", lambda *a, **k: _Response(status_code=404))
     assert fa._fetch_osf_registration("10.17605/OSF.IO/AB12D") == (None, "empty")
+
+
+def test_a_project_falls_back_to_its_own_description(monkeypatch):
+    """1,696 OSF identifiers in the 2026-08-13 worklist are projects, not
+    registrations. Their description is the only text they have, and it names the
+    original — which neither the screen nor the linking rungs can get from a title."""
+    described = ("This study is a replication attempt of the first experiment of "
+                 "Chartrand & Bargh (1999).")
+
+    def _get(url, *a, **k):
+        if "/registrations/" in url:
+            return _Response(status_code=404)
+        return _Response({"data": {"attributes": {"description": described}}})
+
+    monkeypatch.setattr(fa._SESSION, "get", _get)
+    text, status = fa._fetch_osf_registration("10.17605/OSF.IO/AB12D")
+    assert status == "ok"
+    assert text == described
+    # No template line: a project HAS no template, and inventing one would hand the
+    # record to the `osf-registration-protocol` discard on evidence nobody read.
+    assert not text.startswith(fa.OSF_TEMPLATE_PREFIX)
+
+
+def test_a_project_private_to_this_token_is_not_recorded_as_absent(monkeypatch):
+    """The same reading the registration arm gives a 403: the answer is about our
+    access, not about the record, so a later token with more scope asks again."""
+    def _get(url, *a, **k):
+        return _Response(status_code=404 if "/registrations/" in url else 403)
+
+    monkeypatch.setattr(fa._SESSION, "get", _get)
+    assert fa._fetch_osf_registration("10.17605/OSF.IO/AB12D") == (None, "transient")
 
 
 def _pool_row(work: int, doi: str = None, oa_url: str = None,

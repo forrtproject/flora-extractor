@@ -20,6 +20,7 @@ from filter.engine import backfill, cli, overlay
 from filter.engine.export import StaleBundleError, check_release_binding
 from filter.engine.overlay import OverlayError, freeze, validate, worklist
 from filter.engine.pool_reader import iter_pool_batches, overlay_manifest_hash
+from search import fetch_abstracts as fa
 from filter.engine.release import routing_release
 from filter.engine.store import build_routing, open_store
 from search.snapshot_scan import _POOL_SCHEMA
@@ -129,9 +130,10 @@ def test_a_no_text_row_is_worklisted_and_an_overlay_reroutes_it_under_a_new_rele
     wl = tmp_path / "worklist.parquet"
     assert worklist(con, "rel-a", pool, wl) == 1
     listed = overlay.read_worklist(wl)
+    # has_text is False for a no_text row by construction — it is why the row is here.
     assert listed == [{"work_id": 1, "doi": "10.1234/one",
                        "title": "A direct replication of the Smith effect",
-                       "year": 2021, "url": ""}]
+                       "year": 2021, "url": "", "has_text": False}]
 
     overlay_dir = _overlay(tmp_path / "ov", [_overlay_row(1, _REPLICATION)])
     manifest = freeze(overlay_dir)
@@ -376,6 +378,48 @@ def test_a_registration_identified_by_url_alone_reaches_the_overlay(
     written = pq.read_table(overlay.chunk_paths(overlay_dir)[0]).to_pylist()
     assert written[0]["work_id"] == 9
     assert written[0]["abstract_text"].startswith("OSF registration template: ")
+
+
+def _osf_worklist(tmp_path, has_text: bool) -> Path:
+    path = tmp_path / f"worklist-{has_text}.parquet"
+    pq.write_table(pa.Table.from_pylist(
+        [{"work_id": 9, "doi": "10.17605/osf.io/ab12d", "title": "R", "year": 2023,
+          "url": "", "has_text": has_text}],
+        schema=overlay.WORKLIST_SCHEMA), path)
+    return path
+
+
+def test_a_project_description_never_replaces_a_pool_abstract(
+        isolated_cache, tmp_path, monkeypatch):
+    """An overlay row WINS over pool text, and the OSF phase is asked about every
+    admitted OSF row so a registration's template line always reaches its specs. A
+    project has no template line — only a short description (median 252 chars, against
+    297 of 752 admitted projects whose pool abstract passes 500) — so writing it over a
+    real abstract would lose text. It is written only where the row has none."""
+    monkeypatch.setattr(backfill, "_fetch_osf_registration",
+                        lambda ident: ("A replication attempt of Chartrand (1999).", "ok"))
+
+    kept = backfill.run(_osf_worklist(tmp_path, has_text=False), tmp_path / "ov-a",
+                        sources=("osf",), phase="targeted")
+    assert kept["rows"] == 1
+
+    dropped = backfill.run(_osf_worklist(tmp_path, has_text=True), tmp_path / "ov-b",
+                           sources=("osf",), phase="targeted")
+    assert dropped["rows"] == 0
+
+
+def test_a_template_line_is_written_whatever_text_the_row_has(
+        isolated_cache, tmp_path, monkeypatch):
+    """The exception the guard must not swallow: a registration's template line is what
+    the two `osf-registration-*` specs read, and no abstract substitutes for it — which
+    is the whole reason admitted rows are on the worklist at all."""
+    monkeypatch.setattr(
+        backfill, "_fetch_osf_registration",
+        lambda ident: (f"{fa.OSF_TEMPLATE_PREFIX}Open-Ended Registration\n\nsummary: x",
+                       "ok"))
+    result = backfill.run(_osf_worklist(tmp_path, has_text=True), tmp_path / "ov-c",
+                          sources=("osf",), phase="targeted")
+    assert result["rows"] == 1
 
 
 # ---------------------------------------------------------------------------
