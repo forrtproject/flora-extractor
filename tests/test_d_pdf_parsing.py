@@ -417,3 +417,23 @@ class TestWordDocuments:
         results = parse_all("10.1/x", _fake_pdf(tmp_path))
         assert "docx" not in results
         assert "pdfminer" in results
+
+
+class TestReferenceHeadingForms:
+    """The references heading may be numbered ("7. References") or carry a colon
+    ("References:"), and the first entry after it may start with an author, a "[1]"
+    marker or a "1." number — all forms observed in the direct-PDF fallback corpus,
+    where each cost a paid Gemini call for a list the text already held."""
+
+    BODY = "Introduction\nWe replicated Smith.\n"
+
+    @pytest.mark.parametrize("heading, first_entry", [
+        ("References", "Smith, J. (2010). A paper. Journal, 1, 1-2."),
+        ("7.  References", "Smith, J. (2010). A paper. Journal, 1, 1-2."),
+        ("6. REFERENCES", "[1] Smith, J. (2010). A paper. Journal, 1, 1-2."),
+        ("References:", "1. Smith J, Jones B (2010) A paper. Journal 1:1-2."),
+    ])
+    def test_heading_form_yields_a_reference_block(self, heading, first_entry):
+        from shared.grobid import _split_sections
+        text = f"{self.BODY}\n{heading}\n{first_entry}\n"
+        assert "Smith" in _split_sections(text)["references_raw"]

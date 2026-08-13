@@ -59,9 +59,13 @@ _SECTION_HEADERS = {
     "intro"     : re.compile(r"(?i)^\s*(?:\d+[\.\s]+)?introduction\b", re.MULTILINE),
     "methods"   : re.compile(r"(?i)^\s*(?:\d+[\.\s]+)?(?:method|material|procedure|"
                               r"participant|design|experiment\s*1\b)", re.MULTILINE),
-    # Match references header on its own line OR followed immediately by an author
-    "references": re.compile(r"(?i)^\s*(?:references?|bibliography|works\s+cited)"
-                              r"(?:\s*\n|\s*$|\s+[A-Z])", re.MULTILINE),
+    # Match references header on its own line OR followed immediately by an entry.
+    # The heading may be numbered ("7. References") or carry a colon ("References:"),
+    # and the first entry after it may start with an author, a "[1]" marker or a
+    # "1." number — all observed in the fallback corpus.
+    "references": re.compile(r"(?i)^\s*(?:\d+[\.\s]+)?(?:references?|bibliography|"
+                              r"works\s+cited)\s*:?(?:\s*\n|\s*$|\s+[A-Z0-9\[])",
+                              re.MULTILINE),
 }
 
 
