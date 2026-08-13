@@ -257,20 +257,21 @@ def test_the_generation_is_pinned_by_its_inputs():
     assert len(extract_generation()) == 16
 
 
-def test_the_label_rename_does_not_reopen_the_settled_works():
-    """The declared equivalence (issue #171) for the FLoRA outcome-label rename.
-
-    Both replication prompts still hash into the fingerprint at the version they had
-    before the rename, so the works settled under it stay settled. The check is worth
-    a test because the failure is silent in the wrong direction: a broken equivalence
-    reopens 1,899 works and the next run simply re-extracts them.
-    """
+def test_a_declared_prompt_equivalence_reports_the_earlier_version(monkeypatch):
+    """A declared pair holds the fingerprint at the pre-edit version, so a reviewed
+    answer-preserving edit reopens nothing. The pair must name the CURRENT version as
+    its `after` half, or the declaration is stale and silently does nothing."""
     for name, (after, before) in tier_mod._GENERATION_PROMPT_EQUIVALENCES.items():
         assert prompt_version(name) == after, (
-            f"{name} has been edited since the rename was reviewed; either the edit "
-            f"is answer-preserving and the pair here needs re-declaring against the "
+            f"{name} has been edited since its equivalence was reviewed; either the "
+            f"edit is answer-preserving and the pair needs re-declaring against the "
             f"new version, or it is not and the entry must go")
         assert generation_inputs()["prompts"][name] == before
+
+    monkeypatch.setattr(
+        tier_mod, "_GENERATION_PROMPT_EQUIVALENCES",
+        {"build_outcome_prompt": (prompt_version("build_outcome_prompt"), "older")})
+    assert generation_inputs()["prompts"]["build_outcome_prompt"] == "older"
 
 
 def test_an_undeclared_prompt_edit_still_moves_the_generation(monkeypatch):
@@ -281,48 +282,13 @@ def test_an_undeclared_prompt_edit_still_moves_the_generation(monkeypatch):
             == prompt_version("build_outcome_prompt"))
 
 
-def test_every_declared_generation_is_this_question_asked_earlier():
-    """The declared equivalences: the fingerprint's two shape changes, in order.
-
-    Each listed generation is rebuilt from TODAY's inputs — minus the search-confirm
-    prompt, which entered the fingerprint when its grade began writing
-    `link_confidence`, and for the three older ones plus the `ladder` key that used to
-    be in the dict. That rebuild IS the claim being declared: every one of those
-    fingerprints asked what this tier asks now. If a prompt or model ever moves, the
-    current digest moves with it, the declaration is keyed to a generation nobody is
-    running, and every work reopens strictly.
-    """
-    import hashlib
-    import json as _json
-
-    def digest(payload: dict) -> str:
-        return hashlib.sha256(
-            _json.dumps(payload, sort_keys=True, separators=(",", ":"))
-            .encode("utf-8")).hexdigest()[:16]
-
-    before_search_confirm = dict(generation_inputs())
-    before_search_confirm["prompts"] = {
-        name: version for name, version
-        in before_search_confirm["prompts"].items()
-        if name != "build_search_confirm_prompt"}
-
-    rebuilt = {digest(before_search_confirm)}
-    for ladder in (21, 22, 23):
-        rebuilt.add(digest({**before_search_confirm, "ladder": ladder}))
-
-    declared = tier_mod._GENERATION_EQUIVALENCES[extract_generation()]
-    assert set(declared) == rebuilt
-    # The works settled by the 2026-08-09/10 campaigns, named: a broken equivalence
-    # here reopens every one of them and the next run silently re-buys it.
-    assert {"4e23d2dbb9d39029", "d7908ff6851d3228",
-            "4d875363a2410a67", "f2bdee845b792dbb"} == set(declared)
-
-
-def test_a_declared_generation_still_settles_a_work():
+def test_a_declared_generation_still_settles_a_work(monkeypatch):
     """The equivalence has to reach the checkpoint, not just the constant."""
     from filter.engine.tiers import _generation_current
 
-    older = tier_mod.equivalent_generations()[0]
+    older = "f" * 16
+    monkeypatch.setattr(tier_mod, "_GENERATION_EQUIVALENCES",
+                        {extract_generation(): (older,)})
     assert _generation_current(tier_mod.TIER_EXTRACT, older, []) is True
     assert _generation_current(tier_mod.TIER_EXTRACT, "0" * 16, []) is False
 
@@ -512,6 +478,79 @@ def test_the_batch_loop_ends_although_no_work_settled(monkeypatch):
                                        batch_size=2)
     assert calls == [[0, 1], [2, 3]]
     assert report["decided"] == 4
+
+
+# ---------------------------------------------------------------------------
+# A named population must not become a campaign
+# ---------------------------------------------------------------------------
+
+
+def _redo_run(monkeypatch, *, worklist: list[int], redo, batches: list,
+              run: bool = True, allow_extra_works: bool = False):
+    """A run over *worklist* that names *redo*. The caller owns *batches* — every
+    batch this run spends on is appended to it, so a refusal that never returns still
+    leaves the caller able to see whether anything was bought."""
+
+    def run_batch(spec, client, release_id, works, **kwargs):
+        batches.append([w.work_id for w in works])
+        return {"claim_id": f"c{len(batches)}", "decided": len(works),
+                "outcomes": {RESOLVED: len(works)}, "verdicts": len(works)}
+
+    def works_for(*a, attempted=None, limit=None, **k):
+        return [_work(i) for i in worklist if i not in (attempted or set())]
+
+    monkeypatch.setattr(tier_mod, "_run_batch", run_batch)
+    monkeypatch.setattr(tier_mod, "extract_works", works_for)
+    monkeypatch.setattr(tier_mod, "_supersedable", lambda *a, **k: {})
+    report = tier_mod.run_extract_tier(None, MagicMock(), "rel-1", run=run,
+                                       redo=redo, batch_size=10,
+                                       allow_extra_works=allow_extra_works)
+    return report
+
+
+def test_a_redo_whose_worklist_holds_unnamed_works_refuses_before_spending(monkeypatch):
+    """The 2026-08-13 shape: a new generation left nothing for the checkpoint to
+    subtract, so `--redo <5 ids>` offered the whole admitted population."""
+    batches: list[list[int]] = []
+    with pytest.raises(SystemExit) as exc:
+        _redo_run(monkeypatch, worklist=[1, 2, 3, 4], redo=[1, 2], batches=batches)
+    message = str(exc.value)
+    assert "named 2 work(s)" in message and "worklist holds 4" in message
+    assert "--only 1,2" in message and "--allow-extra-works" in message
+    assert batches == [], "the run spent before refusing"
+
+
+def test_the_override_flag_runs_the_full_worklist(monkeypatch):
+    batches: list[list[int]] = []
+    report = _redo_run(monkeypatch, worklist=[1, 2, 3, 4], redo=[1, 2],
+                       batches=batches, allow_extra_works=True)
+    assert batches == [[1, 2, 3, 4]]
+    assert report["decided"] == 4
+
+
+def test_a_redo_whose_worklist_is_exactly_the_named_set_runs(monkeypatch):
+    batches: list[list[int]] = []
+    report = _redo_run(monkeypatch, worklist=[1, 2], redo=[1, 2], batches=batches)
+    assert batches == [[1, 2]]
+    assert report["decided"] == 2
+
+
+def test_a_dry_run_over_the_same_mismatch_is_not_blocked(monkeypatch):
+    batches: list[list[int]] = []
+    report = _redo_run(monkeypatch, worklist=[1, 2, 3, 4], redo=[1, 2],
+                       batches=batches, run=False)
+    assert report["dry_run"] is True
+    assert batches == []
+
+
+def test_a_named_population_that_matched_nothing_still_refuses(monkeypatch):
+    """`--redo-status` after a generation mint resolves to no works at all. An empty
+    named set is still a named one, and must not read as "nobody named a population"."""
+    batches: list[list[int]] = []
+    with pytest.raises(SystemExit) as exc:
+        _redo_run(monkeypatch, worklist=[1, 2, 3], redo=[], batches=batches)
+    assert batches == []
+    assert "named 0 work(s)" in str(exc.value)
 
 
 # ---------------------------------------------------------------------------

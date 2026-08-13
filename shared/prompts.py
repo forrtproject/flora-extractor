@@ -80,27 +80,16 @@ EVIDENCE_POLICY = (
     "the specified uncertainty value rather than inferring or guessing.\n\n"
 )
 
-# ── The replication outcome vocabulary, in two renderings ────────────────────
-# Every fragment that names an outcome category writes it as a «slot» marker and is
-# rendered twice at import: once in the vocabulary FLoRA's database stores
-# (OUTCOME_LABELS, from shared/schema.py) and once in the vocabulary this pipeline
-# used before that was corrected. Only the first is ever SENT. The second exists so a
-# call site can rebuild, byte for byte, the prompt an entry already on disk was bought
-# under — the cache key hashes the rendered text, so the legacy rendering IS the
-# legacy key. See "Editing a prompt without invalidating its cache" in CLAUDE.md.
+# ── The replication outcome vocabulary ───────────────────────────────────────
+# Every fragment that names an outcome category writes it as a «slot» marker, and the
+# fragment is rendered at import from OUTCOME_LABELS (shared/schema.py) — so the
+# vocabulary is a parameter of these prompts rather than text copied into each of them,
+# and one edit to the enum moves every place a category is named.
 #
-# The markers are what make this safe: "failed" and "successful" also occur in these
-# prompts as ordinary English ("a manipulation check that failed", "whatever other
+# The markers are also what makes that safe: "failed" and "successful" occur in these
+# prompts as ordinary English too ("a manipulation check that failed", "whatever other
 # checks succeeded"), and a search-and-replace over the rendered text would rewrite
-# those too. A marker is only where a CATEGORY is named.
-_LEGACY_OUTCOME_LABELS = {
-    **OUTCOME_LABELS,
-    "success":     "success",
-    "failure":     "failure",
-    "descriptive": "descriptive",
-    "flawed":      "statistically_successful_but_flawed",
-}
-
+# those. A marker is only where a CATEGORY is named.
 _VOCAB_MARKER = re.compile(r"«(\w+)»")
 
 
@@ -249,8 +238,7 @@ A target you can see but cannot match to a listed record looks like this — not
 key is the JSON value null, not the text "null", and that it is coded all the same:
 {"key": null, "match_certain": false, "target_as_named": "Ramirez (2014), the delay-discounting result", "study_numbers": "", "replication_study_numbers": "", "evidence_quote": "we re-analysed the delay-discounting data reported by Ramirez (2014)", "outcome": "cannot_be_determined", "outcome_phrase": "", "out_quote_source": "", "outcome_confident": false, "outcome_reasoning": "The evidence supplied never says how the re-analysis came out."}"""
 
-_TARGET_OUTCOME_FIELDS        = _vocab(_TARGET_OUTCOME_FIELDS_SRC, OUTCOME_LABELS)
-_TARGET_OUTCOME_FIELDS_LEGACY = _vocab(_TARGET_OUTCOME_FIELDS_SRC, _LEGACY_OUTCOME_LABELS)
+_TARGET_OUTCOME_FIELDS = _vocab(_TARGET_OUTCOME_FIELDS_SRC, OUTCOME_LABELS)
 
 _REPRO_TARGET_OUTCOME_FIELDS = """
 
@@ -289,7 +277,10 @@ _TARGET_RTC_FIELD = """
   it collected new data or used a different sample to re-test the finding,
   "reproduction" if it re-analysed the original study's own data, "neither" if it
   does not check that original at all, "unclear" if the text does not say. Answer it
-  from the methods, independently of the outcome fields."""
+  from the methods, independently of the outcome fields. A paper that states it is
+  re-testing the named original is a "replication" even where it reports no results
+  yet — a registered plan whose data are not collected is a replication without an
+  outcome, not "neither"."""
 
 _WS_RE = re.compile(r"\s+")
 
@@ -415,8 +406,7 @@ def build_target_outcome_prompt(study_r:      str,
                                 intro:        str = "",
                                 methods:      str = "",
                                 discussion:   str = "",
-                                discussion_provenance: str = "",
-                                legacy_vocabulary: bool = False) -> str:
+                                discussion_provenance: str = "") -> str:
     """Targets and their replication outcomes, one prompt for all three LLM rungs.
 
     entries come from shared.target_keys.assign_target_keys — the keys shown here are
@@ -425,18 +415,11 @@ def build_target_outcome_prompt(study_r:      str,
     Supplying *discussion* is what makes the outcome answerable and is the only thing
     that adds record_type_check: it is a judgment about the methods, and a rung that
     has read no closing sections has not seen them.
-
-    *legacy_vocabulary* renders the pre-rename outcome labels instead of FLoRA's.
-    Nothing sends that rendering: it exists so a caller can rebuild the prompt an
-    entry already on disk was bought under, and the cache key hashes the rendered
-    text. See the declared equivalence in shared/llm_client.py.
     """
     rtc = _TARGET_RTC_FIELD if discussion else ""
-    fields = _TARGET_OUTCOME_FIELDS_LEGACY if legacy_vocabulary else _TARGET_OUTCOME_FIELDS
-    rules  = _OUTCOME_RULES_LEGACY if legacy_vocabulary else _OUTCOME_RULES
     return (EVIDENCE_POLICY + _TARGET_TASK + "\n\n" + _TARGET_RESPONSE_HEAD
-            + _fill(fields, {"record_type_check_field": rtc})
-            + "\n\n" + rules + "\n\nPAPER\n\n"
+            + _fill(_TARGET_OUTCOME_FIELDS, {"record_type_check_field": rtc})
+            + "\n\n" + _OUTCOME_RULES + "\n\nPAPER\n\n"
             + "\n\n".join(_paper_blocks(study_r, abstract_r, entries, pdf_abstract,
                                         intro, methods, discussion,
                                         discussion_provenance))
@@ -709,24 +692,58 @@ ABSTRACT: {abstract_r}
 
 {intro_block}{fulltext_block}Respond with the JSON object only."""
 
-_OUTCOME_TEMPLATE        = _vocab(_OUTCOME_TEMPLATE_SRC, OUTCOME_LABELS)
-_OUTCOME_TEMPLATE_LEGACY = _vocab(_OUTCOME_TEMPLATE_SRC, _LEGACY_OUTCOME_LABELS)
+_OUTCOME_TEMPLATE = _vocab(_OUTCOME_TEMPLATE_SRC, OUTCOME_LABELS)
 
 # Categories, coding rules and examples — the replication vocabulary itself, spliced by
 # both the standalone coder above and the combined target+outcome prompt. Split out so
 # the two ask the same question in the same words: they were written apart once, and
 # the definition of "mixed" drifted between them.
-_OUTCOME_RULES_SRC = """WHEN YOU CANNOT TELL
+_OUTCOME_RULES_SRC = """HOW TO DECIDE, IN ORDER
+
+1. Where the authors state an OVERALL verdict on the replication, that verdict decides the
+   outcome, even where individual results point elsewhere. Trust it over your own reading
+   of the evidence. An overall verdict is a statement about how the replication came out AS
+   A WHOLE — "our results replicate the original finding", "the original result did not
+   hold". A sentence confirming one particular effect is NOT an overall verdict: it is one
+   of the paper's comparisons, and rule 2 applies.
+2. Where no overall verdict is stated, code from the authors' comparisons of their results
+   to the original, explicit or implicit. A comparison is implicit when the result the paper
+   reports IS the original's own finding — the same claim, in the same direction: a study
+   built to re-test the original's effect that reports "the predicted effect was found" has
+   compared, even without naming the original in that sentence. Two tests before you code
+   from an implicit comparison, and both must pass:
+     (a) the evidence states what THE ORIGINAL NAMED ABOVE found. You cannot compare against
+         a finding the evidence never states, however positive this paper's own results
+         sound;
+     (b) you can name this paper's result that corresponds to it.
+   Agreement with a general model, a theory, a method's usefulness or the wider literature
+   is not a comparison to that original's finding. The absence of a contradiction is not
+   agreement: "the findings support X rather than contradicting the original" fails both
+   tests and is «cannot_be_determined», not «success». All comparisons agree → «success»; all
+   disagree → «failure»; some agree and some do not → «mixed».
+3. Where the paper's reported results state or imply nothing about the original's finding,
+   no replication outcome exists to code: answer «cannot_be_determined». Answer «descriptive»
+   only where the AUTHORS themselves say they applied the original's methods in a new context
+   or population — never as your own reading of what the study did.
+
+A changed method, measure, paradigm, population or setting does not by itself mean the paper
+has not compared: a conceptual replication re-tests the original's claim by design, and rule 2
+applies to it unchanged. Where the authors state one of the special verdicts below — «flawed»
+or «uninformative» — that verdict is the outcome.
+
+WHEN YOU CANNOT TELL
 
 Answer "«cannot_be_determined»" when the evidence in front of you does not state the outcome.
 Do not guess an outcome the evidence does not support, and do not withhold one it does state
-(or strongly imply, with a citable sentence that shows this).
+(or implies through a comparison as defined in rule 2 above).
 
 OUTCOME CATEGORIES
 
 - "«success»" — the authors conclude the original finding was confirmed, replicated or
   supported. A finding the authors treat as supported is «success» even when the effect is
-  smaller or weaker than the original: effect size alone does not make it «mixed».
+  smaller or weaker than the original: effect size alone does not make it «mixed». Code
+  «success» from the authors' verdict or from their comparison to the original, never from
+  results with no stated or implied bearing on the original's finding.
 - "«failure»" — the authors conclude the original finding was not supported, was contradicted,
   or failed to replicate.
 - "«mixed»" — the authors themselves present their evidence as partly supporting and partly not,
@@ -734,11 +751,19 @@ OUTCOME CATEGORIES
   only when the paper frames its own result that way; do not infer it from a reduced effect
   size, or because you would have judged the evidence differently. If this paper re-tests
   several studies from the original this verdict is about and they came out differently,
-  that is «mixed».
-- "«descriptive»" — the authors describe their study as a replication and reuse the original's
-  methods in a new context or population, but never compare their results against the original
-  finding. If the paper does compare its results to the original's — even in a new population —
-  code another outcome instead.
+  that is «mixed». Where the paper marks one result as differing from the original in its own
+  words — "in contrast to the original", "unlike Smith et al.", "we did not replicate the
+  second effect" — and reports another as agreeing, the outcome is «mixed». That holds even
+  where the paper opens by confirming the effect it set out to test: confirming the tested
+  effect is one comparison, not a verdict on the whole replication, and only an overall
+  verdict that speaks to the replication as a whole (rule 1) outweighs a stated contrast. A
+  count of how many measures replicated is not by itself such a mark.
+- "«descriptive»" — the AUTHORS say they applied the original's methods, materials or procedure
+  in a new context or population, and the paper compares no result against the original finding.
+  Code this only from the authors' own account of what they did: where they do not say it, you
+  are inferring «descriptive» from the shape of the study, and the answer is
+  «cannot_be_determined» instead. If the paper does compare its results to the original's — even
+  in a new population — code another outcome.
 - "«flawed»" — the authors obtained the original effect but argue
   that their own or the original's method does not validly test the hypothesis, for example
   "we replicated the effect using the original materials, but show that they are not a valid
@@ -765,7 +790,8 @@ CODING RULES
   "«failure»", whatever other checks succeeded.
 - A close replication that works alongside a conceptual replication that does not is "«mixed»".
 - Code the central finding the replication was designed to test. Robustness checks and
-  exploratory analyses around it may be left out of the verdict.
+  exploratory analyses around it may be left out of the verdict; a tested finding the paper
+  itself contrasts with the original may not.
 - Where this paper reports several of its own studies against the original this verdict is
   about, aggregate them into one verdict, following the authors' own judgment where they
   state one; results that conflict with each other are "«mixed»".
@@ -785,8 +811,7 @@ Examples:
 Judge the outcome of this paper's own replication, not outcomes it reports for other studies
 in its background or literature review."""
 
-_OUTCOME_RULES        = _vocab(_OUTCOME_RULES_SRC, OUTCOME_LABELS)
-_OUTCOME_RULES_LEGACY = _vocab(_OUTCOME_RULES_SRC, _LEGACY_OUTCOME_LABELS)
+_OUTCOME_RULES = _vocab(_OUTCOME_RULES_SRC, OUTCOME_LABELS)
 
 # The two checks the model can only answer once it holds some of the paper's own text.
 # They are asked together because they are the same reading: what this paper actually
@@ -801,7 +826,9 @@ _OUTCOME_CHECK_MEANING = """
   collected new data or used a different sample to re-test the finding, "reproduction" if it
   re-analysed the original study's own data, "neither" if it does not check the named original
   at all, "unclear" if the text does not say. Answer it from the methods, independently of the
-  outcome fields.
+  outcome fields. A paper that states it is re-testing the named original is a "replication"
+  even where it reports no results yet — a registered plan whose data are not collected is a
+  replication without an outcome, not "neither".
 - "target_check" — whether the text bears out the link stated above: "this_original" if the
   paper re-tests the named original, "other_original" if it re-tests some other published
   finding instead, "no_original" if it re-tests no earlier published finding at all,
@@ -1234,27 +1261,21 @@ def build_outcome_prompt(title_r: str, abstract_snip: str,
                          original_authors: str = "", original_year: str = "",
                          original_title: str = "", text_snip: str = "",
                          intro_snip: str = "", original_evidence: str = "",
-                         text_provenance: str = "",
-                         legacy_vocabulary: bool = False) -> str:
+                         text_provenance: str = "") -> str:
     """Replication outcome for a link this call did not make.
 
     Either passage of the paper's own text selects the checking pass: the model is
     told what it holds, the named blocks are appended, and record_type_check and
     target_check are asked for. With neither, nothing about the body is rendered at
     all — an empty block would offer a quote source the model never saw.
-
-    *legacy_vocabulary* renders the pre-rename outcome labels instead of FLoRA's.
-    Nothing sends that rendering: it exists so a caller can rebuild the prompt an
-    entry already on disk was bought under. See the declared equivalence in
-    extract/code_outcome.py.
     """
     has_text = bool(text_snip or intro_snip)
-    return _fill(_OUTCOME_TEMPLATE_LEGACY if legacy_vocabulary else _OUTCOME_TEMPLATE, {
+    return _fill(_OUTCOME_TEMPLATE, {
         "evidence_line": _EVIDENCE_FULLTEXT if has_text else _EVIDENCE_ABSTRACT,
         "field_count": "seven" if has_text else "five",
         "check_fields": _OUTCOME_CHECK_FIELDS if has_text else "",
         "check_meanings": _OUTCOME_CHECK_MEANING if has_text else "",
-        "outcome_rules": _OUTCOME_RULES_LEGACY if legacy_vocabulary else _OUTCOME_RULES,
+        "outcome_rules": _OUTCOME_RULES,
         "original_block": _original_block(
             "AN EARLIER STAGE OF THE PIPELINE LINKED THIS PAPER TO:",
             original_authors, original_year, original_title, original_evidence),

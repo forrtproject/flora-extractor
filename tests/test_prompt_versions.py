@@ -201,14 +201,12 @@ class TestChangeDetection:
 
 
 
-class TestTheFloraLabelRenameEquivalence:
-    """The declared cache equivalence (issue #171) for the FLoRA outcome-label rename.
+class TestTheOutcomeVocabularyRendering:
+    """The «slot» markers the outcome prompts name their categories with.
 
-    `resolve_targets_and_outcomes` hashes the RENDERED prompt into its cache key, so
-    the 4,424 stored answers are reachable only if the legacy vocabulary renders the
-    prompt those entries were bought under, byte for byte. Nothing raises when that
-    breaks: the key simply misses and the run re-buys the answer. These digests were
-    taken from the prompts as they stood immediately before the rename.
+    The vocabulary is a parameter of the prompt fragments, rendered once at import
+    from OUTCOME_LABELS, so what the model is asked for is exactly the enum the
+    pipeline stores.
     """
 
     ENTRIES = [
@@ -221,33 +219,8 @@ class TestTheFloraLabelRenameEquivalence:
                     discussion="DISCUSSION TEXT",
                     discussion_provenance="the PDF's conclusion")
 
-    @staticmethod
-    def _digest(text: str) -> str:
-        import hashlib
-        return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
-
-    def test_the_legacy_target_outcome_rendering_is_unchanged(self):
-        full = prompts.build_target_outcome_prompt(
-            "Study R", "Abstract R", self.ENTRIES, legacy_vocabulary=True,
-            **self.EVIDENCE)
-        bare = prompts.build_target_outcome_prompt(
-            "Study R", "Abstract R", self.ENTRIES, legacy_vocabulary=True)
-        assert self._digest(full) == "bd66cb8566b91a8c"
-        assert self._digest(bare) == "1516e143608769dd"
-
-    def test_the_legacy_outcome_rendering_is_unchanged(self):
-        full = prompts.build_outcome_prompt(
-            "Title R", "Abstract snip", "Smith", "2009", "A study of things",
-            "BODY TEXT", "INTRO SNIP", "evidence line", "the PDF's conclusion",
-            legacy_vocabulary=True)
-        bare = prompts.build_outcome_prompt(
-            "Title R", "Abstract snip", "Smith", "2009", "A study of things",
-            legacy_vocabulary=True)
-        assert self._digest(full) == "6ff0214d83884131"
-        assert self._digest(bare) == "a52c4c239e1aa761"
-
     def test_what_is_sent_is_the_flora_vocabulary(self):
-        """The legacy rendering exists for cache keys and is never the one sent."""
+        """Every category the prompt offers is one FLoRA's database stores."""
         from shared.schema import OUTCOME_LABELS
 
         sent = prompts.build_target_outcome_prompt(

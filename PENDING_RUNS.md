@@ -32,6 +32,24 @@ the command, pasteable from the project root, and what proves it worked.
       then `.venv/bin/python -m extract.export --release 8b3d`.
       Done when all 6 read `cannot_be_determined` in `data/extracted.csv`.
 
+- [ ] **Re-extract every settled work under the new outcome policy** (issue #198).
+      The outcome prompt now codes as the authors report: an overall author verdict
+      decides; otherwise their comparisons to the named original decide; a result with
+      no stated bearing on that original's finding is `cannot_be_determined`; and
+      «descriptive» needs the authors' own account of reusing the methods. Editing it
+      minted a new extract generation, so every settled work is already reopened and
+      the shipped CSV still carries verdicts coded under the old policy.
+      `.venv/bin/python -m extract.tier --release 8b3d --run` then
+      `.venv/bin/python -m extract.export --release 8b3d`.
+      Costs a full campaign: the LLM calls are re-bought and every resolved row pays
+      DOI verification again, which is the OpenAlex daily credit budget, so expect more
+      than one budget day. Sandbox-measured on 25 works before commit: 17 of the 20
+      stratified rows unchanged, no `successful` or `failed` row pushed to
+      `cannot_be_determined`.
+      Done when `data/extracted.csv` renders wholly from current-generation verdicts
+      (`extract.export --check` reports no carry-forward) and section 2 of
+      `handover.html` is re-read off the new render.
+
 - [ ] **Re-route after the OSF overlay backfill** (issue #196).
       The backfill of 2026-08-13 gave 854 OSF records their template line; until a
       route reads it, the two OSF specs still cannot see them.

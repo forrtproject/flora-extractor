@@ -44,7 +44,7 @@ from typing import Optional
 
 from shared.config import LLM_CACHE_DIR, OUTCOME_EFFORT, OUTCOME_MODEL, log
 from shared import token_counter
-from shared.cache import content_key, read_cache_migrating, write_cache
+from shared.cache import content_key, read_cache, write_cache
 from shared.llm_client import cache_model_id, call_model
 from shared.prompts import (
     build_outcome_prompt, build_repro_outcome_prompt, prompt_version,
@@ -56,11 +56,6 @@ from shared.token_usage import TokenBudgetExhausted
 # Truncation caps (chars) for the passages this call sends.
 _ABSTRACT_CAP = 3000
 _FULLTEXT_CAP = 8000
-
-# The two versions `build_outcome_prompt` hashed to either side of the FLoRA
-# outcome-label rename — the declared equivalence read at the cache key below.
-_OUTCOME_PRE_RENAME_VERSION = "88efc83ad293"
-_OUTCOME_RENAMED_VERSION    = "e9ef589b44d1"
 _INTRO_CAP    = 2000
 
 # ── Sentence splitter helpers ─────────────────────────────────────────────────
@@ -322,18 +317,7 @@ def _outcome_result(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
              original_evidence, intro_snip, fulltext_provenance, text_snip)
     model_id = cache_model_id(OUTCOME_MODEL, OUTCOME_EFFORT)
     key = content_key("outcome", doi_r, model_id, version, *parts)
-    # The FLoRA-label rename (OUTCOME_LABELS in shared/schema.py) changed how six
-    # categories are spelled and nothing else, so the answers filed under the previous
-    # version of this prompt are the answers this call would get today. Unlike the
-    # combined target+outcome key, this one does not hash the rendered prompt, so the
-    # frozen version is the whole equivalence. Pinned to the version the rename
-    # produced: a later edit to the prompt matches neither literal and pays.
-    legacy_keys = ([content_key("outcome", doi_r, model_id,
-                                _OUTCOME_PRE_RENAME_VERSION, *parts)]
-                   if version == _OUTCOME_RENAMED_VERSION else [])
-    cached = read_cache_migrating(LLM_CACHE_DIR, key, legacy_keys,
-                                  {"prompt_version": version,
-                                   "migration": "flora_outcome_labels"})
+    cached = read_cache(LLM_CACHE_DIR, key)
     if cached is not None:
         cached.setdefault("outcome_reasoning", "")
         cached.setdefault("target_check", "")

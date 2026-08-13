@@ -371,7 +371,11 @@ runs they guard cost money and can close works permanently with a wrong verdict.
    it.** `--redo`, `--only` and `--limit` decide what gets bought. `--redo` was passed
    to a live run without reading the batch loop it feeds; the loop re-applies the redo
    set on every worklist rebuild, so the same 29 works were re-extracted nine times in
-   ten minutes before the run was killed.
+   ten minutes before the run was killed. `--redo` and `--redo-status` ADD to the
+   worklist — they re-admit works the checkpoint subtracted; only `--only` RESTRICTS
+   it. The same command without `--run` prints the worklist size for free, so the dry
+   run is the check that settles what a run will actually extract. A `--redo` run
+   whose worklist holds works nobody named refuses; `--allow-extra-works` accepts it.
 
 3. **Run `/code-review` on the diff before any run that spends more than trivially.**
    A review pass is a rounding error against a $20 campaign.
@@ -461,20 +465,18 @@ reordering the model cannot read differently — does not have to re-buy every a
 already on disk. It is not automatic, and nothing detects it: the maintainer declares
 it, once, and the declaration is reviewable. **An answer-preserving edit has three
 invalidation surfaces, and missing any one of them silently undoes the whole exercise.**
-The worked example is the FLoRA outcome-label rename of 2026-08-10, which moved the two
-replication prompts and re-bought nothing.
 
 1. **The LLM cache key.** Two components move: `prompt_version(builder)`, and — where
    the call site hashes the rendered prompt, as `resolve_targets_and_outcomes` does —
    the prompt TEXT. Freeze the pre-edit version as a literal, make the pre-edit text
    REPRODUCIBLE, and read through
    `read_cache_migrating(cache_dir, key, legacy_keys, migrate_note)`. Reproducible
-   means the varying part is a parameter, not a copy: the outcome vocabulary is written
-   into the fragments as `«success»` markers and rendered twice
-   (`_vocab` in `shared/prompts.py`), so `build_target_outcome_prompt(...,
-   legacy_vocabulary=True)` rebuilds the old text exactly rather than approximately. A
-   search-and-replace over the rendered text is not good enough — these prompts use
-   "failed" and "successful" as ordinary English too.
+   means the varying part is a parameter of the builder, not a copy of its output: the
+   outcome vocabulary, for instance, is written into the prompt fragments as `«success»`
+   markers and rendered from one dict (`_vocab` in `shared/prompts.py`), so a builder
+   can render either vocabulary exactly rather than approximately. A search-and-replace
+   over the rendered text is not good enough — these prompts use "failed" and
+   "successful" as ordinary English too.
 2. **The tier's GENERATION fingerprint**, if the prompt is in `_GENERATION_PROMPTS`
    (`extract/tier.py`, `filter/engine/tiers.py`). This one is easy to forget and
    expensive to miss: the cache can be perfect and the run still re-extracts every
@@ -505,11 +507,11 @@ to strict invalidation on its own. Nothing has to be un-declared later.
 
 **Before editing, snapshot; after editing, assert.** Render the affected prompts with
 fixed synthetic inputs and keep the digests, because a legacy rendering that is one
-space out fails as a cache MISS, not as an error — the run just costs money.
-`TestTheFloraLabelRenameEquivalence` in `tests/test_prompt_versions.py` pins those
-digests, and `test_the_label_rename_does_not_reopen_the_settled_works` in
-`tests/test_extract_tier.py` pins the generation. Both fail loudly if a later edit
-breaks the equivalence, which is the only way this stays true.
+space out fails as a cache MISS, not as an error — the run just costs money. Pin the
+digests in `tests/test_prompt_versions.py`, and pin the generation against the declared
+pair in `tests/test_extract_tier.py`
+(`test_a_declared_prompt_equivalence_reports_the_earlier_version`). A test that fails
+loudly when a later edit breaks the equivalence is the only way this stays true.
 
 Content-complete keys are also what makes the cache **shareable**: an entry from
 another machine is provably the answer this checkout would have computed, so

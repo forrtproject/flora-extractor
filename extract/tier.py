@@ -205,14 +205,11 @@ _GENERATION_PROMPTS = ("build_target_outcome_prompt",
 # this tier has already settled. The pair is the guard: a further edit produces a
 # third version, matches nothing here, and moves the generation as it should.
 #
-# The one entry is the FLoRA outcome-label rename (OUTCOME_LABELS in shared/schema.py),
-# which changed how six categories are spelled in the two replication prompts and
-# nothing about what either asks. The 1,899 works settled under the old spellings are
-# re-rendered by the export, not re-extracted — see `canonical_outcome`.
-_GENERATION_PROMPT_EQUIVALENCES = {
-    "build_target_outcome_prompt": ("1d5a31e3a518", "15fc8eee0150"),
-    "build_outcome_prompt":        ("e9ef589b44d1", "88efc83ad293"),
-}
+# An entry is declared only for an edit that provably cannot change an answer — a
+# category renamed, a typo, a reordering the model cannot read differently — and the
+# recipe a declaration has to follow whole is "Editing a prompt without invalidating
+# its cache" in CLAUDE.md.
+_GENERATION_PROMPT_EQUIVALENCES: dict[str, tuple[str, str]] = {}
 
 
 def generation_inputs() -> dict:
@@ -248,34 +245,17 @@ def extract_generation() -> str:
 # ── Declared equivalent generations ──────────────────────────────────────────
 # `current: (generations whose verdicts still answer the current question)`. The
 # fingerprint is a hash of a dict, so REMOVING a key from that dict moves it exactly as
-# a prompt edit would — and the removal of `EXTRACT_LADDER_VERSION` did. Every verdict
-# on the server carried `{ladder: N, prompts…, models…}`; the tier now asks
+# a prompt edit would — as the removal of `EXTRACT_LADDER_VERSION` did: every verdict
+# on the server carried `{ladder: N, prompts…, models…}`, the tier now asks
 # `{prompts…, models…}` and matched none of them, so 3,025 settled works reopened at
-# once. That is the opposite of what dropping the key was for.
+# once. An entry belongs here when the move left what the tier ASKS untouched, or when
+# it changes a field over a population its author can name on the command line
+# (`--redo-status …`) for a fraction of a campaign's spend.
 #
-# Adding `build_search_confirm_prompt` to the fingerprint moved it the same way: the
-# wiring changes only `link_confidence` on the rows the grade touches, which are
-# exactly the search-linked rows — a population its author can name
-# (`--redo-status llm_title_search,llm_author_year_search`) — while reopening all
-# 3,000+ settled works would re-buy every verdict for a field that is advisory to
-# validators, not a conclusion.
-#
-# The four listed generations are the pre-search-confirm fingerprint and, before it,
-# ladders 21, 22 and 23 over prompts and models identical to today's — verified by
-# rebuilding each digest from the current inputs minus the search-confirm prompt, plus
-# the one ladder key. The ladder is provenance and reaches a population its author
-# names (`--redo-status`), so a verdict produced under any of them still answers what
-# this tier asks.
-#
-# Keyed by the CURRENT generation, which is what makes the declaration self-limiting: a
-# later prompt or model change produces a fifth digest, matches no key here, and every
+# Keyed by the CURRENT generation, which is what makes a declaration self-limiting: a
+# later prompt or model change produces a digest that matches no key here, and every
 # work reopens strictly, as it should.
-_GENERATION_EQUIVALENCES: dict[str, tuple[str, ...]] = {
-    "d1dbd07e1b14440c": ("4e23d2dbb9d39029",   # the grade recorded, not yet shipped
-                         "d7908ff6851d3228",   # ladder 21 — the 2026-08-09 campaign
-                         "4d875363a2410a67",   # ladder 22 — sandbox
-                         "f2bdee845b792dbb"),  # ladder 23 — sandbox
-}
+_GENERATION_EQUIVALENCES: dict[str, tuple[str, ...]] = {}
 
 
 def equivalent_generations() -> tuple[str, ...]:
@@ -1083,6 +1063,7 @@ def run_extract_tier(con, client: Optional[ClaimsClient], release_id: str, *,
                      aliases: Optional[dict[int, int]] = None,
                      record: Optional[dict] = None,
                      run: bool = False,
+                     allow_extra_works: bool = False,
                      cache_dir: Optional[Path] = None,
                      batch_size: int = EXTRACT_CLAIM_BATCH) -> dict:
     """Claim and extract the worklist, `batch_size` works at a time.
@@ -1095,6 +1076,11 @@ def run_extract_tier(con, client: Optional[ClaimsClient], release_id: str, *,
     A dry run needs no state authority and claims nothing — it prints one estimate
     over the whole worklist, because the question a dry run answers is what the
     campaign costs, not what its first 200 rows cost.
+
+    *redo* is a NAMED population: it re-admits works the checkpoint subtracted, and a
+    run that would also extract works nobody named refuses unless
+    *allow_extra_works* says otherwise. `None` means no population was named; an
+    empty set means one was named and matched nothing.
     """
     works = extract_works(con, client, pool_dir, release_id, only=only, limit=limit,
                           mode=mode, spec_dir=spec_dir, overlay_dir=overlay_dir,
@@ -1111,6 +1097,8 @@ def run_extract_tier(con, client: Optional[ClaimsClient], release_id: str, *,
     if not works:
         raise SystemExit("nothing to extract: every admitted work is already settled, "
                          "claimed or skipped.")
+    if redo is not None and only is None and not allow_extra_works:
+        _refuse_unnamed_works({int(w) for w in redo}, works)
 
     total = {"tier": TIER_EXTRACT, "mode": mode, "dry_run": False, "batches": 0,
              "decided": 0, "outcomes": {}, "verdicts": 0, "claims": [],
@@ -1152,6 +1140,32 @@ def run_extract_tier(con, client: Optional[ClaimsClient], release_id: str, *,
     if superseded:
         total["superseded"] = _supersede(client, superseded)
     return total
+
+
+def _refuse_unnamed_works(named: set[int], works: list[ExtractWork]) -> None:
+    """Stop a `--redo`/`--redo-status` run that would extract works nobody named.
+
+    `--redo` ADDS to the worklist; `--only` RESTRICTS it. With a stable generation the
+    difference is invisible — every other work is settled and subtracted, so the
+    worklist is the named set anyway. A new generation reopens every settled work, the
+    subtraction takes nothing away, and the same command becomes a whole campaign.
+    That is exactly the moment an operator reaches for `--redo`, so the check is here
+    rather than in the operator's head.
+    """
+    extra = [w.work_id for w in works if w.work_id not in named]
+    if not extra:
+        return
+    ids = ",".join(str(w) for w in sorted(named)) if 0 < len(named) <= 20 else "<ids>"
+    raise SystemExit(
+        f"--redo/--redo-status named {len(named):,} work(s), but the worklist holds "
+        f"{len(works):,} — this run would also extract {len(extra):,} work(s) you did "
+        "not name.\n"
+        "  --redo and --redo-status ADD to the worklist; they do not restrict it. A "
+        "new extract generation (a changed prompt or model) reopens every settled "
+        "work, so there is nothing left for the checkpoint to subtract and the "
+        "baseline worklist is the whole admitted population.\n"
+        f"  Extract exactly the named works:  --only {ids}\n"
+        "  Or accept the full worklist:      the same command plus --allow-extra-works")
 
 
 def _run_batch(spec: TierSpec, client: ClaimsClient, release_id: str,
@@ -1282,6 +1296,9 @@ def main(argv: Optional[list[str]] = None) -> int:
                              "(e.g. unidentified_original, no_original_found): redo "
                              "every work whose latest result ended that way. How a "
                              "ladder change reopens the rows it was written for.")
+    parser.add_argument("--allow-extra-works", action="store_true",
+                        help="Run the full worklist even though --redo/--redo-status "
+                             "named a smaller population.")
     parser.add_argument("--release", default=None,
                         help="Routing release (default: the store's only one).")
     parser.add_argument("--overlay", type=Path, default=None,
@@ -1342,7 +1359,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     try:
         report = run_extract_tier(
             con, client, release_id, mode=args.mode, batch_label=args.batch_label,
-            limit=args.limit, only=_ids(args.only), redo=sorted(redo) or None,
+            limit=args.limit, only=_ids(args.only),
+            # An empty list, not None, when a population was named and matched
+            # nothing: None means nobody named one, and only that reading lets the
+            # unnamed-works refusal fire on a redo that resolved to zero works.
+            redo=sorted(redo) if (args.redo or args.redo_status) else None,
+            allow_extra_works=args.allow_extra_works,
             pool_dir=args.pool, spec_dir=args.spec_dir,
             overlay_dir=_overlay_dir(args),
             aliases=load_aliases(args.spec_dir / ALIASES_FILENAME),
