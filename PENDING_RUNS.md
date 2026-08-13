@@ -74,12 +74,13 @@ the command, pasteable from the project root, and what proves it worked.
 
 - [ ] **Deduplicate OpenAlex works that name one OSF record** (issue #200). One OSF
       record ships as several rows: 117 records in `data/extracted.csv` are reached by
-      more than one work id, 296 of 2,602 rows (11%). `filter/spec/aliases.json` is the
-      seam and holds none of them. Nothing is written yet — the derivation script does
-      not exist, and the plan plus the canonical rule are in the issue. See
-      `docs/handover-osf-dedup.md` for the brief.
-      Done when the aliases are in `filter/spec/aliases.json`, a re-route has collapsed
-      the duplicates, and the export's row count falls by the surplus.
+      more than one work id, 296 of 2,602 rows (11%). The aliases ARE derived and
+      merged: `filter/spec/aliases.json` holds the 14,744 same-guid entries
+      (`analysis/build_osf_aliases.py`, commit `3fb6efe` — adjudication and QC in its
+      message; 405 groups excluded as OpenAlex mis-located works). What remains is the
+      route that applies them — the combined re-route above — and the export check.
+      Done when a re-route has collapsed the duplicates and the export's row count
+      falls by the merged surplus (expected ≈165 rows on the current CSV).
 
 - [ ] **Re-extract every settled work under the new outcome policy** (issue #198).
       The outcome prompt now codes as the authors report: an overall author verdict
