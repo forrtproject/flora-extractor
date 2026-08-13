@@ -622,19 +622,43 @@ _OSF_REGISTRATION_API = "https://api.osf.io/v2/registrations/{guid}/"
 _MIN_OSF_REGISTRATION_CHARS = 1_000
 
 
+# Path segments that come BEFORE the guid rather than being one. Taking the first
+# five-character token after "osf.io/" read these as guids: `osf.io/download/hgwkv/`
+# gave "download", which is a real identifier collision — 55 pool works carry a
+# download-shaped URL, so all of them keyed one entry, were asked about once, and wore
+# that single answer between them (`osf_identifier()` in search/fetch_abstracts.py).
+_OSF_URL_PREFIXES = {"download", "project", "registrations", "nodes", "preprints",
+                     "v2", "api", "files", "wiki", "search", "dashboard", "settings",
+                     "institutions", "collections", "quickfiles", "explore"}
+_OSF_GUID = re.compile(r"^[a-z0-9]{5,}$")
+
+
 def osf_registration_guid(doi_or_url: str) -> str:
     """The OSF guid in a registration DOI or an osf.io URL, or "".
 
     Both forms reach Stage 3: `10.17605/osf.io/<guid>` as a DOI, and bare
     `osf.io/<guid>` (and `api.osf.io/v2/nodes/<guid>/`) as the url_r of a row that
     never resolved to a DOI at all.
+
+    The guid is the first path segment after `osf.io/` that is not one of the segments
+    OSF puts in FRONT of a guid. A preprint is the exception in shape rather than in
+    kind — `osf.io/preprints/<server>/<guid>` has two — so its guid is the last
+    segment, and a version suffix (`d3x9p_v4`) is dropped: the versions of one preprint
+    are one record.
     """
     text = str(doi_or_url or "").strip()
     if not text:
         return ""
-    m = re.search(r"osf\.io/(?:v2/(?:nodes|registrations)/)?([a-z0-9]{5,})", text,
-                  re.IGNORECASE)
-    return m.group(1).lower() if m else ""
+    m = re.search(r"osf\.io/(.+)$", text, re.IGNORECASE)
+    if not m:
+        return ""
+    parts = [p for p in m.group(1).split("?")[0].split("#")[0].lower().split("/") if p]
+    if parts and parts[0] == "preprints":
+        parts = parts[-1:]
+    guid = next((p.split("_v")[0] for p in parts
+                 if p not in _OSF_URL_PREFIXES and _OSF_GUID.match(p.split("_v")[0])),
+                "")
+    return guid
 
 
 def osf_registration_has_content(registration: "dict | None") -> bool:

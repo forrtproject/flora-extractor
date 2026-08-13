@@ -98,6 +98,27 @@ def test_a_project_neither_endpoint_answers_is_a_definitive_miss(monkeypatch):
     assert fa._fetch_osf_registration("10.17605/OSF.IO/AB12D") == (None, "empty")
 
 
+@pytest.mark.parametrize("identifier,guid", [
+    ("https://osf.io/qp4h8", "qp4h8"),
+    ("10.17605/osf.io/zya9n", "zya9n"),
+    ("http://api.osf.io/v2/nodes/mcuxg/", "mcuxg"),
+    ("http://api.osf.io/v2/registrations/zx5jf/", "zx5jf"),
+    # The segments OSF puts in FRONT of a guid. Reading one AS the guid collided 55
+    # pool works onto a single "osf.io/download" identifier: one call answered for all
+    # of them, and the answer was checkpointed against every one.
+    ("https://osf.io/download/hgwkv/", "hgwkv"),
+    ("https://osf.io/project/ab12d", "ab12d"),
+    ("https://osf.io/ab12d/files/osfstorage", "ab12d"),
+    # A preprint carries two segments before its guid, and its versions are one record.
+    ("https://osf.io/preprints/psyarxiv/abcde", "abcde"),
+    ("10.31234/OSF.IO/D3X9P_V4", "d3x9p"),
+    ("https://example.com/not-osf", ""),
+])
+def test_the_guid_is_the_segment_that_is_a_guid(identifier, guid):
+    from shared.pdf_sources import osf_registration_guid
+    assert osf_registration_guid(identifier) == guid
+
+
 def test_a_project_falls_back_to_its_own_description(monkeypatch):
     """1,696 OSF identifiers in the 2026-08-13 worklist are projects, not
     registrations. Their description is the only text they have, and it names the
