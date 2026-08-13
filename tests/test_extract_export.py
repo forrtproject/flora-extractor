@@ -332,6 +332,24 @@ def test_a_validation_run_is_invisible_to_the_live_export():
     assert set(results) == {14}
 
 
+def test_the_owed_runs_are_read_off_pending_runs(tmp_path):
+    """The export says what the file may not reflect. A committed change that needs a
+    run leaves the artifacts stale while the code looks finished, and the pipeline's
+    state is not in git — so PENDING_RUNS.md is the only place that knows."""
+    path = tmp_path / "PENDING_RUNS.md"
+    path.write_text("# Owed operational runs\n\n"
+                    "- [ ] Re-route after the OSF backfill.\n"
+                    "- [x] Re-export after ladder 26.\n"
+                    "  - [ ] indented, so not an entry\n", encoding="utf-8")
+    assert export_mod.open_pending_runs(path) == ["Re-route after the OSF backfill."]
+
+
+def test_a_missing_pending_runs_file_owes_nothing(tmp_path):
+    """It reports, it never refuses: no file is no entries, not an error, so a
+    checkout without one still exports."""
+    assert export_mod.open_pending_runs(tmp_path / "absent.md") == []
+
+
 def test_a_superseded_generation_is_carried_forward_and_counted():
     """A prompt edit must not silently delete a finding from the corpus.
 

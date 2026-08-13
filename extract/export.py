@@ -90,6 +90,27 @@ from shared.utils import clean_doi
 
 DEFAULT_OUT = DATA_DIR / "extracted.csv"
 
+PENDING_RUNS = Path(__file__).resolve().parent.parent / "PENDING_RUNS.md"
+
+
+def open_pending_runs(path: Path = PENDING_RUNS) -> list[str]:
+    """The unticked entries in PENDING_RUNS.md — the runs this repo still owes.
+
+    A committed change that needs a run to take effect leaves the artifacts stale
+    while the code looks finished, and the pipeline's state is not in git, so nothing
+    else shows it. This file is where those runs are written down; the export reads it
+    because the export is where a stale artifact stops being local and starts being
+    the file the validation import reads.
+
+    A missing or unreadable file is no entries. The check reports, it never refuses:
+    an entry the maintainer has deliberately deferred must not block a render.
+    """
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    return [line[6:].strip() for line in lines if line.startswith("- [ ] ")]
+
 
 def _recorded_at(row: dict) -> tuple:
     """When a verdict row was written, as far as the row can say.
@@ -497,6 +518,16 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(f"  rows from a superseded generation: "
               f"{report['superseded_generation']:,}  (carried forward; "
               "--current-generation-only drops them)")
+
+    # Between what would be rendered and what is done with it, so every path prints it
+    # once — the render, the --check diff and the write alike.
+    owed = open_pending_runs()
+    if owed:
+        print(f"\n  ⚠ {len(owed)} owed operational run(s) — PENDING_RUNS.md. This file "
+              "may not reflect them:")
+        for entry in owed:
+            print(f"      {entry}")
+        print()
 
     if args.check:
         diff = check(report, args.out)
