@@ -345,13 +345,26 @@ PROVENANCE_LABEL = {
     # `extract/run_extract.py`; this line is for the case no field can decide — an
     # `Open-Ended Registration` is as often a retrospective data deposit as a freeze of
     # a plan, and only the text says which.
+    #
+    # It asks for the REJECTION rather than a withheld outcome, because a plan is not a
+    # replication that happens to be unreported: nothing was re-tested, so there is no
+    # study here to record. `record_type_check: "neither"` is what says so — it vetoes
+    # the row to `not_a_replication` in `normalise_outcome_block`, on the combined call
+    # and the standalone coder alike. The field's own definition is cast in the past
+    # tense ("collected new data", "re-analysed"), which rules a plan out by
+    # implication; a form that describes at length the data it WILL collect needs it
+    # said outright.
     "osf_registration":
                   "the filled-in OSF registration form for this record, not a paper. "
-                  "A registration is often filed BEFORE the study runs: its success "
-                  "criteria are then predictions rather than results, and its "
-                  "background describes OTHER studies. Code an outcome only from "
-                  "results the authors report having already obtained; a form that "
-                  "states what will be done reports no outcome",
+                  "A registration is often filed BEFORE the study runs, and such a "
+                  "form is a PLAN: its success criteria are predictions rather than "
+                  "results, and its background describes OTHER studies. A record that "
+                  "only sets out what will be done has re-tested nothing, so it is "
+                  "neither a replication nor a reproduction however much replication "
+                  "it describes — answer record_type_check \"neither\" for it, which "
+                  "rejects the record, rather than reporting an outcome for a study "
+                  "that has not happened. Treat it as a completed study only where the "
+                  "authors report results they have already obtained",
 }
 
 # How much closing-section text the STANDALONE outcome coder slices out of a parse.

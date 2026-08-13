@@ -16,6 +16,7 @@ from unittest.mock import patch
 
 import extract.run_extract as run_extract
 from extract.run_extract import _apply_outcome, build_bibtex
+from shared.schema import normalise_outcome_block
 
 
 # ── _apply_outcome on the reproduction grid ──────────────────────────────────
@@ -110,6 +111,24 @@ def test_a_manuscript_in_the_same_project_is_coded_normally():
     row = _guarded({**_REGISTRATION_ROW, "pdf_source": "osf_files"},
                    template="OSF Preregistration", name="manuscript_final.pdf")
     assert row["outcome"] == "successful"
+
+
+def test_a_rejected_registration_is_not_downgraded_to_a_withheld_outcome():
+    """A plan is not a replication whose result is unknown — nothing was re-tested, so
+    the record is rejected (issue #196). `record_type_check: "neither"` is what says so,
+    and the prospective-registration guard must leave that verdict standing: overwriting
+    it with cannot_be_determined would turn a rejection back into a pending study."""
+    rejected = normalise_outcome_block(
+        {"outcome": "successful", "outcome_phrase": "successful if p < .05",
+         "record_type_check": "neither"},
+        record_type="replication", has_text=True)
+    assert rejected["outcome"] == "not_a_replication"
+    assert rejected["outcome_phrase"] == ""
+
+    row = _guarded({**_REGISTRATION_ROW, "pdf_source": "osf_files"},
+                   name="Preregistration.pdf")
+    row = _apply_outcome(dict(row), dict(rejected))
+    assert row["outcome"] == "not_a_replication"
 
 
 def test_an_unnamed_osf_file_is_coded_normally():
