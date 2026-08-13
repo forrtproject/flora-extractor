@@ -277,10 +277,7 @@ _TARGET_RTC_FIELD = """
   it collected new data or used a different sample to re-test the finding,
   "reproduction" if it re-analysed the original study's own data, "neither" if it
   does not check that original at all, "unclear" if the text does not say. Answer it
-  from the methods, independently of the outcome fields. A paper that states it is
-  re-testing the named original is a "replication" even where it reports no results
-  yet — a registered plan whose data are not collected is a replication without an
-  outcome, not "neither"."""
+  from the methods, independently of the outcome fields."""
 
 _WS_RE = re.compile(r"\s+")
 
@@ -342,6 +339,19 @@ PROVENANCE_LABEL = {
     "sections":   "the abstract, introduction and methods only — the closing sections "
                   "could not be parsed. Statements about replication failures in an "
                   "introduction usually concern OTHER studies",
+    # An OSF registration form is a document and reads like one, which is how planned
+    # success criteria and background sentences were coded as findings (issue #196).
+    # The enumerated pre-data-collection templates are refused outright in
+    # `extract/run_extract.py`; this line is for the case no field can decide — an
+    # `Open-Ended Registration` is as often a retrospective data deposit as a freeze of
+    # a plan, and only the text says which.
+    "osf_registration":
+                  "the filled-in OSF registration form for this record, not a paper. "
+                  "A registration is often filed BEFORE the study runs: its success "
+                  "criteria are then predictions rather than results, and its "
+                  "background describes OTHER studies. Code an outcome only from "
+                  "results the authors report having already obtained; a form that "
+                  "states what will be done reports no outcome",
 }
 
 # How much closing-section text the STANDALONE outcome coder slices out of a parse.
@@ -826,9 +836,7 @@ _OUTCOME_CHECK_MEANING = """
   collected new data or used a different sample to re-test the finding, "reproduction" if it
   re-analysed the original study's own data, "neither" if it does not check the named original
   at all, "unclear" if the text does not say. Answer it from the methods, independently of the
-  outcome fields. A paper that states it is re-testing the named original is a "replication"
-  even where it reports no results yet — a registered plan whose data are not collected is a
-  replication without an outcome, not "neither".
+  outcome fields.
 - "target_check" — whether the text bears out the link stated above: "this_original" if the
   paper re-tests the named original, "other_original" if it re-tests some other published
   finding instead, "no_original" if it re-tests no earlier published finding at all,

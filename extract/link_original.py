@@ -1479,6 +1479,13 @@ def run_for_doi(doi_r:              str,
     # the model never attributes a quote to a section it was not shown.
     discussion, discussion_provenance = outcome_text(
         str(best.get("raw_text") or ""), max_chars=TARGET_DISCUSSION_CHARS)
+    # WHERE the text came from outranks which slice of it outcome_text() picked. An OSF
+    # registration form has no discussion section to find, so outcome_text labels its
+    # closing lines "tail" — "the closing pages of the paper", which is the one thing
+    # this document is not. The form's own label says so and warns what a registration
+    # filed before the study reads like (issue #196).
+    if discussion and pdf.get("pdf_source") == "osf_registration":
+        discussion_provenance = "osf_registration"
     sections = {
         "abstract":   best.get("abstract") or "",
         "intro":      best.get("intro")    or "",

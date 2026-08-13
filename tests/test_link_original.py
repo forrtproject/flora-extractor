@@ -490,7 +490,8 @@ def _run_gate(title_r: str, abstract_r: str, candidates: list,
               screen: "dict | None" = None,
               pdf_ok: bool = True, no_llm: bool = False, no_pdf: bool = False,
               oa_xml: "dict | None" = None, parse: "dict | None" = None,
-              identify=None, record_type: str = "replication") -> dict:
+              identify=None, record_type: str = "replication",
+              pdf_source: str = "unpaywall") -> dict:
     """Drive run_for_doi with the title-pattern rule able to fire.
 
     *abstract_answer* is what the Stage 4 abstract call returns and *llm_answer* what
@@ -502,7 +503,7 @@ def _run_gate(title_r: str, abstract_r: str, candidates: list,
         "year_r": "2020", "openalex_id_r": "W1", "url_r": "",
         "author_year_pattern_r": "",
     }])
-    pdf = ({"pdf_path": "/tmp/x.pdf", "openalex_xml": None, "pdf_source": "unpaywall",
+    pdf = ({"pdf_path": "/tmp/x.pdf", "openalex_xml": None, "pdf_source": pdf_source,
             "pdf_url": "u", "pdf_ok": True, "pdf_url_tried": []} if pdf_ok else
            {"pdf_path": None, "openalex_xml": oa_xml,
             "pdf_source": "openalex_xml" if oa_xml else "none",
@@ -983,6 +984,45 @@ class TestOutcomeDescent:
         assert "did not replicate" in seen["discussion"]
         assert seen["discussion_provenance"] in ("discussion", "tail")
         assert row["grobid_discussion"] == seen["discussion"]
+
+    def test_a_registration_form_is_labelled_as_one_not_as_a_paper(self):
+        """A registration form has no discussion section, so outcome_text calls its
+        closing lines "tail" — "the closing pages of the paper", the one thing this
+        document is not. The form's own label warns what a pre-data-collection
+        registration reads like (issue #196)."""
+        form = ("Hypotheses: " + "x" * 400 + " Analysis plan\n"
+                + "We will treat the replication as successful if p < .05. " + "y" * 300)
+        seen: dict = {}
+
+        def _identify(*a, **k):
+            seen.update(k)
+            return _answer()
+
+        _run_gate("A study", _ONE_PAIR, [], pdf_source="osf_registration",
+                  parse={"markitdown": {"source": "markitdown", "abstract": "",
+                                        "intro": "", "raw_text": form,
+                                        "references": []}},
+                  identify=_identify)
+        assert seen["discussion_provenance"] == "osf_registration"
+        assert "successful if p < .05" in seen["discussion"]
+
+    def test_a_downloaded_paper_keeps_its_own_provenance(self):
+        """The override is about where the document came from, not about OSF: a PDF
+        the OSF file tier supplied is a paper and is labelled like one."""
+        paper = ("Introduction. " + "x" * 400 + " Discussion\n"
+                 + "The effect replicated. " + "y" * 300)
+        seen: dict = {}
+
+        def _identify(*a, **k):
+            seen.update(k)
+            return _answer()
+
+        _run_gate("A study", _ONE_PAIR, [], pdf_source="osf_files",
+                  parse={"markitdown": {"source": "markitdown", "abstract": "",
+                                        "intro": "", "raw_text": paper,
+                                        "references": []}},
+                  identify=_identify)
+        assert seen["discussion_provenance"] in ("discussion", "tail")
 
 
 class TestTheAbstractRungReadsTheTitleToo:
