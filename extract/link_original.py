@@ -514,7 +514,14 @@ OUTCOME_DESCENT = True
 #      answering it, and doi_o != doi_r rules out only the identical identifier
 #      (2026-08-13)
 #      reopen: --redo-status llm_title_search,llm_author_year_search
-EXTRACT_LADDER_VERSION: int = 24
+#  25  an outcome coded from a PROSPECTIVE OSF registration form is refused and
+#      written cannot_be_determined (`_apply_outcome` in extract/run_extract.py,
+#      issue #196): the form states a plan, and its planned success criteria and
+#      prior-work descriptions were coded as results. Plan documents in an OSF
+#      project's file storage also rank behind every other candidate file
+#      (2026-08-13)
+#      reopen: .venv/bin/python -m extract.tier --run --redo 6962150035,6962671413
+EXTRACT_LADDER_VERSION: int = 25
 
 
 # Columns to pass through from the input row (no renaming). Only columns

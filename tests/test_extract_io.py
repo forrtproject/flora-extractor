@@ -52,6 +52,50 @@ def test_apply_outcome_blanks_the_axes_on_a_replication():
         assert row[col] == "", col
 
 
+# ── the prospective-registration guard ───────────────────────────────────────
+
+_REGISTRATION_ROW = {"type": "replication", "doi_r": "10.17605/osf.io/jdh29",
+                     "pdf_source": "osf_registration"}
+_CODED = {"outcome": "successful", "outcome_confidence": "high",
+          "outcome_phrase": "the replication succeeded",
+          "out_quote_source": "fulltext", "llm_model": "gemini-outcome"}
+
+
+def test_a_prospective_registration_form_settles_no_outcome():
+    """A pre-data-collection form states a plan; its planned success criteria read as
+    results (issue #196). The row is refused rather than coded from one."""
+    with patch.object(run_extract, "osf_registration_template",
+                      return_value="Replication Recipe (Brandt et al., 2013): "
+                                   "Pre-Registration"):
+        row = _apply_outcome(dict(_REGISTRATION_ROW), dict(_CODED))
+    assert row["outcome"] == "cannot_be_determined"
+    assert row["outcome_phrase"] == ""
+    assert row["outcome_llm_model"] == ""
+    assert "before data collection" in row["outcome_reasoning"]
+
+
+def test_a_post_completion_registration_is_coded_normally():
+    """The Post-Completion form reports a finished study — it is what this tier reads
+    an OSF registration FOR, and Open-Ended deposits stay codeable beside it."""
+    for template in ("Replication Recipe (Brandt et al., 2013): Post-Completion",
+                     "Open-Ended Registration"):
+        with patch.object(run_extract, "osf_registration_template",
+                          return_value=template):
+            row = _apply_outcome(dict(_REGISTRATION_ROW), dict(_CODED))
+        assert row["outcome"] == "successful", template
+        assert row["outcome_llm_model"] == "gemini-outcome", template
+
+
+def test_the_guard_does_not_touch_a_row_coded_from_a_document():
+    """It fires on the registration form alone: a row whose outcome came from the
+    manuscript in the same project's storage is coded from results."""
+    with patch.object(run_extract, "osf_registration_template",
+                      return_value="OSF Preregistration"):
+        row = _apply_outcome({**_REGISTRATION_ROW, "pdf_source": "osf_files"},
+                             dict(_CODED))
+    assert row["outcome"] == "successful"
+
+
 # ── ref_o / bibtex_ref_o: the human-readable citation of the original ────────
 
 class TestReferenceBuilders:

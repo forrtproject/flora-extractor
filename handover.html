@@ -137,7 +137,7 @@ humans review them. The final product is the Supabase <code>validated</code> tab
 
 <div class="kpis">
   <div class="kpi"><b>2,602</b><span>rows shipped in <code>data/extracted.csv</code></span></div>
-  <div class="kpi"><b>1,902</b><span>rows that enter validation now: a settled outcome and a paper type. The other 700 — nearly all <code>cannot_be_determined</code> — ship in the CSV but are withheld by default (see below).</span></div>
+  <div class="kpi"><b>1,900</b><span>rows that enter validation now: a settled outcome and a paper type. The other 702 — nearly all <code>cannot_be_determined</code> — ship in the CSV but are withheld by default (see below).</span></div>
   <div class="kpi"><b>7,929</b><span>works admitted by the current release</span></div>
   <div class="kpi"><b>5,146,160</b><span>papers in the survivor pool (2,232 parquet files, 7.1&nbsp;GB)</span></div>
 </div>
@@ -175,8 +175,8 @@ humans review them. The final product is the Supabase <code>validated</code> tab
 <div class="tablewrap">
 <table>
   <tr><th>Outcome</th><th class="num">Rows</th><th>Notes</th></tr>
-  <tr><td>successful</td><td class="num">1,023</td><td>56% of the settled successful/failed/mixed rows — higher than FLoRA's 42%, and audited 2026-08-13 (30 successful + 15 failed rows read by hand): no failure was coded as a success. The excess is composition: 43% of successful rows share an author with their original (such self-replications/extensions run 75% successful; author-independent links 47%), and reference-list links (65% successful) are how extension papers match their own cited prior work. Treat 56% as an upper bound: about 1 sampled success in 5 is arguably <code>mixed</code> (partial results taken at the authors' word — issue <a href="https://github.com/forrtproject/flora-extractor/issues/198">#198</a>), and <code>cannot_be_determined</code> likely hides failures disproportionately.</td></tr>
-  <tr><td>cannot_be_determined</td><td class="num">695</td><td>our verdict: the text did not settle it. These rows are nearly all of the 700 that ship in the CSV but are withheld from validation by default. They will need human review eventually; an explicit export flag for them is on the future-work list.</td></tr>
+  <tr><td>successful</td><td class="num">1,021</td><td>56% of the settled successful/failed/mixed rows — higher than FLoRA's 42%, and audited 2026-08-13 (30 successful + 15 failed rows read by hand): no failure was coded as a success. The excess is composition: 43% of successful rows share an author with their original (such self-replications/extensions run 75% successful; author-independent links 47%), and reference-list links (65% successful) are how extension papers match their own cited prior work. Treat 56% as an upper bound: about 1 sampled success in 5 is arguably <code>mixed</code> (partial results taken at the authors' word — issue <a href="https://github.com/forrtproject/flora-extractor/issues/198">#198</a>), and <code>cannot_be_determined</code> likely hides failures disproportionately.</td></tr>
+  <tr><td>cannot_be_determined</td><td class="num">697</td><td>our verdict: the text did not settle it. These rows are nearly all of the 702 that ship in the CSV but are withheld from validation by default. They will need human review eventually; an explicit export flag for them is on the future-work list.</td></tr>
   <tr><td>failed</td><td class="num">504</td><td></td></tr>
   <tr><td>mixed</td><td class="num">313</td><td></td></tr>
   <tr><td>descriptive only</td><td class="num">29</td><td></td></tr>
@@ -371,7 +371,7 @@ two network checks.</p>
 <p>Give <code>data/extracted.csv</code> to the <code>flora-validation</code> repository.
 Its <code>csv_to_db.py</code> inserts the rows into the three Supabase validation tables
 in one idempotent transaction (<code>ON CONFLICT (pair_id) DO NOTHING</code>). Only rows
-with a settled outcome and a paper type are ready — 1,904 of the current 2,605.</p>
+with a settled outcome and a paper type are ready — 1,900 of the current 2,602.</p>
 
 <h3>3.6 What a run costs</h3>
 

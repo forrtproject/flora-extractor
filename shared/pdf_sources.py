@@ -592,14 +592,32 @@ def get_osf_pdf_url(doi: str) -> Optional[str]:
 # in the API instead, as the filled-in registration form — which is the document, not
 # a substitute for one. 33% of the 2026-08-06 worklist is on the 10.17605 registrant.
 #
-# Stage 2 has ALREADY separated the useful registrations from the useless ones, and
-# this tier must not second-guess it: `osf-registration-protocol` (live, discard)
-# drops the preregistration templates, and `osf-registration-completed` (live,
-# screen_expensive) admits the post-completion forms and the Open-Ended Registrations
-# carrying the replication stem. What reaches Stage 3 either sometimes states results
-# (open-ended) or always does (a post-replication recipe).
+# Stage 2 routes on the template where it can see one: `osf-registration-protocol`
+# (live, discard) drops the preregistration templates and `osf-registration-completed`
+# (live, screen_expensive) admits the post-completion forms and the Open-Ended
+# Registrations carrying the replication stem. It sees a template only through the
+# overlay text the backfill wrote, so PROSPECTIVE registrations do reach Stage 3 by two
+# doors (audit of 2026-08-13, issue #196): the Open-Ended arm admits plan freezes, and a
+# record the backfill never reached carries no template line for either rule to read.
+# The form such a row hands over states a plan in the grammar of a result, so what stops
+# it being coded as one is the template guard in `extract/run_extract.py::_apply_outcome`
+# — which reads `osf_registration_template()` below.
 
 _OSF_REGISTRATION_API = "https://api.osf.io/v2/registrations/{guid}/"
+
+# The templates filed BEFORE data collection, as markers matched against the template
+# name. `filter/spec/osf-registration-protocol.json` is the source of truth for the
+# vocabulary; its match block is the complement (a template that is neither
+# post-completion nor Open-Ended), and these markers are that complement enumerated
+# over the measured template names in `analysis/osf_registrations/census.csv`. They
+# cover all ten prospective names there and match neither `Open-Ended Registration` nor
+# `Replication Recipe (Brandt et al., 2013): Post-Completion`, which stay codeable — an
+# Open-Ended record is as often a retrospective data deposit as a plan freeze. A
+# template name no marker recognises is codeable too: this list refuses, it does not
+# admit.
+_OSF_PROSPECTIVE_TEMPLATE = re.compile(
+    r"(?i)pre[-\s]?data\s*collection|pre[-\s]?registration|prereg"
+    r"|aspredicted|egap|registered\s*report\s*protocol")
 
 # Below this, the form carries a title, an author line and little else — no design,
 # no hypotheses, nothing to read. Measured 2026-08-07 over four campaign
@@ -635,6 +653,30 @@ def osf_registration_has_content(registration: "dict | None") -> bool:
     return len(body.strip()) >= _MIN_OSF_REGISTRATION_CHARS
 
 
+def is_prospective_registration_template(template: str) -> bool:
+    """True when *template* names a form filed before data collection."""
+    return bool(_OSF_PROSPECTIVE_TEMPLATE.search(str(template or "")))
+
+
+def osf_registration_template(doi_or_url: str) -> str:
+    """The template a registration was filed under, off the cached form, or "".
+
+    A read of what `get_osf_registration()` already stored — never a fetch. The caller
+    is a row whose document IS that form, so the fetch has happened; anything else
+    (no guid, no cache entry, an entry written before the template was recorded) is
+    "unknown", and the outcome guard that reads this stays out of the way.
+    """
+    guid = osf_registration_guid(doi_or_url)
+    if not guid:
+        return ""
+    cf = OA_CACHE_DIR / f"osfreg_{cache_key(guid)}.json"
+    try:
+        cached = json.loads(cf.read_text(encoding="utf-8"))
+    except Exception:
+        return ""
+    return str((cached or {}).get("registration_supplement") or "")
+
+
 def get_osf_registration(guid: str) -> "dict | None":
     """The OSF registration form for *guid* as a sections dict, or None.
 
@@ -659,7 +701,13 @@ def get_osf_registration(guid: str) -> "dict | None":
         if cached is not None:
             if cached.get("__none__"):
                 return None
-            return cached if osf_registration_has_content(cached) else None
+            # An entry written before the template was recorded is re-fetched, because
+            # the outcome guard reads the template off this file and a form whose
+            # template is unknown is coded as if it stated results. The absence check
+            # above comes first: a `__none__` entry has no template either, and
+            # re-fetching it would never converge.
+            if "registration_supplement" in cached:
+                return cached if osf_registration_has_content(cached) else None
 
     try:
         throttle("osf", _OSF_RATE_SEC)
@@ -695,13 +743,20 @@ def get_osf_registration(guid: str) -> "dict | None":
             if joined:
                 parts.append(f"{label}: {joined}")
 
-    registration = {"sections": {
-        "abstract":   description,
-        "intro":      "",
-        "methods":    "",
-        "raw_text":   "\n\n".join(parts),
-        "references": [],
-    }}
+    registration = {
+        # The template the form was filed under — the one field that says whether it
+        # describes a study that has happened. Stage 3's outcome guard reads it back
+        # through osf_registration_template().
+        "registration_supplement": str(
+            attrs.get("registration_supplement") or "").strip(),
+        "sections": {
+            "abstract":   description,
+            "intro":      "",
+            "methods":    "",
+            "raw_text":   "\n\n".join(parts),
+            "references": [],
+        },
+    }
     if not osf_registration_has_content(registration):
         log.info("  OSF registration %s carries %d chars — no document", guid,
                  len(f"{description}{registration['sections']['raw_text']}".strip()))
@@ -749,14 +804,16 @@ _OSF_NAME_EXCLUDE = re.compile(
     r"(?i)supplement|material|measure|instruction|question|transcript|codebook"
     r"|wrangl|correspondence|ethic|qualtrics|survey|analys|appendix|syntax"
     r"|\bdata\b|dataset|_data|\blog\b")
-# A Stage-1 Registered Report or a preregistration snapshot is the manuscript
-# BEFORE the study ran — its "results" are simulated placeholders (measured
+# A Stage-1 Registered Report, a preregistration snapshot or an analysis plan is the
+# manuscript BEFORE the study ran — its "results" are simulated placeholders (measured
 # 2026-08-09: the 10.17605/osf.io/4jykd pick opens with "Abstract, method, and
-# results were written using a randomized dataset"). Such files are ranked
+# results were written using a randomized dataset"; audit of 2026-08-13, issue #196:
+# 10.17605/osf.io/zya9n was coded from an analytic-plan DOCX). Such files are ranked
 # behind every other candidate, not dropped: for a project that never deposited
 # a final report they are still the best available statement of the target.
 _OSF_NAME_PREREG = re.compile(
-    r"(?i)prereg|pre-reg|stage\s*-?\s*1|snapshot|protocol|registration")
+    r"(?i)prereg|pre-reg|stage\s*-?\s*1|snapshot|protocol|registration"
+    r"|\bplan\b|analytic|proposal")
 
 # Filename tokens covering this much of the row title make the file the paper's own
 # name, whatever else the name says.
@@ -2411,8 +2468,11 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
             return _result()
 
     # Tier 0b — the OSF registration form. Same deal as Tier 0: it IS the document,
-    # so nothing below it can add anything. Stage 2 has already dropped the
-    # preregistration templates, so what reaches here states results or may state them.
+    # so nothing below it can add anything. Some of those forms are PROSPECTIVE — an
+    # Open-Ended plan freeze, or a registration Stage 2 could route only on its title
+    # because the backfill never gave it a template line — and a plan reads like a
+    # result: "we predict a successful replication". Acquiring one is right, coding
+    # one is not, and the template guard in `_apply_outcome` is what draws that line.
     osf_guid = osf_registration_guid(doi_r) or osf_registration_guid(url_r)
 
     # Tier 0a — the manuscript in the OSF project's own file storage, which beats the

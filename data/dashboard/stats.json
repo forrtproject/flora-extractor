@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-08-13T09:03:23",
+  "updated_at": "2026-08-13T10:01:01",
   "filtered": {
     "available": true,
     "store": "/Users/lukaswallrich/Documents/Coding/flora-extractor/cache/engine/engine.duckdb",
@@ -40,13 +40,13 @@
       "none": 35
     },
     "by_outcome": {
-      "successful": 1023,
+      "successful": 1021,
       "failed": 504,
       "mixed": 313,
       "descriptive only": 29,
       "statistically successful but flawed": 6,
       "uninformative": 6,
-      "cannot_be_determined": 695,
+      "cannot_be_determined": 697,
       "not_a_replication": 0,
       "pending": 0,
       "api_error": 0,
@@ -62,8 +62,8 @@
       "": 6
     },
     "by_outcome_replication": {
-      "successful": 1023,
-      "cannot_be_determined": 688,
+      "successful": 1021,
+      "cannot_be_determined": 690,
       "failed": 504,
       "mixed": 313,
       "descriptive only": 29,

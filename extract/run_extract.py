@@ -44,7 +44,8 @@ from shared.openalex_client import fetch_openalex_full_metadata as _oa_full_meta
 from shared.openalex_client import (
     _TitleSearchUnavailable, _search_crossref_by_title, _search_openalex_by_title,
 )
-from shared.pdf_sources import (cached_pdf, openalex_xml_has_content,
+from shared.pdf_sources import (cached_pdf, is_prospective_registration_template,
+                                openalex_xml_has_content, osf_registration_template,
                                 verified_cached_document)
 from shared.pdf_parsing import (
     best_parse_result,
@@ -759,6 +760,42 @@ def _outcome_without_coding(link_method: str, link: dict) -> "dict | None":
                  f"outcome not coded: no resolved original link ({link_method})")
 
 
+# Verdicts that are not a reading of the row's document: nothing was coded from it, so
+# the registration guard below has nothing to refuse.
+_UNCODED_OUTCOMES = {"", "pending", "api_error", "not_a_replication"}
+
+_PROSPECTIVE_REGISTRATION_REASON = (
+    "outcome not coded: the only document for this row is an OSF registration form "
+    "filed under the {template} template, a registration made before data collection. "
+    "It states a plan, and its success criteria and prior-work descriptions read as "
+    "results without being any.")
+
+
+def _prospective_registration_reason(row: dict, outcome: dict) -> str:
+    """Why this row's outcome must be refused, or "" when it may stand.
+
+    A registration form is a document and Stage 3 codes it like one, which for a
+    PROSPECTIVE registration invents a result: the 2026-08-13 audit (issue #196) found
+    `successful` coded off a Replication Recipe pre-registration's planned success
+    criterion and off another's description of the ORIGINAL study's finding. Stage 2
+    discards those templates where it can see them, and two doors leave it blind — an
+    Open-Ended plan freeze, and a record whose overlay carries no template line at all.
+    So the template is read again here, from the form the row was actually coded from.
+
+    Post-Completion forms and Open-Ended registrations stay codeable: the first reports
+    a finished study, and the second is as often a retrospective data deposit as a plan.
+    """
+    if str(outcome.get("outcome", "") or "") in _UNCODED_OUTCOMES:
+        return ""
+    if str(row.get("pdf_source", "") or "") != "osf_registration":
+        return ""
+    template = (osf_registration_template(str(row.get("doi_r", "") or ""))
+                or osf_registration_template(str(row.get("url_r", "") or "")))
+    if not is_prospective_registration_template(template):
+        return ""
+    return _PROSPECTIVE_REGISTRATION_REASON.format(template=template)
+
+
 def _apply_outcome(row: dict, outcome: dict) -> dict:
     """Write the outcome fields onto an already-merged result row.
 
@@ -773,6 +810,10 @@ def _apply_outcome(row: dict, outcome: dict) -> dict:
     not: the paper does re-test something, just not this — which is a link the row
     should carry at low confidence with the disagreement written down, for a human to
     settle, rather than a row silently dropped.
+
+    It is also the one seam every coded outcome passes — the combined call's per-target
+    block and the standalone coder's verdict alike — which is where the prospective
+    registration guard sits.
     """
     if outcome.get("target_check") == "other_original":
         row["link_confidence"] = "low"
@@ -790,6 +831,27 @@ def _apply_outcome(row: dict, outcome: dict) -> dict:
     })
     if outcome.get("record_type"):
         row["type"] = str(outcome["record_type"])
+
+    reason = _prospective_registration_reason(row, outcome)
+    if reason:
+        log.info("[%s] outcome refused: coded from a prospective OSF registration",
+                 row.get("doi_r") or row.get("url_r"))
+        # High confidence, and no model named: the refusal is the pipeline's, read off
+        # the template, and no verdict of the coder's survives it. A reproduction's two
+        # axes are reset as well — outcome_is_settled() reads THEM for a reproduction,
+        # so a coded axis beside a refused outcome would still read as settled.
+        row.update({
+            "outcome":            "cannot_be_determined",
+            "outcome_phrase":     "",
+            "outcome_confidence": "high",
+            "out_quote_source":   "",
+            "outcome_reasoning":  reason,
+            "outcome_llm_model":  "",
+            **{col: "" for col in _OUTCOME_AXIS_COLS},
+        })
+        if str(row.get("type", "") or "").strip().lower() == "reproduction":
+            row["outcome_computation"] = "cannot_be_determined"
+            row["outcome_robustness"]  = "cannot_be_determined"
     return row
 
 

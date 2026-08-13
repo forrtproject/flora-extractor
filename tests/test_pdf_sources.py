@@ -854,6 +854,31 @@ def test_a_supplement_named_after_the_paper_is_not_the_paper():
     assert [f["name"] for f in ranked] == ["manuscript.docx"]
 
 
+@pytest.mark.parametrize("plan_name", [
+    "Final report - study plan.pdf", "Final analytic report.pdf",
+    "Main paper proposal.pdf",
+])
+def test_a_plan_document_ranks_behind_the_manuscript(plan_name):
+    """A plan is the study before it ran (issue #196: 10.17605/osf.io/zya9n shipped an
+    outcome coded off an analytic-plan DOCX). It is demoted, never dropped."""
+    files = [{"name": plan_name, "size": 900_000,
+              "download": "https://osf.io/download/plan/"},
+             {"name": "manuscript.pdf", "size": 100_000,
+              "download": "https://osf.io/download/ms/"}]
+    ranked = [f["name"] for f in ps.rank_osf_files(files)]
+    assert ranked == ["manuscript.pdf", plan_name]
+    # The only file a project deposited is still the best statement of the target.
+    assert ps.rank_osf_files(files[:1])[0]["name"] == plan_name
+
+
+def test_the_plan_demotion_reads_whole_words():
+    """"explanation" is not a plan, and a demotion on a substring would rank the
+    manuscript below a supplement."""
+    files = [{"name": "An explanation of the effect.pdf", "size": 100_000,
+              "download": "https://osf.io/download/expl/"}]
+    assert not ps._OSF_NAME_PREREG.search(files[0]["name"])
+
+
 def test_a_partial_osf_listing_is_used_but_never_cached(_oa_cache_in_tmp):
     """A folder that failed transiently is part of the tree we did not see; caching
     the listing without it would hide the manuscript in it until the entry expired."""
