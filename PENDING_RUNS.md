@@ -50,13 +50,18 @@ the command, pasteable from the project root, and what proves it worked.
       (`extract.export --check` reports no carry-forward) and section 2 of
       `handover.html` is re-read off the new render.
 
-- [ ] **Re-route after the OSF overlay backfill** (issue #196).
-      The backfill of 2026-08-13 gave 854 OSF records their template line; until a
-      route reads it, the two OSF specs still cannot see them.
-      `.venv/bin/python -m filter.engine route` — mints a new release.
-      Done when `osf-registration-protocol`'s match count has risen and the route
-      report's domain-coverage gap for both OSF specs has shrunk.
-
 ## Done
 
-_(Tick entries move here with the commit that recorded the run.)_
+- [x] **Re-route after the OSF overlay backfill** (issue #196), 2026-08-13.
+      Release **`56076eb48fda`**, overlay hash `a3ccbfb18a38` (7 chunks, 3,159 rows).
+      The backfill recovered 427 of 854 OSF records; the rest are projects and
+      components, which the registrations endpoint 404s on and no template line can
+      ever reach. `osf-registration-protocol` matched 2,103 → 2,479, and
+      `osf-registration-completed` 523 → 574. Both domain-coverage gaps shrank:
+      1,685 → 1,348 and 1,162 → 774. Piles moved discard +376, screen_expensive −336.
+      **Which release the next campaign names is now a decision**, not a formality:
+      336 works 8b3d admitted are preregistrations `56076eb48fda` discards, so an
+      export against the new release stops shipping their rows — which is the fix, and
+      is also a visible drop in `data/extracted.csv`. The two open entries above still
+      say `--release 8b3d`; changing them to `56076eb` is what applies the re-route to
+      what ships.
