@@ -23,6 +23,24 @@ the command, pasteable from the project root, and what proves it worked.
 
 ## Open
 
+- [ ] **Re-run the OSF projects backfill** (issue #196). The nodes fallback is
+      committed and reaches nothing yet: the 2026-08-13 run stopped on its own circuit
+      breaker after 25 consecutive transient failures, having recovered 0 of 1,699
+      targets. The cause is OSF, not the code — every request failed from the first
+      one, including the registrations call the fallback does not touch, and a guid
+      that answered HTTP 200 with a description 25 minutes earlier was answering 500 by
+      then. Probably our own load: ~2,500 OSF calls in the preceding hour, and the
+      fallback costs two calls per project rather than one.
+      Nothing was checkpointed — the phase records a transient failure as nothing at
+      all — so the run resumes with no state to repair and no misses to reopen.
+      `.venv/bin/python -m filter.engine worklist --release 56076eb --out cache/engine/worklist-osf-nodes.parquet`
+      then `.venv/bin/python -m filter.engine.backfill --worklist cache/engine/worklist-osf-nodes.parquet --source osf --run`.
+      Check `https://api.osf.io/v2/nodes/7weum/` answers 200 first, and consider
+      `OSF_RATE_SEC=2` for the re-run. Expect roughly 87% of ~1,700 to recover a
+      description (26 of 30 measured by hand before the outage).
+      Done when the run reports a non-zero "Abstracts found" and writes a chunk; then
+      freeze the overlay and re-route, as the 2026-08-13 entry below records.
+
 - [ ] **Re-extract every settled work under the new outcome policy** (issue #198).
       The outcome prompt now codes as the authors report: an overall author verdict
       decides; otherwise their comparisons to the named original decide; a result with
