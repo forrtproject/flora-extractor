@@ -23,15 +23,6 @@ the command, pasteable from the project root, and what proves it worked.
 
 ## Open
 
-- [ ] **Re-extract the 6 works the plan-document guard reopens** (ladder 26, issue #196).
-      Their shipped outcomes were coded from a preregistration or an analysis plan.
-      Blocked until the working tree's outcome-vocabulary work is committed: that
-      change empties `_GENERATION_EQUIVALENCES`, which reopens every settled work, so
-      the redo worklist reads 4,018 rows instead of 6.
-      `.venv/bin/python -m extract.tier --release 8b3d --only 6925263306,6925305059,6925552412,6944082684,7043480225,7112297948 --redo 6925263306,6925305059,6925552412,6944082684,7043480225,7112297948 --run`
-      then `.venv/bin/python -m extract.export --release 8b3d`.
-      Done when all 6 read `cannot_be_determined` in `data/extracted.csv`.
-
 - [ ] **Re-extract every settled work under the new outcome policy** (issue #198).
       The outcome prompt now codes as the authors report: an overall author verdict
       decides; otherwise their comparisons to the named original decide; a result with

@@ -879,35 +879,6 @@ def test_the_plan_demotion_reads_whole_words():
     files = [{"name": "An explanation of the effect.pdf", "size": 100_000,
               "download": "https://osf.io/download/expl/"}]
     assert not ps._OSF_NAME_PREREG.search(files[0]["name"])
-    assert not ps.is_plan_document_name(files[0]["name"])
-
-
-def test_the_document_name_is_recovered_from_the_listing_and_kept(_oa_cache_in_tmp):
-    """Stage 3's outcome guard reads the name of the file a row was coded from. The
-    sidecars written before that field existed recover it from the listing cache, and
-    keep it — the listing expires after a fortnight and the sidecar does not."""
-    from shared.utils import cache_key
-    doi, url = "10.17605/osf.io/zya9n", "https://osf.io/download/hgwkv/"
-    ps._write_provenance(doi, "osf_files", url, title_check="low", title_coverage=0.5)
-    ps.write_json(_oa_cache_in_tmp / f"osffiles_{cache_key('zya9n')}.json",
-                  {"files": [{"name": "Analytic plan.docx", "download": url}],
-                   "fetched_at": "2026-08-13T00:00:00+00:00"})
-
-    assert ps.osf_document_name(doi) == "Analytic plan.docx"
-    assert ps.is_plan_document_name(ps.osf_document_name(doi))
-    # Written back, with the title-check audit trail beside it left intact.
-    record = json.loads(ps._provenance_path(doi).read_text(encoding="utf-8"))
-    assert record["name"] == "Analytic plan.docx"
-    assert record["title_check"] == "low"
-
-
-def test_an_unlisted_document_has_no_name_and_no_fetch(_oa_cache_in_tmp):
-    """A row whose listing cache has expired reads "" rather than buying the listing
-    again: the guard refuses on what a name says, so no name refuses nothing."""
-    doi = "10.17605/osf.io/zya9n"
-    ps._write_provenance(doi, "osf_files", "https://osf.io/download/hgwkv/")
-    with patch.object(ps, "list_osf_files", side_effect=AssertionError("fetched")):
-        assert ps.osf_document_name(doi) == ""
 
 
 def test_a_partial_osf_listing_is_used_but_never_cached(_oa_cache_in_tmp):

@@ -292,7 +292,7 @@ def _read_provenance(doi: str) -> dict:
     """What was recorded for a saved PDF, or {}.
 
     {"source": tier label, "url": the URL it came from, "name": the file's own name
-    where the tier knew one — see `osf_document_name`}.
+    where the tier knew one}.
     """
     try:
         path = _provenance_path(doi)
@@ -316,8 +316,8 @@ def _write_provenance(doi: str, source: str, url: str, title_check: str = "",
     "no_text" for a file that carries no title at all) can be audited afterwards
     without re-reading it. Nothing reads these two fields; they are the audit trail.
 
-    *name* is the file's own name where the tier has one. Stage 3's outcome guard does
-    read it: a document named as a plan reports no results.
+    *name* is the file's own name where the tier has one — part of the same audit
+    trail: which of a project's files the row was read from.
     """
     if not (doi and source):
         return
@@ -333,23 +333,6 @@ def _write_provenance(doi: str, source: str, url: str, title_check: str = "",
         _atomic_write_text(path, json.dumps(record, ensure_ascii=False))
     except Exception as e:
         log.debug("PDF provenance write failed (%s): %s", path, e)
-
-
-def _amend_provenance(doi: str, **fields: str) -> None:
-    """Add *fields* to an existing provenance record, keeping everything else.
-
-    For a fact recovered after the download — the file's name, which `osf_document_name`
-    reads off a listing cache that expires while the sidecar does not. A record that
-    does not exist is not created: there is no document to describe.
-    """
-    path = _provenance_path(doi)
-    try:
-        record = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(record, dict):
-            return
-        _atomic_write_text(path, json.dumps({**record, **fields}, ensure_ascii=False))
-    except Exception as e:
-        log.debug("PDF provenance amend failed (%s): %s", path, e)
 
 
 def verified_cached_document(doi_or_url: str, title: str,
@@ -620,32 +603,17 @@ def get_osf_pdf_url(doi: str) -> Optional[str]:
 # in the API instead, as the filled-in registration form — which is the document, not
 # a substitute for one. 33% of the 2026-08-06 worklist is on the 10.17605 registrant.
 #
-# Stage 2 routes on the template where it can see one: `osf-registration-protocol`
-# (live, discard) drops the preregistration templates and `osf-registration-completed`
-# (live, screen_expensive) admits the post-completion forms and the Open-Ended
-# Registrations carrying the replication stem. It sees a template only through the
-# overlay text the backfill wrote, so PROSPECTIVE registrations do reach Stage 3 by two
-# doors (audit of 2026-08-13, issue #196): the Open-Ended arm admits plan freezes, and a
-# record the backfill never reached carries no template line for either rule to read.
-# The form such a row hands over states a plan in the grammar of a result, so what stops
-# it being coded as one is the template guard in `extract/run_extract.py::_apply_outcome`
-# — which reads `osf_registration_template()` below.
+# Which registrations are worth reading is Stage 2's decision, made on the template:
+# `osf-registration-protocol` (live, discard) drops the preregistration templates and
+# `osf-registration-completed` (live, screen_expensive) admits the post-completion forms
+# and the Open-Ended Registrations carrying the replication stem. Stage 2 sees a
+# template only through the overlay text the backfill wrote, so prospective
+# registrations can still reach Stage 3 (audit of 2026-08-13, issue #196): the
+# Open-Ended arm admits plan freezes, and a record the backfill never reached carries no
+# template line for either rule to read. Keeping them out is Stage 2's work — tightening
+# those two specs — not this tier's.
 
 _OSF_REGISTRATION_API = "https://api.osf.io/v2/registrations/{guid}/"
-
-# The templates filed BEFORE data collection, as markers matched against the template
-# name. `filter/spec/osf-registration-protocol.json` is the source of truth for the
-# vocabulary; its match block is the complement (a template that is neither
-# post-completion nor Open-Ended), and these markers are that complement enumerated
-# over the measured template names in `analysis/osf_registrations/census.csv`. They
-# cover all ten prospective names there and match neither `Open-Ended Registration` nor
-# `Replication Recipe (Brandt et al., 2013): Post-Completion`, which stay codeable — an
-# Open-Ended record is as often a retrospective data deposit as a plan freeze. A
-# template name no marker recognises is codeable too: this list refuses, it does not
-# admit.
-_OSF_PROSPECTIVE_TEMPLATE = re.compile(
-    r"(?i)pre[-\s]?data\s*collection|pre[-\s]?registration|prereg"
-    r"|aspredicted|egap|registered\s*report\s*protocol")
 
 # Below this, the form carries a title, an author line and little else — no design,
 # no hypotheses, nothing to read. Measured 2026-08-07 over four campaign
@@ -681,30 +649,6 @@ def osf_registration_has_content(registration: "dict | None") -> bool:
     return len(body.strip()) >= _MIN_OSF_REGISTRATION_CHARS
 
 
-def is_prospective_registration_template(template: str) -> bool:
-    """True when *template* names a form filed before data collection."""
-    return bool(_OSF_PROSPECTIVE_TEMPLATE.search(str(template or "")))
-
-
-def osf_registration_template(doi_or_url: str) -> str:
-    """The template a registration was filed under, off the cached form, or "".
-
-    A read of what `get_osf_registration()` already stored — never a fetch. The caller
-    is a row whose document IS that form, so the fetch has happened; anything else
-    (no guid, no cache entry, an entry written before the template was recorded) is
-    "unknown", and the outcome guard that reads this stays out of the way.
-    """
-    guid = osf_registration_guid(doi_or_url)
-    if not guid:
-        return ""
-    cf = OA_CACHE_DIR / f"osfreg_{cache_key(guid)}.json"
-    try:
-        cached = json.loads(cf.read_text(encoding="utf-8"))
-    except Exception:
-        return ""
-    return str((cached or {}).get("registration_supplement") or "")
-
-
 def get_osf_registration(guid: str) -> "dict | None":
     """The OSF registration form for *guid* as a sections dict, or None.
 
@@ -729,11 +673,11 @@ def get_osf_registration(guid: str) -> "dict | None":
         if cached is not None:
             if cached.get("__none__"):
                 return None
-            # An entry written before the template was recorded is re-fetched, because
-            # the outcome guard reads the template off this file and a form whose
-            # template is unknown is coded as if it stated results. The absence check
-            # above comes first: a `__none__` entry has no template either, and
-            # re-fetching it would never converge.
+            # Every cached form carries the template it was filed under. An entry
+            # written before that field existed is re-fetched once, so the provenance is
+            # complete for whatever reads the cache. The absence check above comes
+            # first: a `__none__` entry has no template either, and re-fetching it would
+            # never converge.
             if "registration_supplement" in cached:
                 return cached if osf_registration_has_content(cached) else None
 
@@ -773,8 +717,7 @@ def get_osf_registration(guid: str) -> "dict | None":
 
     registration = {
         # The template the form was filed under — the one field that says whether it
-        # describes a study that has happened. Stage 3's outcome guard reads it back
-        # through osf_registration_template().
+        # describes a study that has happened. Kept as provenance beside the text.
         "registration_supplement": str(
             attrs.get("registration_supplement") or "").strip(),
         "sections": {
@@ -1034,48 +977,6 @@ def rank_osf_files(files: list[dict], title: str = "") -> list[dict]:
                        -int(entry.get("size") or 0), name, entry))
     scored.sort(key=lambda row: row[:5])
     return [row[5] for row in scored]
-
-
-def osf_document_name(doi_or_url: str) -> str:
-    """The filename of the OSF file this row's document came from, or "".
-
-    Never fetches. The saved document's provenance sidecar records the URL the file
-    came from, and `list_osf_files` keeps the name beside that URL in its own cache;
-    matching the two recovers the name. It is written back into the sidecar on the
-    first lookup, because the listing cache expires after PDF_RETRY_AFTER_DAYS and the
-    sidecar does not — after which the name is read straight off the sidecar.
-
-    "" whenever anything is missing, which is what the caller wants: the outcome guard
-    that reads this refuses on what a name SAYS, so an unknown name refuses nothing.
-    """
-    prov = _read_provenance(doi_or_url)
-    if prov.get("name"):
-        return str(prov["name"])
-    guid = osf_registration_guid(doi_or_url)
-    if not (guid and prov.get("url")):
-        return ""
-    try:
-        listing = json.loads(
-            (OA_CACHE_DIR / f"osffiles_{cache_key(guid)}.json").read_text("utf-8"))
-    except Exception:
-        return ""
-    name = next((str(f.get("name") or "") for f in (listing.get("files") or [])
-                 if f.get("download") == prov["url"]), "")
-    if name:
-        _amend_provenance(doi_or_url, name=name)
-    return name
-
-
-def is_plan_document_name(name: str) -> bool:
-    """True when *name* is a file an OSF project deposits BEFORE the study runs.
-
-    The same test `rank_osf_files` ranks by, asked as a question. A preregistration, a
-    protocol or an analysis plan states a design and its authors' background, and both
-    read as results — the 2026-08-13 audit (issue #196) found `successful` coded from
-    `Extension-Analytic plan for mere ownership_20180628-G.docx`, off a sentence about
-    the authors' own earlier studies.
-    """
-    return bool(_OSF_NAME_PREREG.search(str(name or "")))
 
 
 # ── HTML as a document ────────────────────────────────────────────────────────

@@ -514,20 +514,14 @@ OUTCOME_DESCENT = True
 #      answering it, and doi_o != doi_r rules out only the identical identifier
 #      (2026-08-13)
 #      reopen: --redo-status llm_title_search,llm_author_year_search
-#  25  an outcome coded from a PROSPECTIVE OSF registration form is refused and
-#      written cannot_be_determined (`_apply_outcome` in extract/run_extract.py,
-#      issue #196): the form states a plan, and its planned success criteria and
-#      prior-work descriptions were coded as results. Plan documents in an OSF
-#      project's file storage also rank behind every other candidate file
-#      (2026-08-13)
-#      reopen: .venv/bin/python -m extract.tier --run --redo 6962150035,6962671413
-#  26  the same refusal for a row whose only document is a plan-named FILE in the
-#      OSF project's storage (`osf_document_name` in shared/pdf_sources.py, issue
-#      #196): a project that deposited nothing but its preregistration hands the
-#      ladder a document whose background passages read as results. 106 of the 331
-#      OSF-file works in the 2026-08-13 export are on such a file; 101 already
-#      settled cannot_be_determined and 5 had been coded an outcome (2026-08-13)
-#      reopen: .venv/bin/python -m extract.tier --run --redo 6925263306,6925305059,6925552412,6944082684,7043480225,7112297948
+#  25–26  a plan document in an OSF project's file storage ranks behind every other
+#      candidate file — a name carrying prereg, protocol, snapshot, stage 1, plan,
+#      analytic or proposal (`_OSF_NAME_PREREG` in shared/pdf_sources.py, issue #196).
+#      Such a file is the manuscript before the study ran: its results are placeholders
+#      and its background passages read as findings. Demoted, never dropped — for a
+#      project that deposited nothing else it is still the best statement of the target,
+#      which is 106 of the 331 OSF-file works in the 2026-08-13 export. The file's own
+#      name is also kept in the document's provenance sidecar (2026-08-13)
 EXTRACT_LADDER_VERSION: int = 26
 
 
