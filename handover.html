@@ -50,7 +50,7 @@
 
 <h1>FLoRA Extractor — pipeline status &amp; handover</h1>
 <p class="sub">Written 2026-08-10 on <code>main</code>, last updated 2026-08-13. Numbers are as of
-2026-08-13 01:30 UTC, with the widened campaign complete: every admitted work
+2026-08-13 02:00 UTC, with the widened campaign complete: every admitted work
 carries a verdict.
 Every number on this page was read off a file or a read-only command, not inferred from
 the code. Section 1 explains how the pipeline works. Section 2 says where it stands
@@ -136,8 +136,8 @@ humans review them. The final product is the Supabase <code>validated</code> tab
 <h2>2. Where things stand today</h2>
 
 <div class="kpis">
-  <div class="kpi"><b>2,605</b><span>rows shipped in <code>data/extracted.csv</code></span></div>
-  <div class="kpi"><b>1,904</b><span>rows that enter validation now: a settled outcome and a paper type. The other 701 — nearly all <code>cannot_be_determined</code> — ship in the CSV but are withheld by default (see below).</span></div>
+  <div class="kpi"><b>2,602</b><span>rows shipped in <code>data/extracted.csv</code></span></div>
+  <div class="kpi"><b>1,902</b><span>rows that enter validation now: a settled outcome and a paper type. The other 700 — nearly all <code>cannot_be_determined</code> — ship in the CSV but are withheld by default (see below).</span></div>
   <div class="kpi"><b>7,929</b><span>works admitted by the current release</span></div>
   <div class="kpi"><b>5,146,160</b><span>papers in the survivor pool (2,232 parquet files, 7.1&nbsp;GB)</span></div>
 </div>
@@ -154,7 +154,7 @@ humans review them. The final product is the Supabase <code>validated</code> tab
       by the difference.</li>
   <li><b>The CSV matches the store.</b> <code>extract.export --check</code> re-renders the
       verdicts in memory and diffs them against the file: zero differences. Verdicts exist
-      for 4,229 of the 7,929 admitted works, rendering 4,408 rows (the rest of the
+      for 4,229 of the 7,929 admitted works, rendering 4,409 rows (the rest of the
       admitted works were screened out). The export also holds
       411 verdicts for works the current release does not admit (it drops them from the
       render) and suppresses 12 rows whose paper is already in FLoRA or the validation
@@ -170,14 +170,14 @@ humans review them. The final product is the Supabase <code>validated</code> tab
       both.</li>
 </ul>
 
-<h3>What the 2,605 shipped rows contain</h3>
+<h3>What the 2,602 shipped rows contain</h3>
 
 <div class="tablewrap">
 <table>
   <tr><th>Outcome</th><th class="num">Rows</th><th>Notes</th></tr>
-  <tr><td>successful</td><td class="num">1,024</td><td>56% of the settled successful/failed/mixed rows — higher than FLoRA's 42%, and audited 2026-08-13 (30 successful + 15 failed rows read by hand): no failure was coded as a success. The excess is composition: 43% of successful rows share an author with their original (such self-replications/extensions run 75% successful; author-independent links 47%), and reference-list links (65% successful) are how extension papers match their own cited prior work. Treat 56% as an upper bound: about 1 sampled success in 5 is arguably <code>mixed</code> (partial results taken at the authors' word — issue <a href="https://github.com/forrtproject/flora-extractor/issues/198">#198</a>), and <code>cannot_be_determined</code> likely hides failures disproportionately.</td></tr>
-  <tr><td>cannot_be_determined</td><td class="num">696</td><td>our verdict: the text did not settle it. These rows are nearly all of the 701 that ship in the CSV but are withheld from validation by default. They will need human review eventually; an explicit export flag for them is on the future-work list.</td></tr>
-  <tr><td>failed</td><td class="num">505</td><td></td></tr>
+  <tr><td>successful</td><td class="num">1,023</td><td>56% of the settled successful/failed/mixed rows — higher than FLoRA's 42%, and audited 2026-08-13 (30 successful + 15 failed rows read by hand): no failure was coded as a success. The excess is composition: 43% of successful rows share an author with their original (such self-replications/extensions run 75% successful; author-independent links 47%), and reference-list links (65% successful) are how extension papers match their own cited prior work. Treat 56% as an upper bound: about 1 sampled success in 5 is arguably <code>mixed</code> (partial results taken at the authors' word — issue <a href="https://github.com/forrtproject/flora-extractor/issues/198">#198</a>), and <code>cannot_be_determined</code> likely hides failures disproportionately.</td></tr>
+  <tr><td>cannot_be_determined</td><td class="num">695</td><td>our verdict: the text did not settle it. These rows are nearly all of the 700 that ship in the CSV but are withheld from validation by default. They will need human review eventually; an explicit export flag for them is on the future-work list.</td></tr>
+  <tr><td>failed</td><td class="num">504</td><td></td></tr>
   <tr><td>mixed</td><td class="num">313</td><td></td></tr>
   <tr><td>descriptive only</td><td class="num">29</td><td></td></tr>
   <tr><td>uninformative</td><td class="num">6</td><td>the authors' own verdict, unlike <code>cannot_be_determined</code>, which is ours</td></tr>
@@ -187,7 +187,7 @@ humans review them. The final product is the Supabase <code>validated</code> tab
 </div>
 
 <ul>
-  <li><b>By type:</b> 2,566 replications, 33 reproductions, 6 without a type — OSF
+  <li><b>By type:</b> 2,563 replications, 33 reproductions, 6 without a type — OSF
       registrations whose stored abstract is the registration template, so the screen
       had nothing to type them from. Three of the six are
       <code>10.17605/osf.io/zya9n</code>, a preregistration that reports no results: the
@@ -196,7 +196,7 @@ humans review them. The final product is the Supabase <code>validated</code> tab
       covers both — screening registrations on their registration content, and refusing to
       code outcomes from results-free registrations.</li>
   <li><b>By link method</b> (how the original was found): reference list 944, title search
-      829, author-and-year search 613, cited-candidates match 185, full text 29, title
+      826, author-and-year search 613, cited-candidates match 185, full text 29, title
       pattern 4, citation context 1. The last two are the ladder's cheap deterministic
       rungs: <i>title pattern</i> matches a paper whose own title names its target
       ("A Replication of X") against the candidate list; <i>citation context</i> matches
@@ -206,7 +206,7 @@ humans review them. The final product is the Supabase <code>validated</code> tab
       rows that would match fall through to the LLM rungs, which record their own method.
       The two search-based methods count as resolved links
       after two triages measured them at 98–99% precision.</li>
-  <li><b>By link confidence:</b> 1,424 high, 3 medium, 1,178 low. On the two search-based
+  <li><b>By link confidence:</b> 1,426 high, 3 medium, 1,173 low. On the two search-based
       methods — the links no reference list corroborates — every accepted link is graded
       by a separate, cold confirmation call (shown only the paper's title/abstract, the
       quoted evidence and the matched record), and the grade sets the confidence:
@@ -229,9 +229,9 @@ humans review them. The final product is the Supabase <code>validated</code> tab
   <tr><th>File in <code>data/</code></th><th class="num">Rows</th><th>Meaning</th></tr>
   <tr><th colspan="3">Retried automatically on the next run</th></tr>
   <tr><td><code>api_error.csv</code></td><td class="num">0</td><td>a provider failed after retries; the next run asks again. Written only when a render produces such rows; the export deletes set-aside files it writes nothing to.</td></tr>
-  <tr><th colspan="3">Held — for human review or better acquisition; nothing reopens them automatically</th></tr>
-  <tr><td><code>target_pending.csv</code></td><td class="num">1,440</td><td>the paper names originals that could not be matched to any record. Not closed, because "we could not look it up" is not "it replicates nothing". Only <code>--redo</code>/<code>--redo-status</code> or a generation bump reopens one; clearing the pile needs better acquisition (<a href="https://github.com/forrtproject/flora-extractor/issues/188" title="Full-text acquisition: five routes measured to work that the waterfall does not try">#188</a>) or a human decision.</td></tr>
-  <tr><td><code>unidentified_original.csv</code></td><td class="num">94</td><td>the paper names an original, and we kept the link — but the matched record has no DOI and no OpenAlex id (typically a garbled parsed reference), so it cannot be keyed as a validation pair.</td></tr>
+  <tr><th colspan="3">Held — cleared by pipeline improvement over time (<a href="https://github.com/forrtproject/flora-extractor/issues/188" title="Full-text acquisition: five routes measured to work that the waterfall does not try">#188</a>); nothing reopens them automatically, and this pipeline has no standing human-review queue</th></tr>
+  <tr><td><code>target_pending.csv</code></td><td class="num">1,441</td><td>the paper names originals that could not be matched to any record. Not closed, because "we could not look it up" is not "it replicates nothing". Only <code>--redo</code>/<code>--redo-status</code> or a generation bump reopens one; clearing the pile needs better acquisition (<a href="https://github.com/forrtproject/flora-extractor/issues/188" title="Full-text acquisition: five routes measured to work that the waterfall does not try">#188</a>) or a human decision.</td></tr>
+  <tr><td><code>unidentified_original.csv</code></td><td class="num">97</td><td>the paper names an original, and we kept the link — but the matched record has no DOI and no OpenAlex id (typically a garbled parsed reference), so it cannot be keyed as a validation pair.</td></tr>
   <tr><td><code>keyed_link_disputed.csv</code></td><td class="num">27</td><td>a second, independent LLM check confidently disagreed with an accepted link (issue <a href="https://github.com/forrtproject/flora-extractor/issues/186" title="Pick between title-search candidates with a plausibility check">#186</a>). Link, outcome and both readings are kept for the reviewer.</td></tr>
   <tr><td><code>search_link_unconfirmed.csv</code></td><td class="num">52</td><td>search-based links whose confirmation grade is <code>likely_target</code> or below; only <code>clearly_target</code> search links ship in <code>extracted.csv</code>. An export flag (<code>--include-unconfirmed-search</code>) ships them deliberately.</td></tr>
   <tr><th colspan="3">Closed — the verdict is negative and settles the work</th></tr>
@@ -240,8 +240,8 @@ humans review them. The final product is the Supabase <code>validated</code> tab
 </table>
 </div>
 
-<p class="muted">The arithmetic of the current render closes: 2,605 main rows + 1,440 +
-94 + 27 + 52 + 78 + 112 set-aside rows = the 4,408 rendered rows that <code>--check</code>
+<p class="muted">The arithmetic of the current render closes: 2,602 main rows + 1,441 +
+97 + 27 + 52 + 78 + 112 set-aside rows = the 4,409 rendered rows that <code>--check</code>
 reports.</p>
 
 <div class="note">
@@ -416,15 +416,17 @@ from the issue tracker at face value.</p>
       acquisition can settle both, but only a named reopen re-runs them).</li>
   <li><b>Decide the parked <code>target_pending</code> pile.</b> The 1,440 works are held
       indefinitely (nothing auto-reopens them). Clearing the pile needs better
-      acquisition (<a href="https://github.com/forrtproject/flora-extractor/issues/188" title="Full-text acquisition: five routes measured to work that the waterfall does not try">#188</a>), a human queue, or a decision to close them.</li>
+      acquisition (<a href="https://github.com/forrtproject/flora-extractor/issues/188" title="Full-text acquisition: five routes measured to work that the waterfall does not try">#188</a>) or a decision to close them; there is no standing
+      human-review queue in this pipeline.</li>
   <li><b>Search links graded below <code>clearly_target</code> are withheld.</b> The export
       sets rows whose search-confirm grade is <code>likely_target</code>,
       <code>unlikely_target</code> or <code>clearly_not_target</code> aside into
       <code>data/search_link_unconfirmed.csv</code> (52 rows today) instead of
       <code>extracted.csv</code>; <code>--include-unconfirmed-search</code> ships them
       deliberately. The campaign's grade distribution: 439 graded — 88% clearly_target,
-      7% likely_target, 5% negative. Open question: whether the negative grades should
-      ever gate a discard rather than a set-aside.</li>
+      7% likely_target, 5% negative. Whether a confidently negative grade should
+      auto-reject the link (letting the ladder keep descending) is tracked on
+      <a href="https://github.com/forrtproject/flora-extractor/issues/188" title="Full-text acquisition: five routes measured to work that the waterfall does not try">#188</a> — measure the negative grades' error rate first.</li>
   <li><b>Add an export flag for withheld rows.</b> The 696 <code>cannot_be_determined</code> rows
       eventually need human review in validation; today they ship in the CSV but are
       withheld. An explicit flag (or a separate output) would export them deliberately
@@ -446,11 +448,13 @@ from the issue tracker at face value.</p>
       <code>best_parse_result()</code> still has no method-priority tie-break.</li>
   <li><b><a href="https://github.com/forrtproject/flora-extractor/issues/71" title="Get 800 failed 2011-2021 replications to Josefina">#71</a> — get the ~800 failed 2011–2021 replications to Josefina.</b> The settled
       failure and mixed rows now exist; this is a delivery task, not a pipeline task. The
-      current export holds 246 <code>failed</code> and 145 <code>mixed</code> rows with a
+      current export holds 245 <code>failed</code> and 145 <code>mixed</code> rows with a
       2011–2021 replication year.</li>
-  <li><b>Human review queues:</b> 27 rows in <code>keyed_link_disputed.csv</code>, 94 in
+  <li><b>Held link-quality piles:</b> 27 rows in <code>keyed_link_disputed.csv</code>, 94 in
       <code>unidentified_original.csv</code> and 52 in
-      <code>search_link_unconfirmed.csv</code> wait for a person, not for code.</li>
+      <code>search_link_unconfirmed.csv</code>. This pipeline has no standing
+      human-review queue, so these shrink through better parsing, matching and
+      acquisition over time (<a href="https://github.com/forrtproject/flora-extractor/issues/188" title="Full-text acquisition: five routes measured to work that the waterfall does not try">#188</a>), with periodic <code>--redo-status</code> re-runs.</li>
   <li><b><a href="https://github.com/forrtproject/flora-extractor/issues/150" title="Stage 1: curated harvester for OSF/I4R/HAL/EconStor reproduction reports">#150</a></b> — curated Stage 1 harvester for OSF, I4R, HAL and EconStor
       reproduction reports (the retired API-harvest sources are parked on
       <code>wip/api-harvest-sources</code>, <a href="https://github.com/forrtproject/flora-extractor/pull/158">PR #158</a>).</li>
