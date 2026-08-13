@@ -36,6 +36,11 @@ Thumbs.db
 
 # ── AI tooling ────────────────────────────────────────────────────────────────
 .claude/
+# settings.json is the exception: it carries the hooks that state the owed
+# operational runs in PENDING_RUNS.md, which every checkout needs.
+!.claude/
+.claude/*
+!.claude/settings.json
 .superpowers/
 docs/superpowers/
 docs/GITHUB_ISSUES.md

@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"${CLAUDE_PROJECT_DIR:-.}/PENDING_RUNS.md\"; grep '^- \\[ \\]' \"$f\" 2>/dev/null | jq -Rs 'select(length>0) | {systemMessage:(\"Owed operational runs (PENDING_RUNS.md):\\n\" + .), hookSpecificOutput:{hookEventName:\"SessionStart\", additionalContext:(\"OWED OPERATIONAL RUNS (PENDING_RUNS.md) — committed code whose effect has not been applied to the artifacts. The pipeline state lives outside git, so nothing else shows these. Do not report the related work complete, and do not start work that depends on it, until each is run or the user defers it:\\n\" + .)}}' || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"${CLAUDE_PROJECT_DIR:-.}/PENDING_RUNS.md\"; grep '^- \\[ \\]' \"$f\" 2>/dev/null | jq -Rs 'select(length>0) | {hookSpecificOutput:{hookEventName:\"UserPromptSubmit\", additionalContext:(\"OWED OPERATIONAL RUNS (PENDING_RUNS.md) — committed code whose effect has not been applied to the artifacts. Do not report the related work complete, and do not start work that depends on it, until each is run or the user defers it:\\n\" + .)}}' || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
