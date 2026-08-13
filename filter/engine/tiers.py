@@ -81,6 +81,7 @@ from typing import Callable, Iterable, Optional
 
 from filter.engine.claims import (PENDING_UPLOAD, ClaimConflict, ClaimsClient,
                                   ClaimsError, UnknownRelease)
+from filter.engine.backends import row_url
 from filter.engine.overlay import overlay_fetched_at
 from filter.engine.pool_reader import iter_pool_batches
 from filter.engine.release import read_release
@@ -98,6 +99,7 @@ from shared.prompts import prompt_version
 from shared.prescreen import prescreen_bypass, prescreen_vote, prescreen_voters
 from shared.token_usage import TokenBudgetExhausted, check_openai_budget
 from shared.utils import clean_doi
+from search.fetch_abstracts import osf_identifier
 
 log = logging.getLogger(__name__)
 
@@ -449,10 +451,13 @@ def pile_works(con, release_id: str, pile: str, pool_dir: Path = SNAPSHOT_POOL_D
             seen.add(wid)
             title = record.get("display_name") or record.get("title") or ""
             abstract = record.get("abstract_text") or ""
-            # A row with no text never reaches a screen pile — route.py downgrades
-            # it to pending/no_text — so an empty abstract here means the pool and
+            # A row with no text reaches a screen pile only through route.py's one
+            # exemption (`_screenable_on_its_title`): an OSF record with a title is
+            # screened on it, and the classify prompt renders the absent abstract as
+            # "(not available)". Any OTHER textless work here means the pool and
             # the routing disagree, which is a bug rather than a row to skip.
-            assert abstract.strip(), (
+            assert abstract.strip() or (title.strip() and osf_identifier(
+                clean_doi(record.get("doi") or ""), row_url(record)) is not None), (
                 f"work {wid} is routed to {pile} with no abstract text: the "
                 "routing table and the pool disagree, re-run `route`")
             # `clean_doi` and `display_name or title` are not cosmetic here: they
