@@ -187,24 +187,25 @@ SCREENING_MODEL_2 = "gpt-5.4-mini"
 # model for all three rungs: the abstract, the reference list and the full text ask
 # the same question of different evidence.
 #
-# Moved off gemini-3-flash-preview, which it inherited from the ladder rather than
-# from any measurement. The task is long-context retrieval — pick the right entries
-# out of ~80 keyed reference lines without confusing them — and that is the one axis
-# where the two models separate: gpt-5.4-mini wins MRCR v2 (8-needle), while Gemini 3
-# Flash's wins (GPQA, HLE, MMMU-Pro) are science-QA and multimodal, neither of which
-# this call does. Gemini is 1.5x cheaper and holds 1M tokens against 400K, but the
-# prompt is capped near 5k tokens (TARGET_ABSTRACT_CHARS and friends in prompts.py),
-# so neither advantage bites. Linking has never been scored against data/flora.csv —
-# it is the next thing to measure, and this choice is a benchmark inference until
-# then.
-LINKING_MODEL = "gpt-5.4-mini"
+# gpt-5.6-luna is OpenAI's small flagship-generation model: stronger than gpt-5.4-mini
+# on every published benchmark and, at flex tier, about a quarter of its price per
+# token ($0.10/M in, $0.60/M out against $0.375/$2.25 on 2026-08-15). It is not in
+# the free daily token allocation, so every call is billed — set
+# OPENAI_DAILY_TOKEN_BUDGET=0 for a run, or the 9.5M free-tier cap stops it. The task
+# is long-context retrieval — pick the right entries out of ~80 keyed reference lines
+# without confusing them — which is why the OpenAI small models were preferred over
+# Gemini 3 Flash here (MRCR v2). Rows settled under gpt-5.4-mini in the 2026-08
+# campaign are kept, not re-bought: `_GENERATION_EQUIVALENCES` in extract/tier.py
+# declares that generation still current, and each verdict stamps the models that
+# produced it. Linking has never been scored against data/flora.csv — it is the next
+# thing to measure, and this choice is a benchmark inference until then.
+LINKING_MODEL = "gpt-5.6-luna"
 
 # Outcome coding (extract/code_outcome.py) — WHAT was the outcome? Both the abstract
-# pass and the full-text escalation. The ladder this replaced tried OpenAI first here
-# and fell through to the linking model, so OpenAI is what actually coded the rows on
-# disk; gpt-5.4-mini keeps that and moves it off the older gpt-5-mini the ladder
-# defaulted to.
-OUTCOME_MODEL = "gpt-5.4-mini"
+# pass and the full-text escalation. Same model as linking, for the same reasons; the
+# per-target outcome is coded in the same call as the link, so the two are one
+# reading of the evidence.
+OUTCOME_MODEL = "gpt-5.6-luna"
 
 # Reference extraction from a document (shared/grobid.py) — the only call that is sent
 # a PDF or page images rather than text. Its answers are cached under filenames that
@@ -232,9 +233,9 @@ PDF_PARSE_EFFORT = "minimal"
 # It reaches the request because the linking call site passes it explicitly, and it
 # names that call's cache entries because the same call site passes it to
 # cache_model_id() (shared/llm_client.py), so two settings never share an answer.
-# Nothing is inferred from the model id: LINKING_MODEL, OUTCOME_MODEL and
-# SCREENING_MODEL_2 are the same string today, and dispatching on it once sent
-# linking's effort to calls that never asked for one.
+# Nothing is inferred from the model id: two call sites may name the same model
+# (LINKING_MODEL and OUTCOME_MODEL do), and dispatching on the id once sent linking's
+# effort to calls that never asked for one.
 LINKING_EFFORT = "medium"
 
 # How hard each of the screen's two voters is asked to think. The screen answers a
@@ -255,12 +256,10 @@ SCREENING_EFFORT_1 = "low"
 SCREENING_EFFORT_2 = "low"
 
 # How hard OUTCOME_MODEL is asked to think (extract/code_outcome.py, both passes).
-# This pins what actually coded the rows on disk: before efforts became a per-call-site
-# value, the outcome call derived "medium" from its model id and sent it, so every
-# outcome entry in the cache was produced at medium. Naming it here keeps that, and
-# keeps the outcome cache key at its historical "gpt-5.4-mini@effort=medium" string,
-# so the whole namespace stays valid. Outcome coding may well not need medium —
-# lowering it is a deliberate, evaluated change that re-codes rows, not a default.
+# Every outcome row on disk was coded at medium, and the value reaches the outcome
+# cache key and the extract generation, so it is a constant here rather than a
+# literal at the call site. Outcome coding may well not need medium — lowering it is
+# a deliberate, evaluated change that re-codes rows, not a default.
 OUTCOME_EFFORT = "medium"
 
 # OpenRouter (OpenAI-compatible API at openrouter.ai). Nothing routes here by

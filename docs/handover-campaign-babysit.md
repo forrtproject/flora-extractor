@@ -10,32 +10,35 @@ done; do not redo it. The campaign order and rationale are in
 - **Release: `16d370746b45`.** Every command names it. Do NOT run
   `filter.engine route` — a new route mints a new release and invalidates this one.
 - **Interpreter: `.venv/bin/python`**, from the project root.
-- **The machine is on CEST (UTC+2).** The OpenAI free budget (9.5M tokens/day)
-  resets at midnight UTC = **02:00 local**.
+- **Stage 3 runs on `gpt-5.6-luna` since 2026-08-15** (flex tier, $0.10/M in,
+  $0.60/M out). Luna is not in OpenAI's free daily allocation, so every call is
+  billed and the run needs `OPENAI_DAILY_TOKEN_BUDGET=0` — otherwise the 9.5M
+  free-tier cap stops it. The 1,567 works settled under `gpt-5.4-mini` stay
+  settled (`_GENERATION_EQUIVALENCES` in `extract/tier.py`); the export ships both.
 - **Resume state lives in Postgres**, not in any file. A killed or budget-stopped
   run loses nothing; re-running the same command continues where it stopped.
-- The extract worklist is 5,928 works. As of 2026-08-15 ~05:00 UTC, 890 are settled.
-  Expect roughly 1,000 works per free budget window; completion around 2026-08-19
-  unless Lukas raises the budget (see "The one open decision").
+- The extract worklist is 5,928 works. As of 2026-08-15 13:00 UTC, 1,567 are
+  settled; the 4,361 open works cost roughly $7–12 at luna's flex prices and take
+  about nine hours at the measured ~480 works/hour.
 
 ## The loop
-
-Each day shortly after 02:17 local:
 
 1. **Free any claims a dead run left** (harmless when there are none):
    `.venv/bin/python -m filter.engine release-claim`
    — if it lists active claims, end each one:
    `.venv/bin/python -m filter.engine release-claim --claim <id> --status failed --yes`
 2. **Resume, in the background, with a log**:
-   `caffeinate -i .venv/bin/python -m extract.tier --release 16d370746b45 --run`
+   `OPENAI_DAILY_TOKEN_BUDGET=0 caffeinate -i .venv/bin/python -m extract.tier --release 16d370746b45 --run`
    (`caffeinate -i` stops idle sleep from killing the run — that happened once.)
-3. **Watch the log** for `TokenBudgetExhausted`, `OpenAlexQuotaExhausted`,
-   `ClaimConflict`, `Traceback`. Retry-and-continue noise (`Retrying request`,
-   per-row `api_error`) is normal.
-4. When the run stops on `TokenBudgetExhausted`: release claims (step 1) and wait
-   for the next 02:17. That stop is clean by design; nothing needs repair.
+3. **Watch the log** for `OpenAlexQuotaExhausted`, `ClaimConflict`, `Traceback`.
+   Retry-and-continue noise (`Retrying request`, per-row `api_error`) is normal.
+   `TokenBudgetExhausted` means the budget override was not passed.
+4. If the run stops for any of those: release claims (step 1) and relaunch (step 2)
+   once the cause is gone. Resume is the verdict row, so nothing needs repair.
 5. Progress check (cheap, any time):
    `.venv/bin/python -c "import shared.config; from filter.engine.claims import ClaimsClient; from extract.tier import settled_work_ids; print(len(settled_work_ids(ClaimsClient())))"`
+6. Spend check: OpenAI tokens for the day under `openai → gpt-5.6-luna` in
+   `cache/token_usage.json`, priced at $0.10/M in and $0.60/M out.
 
 ## When the run completes (a batch loop that finds an empty worklist)
 
@@ -69,17 +72,18 @@ Run these from the project root, in order, and READ each output:
    waiting in `handover.html` section 4 (the `search_confirm` grade read, the
    test-suite consolidation pass).
 
-## The one open decision (Lukas's, not yours)
+## Spend
 
-Raising `OPENAI_DAILY_TOKEN_BUDGET` in `.env` (or setting `0` to disable) finishes
-the run in one go at roughly $15–30 of paid OpenAI spend. Do not change it on your
-own — the cap is the repo's cost guard. If Lukas says to raise it, do so, relaunch,
-and report actual spend against that estimate.
+The budget override is passed per invocation (step 2), never written to `.env` — the
+committed cap stays the repo's cost guard for every other run. Report actual spend
+against the $7–12 estimate when the run completes (step 8 above).
 
 ## Do not
 
 - Do not run `filter.engine route`, `search.run_search`, or any screen command.
-- Do not use `--redo`, `--redo-status`, `--limit` or `--only` on the extract tier.
-- Do not edit prompts or models in `shared/config.py`/`shared/prompts.py` — any
-  such edit mints a new generation and reopens every settled work.
+- Do not use `--redo`, `--redo-status`, `--limit` or `--only` on the live extract
+  tier.
+- Do not edit prompts, models or efforts in `shared/config.py`/`shared/prompts.py`
+  — any such edit mints a new generation and reopens every settled work unless a
+  reviewed `_GENERATION_EQUIVALENCES` entry says otherwise.
 - Do not write to `data/extracted.csv` by any path except `extract.export`.

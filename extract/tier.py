@@ -262,7 +262,14 @@ def extract_generation() -> str:
 # Keyed by the CURRENT generation, which is what makes a declaration self-limiting: a
 # later prompt or model change produces a digest that matches no key here, and every
 # work reopens strictly, as it should.
-_GENERATION_EQUIVALENCES: dict[str, tuple[str, ...]] = {}
+_GENERATION_EQUIVALENCES: dict[str, tuple[str, ...]] = {
+    # 2026-08-15: LINKING_MODEL and OUTCOME_MODEL moved from gpt-5.4-mini to
+    # gpt-5.6-luna part-way through the 2026-08 re-extract, with 1,567 of 5,928
+    # works settled under mini. Those verdicts stay current: the question is the
+    # same, the mini answers were bought under an evaluated configuration, and every
+    # verdict stamps the models that produced it. The residue is bought under luna.
+    "5b716d061bb336f5": ("dd7572887420ef65",),
+}
 
 
 def equivalent_generations() -> tuple[str, ...]:
@@ -889,9 +896,10 @@ EXTRACT_RUNG_TOKENS = {
 # Rough list prices per 1,000 tokens for LINKING_MODEL / OUTCOME_MODEL, which are the
 # same id today. Same status as the screens' table in `filter/engine/tiers.py`: they
 # answer "is this run $30 or $3,000" before it starts and are not a billing record.
-# Update them in the same commit as a price or a model change.
-EXTRACT_PRICE_PER_1K_IN = 0.00025
-EXTRACT_PRICE_PER_1K_OUT = 0.00200
+# Update them in the same commit as a price or a model change. gpt-5.6-luna at flex
+# tier, 2026-08-15: $0.10 / $0.60 per 1M.
+EXTRACT_PRICE_PER_1K_IN = 0.00010
+EXTRACT_PRICE_PER_1K_OUT = 0.00060
 # The PDF parse call, charged once per row that acquires a document. A whole PDF goes
 # to PDF_PARSE_MODEL, so it is priced separately and it dominates a fulltext row.
 EXTRACT_PDF_PARSE_USD = 0.0120

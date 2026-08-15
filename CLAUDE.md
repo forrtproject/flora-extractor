@@ -59,7 +59,11 @@ POPULATION — any result verdict (`resolved`, `provisional`, `not_a_replication
 link methods can share one verdict and a change that reaches one need not reach the
 other. Both supersede the previous result row. Editing a prompt or a model mints a
 new extract GENERATION, which reopens every work at once, because it changes what the
-pipeline ASKS.
+pipeline ASKS. The maintainer's lever for a deliberate mixed-model artifact is
+`_GENERATION_EQUIVALENCES` in `extract/tier.py`: declaring the previous generation
+still current keeps its settled works settled, so only open works are bought under the
+new model (used 2026-08-15 to move Stage 3 from `gpt-5.4-mini` to `gpt-5.6-luna`
+mid-campaign; each verdict stamps the models that produced it).
 
 `EXTRACT_LADDER_VERSION` was in that fingerprint until 2026-08-10 and is not any
 more. A ladder change alters how an original is FOUND, and it reaches a population its
@@ -445,8 +449,8 @@ key = content_key("outcome", doi_r, prompt_version("build_outcome_prompt"),
 A model reaches a key only through `cache_model_id(model, effort)`, which appends the
 reasoning effort the call sends — how hard a model thinks changes its answer, so the
 two settings never share a cache entry. **The effort belongs to the call site, never
-to the model id**: `LINKING_MODEL`, `OUTCOME_MODEL` and `SCREENING_MODEL_2` are the
-same string today, so each caller passes its own value (`LINKING_EFFORT`,
+to the model id**: two call sites may name the same model (`LINKING_MODEL` and
+`OUTCOME_MODEL` do), so each caller passes its own value (`LINKING_EFFORT`,
 `OUTCOME_EFFORT`, the screen's per-voter `SCREENING_EFFORT_1`/`SCREENING_EFFORT_2`, or
 `""` for the pre-screen) to `call_model` AND the same value to `cache_model_id`. Each
 is a constant per call site rather than one per provider, and `llm_client` sends it
