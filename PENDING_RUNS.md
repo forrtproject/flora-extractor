@@ -23,7 +23,11 @@ the command, pasteable from the project root, and what proves it worked.
 
 ## Open
 
-- [ ] **Re-screen every screened work under the new voter pair and gate** (voter 1
+(none)
+
+## Done
+
+- [x] **Re-screen every screened work under the new voter pair and gate** (voter 1
       is now `deepseek/deepseek-v4-flash@low`, the gate G-unanimous; evidence:
       `analysis/screening_eval/cheap_voter_2026-08.md`). The voter swap minted a new
       screening generation, so every screened work is claimable again and **the
@@ -47,8 +51,9 @@ the command, pasteable from the project root, and what proves it worked.
       leaves an eligible host for every model.
       Done when `filter.engine status` shows the screen tier settled for the release
       and the extract worklist is non-empty again.
+      **Done 2026-08-14/15**, release `16d370746b45` (minted by the combined re-route below): 7,760 works screened, 880 discard / 6,880 proceed; DeepSeek ≈$2 (9.0M in / 1.8M out). The extract worklist reopened at 5,928 works.
 
-- [ ] **Reopen the 55 works that shared one OSF identifier** (issue #201). Until
+- [x] **Reopen the 55 works that shared one OSF identifier** (issue #201). Until
       `681556a`, `osf_registration_guid()` read the path segment in front of a guid as
       the guid, so every pool work with a download-shaped URL keyed
       `osf:osf.io/download`. That key is on disk as a definitive miss: the 55 were
@@ -58,8 +63,9 @@ the command, pasteable from the project root, and what proves it worked.
       then re-run the OSF backfill phase as the Done entry below records.
       Done when no work resolves to a guid of `download`, `preprints` or `project`, and
       the re-run reports a non-zero "Abstracts found".
+      **Done 2026-08-13**: the misses were dropped and the OSF backfill re-run; the re-route below carried the recovered text.
 
-- [ ] **Freeze and re-route, carrying the OSF text and the no-text exemption**
+- [x] **Freeze and re-route, carrying the OSF text and the no-text exemption**
       (issue #196). Two committed changes reach nothing until a route reads them:
       `overlay-0007.parquet` (57 project descriptions) is written but not frozen, and
       `e0feb7d` exempts titled OSF records from the `no_text` downgrade.
@@ -71,8 +77,9 @@ the command, pasteable from the project root, and what proves it worked.
       about to be merged.
       Done when the route report shows `pending` down by ~849 and the new release id is
       recorded in the re-screen entry above.
+      **Done 2026-08-14**: frozen and re-routed together with the issue #200 aliases; release `16d370746b45`, overlay hash `011bba95582f` (9 chunks), 7,760 works in `screen_expensive`.
 
-- [ ] **Deduplicate OpenAlex works that name one OSF record** (issue #200). One OSF
+- [x] **Deduplicate OpenAlex works that name one OSF record** (issue #200). One OSF
       record ships as several rows: 117 records in `data/extracted.csv` are reached by
       more than one work id, 296 of 2,602 rows (11%). The aliases ARE derived and
       merged: `filter/spec/aliases.json` holds the 14,744 same-guid entries
@@ -81,8 +88,9 @@ the command, pasteable from the project root, and what proves it worked.
       route that applies them — the combined re-route above — and the export check.
       Done when a re-route has collapsed the duplicates and the export's row count
       falls by the merged surplus (expected ≈165 rows on the current CSV).
+      **Done 2026-08-16**: the export of release `16d370746b45` shows OSF records reached by more than one work id down from 92 (223 rows) to 6 (13 rows). The total row count is not the proof any more: the re-screened gate admitted 928 works no earlier render held, so the main CSV rose to 3,147 rows.
 
-- [ ] **Re-extract every settled work under the new outcome policy** (issue #198).
+- [x] **Re-extract every settled work under the new outcome policy** (issue #198).
       The outcome prompt now codes as the authors report: an overall author verdict
       decides; otherwise their comparisons to the named original decide; a result with
       no stated bearing on that original's finding is `cannot_be_determined`; and
@@ -112,8 +120,7 @@ the command, pasteable from the project root, and what proves it worked.
       Done when the export prints NO `rows from a superseded generation:` line —
       `--check` alone does not test carry-forward — and section 2 of
       `handover.html` is re-read off the new render.
-
-## Done
+      **Done 2026-08-16**: 5,928 of 5,928 works settled (1,567 under `gpt-5.4-mini`, the rest under `gpt-5.6-luna` for $6.12); the dry run reports 0 open works. Rendered with `.venv/bin/python -m extract.export --release 16d370746b45 --current-generation-only`: 3,147 main rows, 6,434 in all, `--check` zero diff. The flag is deliberate: the default render carries 96 works whose only verdict is from a superseded generation and which the worklist never offers — 85 the current screen discards, 11 on the FLoRA skip list — so the done-criterion (no `superseded generation` line) holds only with it. Follow-up in `handover.html` section 4: the export should read the screen's discards itself.
 
 - [x] **The OSF projects backfill** (issue #196), 2026-08-13. 1,699 targets, **726
       descriptions recovered**, **57 written** to `overlay-0007.parquet`. The gap is

@@ -1,5 +1,9 @@
 # Babysit brief: finish the 2026-08 campaign's re-extract and export
 
+**Status: completed 2026-08-16.** The worklist is empty and the CSV is rendered
+(`PENDING_RUNS.md` records the results; the render used `--current-generation-only`,
+see `handover.html` section 2). Kept as the record of how the run was shepherded.
+
 For the agent that watches the rest of the run. Everything before the re-extract is
 done; do not redo it. The campaign order and rationale are in
 `docs/handover-campaign-2026-08.md`; the owed runs with done-criteria are in
