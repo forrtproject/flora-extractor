@@ -294,6 +294,12 @@ def _verdict(work: int, *, verdict: str = RESOLVED, claim: str = "c-live",
             "payload": payload}
 
 
+@pytest.fixture(autouse=True)
+def _no_screen_discards(monkeypatch):
+    """The fake client holds extract verdicts only; the screen decided nothing."""
+    monkeypatch.setattr(export_mod, "decisions", lambda client: (set(), {}))
+
+
 def _client(verdicts: list[dict], claims: "list[dict] | None" = None) -> MagicMock:
     client = MagicMock()
     client.verdicts.return_value = verdicts
@@ -389,6 +395,17 @@ def test_a_work_the_release_no_longer_admits_is_dropped_and_counted():
         _client([_verdict(41, row_id="v-in"), _verdict(42, row_id="v-out")]),
         admitted={41})
     assert report["works"] == 1 and report["not_admitted"] == 1
+    assert [r["pair_id"] for r in report["main"]] == [_SINGLE["pair_id"]]
+
+
+def test_a_work_the_current_screen_discards_is_dropped_and_counted(monkeypatch):
+    """The worklist never offers a screen-discarded work, so an old verdict bought
+    under an earlier screen's admission is never replaced — 85 such works after the
+    2026-08 voter-pair change. The render drops them like the worklist does."""
+    monkeypatch.setattr(export_mod, "decisions", lambda client: ({42}, {}))
+    report = export_mod.render(
+        _client([_verdict(41, row_id="v-in"), _verdict(42, row_id="v-out")]))
+    assert report["works"] == 1 and report["screen_discarded"] == 1
     assert [r["pair_id"] for r in report["main"]] == [_SINGLE["pair_id"]]
 
 

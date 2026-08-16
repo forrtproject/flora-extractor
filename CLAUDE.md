@@ -42,7 +42,9 @@ and stores one permanent RESULT verdict per work whose payload rebuilds every
 payloads into the CSV, whole, sorted and atomically. It renders only the works that
 release put in an admitted pile, because a verdict outlives the routing that bought it
 — a work today's rule book discards would otherwise keep reaching the validation
-import forever. Omitted, the release is the store's when it holds exactly one, and a
+import forever. It also drops the works the current screen discards
+(`decisions()` in `filter/engine/handoff.py`): the worklist never offers such a work,
+so a verdict bought under an earlier screen's admission would never be replaced. Omitted, the release is the store's when it holds exactly one, and a
 store holding several refuses; `--all-releases` renders every stored verdict whatever
 routing says. Resume is the verdict row, not the file: the
 worklist subtracts every work whose latest current-generation result SETTLES it.

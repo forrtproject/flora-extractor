@@ -146,14 +146,12 @@ humans review them. The final product is the Supabase <code>validated</code> tab
 
 <div class="note">
 <b>The 2026-08 campaign is complete.</b> Every work the release admits and the screen
-passes has a current-generation verdict; the CSV on disk is that render. It was made with
-<code>python -m extract.export --release 16d370746b45 --current-generation-only</code>,
-which drops 96 works whose only verdict is from a superseded generation and which the
-worklist can never reopen: 85 are works the current screen discards (both voters
-<code>none</code>) but an earlier screen had passed and an earlier generation had
-extracted; 11 are on the FLoRA skip list. A default render (without the flag) carries
-those 96 old-policy rows forward — 22 of them into <code>extracted.csv</code> — so use
-the flag until the export learns to consult the screen's discards itself (section 4).
+passes has a current-generation verdict, and the CSV on disk is the plain render,
+<code>python -m extract.export --release 16d370746b45</code>: it prints no
+<code>rows from a superseded generation</code> line. The export drops the works the
+current screen discards (85 after the re-screen: an earlier screen had passed them and
+an earlier generation had extracted them, and the worklist never reopens a discarded
+work) and the works on the skip lists, and prints both counts.
 </div>
 
 <ul>
@@ -443,22 +441,13 @@ from the issue tracker at face value.</p>
 
 <h3>Next steps — agreed and waiting</h3>
 <ul>
-  <li><b>Teach the export to drop works the current screen discards.</b> The
-      export renders every admitted work that has any stored verdict, so a work an
-      earlier screen passed and an earlier generation extracted keeps shipping its old
-      verdict after the current screen discards it — 85 such works after the 2026-08
-      re-screen. <code>--current-generation-only</code> drops them today (section 2)
-      because the tier never gives them a current-generation row; the durable fix is
-      for <code>extract/export.py</code> to read the screen's decisions
-      (<code>filter/engine/handoff.py::decisions()</code>) and set those works aside,
-      so the default render is safe again. The campaign itself is complete
-      (<code>docs/handover-campaign-2026-08.md</code>, <code>PENDING_RUNS.md</code>);
-      the pipeline is frozen except the rule set.</li>
   <li><b>Provenance stamp on 215 rows.</b> Their <code>link_llm_model</code> reads
-      <code>deepseek/deepseek-v4-flash+gpt-5.4-mini</code> — the screen's voter pair —
-      on reference-list and search links that no screen made. Read where
-      <code>render_payload()</code> takes the value from before trusting that column
-      per row.</li>
+      <code>deepseek/deepseek-v4-flash+gpt-5.4-mini</code>, the screen's voter pair,
+      although the reference-list call named their targets: when that call named
+      several originals without accepting one as THE link, the resolution kept the
+      classification half's model. Fixed forward in
+      <code>screen_references_with_llm()</code>; the stored rows keep the stamp until
+      those works are re-extracted.</li>
   <li><b>Read the collected <code>search_confirm</code> grades</b> and decide whether
       the negative grades should gate a discard or a review queue
       (<code>analysis/stage3_eval/search_confirm_plan.md</code>). The re-extract grades

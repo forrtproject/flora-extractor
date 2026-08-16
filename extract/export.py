@@ -36,6 +36,16 @@ rule book on disk first (`check_binding`), so a release routed under a bundle th
 since changed refuses instead of shipping the admissions of a rule book nobody is
 running. `--all-releases` asks no routing question and is exempt.
 
+**A verdict also outlives the screen that admitted it.** The screen decides per
+WORK and per screening generation; the extract tier only ever offers works the current
+screen passes, so a work it discards gets no current-generation extract row — and no
+row at all, if it was never extracted. A work an earlier screen passed and an earlier
+generation extracted is the gap: the current screen has said it is not a replication,
+the worklist never reopens it, and its old verdict would render forever. The render
+therefore drops every work the current screen discards (`decisions()` in
+`filter/engine/handoff.py`, the same reading the worklist takes) and prints the count.
+Measured 2026-08-16, after the voter-pair change: 85 works.
+
 **Two generations, and why the older one still counts.** A verdict belongs to a
 generation — the ladder, the prompts and the models it was produced by
 (`extract_generation()`). The strict reading is that a superseded generation says
@@ -82,6 +92,7 @@ from typing import Optional
 
 from filter.engine.claims import ClaimsClient, ClaimsNotConfigured
 from filter.engine.export import SPEC_DIR, StaleBundleError, check_release_binding
+from filter.engine.handoff import decisions
 from filter.engine.release import read_release
 from extract.sanity_check import classify_row, demote_malformed
 from extract.tier import (RESULT_VERDICTS, TIER_EXTRACT, equivalent_generations,
@@ -361,9 +372,13 @@ def render(client: ClaimsClient, *, mode: str = "live",
         kept = {work: row for work, row in results.items() if work in admitted}
         not_admitted = len(results) - len(kept)
         results = kept
-        generations = {extract_generation(), *equivalent_generations()}
-        stale = sum(1 for row in results.values()
-                    if str(row.get("prompt_hash") or "") not in generations)
+    # The current screen's discards, applied at render too: the worklist never offers
+    # such a work, so nothing else would ever replace the verdict an earlier screen's
+    # admission bought.
+    discarded = decisions(client)[0]
+    kept = {work: row for work, row in results.items() if work not in discarded}
+    screen_discarded = len(results) - len(kept)
+    results = kept
     # The skip lists the worklist reads, applied at render too: a work that entered
     # FLoRA or the validation tables AFTER it was extracted keeps its verdict as
     # evidence, but its rows must not keep reaching the validation import. Measured
@@ -373,22 +388,27 @@ def render(client: ClaimsClient, *, mode: str = "live",
     validated_ids, validated_dois = load_validated_skip(
         Path(data_dir) / VALIDATED_SKIP_NAME)
     skip_dois |= validated_dois
-    results = {work: row for work, row in results.items()
-               if work not in validated_ids}
-    rows, suppressed = [], 0
-    for row in rows_from_results(results):
-        if clean_doi(str(row.get("doi_r") or "")) in skip_dois:
-            suppressed += 1
-            continue
-        rows.append(row)
+    kept = {work: row for work, row in results.items()
+            if work not in validated_ids
+            and clean_doi(str((row.get("payload") or {}).get("doi_r") or ""))
+            not in skip_dois}
+    suppressed = len(results) - len(kept)
+    results = kept
     if suppressed:
-        log.info("%d row(s) suppressed at render: their DOI is already in "
+        log.info("%d work(s) suppressed at render: their DOI is already in "
                  "FLoRA or the validation tables", suppressed)
+    # Counted last, over the works this render carries — a stale verdict that no row
+    # reaches is nothing to reopen.
+    generations = {extract_generation(), *equivalent_generations()}
+    stale = sum(1 for row in results.values()
+                if str(row.get("prompt_hash") or "") not in generations)
+    rows = list(rows_from_results(results))
     main, aside = partition(rows,
                             include_unconfirmed_search=include_unconfirmed_search)
     return {"works": len(results), "rows": len(rows), "main": main, "aside": aside,
             "already_in_flora": suppressed,
             "superseded_generation": stale, "not_admitted": not_admitted,
+            "screen_discarded": screen_discarded,
             "endings": Counter(str(r.get("verdict") or "") for r in results.values())}
 
 
@@ -555,6 +575,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     else:
         print("  --all-releases: every stored verdict rendered, whatever routing "
               "says about its work")
+    print(f"  works the current screen discards: {report['screen_discarded']:,}  "
+          "(dropped from the render)")
     if report["superseded_generation"]:
         print(f"  rows from a superseded generation: "
               f"{report['superseded_generation']:,}  (carried forward; "

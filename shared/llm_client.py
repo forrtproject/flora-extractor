@@ -1804,6 +1804,12 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
             "resolved_study_r":   pick["resolved_study_r"],
             "outcome_block":      pick["outcome_block"],
         })
+        if pick["targets"]:
+            # The targets are this call's, whether or not it accepted one of them as
+            # THE link, so the rows the adapter writes per target name the model that
+            # named them — not the screen voters the classification half came from.
+            out.update({"llm_source": pick["llm_source"],
+                        "llm_model":  pick["llm_model"]})
         if pick["resolved"]:
             # The link is this call's decision, not Q1's, so the row is attributed to
             # the model that picked the reference and carries its justifying quote.
