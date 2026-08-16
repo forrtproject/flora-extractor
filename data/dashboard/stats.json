@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-08-16T18:01:56",
+  "updated_at": "2026-08-16T21:06:14",
   "filtered": {
     "available": true,
     "store": "/Users/lukaswallrich/Documents/Coding/flora-extractor/cache/engine/engine.duckdb",
@@ -35,8 +35,7 @@
       "_other": 2899
     },
     "by_model": {
-      "gpt": 2903,
-      "other": 215,
+      "gpt": 3118,
       "none": 29
     },
     "by_outcome": {
