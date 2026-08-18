@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% block title %}FLoRA — how the pipeline works{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='docs.css') }}"/>
+{% endblock %}
+
+{% block content %}
+<div class="docs">
+  <aside class="toc" aria-label="Contents">
+    <div class="toc-inner">
+      <p class="toc-title">Contents</p>
+      <ol>
+        <li><a href="#overview">What the pipeline does</a></li>
+        <li><a href="#architecture">Code structure</a></li>
+        <li><a href="#stage1">Stage 1 — discovery</a></li>
+        <li><a href="#stage2">Stage 2 — routing</a></li>
+        <li><a href="#rules">The rule book</a></li>
+        <li><a href="#screen">The screen</a></li>
+        <li><a href="#stage3">Stage 3 — extraction</a></li>
+        <li><a href="#ladder">The resolution ladder</a></li>
+        <li><a href="#prompts">Every LLM prompt</a></li>
+        <li><a href="#change">What can be changed</a></li>
+      </ol>
+      <p class="toc-foot">Generated from the running code.</p>
+    </div>
+  </aside>
+
+  <main class="doc-body">
+    <header class="doc-head">
+      <h1>How the pipeline works</h1>
+      <p class="lede">Every rule, prompt and pile on this page is read from the code
+      that runs, not written alongside it. Edit a prompt and this page changes with
+      it — so what you read here is what the pipeline actually does.</p>
+    </header>
+
+    <section id="overview">
+      <h2>What the pipeline does</h2>
+      <p>FLoRA Extractor finds replication and reproduction studies for the FLoRA
+      database. For each candidate paper it works out <em>which original study</em>
+      the paper re-tested and <em>what the outcome was</em>. Four stages, each
+      narrowing the set.</p>
+      <div class="stageflow" id="stageflow"></div>
+    </section>
+
+    <section id="architecture">
+      <h2>Code structure</h2>
+      <p>Every module below, with the first line of its own docstring. The pipeline
+      is five packages: four stages and the shared services they all use.</p>
+      <div id="architecture-body" class="loading">Reading the modules…</div>
+    </section>
+
+    <section id="stage1">
+      <h2>Stage 1 — discovery</h2>
+      <p>A one-off scan of the full OpenAlex snapshot (725 GB) keeps every paper that
+      passes a keyword gate. The result is the <strong>survivor pool</strong> — a few
+      million rows of parquet, shared through a private Hugging Face repository
+      rather than re-scanned. You almost never run this stage; you pull the pool.</p>
+      <p>The gate is a keyword filter, deliberately wide: Stage 1 is tuned for recall,
+      because a paper it drops can never be recovered by any later stage. Precision is
+      Stage 2's job.</p>
+      <div class="callout">
+        <p><strong>Why the pool is not the corpus.</strong> The scan admits on
+        keywords alone. Most of what survives is not a replication — it is everything
+        whose title or abstract mentions one. Stage 2 exists to sort that.</p>
+      </div>
+    </section>
+
+    <section id="stage2">
+      <h2>Stage 2 — routing</h2>
+      <p>A rule book of JSON specs sorts the pool into piles. The governing constraint
+      is short and load-bearing:</p>
+      <p class="rule-of-law">Rules may only <strong>route</strong> or
+      <strong>discard</strong>. Only an LLM screen may <strong>admit</strong>.</p>
+      <p>A rule that matches sends a work to a pile. Works nothing matches, and works
+      with no text to match against, end in <code>pending</code> with a reason.</p>
+      <h3>Piles</h3>
+      <div id="piles-body" class="loading">Reading conventions.json…</div>
+      <h3>Why a work ends in <code>pending</code></h3>
+      <div id="pending-body" class="loading">Reading conventions.json…</div>
+    </section>
+
+    <section id="rules">
+      <h2>The rule book</h2>
+      <p>Every spec the engine loads, in precedence order. Each carries its own record
+      of what it was measured against and what was rejected while writing it — that is
+      the material you need to change one responsibly.</p>
+      <div id="rules-body" class="loading">Reading filter/spec…</div>
+    </section>
+
+    <section id="screen">
+      <h2>The screen</h2>
+      <p>The only step that may admit a paper. Two models vote on each work; a paper
+      proceeds unless the votes say it is not a replication. Screening runs as a
+      claimed job — each machine claims a batch first, so two machines never pay for
+      the same paper.</p>
+      <p>The prompt it sends is <code>build_classify_prompt</code>, in full
+      <a href="#prompts">below</a>.</p>
+    </section>
+
+    <section id="stage3">
+      <h2>Stage 3 — extraction</h2>
+      <p>For each admitted paper, a ladder of steps tries to find the original study,
+      cheapest step first, and returns at the first one that resolves. The same reading
+      also codes the outcome. Each paper ends in one permanent verdict; a separate
+      export renders those verdicts as <code>data/extracted.csv</code>.</p>
+      <div class="callout">
+        <p><strong>Two outcome vocabularies.</strong> A replication is coded on one
+        axis (successful, failed, mixed, and so on). A reproduction is coded on
+        <em>two independent axes</em> — computation and robustness — and its outcome is
+        the two settled values joined. They are different scales and are never summed.</p>
+      </div>
+    </section>
+
+    <section id="ladder">
+      <h2>The resolution ladder</h2>
+      <p>The ordered list of resolution steps, and the running record of why each rung
+      behaves the way it does.</p>
+      <div id="ladder-body" class="loading">Reading link_original.py…</div>
+    </section>
+
+    <section id="prompts">
+      <h2>Every LLM prompt</h2>
+      <p>Every prompt the pipeline can send, with the version hash that keys its cache.
+      A builder assembles its prompt from spliced fragments at call time, so both the
+      assembly and each fragment are shown — together they are exactly what the version
+      hash covers, so this page and the cache key cannot disagree.</p>
+      <div id="prompts-body" class="loading">Reading shared/prompts.py…</div>
+    </section>
+
+    <section id="change">
+      <h2>What can be changed</h2>
+      <p>Three things are meant to be edited, and each has a different blast radius.</p>
+      <dl class="levers">
+        <dt>Keywords — the Stage 1 gate</dt>
+        <dd>Widening the gate means re-scanning 725 GB, so it changes only between
+        campaigns. A narrower gate silently loses papers no later stage can recover.</dd>
+
+        <dt>Rules — <code>filter/spec/*.json</code></dt>
+        <dd>Cheap to change and cheap to measure. Editing any spec moves the bundle
+        hash, which mints a new release — the store refuses to mix a release with a
+        spec bundle that has moved. Record what you measured in the spec's own
+        <code>measured</code> block; every rule above shows its predecessor's.</dd>
+
+        <dt>Prompts — <code>shared/prompts.py</code></dt>
+        <dd>The most expensive lever. Editing a prompt changes its version hash, which
+        invalidates exactly its cached answers and mints a new extraction generation —
+        reopening every work at once. Do it knowingly. Where an edit provably cannot
+        change an answer, the old and new cache keys can be declared equivalent so the
+        existing answers keep serving.</dd>
+      </dl>
+    </section>
+  </main>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='docs.js') }}" defer></script>
+{% endblock %}

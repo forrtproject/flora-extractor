@@ -1,0 +1,236 @@
+/* docs.css — Read surface. Extends style.css's tokens; adds only what reading needs. */
+:root {
+  --doc-measure: 68ch;
+  /* style.css's --text-muted/--text-faint are tuned for chrome beside large numbers.
+     At documentation body sizes they measure 3.03:1 and 2.56:1, under the 4.5:1
+     floor, so reading text uses these instead. Scoped to .docs — the dashboard's
+     own use of the shared tokens is unchanged. */
+  --doc-muted:   #4b5563;
+  --doc-faint:   #5b6674;
+  --pile-admit:  #1d6f42;
+  --pile-drop:   #a3352c;
+  --pile-hold:   #7a6320;
+}
+[data-theme="dark"] {
+  --doc-muted:   #a9b6c8;
+  --doc-faint:   #93a1b3;
+  --pile-admit:  #6edb9f;
+  --pile-drop:   #f2857c;
+  --pile-hold:   #e0b155;
+}
+
+/* Browser surfaces the design still owns. */
+.docs ::selection { background: var(--accent-ring); color: var(--text); }
+.docs { caret-color: var(--accent); }
+.docs pre, .docs .scroll {
+  scrollbar-width: thin; scrollbar-color: var(--border-2) transparent;
+}
+.docs pre::-webkit-scrollbar { height: 9px; width: 9px; }
+.docs pre::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 5px; }
+.docs a:focus-visible, .docs summary:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px;
+}
+.docs a { color: var(--accent); text-underline-offset: 3px; }
+
+.docs {
+  display: grid; grid-template-columns: 232px minmax(0, 1fr);
+  gap: 48px; max-width: 1180px; margin: 0 auto; padding: 24px 28px 96px;
+  align-items: start;
+}
+
+/* contents */
+.toc { position: sticky; top: 20px; }
+.toc-title {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+  color: var(--doc-faint); margin: 0 0 10px;
+}
+.toc ol { list-style: none; margin: 0; padding: 0; counter-reset: toc; }
+.toc li { counter-increment: toc; }
+.toc a {
+  display: block; padding: 5px 0 5px 26px; position: relative;
+  font-size: 13px; color: var(--doc-muted); text-decoration: none;
+  border-left: 1px solid var(--border); line-height: 1.35;
+}
+.toc a::before {
+  content: counter(toc); position: absolute; left: 9px;
+  font-size: 10.5px; color: var(--doc-faint); font-variant-numeric: tabular-nums;
+}
+.toc a:hover { color: var(--text); }
+.toc a.current {
+  color: var(--accent); border-left-color: var(--accent); font-weight: 600;
+}
+.toc-foot {
+  margin-top: 14px; font-size: 11px; line-height: 1.5; color: var(--doc-faint);
+}
+
+/* reading column */
+.doc-body { min-width: 0; }
+.doc-head { margin-bottom: 40px; }
+.doc-head h1 {
+  font-size: 34px; font-weight: 700; letter-spacing: -0.02em;
+  margin: 0 0 12px; color: var(--text); text-wrap: balance;
+}
+.doc-body .lede {
+  font-size: 16.5px; line-height: 1.62; color: var(--doc-muted);
+  max-width: var(--doc-measure); margin: 0;
+}
+
+.doc-body section { margin: 0 0 56px; scroll-margin-top: 20px; }
+.doc-body h2 {
+  font-size: 21px; font-weight: 700; letter-spacing: -0.015em; color: var(--text);
+  margin: 0 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--border-2);
+  text-wrap: balance;
+}
+.doc-body h3 {
+  font-size: 14.5px; font-weight: 650; color: var(--text); margin: 30px 0 10px;
+}
+.doc-body p, .doc-body dd {
+  font-size: 15px; line-height: 1.68; color: var(--text);
+  max-width: var(--doc-measure); margin: 0 0 14px;
+}
+.doc-body code {
+  font: 0.88em/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 4px; padding: 1px 5px;
+}
+
+.rule-of-law {
+  font-size: 16px; line-height: 1.6; padding: 14px 18px;
+  background: var(--surface); border: 1px solid var(--border-2);
+  border-radius: 8px; box-shadow: var(--shadow);
+}
+.callout {
+  padding: 14px 18px; margin: 18px 0; border-radius: 8px;
+  background: var(--surface-2); border: 1px solid var(--border);
+}
+.callout p { margin: 0; }
+
+/* stage flow */
+.stageflow { display: grid; gap: 10px; margin-top: 20px; }
+.stagerow {
+  display: grid; grid-template-columns: 30px 1fr; gap: 14px; align-items: start;
+  padding: 13px 16px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 8px;
+}
+.stagerow .n {
+  font-size: 12px; font-weight: 700; color: var(--doc-faint);
+  font-variant-numeric: tabular-nums; padding-top: 2px;
+}
+.stagerow h4 { margin: 0 0 3px; font-size: 14px; font-weight: 650; color: var(--text); }
+.stagerow p { margin: 0; font-size: 13.5px; color: var(--doc-muted); max-width: none; }
+.stagerow .cmd {
+  display: inline-block; margin-top: 7px;
+  font: 11.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--doc-muted);
+}
+
+/* tables */
+.scroll { overflow-x: auto; }
+table.doc { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+table.doc th {
+  text-align: left; font-size: 11px; text-transform: uppercase;
+  letter-spacing: .05em; color: var(--doc-muted); font-weight: 600;
+  padding: 7px 10px; border-bottom: 1px solid var(--border-2); white-space: nowrap;
+}
+table.doc td {
+  padding: 8px 10px; border-bottom: 1px solid var(--border);
+  color: var(--text); vertical-align: top;
+}
+table.doc td.num {
+  font-variant-numeric: tabular-nums; text-align: right; color: var(--doc-muted);
+}
+table.doc td.mono {
+  font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+table.doc tr:hover td { background: var(--row-hover); }
+
+.pkg { margin-bottom: 26px; }
+.pkg-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; }
+.pkg-head h3 { margin: 0; }
+.pkg-head .pkg-name {
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--doc-faint);
+}
+.pkg > p { font-size: 13.5px; color: var(--doc-muted); margin: 0 0 10px; }
+
+/* piles and rules */
+.pill {
+  display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .02em;
+  padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor;
+  white-space: nowrap;
+}
+.pill.admit { color: var(--pile-admit); }
+.pill.drop  { color: var(--pile-drop); }
+.pill.hold  { color: var(--pile-hold); }
+.pill.other { color: var(--text-muted); }
+
+.rule, .prompt {
+  border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px;
+  background: var(--surface); overflow: hidden;
+}
+.rule > summary, .prompt > summary {
+  cursor: pointer; padding: 12px 15px; display: grid;
+  grid-template-columns: 1fr auto auto; gap: 12px; align-items: center;
+  list-style: none;
+}
+.rule > summary::-webkit-details-marker,
+.prompt > summary::-webkit-details-marker { display: none; }
+.rule > summary:hover, .prompt > summary:hover { background: var(--surface-2); }
+.rule .rid, .prompt .pname {
+  font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 600; color: var(--text);
+}
+.rule .prec, .prompt .pmeta {
+  font: 11.5px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--doc-faint); font-variant-numeric: tabular-nums;
+}
+.rule-detail, .prompt-detail {
+  padding: 0 15px 15px; border-top: 1px solid var(--border);
+}
+.rule-detail p {
+  font-size: 13.5px; line-height: 1.65; color: var(--doc-muted);
+  max-width: none; margin: 12px 0 0;
+}
+.rule-detail .shadow-note { font-size: 12px; color: var(--pile-hold); margin-top: 10px; }
+
+.frag-label {
+  font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--doc-muted); margin: 14px 0 5px;
+}
+.docs pre {
+  margin: 0; padding: 12px 14px; overflow-x: auto;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 6px;
+  font: 12px/1.62 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text); white-space: pre; tab-size: 2;
+}
+
+/* ladder */
+.ladder { list-style: none; padding: 0; margin: 16px 0 0; }
+.ladder li {
+  display: grid; grid-template-columns: 34px 1fr; gap: 12px;
+  padding: 9px 0; border-top: 1px solid var(--border);
+}
+.ladder .n {
+  font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--doc-faint); text-align: right; font-variant-numeric: tabular-nums;
+}
+.ladder p {
+  margin: 0; font-size: 13.5px; line-height: 1.6;
+  color: var(--doc-muted); max-width: none;
+}
+
+.levers dt { font-size: 14.5px; font-weight: 650; color: var(--text); margin-top: 20px; }
+.levers dd { margin: 6px 0 0; }
+
+.loading { font-size: 13.5px; color: var(--doc-faint); padding: 10px 0; }
+.docs .failed { color: var(--pile-drop); }
+
+@media (max-width: 900px) {
+  .docs { grid-template-columns: 1fr; gap: 24px; padding: 18px 18px 72px; }
+  .toc { position: static; }
+  .toc ol { display: flex; flex-wrap: wrap; gap: 2px 6px; }
+  .toc a { border-left: 0; padding: 4px 8px; }
+  .toc a::before { display: none; }
+  .doc-head h1 { font-size: 27px; }
+}
