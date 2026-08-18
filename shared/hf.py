@@ -183,7 +183,9 @@ def remote_sizes(api, repo_id: str, suffix: str) -> dict[str, int]:
     error: the first push creates it.
     """
     try:
-        entries = api.list_repo_tree(repo_id, repo_type=REPO_TYPE, recursive=True)
+        # list() inside the try: the listing is a lazy generator, so the request that
+        # says "no such repo" is made on iteration rather than on the call.
+        entries = list(api.list_repo_tree(repo_id, repo_type=REPO_TYPE, recursive=True))
     except Exception as exc:  # noqa: BLE001 — a missing repo is the first-push case
         log.warning("Could not list %s (%s) — treating the remote as empty, so nothing "
                     "will be skipped and every file transfers again", repo_id, exc)

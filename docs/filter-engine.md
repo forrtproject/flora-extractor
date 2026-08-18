@@ -440,6 +440,15 @@ LLM" — so the only way it reaches a screening tier is for text to arrive from
 somewhere else. That somewhere else is a **text overlay**: a frozen release of
 recovered abstract text, layered over the pool at read time.
 
+The overlay is SHARED with the pool, not with the caches: `overlay_hash` is one of
+the six routing-release inputs, so a collaborator holding the pool without the
+overlay routes the same specs into a different release id and every overlay-only
+rule matches nothing on their machine. `python -m search.pool_sync --push` /
+`--pull` move both (`--overlay-only`, `--no-overlay`); the transfer refuses an
+unfrozen or stale overlay, refuses a chunk the other side holds under the same
+name with different bytes, and verifies every pulled chunk against the sha256 in
+its frozen manifest.
+
 | Module | Contract |
 | --- | --- |
 | `pool_reader.py` | `iter_pool_batches(pool_dir, overlay_dir=None, batch_size=50_000, aliases=None)` — the engine's single input path: pool batches with overlay text written over the pool's `abstract_text`, empty or not. `overlay_manifest_hash(overlay_dir) -> str \| None` (defined in `overlay.py`, re-exported here so the input path is one import). The overlay is loaded once as a `work_id -> text` dict and applied per batch; with no overlay the stream is `iter_batches()` untouched. |

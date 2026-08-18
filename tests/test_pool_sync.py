@@ -88,8 +88,21 @@ class _FakeApi:
             raise RuntimeError("401 Unauthorized")   # what a dead token gets
         return {"name": "alice"}
 
-    def list_repo_tree(self, repo_id, repo_type=None, recursive=False):
-        return [_Entry(p, len(b)) for p, b in self._store.items()]
+    def list_repo_tree(self, repo_id, path_in_repo=None, repo_type=None,
+                       recursive=False):
+        # The real API scopes to path_in_repo — the overlay listing relies on that to
+        # avoid walking the pool and the response blobs — and it returns a LAZY
+        # generator that raises 404 for a prefix that is not there on iteration, not
+        # on the call. The fake does both, because a try around the call alone would
+        # catch neither and every caller here treats "not there" as the first push.
+        prefix = path_in_repo.rstrip("/") + "/" if path_in_repo else ""
+        def walk():
+            if prefix and not any(p.startswith(prefix) for p in self._store):
+                raise _EntryNotFound(f"{path_in_repo} does not exist on 'main'")
+            for path, blob in self._store.items():
+                if path.startswith(prefix):
+                    yield _Entry(path, len(blob))
+        return walk()
 
     def create_commit(self, repo_id=None, repo_type=None, operations=None,
                       commit_message=None):
@@ -579,3 +592,163 @@ def test_check_access_raises_on_a_token_the_hub_will_not_identify(monkeypatch):
     calls["whoami_fails"] = True
     with pytest.raises(RuntimeError, match="HF_TOKEN"):
         ps.check_access(repo="me/pool")
+
+
+# ---------------------------------------------------------------------------
+# The text overlay
+# ---------------------------------------------------------------------------
+
+
+def _overlay(tmp_path, rows: dict[str, list[int]], freeze: bool = True) -> Path:
+    """An overlay directory holding one chunk per *rows* entry (name -> work ids)."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    from filter.engine.overlay import OVERLAY_SCHEMA, freeze as freeze_overlay
+
+    overlay_dir = tmp_path / "overlay"
+    overlay_dir.mkdir(exist_ok=True)
+    for name, ids in rows.items():
+        pq.write_table(pa.table({
+            "work_id": ids,
+            "abstract_text": [f"Text for W{i}." for i in ids],
+            "source": ["osf"] * len(ids),
+            "fetched_at": ["2026-08-18T00:00:00Z"] * len(ids),
+        }, schema=OVERLAY_SCHEMA), overlay_dir / name)
+    if freeze:
+        freeze_overlay(overlay_dir)
+    return overlay_dir
+
+
+def _pushed_overlay(tmp_path, monkeypatch, rows: dict[str, list[int]]) -> dict:
+    """Push *rows* as an overlay and return the resulting fake remote's contents."""
+    calls = _fake_hub(monkeypatch, {})
+    ps.push_overlay(_overlay(tmp_path, rows), repo="me/pool")
+    return calls["remote"]
+
+
+def test_push_refuses_an_overlay_that_was_never_frozen(tmp_path, monkeypatch):
+    _fake_hub(monkeypatch, {})
+    overlay_dir = _overlay(tmp_path, {"overlay-0000.parquet": [1, 2]}, freeze=False)
+    with pytest.raises(RuntimeError, match="freeze"):
+        ps.push_overlay(overlay_dir, repo="me/pool")
+
+
+def test_push_refuses_an_overlay_appended_to_since_its_freeze(tmp_path, monkeypatch):
+    """The pointer would name a hash the files no longer produce, so what went up
+    would be a release id nobody can reproduce."""
+    _fake_hub(monkeypatch, {})
+    overlay_dir = _overlay(tmp_path, {"overlay-0000.parquet": [1]})
+    _overlay(tmp_path, {"overlay-0001.parquet": [2]}, freeze=False)
+    with pytest.raises(RuntimeError, match="changed since it was frozen"):
+        ps.push_overlay(overlay_dir, repo="me/pool")
+
+
+def test_push_uploads_chunks_manifests_and_the_pointer_last(tmp_path, monkeypatch):
+    calls = _fake_hub(monkeypatch, {})
+    ps.push_overlay(_overlay(tmp_path, {"overlay-0000.parquet": [1, 2]}), repo="me/pool")
+    uploaded = _uploaded(calls)
+    assert uploaded[-1] == "overlay/overlay_manifest.json", \
+        "the pointer makes the chunks readable, so it must not precede them"
+    assert "overlay/overlay-0000.parquet" in uploaded
+    assert any(p.startswith("overlay/overlay_manifest-") for p in uploaded)
+
+
+def test_pushing_the_same_overlay_again_uploads_nothing(tmp_path, monkeypatch):
+    remote = _pushed_overlay(tmp_path, monkeypatch, {"overlay-0000.parquet": [1]})
+    calls = _fake_hub(monkeypatch, {}, store=dict(remote))
+    assert ps.push_overlay(tmp_path / "overlay", repo="me/pool") == 0
+    assert _uploaded(calls) == []
+
+
+def test_push_refuses_a_chunk_the_remote_holds_with_different_content(tmp_path,
+                                                                     monkeypatch):
+    """Two machines each appended their own overlay-0000; neither is the other."""
+    remote = _pushed_overlay(tmp_path, monkeypatch, {"overlay-0000.parquet": [1, 2]})
+    shutil.rmtree(tmp_path / "overlay")
+    mine = _overlay(tmp_path, {"overlay-0000.parquet": [3, 4]})
+
+    calls = _fake_hub(monkeypatch, {}, store=dict(remote))
+    with pytest.raises(RuntimeError, match="different content"):
+        ps.push_overlay(mine, repo="me/pool")
+    assert _uploaded(calls) == [], "a refused push uploads nothing at all"
+    assert ps.push_overlay(mine, repo="me/pool", force=True) > 0
+
+
+def test_pull_round_trips_the_overlay_and_verifies_every_chunk(tmp_path, monkeypatch):
+    remote = _pushed_overlay(tmp_path, monkeypatch,
+                             {"overlay-0000.parquet": [1], "overlay-0001.parquet": [2]})
+    pushed_hash = ps._overlay_mod().overlay_hash(tmp_path / "overlay")
+    shutil.rmtree(tmp_path / "overlay")
+
+    _fake_hub(monkeypatch, {}, store=dict(remote))
+    ps.pull_overlay(tmp_path / "overlay", repo="me/pool")
+
+    assert ps._overlay_mod().overlay_hash(tmp_path / "overlay") == pushed_hash
+    assert not (tmp_path / "overlay" / "overlay").exists(), \
+        "the remote prefix is a shard folder, not part of the local overlay"
+
+
+def test_pull_refuses_a_chunk_whose_bytes_are_not_what_the_manifest_names(tmp_path,
+                                                                         monkeypatch):
+    remote = dict(_pushed_overlay(tmp_path, monkeypatch, {"overlay-0000.parquet": [1]}))
+    remote["overlay/overlay-0000.parquet"] = b"not the parquet that was frozen"
+    shutil.rmtree(tmp_path / "overlay")
+
+    _fake_hub(monkeypatch, {}, store=remote)
+    with pytest.raises(RuntimeError, match="sha256"):
+        ps.pull_overlay(tmp_path / "overlay", repo="me/pool")
+    assert not (tmp_path / "overlay" / "overlay-0000.parquet").exists(), \
+        "a chunk that failed its check is removed, never left to be routed under"
+
+
+def test_pull_refuses_to_overwrite_a_local_chunk_of_the_same_name(tmp_path, monkeypatch):
+    remote = _pushed_overlay(tmp_path, monkeypatch, {"overlay-0000.parquet": [1, 2]})
+    shutil.rmtree(tmp_path / "overlay")
+    mine = _overlay(tmp_path, {"overlay-0000.parquet": [3, 4]})
+
+    _fake_hub(monkeypatch, {}, store=dict(remote))
+    with pytest.raises(RuntimeError, match="different content"):
+        ps.pull_overlay(mine, repo="me/pool")
+    ps.pull_overlay(mine, repo="me/pool", force=True)
+    assert ps._overlay_mod().overlay_hash(mine)[:12] == \
+        json.loads(remote["overlay/overlay_manifest.json"])["overlay_hash"][:12]
+
+
+def test_pull_of_a_repo_with_no_overlay_is_not_an_error(tmp_path, monkeypatch):
+    """The pool predates the overlay, so the bundled default must tolerate its
+    absence rather than break every pull until the first backfill is pushed."""
+    _fake_hub(monkeypatch, {"2019/part-2019-01-01-part_0000.parquet": 10})
+    assert ps.pull_overlay(tmp_path / "overlay", repo="me/pool") == 0
+
+
+def test_pull_pool_ignores_the_overlay_s_parquet_chunks(tmp_path, monkeypatch):
+    """An overlay chunk is a parquet in the same repo and is not a pool file: pulled
+    into the pool directory it would be globbed as pool rows, and its name would
+    inflate the file count the provenance sidecar calls complete."""
+    remote = {"2019/part-2019-01-01-part_0000.parquet": 10,
+              "overlay/overlay-0000.parquet": 20}
+    calls = _fake_hub(monkeypatch, remote)
+    pool = tmp_path / "pool"
+
+    ps.pull_pool(pool, repo="me/pool")
+
+    assert calls["downloaded"] == ["2019/part-2019-01-01-part_0000.parquet"]
+    assert not (pool / "overlay-0000.parquet").exists()
+    assert ss.read_pool_provenance(pool)["expected_files"] == 1
+
+
+def test_pull_leaves_a_chunk_the_frozen_manifest_does_not_name(tmp_path, monkeypatch):
+    """The push writes chunks before its pointer, so an interrupted push of a
+    re-frozen overlay leaves newer chunks under the older pointer. Taken, they would
+    be read by `load_overlay()` while the pointer still named the old hash — routing
+    would stamp a release id that does not name the text it read."""
+    remote = dict(_pushed_overlay(tmp_path, monkeypatch, {"overlay-0000.parquet": [1]}))
+    remote["overlay/overlay-0001.parquet"] = b"a chunk from a push that did not finish"
+    shutil.rmtree(tmp_path / "overlay")
+
+    calls = _fake_hub(monkeypatch, {}, store=remote)
+    ps.pull_overlay(tmp_path / "overlay", repo="me/pool")
+
+    assert "overlay/overlay-0001.parquet" not in calls["downloaded"]
+    assert not (tmp_path / "overlay" / "overlay-0001.parquet").exists()
+    assert (tmp_path / "overlay" / "overlay-0000.parquet").exists()

@@ -43,8 +43,11 @@ The abstracts are the exception — one SQLite file, pushed whole and merged on 
 `cache/pdfs` IS shared, on the maintainer's decision: the repo is private, the
 collaborators are named, and the acquisition waterfall is slow and lossy enough
 that re-running it does not reliably return the same documents. What is not shared
-is `cache/engine/responses` — `filter/engine/tiers.py` already pushes those blobs
-as each tier run decides a work, and a second writer would just race it.
+here is `cache/engine/responses` — `filter/engine/tiers.py` already pushes those
+blobs as each tier run decides a work, and a second writer would just race it —
+and `cache/engine/overlay`, which is not a cache at all: the text overlay is a
+routing-release input, so it travels with the pool it is keyed against
+(`search/pool_sync.py`, remote prefix `overlay/`).
 
 **Misses are shared too, and that is where the one asymmetry lives.** A cached
 `__none__` means "this source definitively has no abstract for this DOI", and not

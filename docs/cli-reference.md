@@ -158,7 +158,7 @@ link that can do the whole pool in minutes.
 **Collaborator workflow — one command:**
 
 ```bash
-python -m search.pool_sync --pull        # the survivor pool → Stage 2's input
+python -m search.pool_sync --pull        # the survivor pool + text overlay → Stage 2's input
 ```
 
 Pool files are stored **year-sharded** on the remote
@@ -178,6 +178,11 @@ python -m search.pool_sync --push --dry-run
 python -m search.pool_sync --pull
 python -m search.pool_sync --pull --years 2019,2021-2023
 python -m search.pool_sync --pull --pool-dir /mnt/big/pool --repo my-org/flora-survivor-pool
+
+# The text overlay alone — how a backfill is published, and how it is taken
+python -m search.pool_sync --push --overlay-only
+python -m search.pool_sync --pull --overlay-only
+python -m search.pool_sync --pull --no-overlay          # the pool alone
 ```
 
 A push writes `pool_manifest.json` at the repo root recording the search gate,
@@ -191,11 +196,28 @@ authority on which gate admitted these rows — and records how many files compl
 the pull *before* fetching any, so an interrupted transfer is visibly short rather
 than fingerprintable.
 
+**The text overlay travels with the pool**, under the remote's `overlay/` prefix,
+and both directions move it unless `--no-overlay` says otherwise. It is not a
+cache: `overlay_hash` is one of the six routing-release inputs, so the same pool
+and specs without the overlay mint a *different* release id, and the overlay-only
+rules (the `osf-registration-*` pair) match nothing without saying so.
+
+The overlay is a frozen release and the transfer defends that. A push refuses an
+overlay with no `overlay_manifest.json`, and one appended to since its last
+`freeze()` — the pointer would name a hash the files no longer produce. Both
+directions refuse a chunk the other side holds under the same name with different
+bytes: chunks are sequence-named, so two machines that both backfilled have both
+written an `overlay-0002.parquet`, and there is no merge (`--force` takes the
+other side's; the real fix is to rewrite the chunks so each work id appears once
+and re-freeze). A pull checks every downloaded chunk against the sha256 in the
+frozen manifest its pointer names, and deletes a file that fails.
+
 The prebuilt-`candidates.csv` build commands (`--build-candidates`,
 `--push-build`, `--pull-build`) belonged to the admission-gated Stage 1 and are
 retired with it; the pool is the artifact to share.
 
-**Output:** the survivor pool (`cache/snapshot_pool`)
+**Output:** the survivor pool (`cache/snapshot_pool`) and the text overlay
+(`cache/engine/overlay`)
 
 ---
 
@@ -206,7 +228,8 @@ have to re-buy. `cache/llm` is the provider bill, and because the models are not
 deterministic, re-running it does not reproduce our grading — it produces the
 collaborator's own. The abstract store is six rate-limited sources over ~500k
 identifiers. Both go to the same private dataset repo as the pool, under a
-`cache/` prefix (`pool_sync` only ever lists `*.parquet`, so the two never collide).
+`cache/` prefix; `pool_sync` lists only parquet outside its own `overlay/` prefix,
+so the three sets of files never collide.
 
 ```bash
 python -m shared.cache_sync --pull                      # everything
