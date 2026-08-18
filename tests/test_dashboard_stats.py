@@ -326,65 +326,11 @@ def test_pool_absent_is_none_not_an_error(tmp_path):
     _clear_pool_memo()
     assert compute_pool_stats(tmp_path / "nope") is None
     _clear_pool_memo()
-    assert compute_stage_stats("pool") is None or isinstance(compute_stage_stats("pool"), dict)
-
-
-def test_csv_stats_endpoint_reports_pool_absence(tmp_path, monkeypatch):
-    """With neither a local pool nor pool figures in stats.json, the Stage 1 panel
-    must say so — not render a zero that reads as 'the search found nothing'."""
-    import validate.routes.dashboard as dash
-
-    monkeypatch.setattr(dash, "load_stats", lambda: {})
-    monkeypatch.setattr(dash, "pool_totals", lambda: None)
-    monkeypatch.setattr(dash, "_CSV_STAGES", ())
-    monkeypatch.setattr(dash, "compute_stage_stats", lambda stage: None)
-    from validate.app import create_app
-    data = create_app().test_client().get("/api/dashboard/csv-stats").get_json()
-
-    assert data["pool_present"] is False
-    assert data["pool_source"] == "none"
-    assert data["pool_count"] is None
-
-
-def test_csv_stats_serve_the_stores_answer_not_stats_json(monkeypatch):
-    """Stage 2's figures are one DuckDB query, so they are asked for on every load.
-    A stats.json block must never be able to show a release the store has moved on
-    from."""
-    import validate.routes.dashboard as dash
-
-    monkeypatch.setattr(dash, "load_stats", lambda: {
-        "filtered": {"available": True, "release_id": "stale", "total": 2582749}})
-    monkeypatch.setattr(dash, "pool_totals", lambda: None)
-    monkeypatch.setattr(dash, "_CSV_STAGES", ())
-    monkeypatch.setattr(dash, "compute_stage_stats", lambda stage: {
-        "available": True, "release_id": "f7e4667b6c46", "release_created_at": "2026-08-11",
-        "total": 5146160, "by_pile": {"discard": 558355}, "store": "cache/engine/engine.duckdb"})
-    from validate.app import create_app
-    data = create_app().test_client().get("/api/dashboard/csv-stats").get_json()
-
-    assert data["filtered_release"] == "f7e4667b6c46"
-    assert data["filtered_count"] == 5146160
-    assert data["filtered_by_pile"] == {"discard": 558355}
-
-
-def test_csv_stats_pass_a_store_failure_through_as_a_panel_state(monkeypatch):
-    """No store, a locked store or an undatable release must reach the panel as a
-    reason to show. A 500 here takes the whole dashboard down with it."""
-    import validate.routes.dashboard as dash
-
-    def _boom(stage):
-        raise RuntimeError("no routing store at cache/engine/engine.duckdb")
-
-    monkeypatch.setattr(dash, "load_stats", lambda: {})
-    monkeypatch.setattr(dash, "pool_totals", lambda: None)
-    monkeypatch.setattr(dash, "_CSV_STAGES", ())
-    monkeypatch.setattr(dash, "compute_stage_stats", _boom)
-    from validate.app import create_app
-    data = create_app().test_client().get("/api/dashboard/csv-stats").get_json()
-
-    assert data["filtered_available"] is False
-    assert "no routing store" in data["filtered_reason"]
-    assert data["filtered_count"] is None
+    # Through the stage dispatcher too, and pointed at the SAME absent directory.
+    # Reading the default pool here asserted nothing (`is None or isinstance(…, dict)`
+    # holds for every possible return) while paying for two full scans of it — 610s
+    # once a real 7.8 GB pool existed on the machine, and invisibly fast before that.
+    assert compute_stage_stats("pool", pool_dir=tmp_path / "nope") is None
 
 
 def test_the_filtered_download_generates_from_the_store_or_says_why(monkeypatch, tmp_path):

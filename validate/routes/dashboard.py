@@ -1,17 +1,15 @@
 """
 routes/dashboard.py — Read-only monitoring dashboard.
 
+The page shell and the set-aside CSVs. The three bands fetch their own numbers from
+api_flow / api_analysis / api_concerns; the Supabase views moved to api_validation.
+
 Routes:
   GET  /dashboard                        → dashboard page
-  GET  /api/dashboard/csv-stats          → pipeline stats (stats.json → live compute)
+  GET  /api/dashboard/set-stats          → one set-aside pile's size
+  GET  /api/dashboard/set-rows           → a page of one set-aside pile
+  GET  /api/dashboard/set-download       → one set-aside CSV as attachment
   GET  /api/dashboard/download           → stream a raw pipeline CSV as attachment
-  GET  /api/dashboard/supabase-stats     → Supabase validation KPIs (cached 5 min)
-  GET  /api/dashboard/supabase-analytics → coverage, per-field validator agreement,
-                                           final-vs-pipeline changes
-  GET  /api/dashboard/supabase-outcomes  → outcome distribution from validated table
-  GET  /api/dashboard/supabase-corrections → per-field correction frequency
-  GET  /api/dashboard/supabase-confusion  → pipeline-vs-final confusion matrices (#72)
-  GET  /api/dashboard/supabase-drilldown → paginated incorrect-DOI table
 """
 import datetime
 import shutil
@@ -20,154 +18,15 @@ import pandas as pd
 from flask import Blueprint, jsonify, render_template, request, send_file
 
 from shared.config import DATA_DIR
-from shared import supabase_client as supa
-from shared.dashboard_cache import compute_stage_stats, load_stats, pool_totals
 from shared.schema import SET_ASIDE_DESTINATIONS
 
 dashboard_bp = Blueprint("dashboard", __name__)
 
-_OUTCOME_KEYS = ("successful", "failed", "mixed", "descriptive only",
-                 "statistically successful but flawed", "uninformative",
-                 "cannot_be_determined", "not_a_replication",
-                 "pending", "api_error")
-# The five rule-based resolution methods are now distinct link_method values. The
-# dashboard's coarse "author_year_match" tile aggregates them (plus legacy/literal
-# author_year_match rows); the granular per-method breakdown lives in stats.json's
-# by_link_method.
-_RULE_METHOD_KEYS = ("citation_context_match", "same_author_year_title_overlap",
-                     "single_candidate_after_requery", "title_pattern_match",
-                     "grobid_ref_match", "author_year_match_legacy", "author_year_match")
-_METHOD_KEYS  = _RULE_METHOD_KEYS + ("llm_cited_candidates", "llm_fulltext",
-                 "no_original_found", "target_pending", "api_error")
-
 
 @dashboard_bp.route("/dashboard")
 def dashboard_page():
-    return render_template("dashboard.html", active_page="dashboard", set_files=SET_FILES)
+    return render_template("dashboard.html", active_page="dashboard")
 
-
-
-def _stats_json_to_api(sj: dict, source: str = "stats_json") -> dict:
-    """Translate a stats.json-shaped dict to the flat dict the dashboard JS expects.
-
-    Missing stages degrade to a null count rather than failing — the UI renders
-    those tiles as "—".
-    """
-    p  = sj.get("pool")           or {}
-    f  = sj.get("filtered")       or {}
-    e  = sj.get("extracted")      or {}
-    et = sj.get("extracted_test") or {}
-
-    by_method = e.get("by_link_method",   {})
-    by_model  = e.get("by_model",         {})
-    by_outcome= e.get("by_outcome",       {})
-    by_mt     = e.get("by_match_type",    {})
-
-    tbm  = et.get("by_link_method",   {})
-    tmod = et.get("by_model",         {})
-    toc  = et.get("by_outcome",       {})
-    tmt  = et.get("by_match_type",    {})
-
-    # Stage 1's artifact is the survivor pool. `live` is the cheap footer-only
-    # read of the pool on THIS machine; the breakdowns can only come from a
-    # stats.json written where the pool lives. Both absent → the UI says so.
-    live = pool_totals()
-    out: dict = {
-        # Survivor pool (Stage 1)
-        "pool_present":   live is not None,
-        "pool_count":     (live or p).get("total"),
-        "pool_files":     (live or p).get("files"),
-        "pool_bytes":     (live or p).get("bytes"),
-        "pool_dir":       (live or p).get("pool_dir"),
-        "pool_no_doi":    p.get("no_doi"),
-        "pool_by_year":   p.get("by_year", {}),
-        "pool_gate_hits": p.get("gate_hits", {}),
-        "pool_source":    "live" if live is not None else ("stats_json" if p else "none"),
-        # Filtered (Stage 2) — the routing store, per release
-        "filtered_available":  bool(f.get("available")),
-        "filtered_reason":     f.get("reason", ""),
-        "filtered_store":      f.get("store", ""),
-        "filtered_release":    f.get("release_id"),
-        "filtered_release_created_at": f.get("release_created_at", ""),
-        "filtered_count":      f.get("total"),
-        "filtered_by_pile":    f.get("by_pile", {}),
-        # Extracted
-        "extracted_count":           e.get("total"),
-        "target_pending_count":      e.get("target_pending_count", 0),
-        "match_single":              by_mt.get("single_original",   0),
-        "match_multiple_match":      by_mt.get("multiple_match",    0),
-        "match_multiple_original":   by_mt.get("multiple_original", 0),
-        "method_author_year_match":  sum(by_method.get(k, 0) for k in _RULE_METHOD_KEYS),
-        "method_llm_cited_candidates":       by_method.get("llm_cited_candidates",       0),
-        "method_llm_fulltext":       by_method.get("llm_fulltext",       0),
-        "method_no_original_found":  by_method.get("no_original_found",  0),
-        "method_target_pending":     by_method.get("target_pending",     0),
-        "method_api_error":          by_method.get("api_error",          0),
-        "model_gemini": by_model.get("gemini", 0),
-        "model_gpt":    by_model.get("gpt",    0),
-        "model_qwen":   by_model.get("qwen",   0),
-        "model_other":  by_model.get("other",  0),
-        "model_none":   by_model.get("none",   0),
-        **{f"outcome_{k}": by_outcome.get(k, 0) for k in _OUTCOME_KEYS},
-        "extracted_by_type":            e.get("by_type", {}),
-        "extracted_outcome_replication":  e.get("by_outcome_replication",  {}),
-        "extracted_outcome_reproduction": e.get("by_outcome_reproduction", {}),
-        "extracted_by_year":            e.get("by_year", {}),
-        # Extracted-test
-        "test_extracted_count":          et.get("total"),
-        "test_target_pending_count":     et.get("target_pending_count", 0),
-        "test_match_single":             tmt.get("single_original",   0),
-        "test_match_multiple_match":     tmt.get("multiple_match",    0),
-        "test_match_multiple_original":  tmt.get("multiple_original", 0),
-        "test_method_author_year_match": sum(tbm.get(k, 0) for k in _RULE_METHOD_KEYS),
-        "test_method_llm_cited_candidates":      tbm.get("llm_cited_candidates",       0),
-        "test_method_llm_fulltext":      tbm.get("llm_fulltext",       0),
-        "test_method_no_original_found": tbm.get("no_original_found",  0),
-        "test_method_target_pending":    tbm.get("target_pending",     0),
-        "test_method_api_error":         tbm.get("api_error",          0),
-        "test_model_gemini": tmod.get("gemini", 0),
-        "test_model_gpt":    tmod.get("gpt",    0),
-        "test_model_qwen":   tmod.get("qwen",   0),
-        "test_model_other":  tmod.get("other",  0),
-        "test_model_none":   tmod.get("none",   0),
-        **{f"test_outcome_{k}": toc.get(k, 0) for k in _OUTCOME_KEYS},
-        "test_extracted_by_type":            et.get("by_type", {}),
-        "test_extracted_outcome_replication":  et.get("by_outcome_replication",  {}),
-        "test_extracted_outcome_reproduction": et.get("by_outcome_reproduction", {}),
-        "test_extracted_by_year":            et.get("by_year", {}),
-        "_source": source,
-        "_updated_at": sj.get("updated_at"),
-    }
-    return out
-
-
-@dashboard_bp.route("/api/dashboard/csv-stats")
-def api_csv_stats():
-    """Return pipeline stats. Fast path: stats.json; slow path: live Parquet/CSV.
-
-    The slow path calls dashboard_cache.compute_stage_stats so both paths share
-    one implementation of every aggregation. The pool is never computed here —
-    it is gigabytes of parquet, and _stats_json_to_api already overlays the cheap
-    footer-only count for the machine that has it.
-
-    Stage 2 is always computed, never read from stats.json: it is one DuckDB
-    query against the routing store, and a figure that costs milliseconds should
-    be the store's answer now rather than whatever a past run wrote down.
-    """
-    sj = load_stats()
-    missing = [s for s in _CSV_STAGES if not sj.get(s.replace("-", "_"))]
-    for stage in missing:
-        try:
-            computed = compute_stage_stats(stage)
-        except Exception:
-            computed = None
-        if computed is not None:
-            sj[stage.replace("-", "_")] = computed
-    try:
-        sj["filtered"] = compute_stage_stats("filtered")
-    except Exception as exc:  # noqa: BLE001 — a panel state, never a 500
-        sj["filtered"] = {"available": False, "reason": str(exc)}
-    return jsonify(_stats_json_to_api(sj, source="csv" if missing else "stats_json"))
 
 
 # ── Set-aside CSVs ────────────────────────────────────────────────────────────
@@ -178,6 +37,26 @@ def api_csv_stats():
 # file nothing writes. This map holds only the display copy, keyed by filename; a
 # destination with no entry still gets a tab, under a title derived from its filename.
 _SET_ASIDE_COPY: dict[str, dict] = {
+    "keyed_link_disputed.csv": {
+        "title": "Keyed Link Disputed",
+        "why": "An LLM accepted this original from the keyed candidate/reference list, and a "
+               "second, independent check — shown only the study's title/abstract, the quoted "
+               "evidence and the matched record, with no knowledge of the first answer — "
+               "confidently said it is not the target the paper named (issue #186). The link, "
+               "the outcome and BOTH readings are kept so a human can adjudicate.",
+        "action": "Read the two readings side by side. A confident disagreement is the one "
+                  "signal that catches the right list with the wrong entry picked from it, "
+                  "which DOI verification passes as 'verified'.",
+    },
+    "unidentified_original.csv": {
+        "title": "Unidentified Original",
+        "why": "The paper names an original and the link was KEPT — but the matched record "
+               "carries neither a DOI nor an OpenAlex id, typically because it came from a "
+               "garbled parsed reference. Without an identifier the pair cannot be keyed, so "
+               "it cannot enter validation however real the link is.",
+        "action": "Recoverable by better reference parsing or acquisition (#188); re-run with "
+                  "--redo-status unidentified_original once that improves.",
+    },
     "not_a_replication.csv": {
         "title": "Not a Replication",
         "why": "The full-text outcome pass answered record_type_check=neither — the text does not "
@@ -514,47 +393,3 @@ def api_dashboard_download():
 
 
 # ── Supabase endpoints ────────────────────────────────────────────────────────
-
-@dashboard_bp.route("/api/dashboard/supabase-stats")
-def api_supabase_stats():
-    """Validation KPIs from Supabase (cached 5 min)."""
-    return jsonify(supa.get_validation_stats())
-
-
-@dashboard_bp.route("/api/dashboard/supabase-outcomes")
-def api_supabase_outcomes():
-    """Outcome distribution from validated table."""
-    return jsonify(supa.get_validated_outcomes())
-
-
-@dashboard_bp.route("/api/dashboard/supabase-analytics")
-def api_supabase_analytics():
-    """Coverage, per-field validator agreement, and final-vs-pipeline changes."""
-    return jsonify(supa.get_validation_analytics())
-
-
-@dashboard_bp.route("/api/dashboard/supabase-corrections")
-def api_supabase_corrections():
-    """Per-field correction frequency (type / original / outcome)."""
-    return jsonify(supa.get_correction_frequency())
-
-
-@dashboard_bp.route("/api/dashboard/supabase-confusion")
-def api_supabase_confusion():
-    """Pipeline-coded vs human-final confusion matrices (outcome, type) — #72."""
-    return jsonify(supa.get_confusion_matrices())
-
-
-@dashboard_bp.route("/api/dashboard/supabase-drilldown")
-def api_supabase_drilldown():
-    """Paginated table of DOIs where at least one field was corrected.
-
-    Query params:
-      page           — 1-based page (default 1)
-      outcome_filter — "all" or a specific outcome value (default "all")
-      check_filter   — "all" | "type" | "original" | "outcome" (default "all")
-    """
-    page = max(1, int(request.args.get("page", 1)))
-    outcome_filter = request.args.get("outcome_filter", "all")
-    check_filter = request.args.get("check_filter", "all")
-    return jsonify(supa.get_drilldown_page(page, outcome_filter, check_filter))
