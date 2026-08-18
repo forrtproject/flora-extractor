@@ -25,8 +25,15 @@ def create_app(test_config: dict | None = None) -> Flask:
     # extraction spend) is parked on the wip/batch-blueprint branch.
     from validate.routes.dashboard import dashboard_bp
     from validate.routes.check import check_bp
-    app.register_blueprint(dashboard_bp)
-    app.register_blueprint(check_bp)
+    from validate.routes.api_concerns import concerns_bp
+    from validate.routes.api_flow import flow_bp
+    from validate.routes.api_analysis import analysis_bp
+    from validate.routes.api_validation import validation_bp
+    from validate.routes.api_docs import docs_bp
+    from validate.routes.docs import docs_page_bp
+    for blueprint in (dashboard_bp, check_bp, concerns_bp, flow_bp,
+                      analysis_bp, validation_bp, docs_bp, docs_page_bp):
+        app.register_blueprint(blueprint)
 
     @app.route("/pdf/<path:filename>")
     def serve_pdf(filename: str):

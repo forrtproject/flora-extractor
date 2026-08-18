@@ -87,6 +87,9 @@
 }
 .ms-panel label:hover { background:var(--surface-2); }
 .ms-panel label input[type=checkbox] { accent-color:var(--accent); }
+.flagbox { display:inline-flex; align-items:center; gap:5px; font-size:12.5px;
+           color:var(--text); cursor:pointer; margin-right:10px; }
+.flagbox input { accent-color:var(--accent); cursor:pointer; }
 .ms-clear { font-size:10px; color:var(--text-faint); padding:2px 6px; cursor:pointer; border:none; background:none; width:100%; text-align:left; }
 .ms-clear:hover { color:var(--accent); }
 
@@ -253,16 +256,9 @@
         <button type="button" class="ms-trigger" data-ms="outcome">Any</button>
         <div class="ms-panel" data-ms-panel="outcome">
           <button type="button" class="ms-clear" onclick="clearMs('outcome')">Clear</button>
-          <label><input type="checkbox" data-ms-val="outcome" value="success"> Success</label>
-          <label><input type="checkbox" data-ms-val="outcome" value="failure"> Failure</label>
-          <label><input type="checkbox" data-ms-val="outcome" value="mixed"> Mixed</label>
-          <label><input type="checkbox" data-ms-val="outcome" value="descriptive"> Descriptive</label>
-          <label><input type="checkbox" data-ms-val="outcome" value="statistically_successful_but_flawed"> Statistically successful but flawed</label>
-          <label><input type="checkbox" data-ms-val="outcome" value="uninformative"> Uninformative</label>
-          <label><input type="checkbox" data-ms-val="outcome" value="cannot_be_determined"> Cannot be determined</label>
-          <label><input type="checkbox" data-ms-val="outcome" value="not_a_replication"> Not a replication</label>
-          <label><input type="checkbox" data-ms-val="outcome" value="pending"> Pending</label>
-          <label><input type="checkbox" data-ms-val="outcome" value="api_error"> API error</label>
+          {% for value, label in outcome_options %}
+          <label><input type="checkbox" data-ms-val="outcome" value="{{ value }}"> {{ label }}</label>
+          {% endfor %}
         </div>
       </div>
 
@@ -295,6 +291,16 @@
 
       <!-- DOI verified -->
       <div class="ms-group">
+        <span class="ms-label-txt">Link confidence</span>
+        <button type="button" class="ms-trigger" data-ms="link_confidence">Any</button>
+        <div class="ms-panel" data-ms-panel="link_confidence">
+          <button type="button" class="ms-clear" onclick="clearMs('link_confidence')">Clear</button>
+          {% for value, label in confidence_options %}
+          <label><input type="checkbox" data-ms-val="link_confidence" value="{{ value }}"> {{ label }}</label>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="ms-group">
         <span class="ms-label-txt">DOI verified</span>
         <button type="button" class="ms-trigger" data-ms="doi_verified">Any</button>
         <div class="ms-panel" data-ms-panel="doi_verified">
@@ -311,6 +317,11 @@
       </div>
 
       <!-- Source -->
+      <div class="ms-group">
+        <span class="ms-label-txt">Missing</span>
+        <label class="flagbox"><input type="checkbox" id="flagNoDoi"> No DOI</label>
+        <label class="flagbox"><input type="checkbox" id="flagNoAbstract"> No abstract</label>
+      </div>
       <div class="ms-group">
         <span class="ms-label-txt">Source</span>
         <button type="button" class="ms-trigger" data-ms="source">Any</button>
@@ -444,7 +455,7 @@ document.querySelectorAll('.ms-panel').forEach(function(p){
   p.addEventListener('click', function(e){ e.stopPropagation(); });
 });
 
-['outcome','link_method','match_type','doi_verified','source'].forEach(initMs);
+['outcome','link_method','match_type','doi_verified','source','link_confidence'].forEach(initMs);
 
 function updateMsTrigger(name) {
   var isType  = name === 'type';
@@ -482,9 +493,12 @@ function buildQuery(page) {
   if (yf) params.set('year_from', yf);
   if (yt) params.set('year_to',   yt);
 
-  ['type','outcome','link_method','match_type','doi_verified','source'].forEach(function(n){
+  ['type','outcome','link_method','match_type','doi_verified','source','link_confidence'].forEach(function(n){
     getMsValues(n).forEach(function(v){ params.append(n, v); });
   });
+
+  if (document.getElementById('flagNoDoi').checked) params.set('no_doi', '1');
+  if (document.getElementById('flagNoAbstract').checked) params.set('no_abstract', '1');
 
   var q = document.getElementById('searchQ').value.trim();
   if (q) params.set('q', q);
@@ -705,9 +719,11 @@ function resetFilters() {
   document.getElementById('yearFrom').value = '';
   document.getElementById('yearTo').value   = '';
   document.getElementById('searchQ').value  = '';
-  ['type','outcome','link_method','match_type','doi_verified','source'].forEach(function(n) {
+  ['type','outcome','link_method','match_type','doi_verified','source','link_confidence'].forEach(function(n) {
     clearMs(n);
   });
+  document.getElementById('flagNoDoi').checked = false;
+  document.getElementById('flagNoAbstract').checked = false;
   search(1);
 }
 
@@ -719,7 +735,55 @@ function updateDownloadLink() {
   document.getElementById('downloadBtn').href = '/api/check/download?' + params.toString();
 }
 
+// ── Filters from the URL ──────────────────────────────────────────────────────
+// The dashboard links here rather than showing rows inline: every count on it is a
+// filter over this same table, and this page already has the row detail. It also
+// makes a Check view shareable — the URL now carries the filter.
+function applyUrlFilters() {
+  var url = new URLSearchParams(window.location.search);
+  if (![...url.keys()].length) return false;
+
+  ['type','outcome','link_method','match_type','doi_verified','source',
+   'link_confidence'].forEach(function(name) {
+    var wanted = url.getAll(name);
+    if (!wanted.length) return;
+    document.querySelectorAll('input[data-ms-val="' + name + '"]').forEach(function(cb) {
+      if (wanted.indexOf(cb.value) !== -1) cb.checked = true;
+    });
+    updateMsTrigger(name);
+  });
+
+  [['year_from','yearFrom'], ['year_to','yearTo'], ['q','searchQ']].forEach(function(pair) {
+    var v = url.get(pair[0]);
+    if (v) document.getElementById(pair[1]).value = v;
+  });
+
+  [['no_doi','flagNoDoi'], ['no_abstract','flagNoAbstract']].forEach(function(pair) {
+    if (url.get(pair[0]) === '1') document.getElementById(pair[1]).checked = true;
+  });
+
+  // A value the vocabulary does not offer would silently filter to nothing, so it
+  // is said out loud rather than returning an empty table that looks like a finding.
+  var missed = [];
+  ['outcome','link_method','doi_verified','type','link_confidence'].forEach(function(name) {
+    url.getAll(name).forEach(function(v) {
+      if (!document.querySelector('input[data-ms-val="' + name + '"][value="' + v + '"]')) {
+        missed.push(name + '=' + v);
+      }
+    });
+  });
+  if (missed.length) {
+    var bar = document.createElement('p');
+    bar.style.cssText = 'margin:8px 0;font-size:12.5px;color:var(--text-muted)';
+    bar.textContent = 'No filter matches ' + missed.join(', ')
+      + ' — showing the unfiltered table instead.';
+    document.querySelector('.check-filters, form, body').prepend(bar);
+  }
+  return true;
+}
+
 // ── Auto-search on load ───────────────────────────────────────────────────────
+applyUrlFilters();
 search(1);
 </script>
 {% endblock %}

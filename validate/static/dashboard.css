@@ -1,0 +1,307 @@
+/* dashboard.css — Operate surface.
+   Colours come from style.css's tokens so the light/dark toggle keeps working.
+
+   The rule this file is built on: ONE thing reads first on each band. Panels carry
+   the structure, not a uniform grid of equal cards — equal cards were the previous
+   version's failure, because nothing told the eye where to start. */
+:root {
+  /* style.css's --text-faint is 2.56:1 on --surface: a hairline beside a big number,
+     under the 4.5:1 floor for label text. These carry the small text. */
+  --dash-faint: #5b6674;
+  /* --text-muted is 4.41:1 on --bg — fine on a white card, just under the floor on
+     the page ground, which is where the notes and sub-labels sit. */
+  --dash-muted: #545c69;
+  --fill:       rgba(37, 99, 235, .13);   /* proportion bars */
+  --tint:       37, 99, 235;              /* matrix intensity, as r,g,b */
+  --diag-ok:    #dcefe3;
+  --diag-bad:   #fbe4e1;
+  --sev-high:   #b3261e;
+  --sev-medium: #8a5c11;
+  --absent:     #6a707c;
+}
+[data-theme="dark"] {
+  --dash-faint: #93a1b3;
+  --dash-muted: #aab6c6;
+  --fill:       rgba(96, 150, 255, .17);
+  --tint:       120, 165, 255;
+  --diag-ok:    #1c3a2b;
+  --diag-bad:   #43231f;
+  --sev-high:   #f2857c;
+  --sev-medium: #e0b155;
+  --absent:     #97a1b0;
+}
+
+.dash { max-width: 1240px; margin: 0 auto; padding: 22px 26px 80px; }
+.dash ::selection { background: var(--accent-ring); color: var(--text); }
+
+/* ── page head ────────────────────────────────────────────────────────────── */
+.dash-head { display: flex; align-items: center; gap: 12px; margin-bottom: 26px; }
+.dash-head h1 {
+  font-size: 21px; font-weight: 700; letter-spacing: -.015em; margin: 0;
+  color: var(--text);
+}
+.dash-head .spacer { flex: 1; }
+.badge {
+  font: 11.5px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 2px 10px; border-radius: 999px;
+  border: 1px solid var(--border-2); color: var(--dash-faint);
+}
+.ghost {
+  font-size: 12.5px; padding: 5px 12px; cursor: pointer; border-radius: 6px;
+  background: var(--surface); color: var(--text); border: 1px solid var(--border-2);
+}
+.ghost:hover { border-color: var(--accent); color: var(--accent); }
+.dash :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ── bands ────────────────────────────────────────────────────────────────── */
+.band { margin: 0 0 44px; }
+.band > h2 {
+  font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .09em;
+  color: var(--dash-faint); margin: 0 0 3px;
+}
+.band > h3 {
+  font-size: 13px; font-weight: 650; color: var(--text); margin: 30px 0 8px;
+}
+.band-note {
+  font-size: 12.5px; line-height: 1.55; color: var(--dash-muted);
+  margin: 0 0 16px; max-width: 76ch;
+}
+
+/* Panels do the grouping. A panel is a titled box with internal structure; it is
+   NOT the same shape as a stat, which is why the two never sit in one grid. */
+.grid { display: grid; gap: 14px; grid-template-columns: repeat(12, 1fr); }
+.panel {
+  grid-column: span 6; min-width: 0;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 9px; padding: 14px 16px 15px;
+}
+.panel.full { grid-column: span 12; }
+.panel.third { grid-column: span 4; }
+.panel.quarter { grid-column: span 3; }
+.panel.fifths  { grid-column: span 5; }
+.panel.sevenths { grid-column: span 7; }
+.panel > h4 {
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em;
+  color: var(--dash-faint); margin: 0 0 10px;
+}
+.panel .hint {
+  font-size: 12px; line-height: 1.55; color: var(--text-muted); margin: -4px 0 10px;
+}
+
+/* ── the funnel: a sequence, so it is drawn as one ────────────────────────── */
+.funnel {
+  display: flex; flex-wrap: wrap; align-items: stretch; gap: 0;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 9px; overflow: hidden;
+}
+.step { flex: 1 1 168px; padding: 13px 16px; min-width: 0; position: relative; }
+.step + .step { border-left: 1px solid var(--border); }
+.step .k {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--dash-faint); margin-bottom: 5px;
+}
+.step .v {
+  font-size: 27px; font-weight: 700; line-height: 1.05; color: var(--text);
+  font-variant-numeric: tabular-nums; letter-spacing: -.02em;
+}
+.step .v.absent { font-size: 14px; font-weight: 600; color: var(--absent); }
+.step .sub { font-size: 11px; color: var(--dash-faint); margin-top: 5px; line-height: 1.45; }
+.step .sub.warn { color: var(--sev-medium); }
+
+/* ── stat strip: a few headline numbers, deliberately not cards ───────────── */
+.stats { display: flex; flex-wrap: wrap; gap: 26px 40px; margin-bottom: 16px; }
+.stat { min-width: 108px; }
+.stat .k {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--dash-faint); margin-bottom: 3px;
+}
+.stat .v {
+  font-size: 25px; font-weight: 700; color: var(--text);
+  font-variant-numeric: tabular-nums; letter-spacing: -.02em; line-height: 1.1;
+}
+.stat .sub {
+  font-size: 11.5px; line-height: 1.5; color: var(--dash-muted);
+  margin-top: 4px; max-width: 34ch;
+}
+
+/* ── distribution rows ────────────────────────────────────────────────────── */
+/* The proportion is the row's own background, filled from the left. The previous
+   version drew a 2px rule under the label, which read as an underlined link. */
+.dist { display: block; }
+.dist .r {
+  display: grid; grid-template-columns: 1fr auto auto; gap: 10px;
+  align-items: baseline; padding: 5px 8px; border-radius: 5px;
+  font-size: 13px; color: var(--text); position: relative;
+  background-image: linear-gradient(to right, var(--fill) var(--p, 0%),
+                                    transparent var(--p, 0%));
+  background-repeat: no-repeat;
+}
+.dist .r + .r { margin-top: 1px; }
+.dist .r > span { min-width: 0; overflow-wrap: anywhere; }
+.dist .r b { font-variant-numeric: tabular-nums; font-weight: 650; }
+.dist .r em {
+  font-style: normal; font-size: 11.5px; color: var(--dash-faint);
+  font-variant-numeric: tabular-nums; min-width: 42px; text-align: right;
+}
+.dist .r.sub > span { padding-left: 14px; color: var(--text-muted); }
+button.r {
+  width: 100%; text-align: left; border: 0; font: inherit; cursor: pointer;
+  font-size: 13px;
+}
+button.r:hover { background-color: var(--row-hover); }
+button.r:hover > span { color: var(--accent); }
+
+/* ── donut ────────────────────────────────────────────────────────────────── */
+.chartwrap { display: flex; gap: 22px; align-items: center; flex-wrap: wrap; }
+.donut { width: 132px; height: 132px; flex: none; }
+.donut-n {
+  text-anchor: middle; font-size: 19px; font-weight: 700; fill: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.donut-l { text-anchor: middle; font-size: 8.5px; fill: var(--dash-faint); }
+.legend { flex: 1 1 240px; min-width: 0; }
+.legend .r { grid-template-columns: 11px 1fr auto auto; }
+.legend i { width: 9px; height: 9px; border-radius: 2px; align-self: center; }
+
+/* ── matrices ─────────────────────────────────────────────────────────────── */
+.mscroll { overflow-x: auto; margin: 0 -4px; padding: 0 4px; }
+table.mx { border-collapse: collapse; font-size: 12.5px; width: 100%; }
+table.mx th {
+  font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--dash-faint); padding: 5px 7px; text-align: right;
+  border-bottom: 1px solid var(--border-2); vertical-align: bottom;
+  white-space: normal; overflow-wrap: normal; word-break: normal; hyphens: none;
+  min-width: 62px;
+}
+table.mx thead th:first-child { text-align: left; max-width: none; }
+table.mx tbody th {
+  text-transform: none; letter-spacing: 0; font-size: 12px; color: var(--text);
+  text-align: left; font-weight: 500;
+  /* nowrap here forced `computationally reproducible` to one long line and pushed
+     the grid past its panel; the <wbr> joints let it wrap instead. */
+  white-space: normal; overflow-wrap: normal; word-break: normal; max-width: 190px;
+  border-bottom: 1px solid var(--border); border-right: 1px solid var(--border-2);
+  padding-right: 12px;
+}
+table.mx td {
+  padding: 5px 7px; text-align: right; font-variant-numeric: tabular-nums;
+  border-bottom: 1px solid var(--border); color: var(--text);
+}
+table.mx td.z { color: var(--text-faint); }
+table.mx td.ok { background: var(--diag-ok); font-weight: 700; }
+table.mx td.bad { background: var(--diag-bad); }
+table.mx td.heat { background: rgba(var(--tint), calc(var(--w) * .3)); }
+table.mx td.sum {
+  color: var(--dash-faint); border-left: 1px solid var(--border-2);
+  font-variant-numeric: tabular-nums;
+}
+table.mx.rows td { text-align: left; max-width: 300px; overflow-wrap: anywhere; }
+.mxkey { font-size: 11px; color: var(--dash-faint); margin-top: 8px; }
+
+/* ── set-aside ────────────────────────────────────────────────────────────── */
+.sets {
+  display: grid; gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(268px, 1fr));
+}
+.sets .setcard[open] { grid-column: 1 / -1; }   /* expanded copy gets the full width */
+.setcard {
+  border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
+  overflow: hidden;
+}
+.setcard > summary {
+  cursor: pointer; list-style: none; display: grid;
+  grid-template-columns: 1fr auto; gap: 4px 12px; padding: 11px 14px;
+  align-items: baseline;
+}
+.setcard > summary::-webkit-details-marker { display: none; }
+.setcard > summary:hover { background: var(--surface-2); }
+.setcard .setname { font-size: 13.5px; font-weight: 650; color: var(--text); }
+.setcard .setfile {
+  grid-column: 1; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--dash-faint);
+}
+.setcard > summary b {
+  grid-row: span 2; align-self: center; font-size: 19px;
+  font-variant-numeric: tabular-nums; color: var(--text);
+}
+.setcard.empty > summary b { color: var(--absent); font-weight: 500; font-size: 15px; }
+.setbody {
+  padding: 0 14px 13px; border-top: 1px solid var(--border); margin-top: 2px;
+}
+.setbody p {
+  font-size: 12.5px; line-height: 1.62; color: var(--text-muted); margin: 10px 0 0;
+  max-width: 84ch;
+}
+.setbody code {
+  font: 11.5px ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 4px; padding: 1px 5px; color: var(--text);
+}
+
+/* ── concerns ─────────────────────────────────────────────────────────────── */
+.concerns { list-style: none; padding: 0; margin: 0; }
+.concern {
+  display: grid; grid-template-columns: 62px 1fr; gap: 3px 14px;
+  align-items: baseline; padding: 13px 2px; border-top: 1px solid var(--border);
+}
+.concern:first-child { border-top: 0; }
+.concern .count {
+  font-size: 21px; font-weight: 700; text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.concern .label { font-size: 14px; color: var(--text); font-weight: 550; }
+.concern.high   .count { color: var(--sev-high); }
+.concern.medium .count { color: var(--sev-medium); }
+.concern.low    .count { color: var(--text-muted); }
+.concern .note {
+  grid-column: 2; font-size: 12.5px; line-height: 1.6; color: var(--dash-muted);
+  max-width: 88ch;
+}
+.concern code {
+  grid-column: 2; display: block; margin-top: 6px; padding: 6px 9px;
+  font: 11.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 5px; color: var(--text); overflow-x: auto;
+}
+
+/* ── provenance and absence ───────────────────────────────────────────────── */
+/* Absence is informative, not alarming: it is the normal state of a checkout that
+   has not routed yet, so it is grey, quiet, and carries its command. */
+.prov {
+  font: 10.5px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--dash-faint); margin-top: 9px; overflow-wrap: anywhere;
+}
+.prov.absent { color: var(--absent); }
+.prov code { color: var(--text); }
+
+.drill-panel {
+  background: var(--surface); border: 1px solid var(--border-2);
+  border-radius: 9px; padding: 14px 16px; box-shadow: var(--shadow-md);
+  margin-bottom: 44px;
+}
+.drill-head {
+  display: flex; align-items: center; gap: 12px; font-size: 13px;
+  color: var(--text); margin-bottom: 8px; flex-wrap: wrap;
+}
+.drill-head span { flex: 1; color: var(--text-muted); }
+.drill-head code {
+  font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--accent);
+}
+.loading { font-size: 12.5px; color: var(--dash-faint); }
+
+@media (max-width: 900px) {
+  .dash { padding: 16px 16px 64px; }
+  .panel, .panel.third, .panel.quarter,
+  .panel.fifths, .panel.sevenths { grid-column: span 12; }
+  .step + .step { border-left: 0; border-top: 1px solid var(--border); }
+}
+
+/* Distribution rows are links now; they must not read as body links. */
+a.r { text-decoration: none; color: var(--text); display: grid; }
+a.r:hover { background-color: var(--row-hover); }
+a.r:hover > span { color: var(--accent); }
+a.r:visited { color: var(--text); }
+
+.concern .label a { color: var(--text); text-decoration: none; }
+.concern .label a:hover { color: var(--accent); text-decoration: underline;
+                          text-underline-offset: 3px; }

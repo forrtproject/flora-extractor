@@ -1,0 +1,16 @@
+<section class="band" id="band-analysis">
+  <h2>Analysis</h2>
+  <p class="band-note">Read live from <code>data/extracted.csv</code> on every load, so
+     these are never stale. Any row with a value links into <strong>Check</strong>,
+     filtered to exactly those rows, where each one expands to its full record.</p>
+  <div class="stats" id="analysis-stats"></div>
+  <div class="grid" id="analysis"></div>
+
+  <h3>Token usage</h3>
+  <div class="grid" id="tokens"></div>
+
+  <h3>Validation</h3>
+  <p class="band-note">From the Supabase tables the separate validation app writes.</p>
+  <div class="stats" id="validation-stats"></div>
+  <div class="grid" id="validation"></div>
+</section>

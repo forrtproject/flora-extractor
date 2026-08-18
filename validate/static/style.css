@@ -189,3 +189,18 @@ textarea { resize: vertical; }
 
 .tab-panel { display: none; }
 .tab-panel.active { display: block; }
+
+/* Repository link, beside the theme toggle. Inherits the nav's own colours so it
+   reads as chrome rather than as page content. */
+.repo-link {
+  display: inline-flex; align-items: center; gap: 6px; margin-left: auto;
+  color: var(--nav-text); text-decoration: none; font-size: 12px; font-weight: 500;
+  padding: 5px 9px; border-radius: 6px; line-height: 1;
+}
+/* .theme-toggle also carries margin-left:auto; two auto margins would SPLIT the
+   free space and separate the pair. The repo link (first in the DOM) takes it, and
+   the toggle's is neutralised so the two sit together at the right. */
+.repo-link + .theme-toggle { margin-left: 0; }
+.repo-link:hover { color: #fff; background: var(--nav-hover); }
+.repo-link:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.repo-link svg { display: block; }

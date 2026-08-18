@@ -85,6 +85,7 @@ def _apply_filters(chunk: pd.DataFrame, stage: str, params: dict) -> pd.DataFram
         ("link_method",         link_methods),
         ("original_match_type", match_types),
         ("doi_o_verification",  doi_verified),
+        ("link_confidence",     params.get("link_confidences", [])),
         ("source",              sources),
     ]:
         if vals and col in chunk.columns:
@@ -105,8 +106,15 @@ def _read_one_stage(stage: str, params: dict) -> pd.DataFrame:
     if not path.exists():
         return pd.DataFrame()
 
+    # The Parquet mirror is a read cache for the CSV, so it may only serve while it is
+    # at least as new as the file it mirrors. Without this test it was served whenever
+    # it existed: on 2026-08-18 the mirror was 26 days old and held 1,881 rows against
+    # the CSV's 3,147, in the SUPERSEDED outcome vocabulary ("success"/"failure" rather
+    # than "successful"/"failed"). Every Check result was that stale set, and nothing
+    # said so. Refresh it with
+    # `python -c "from shared.dashboard_cache import refresh; refresh('extracted')"`.
     pq_path = DASHBOARD_DIR / f"{stage}.parquet"
-    if pq_path.exists():
+    if pq_path.exists() and pq_path.stat().st_mtime >= path.stat().st_mtime:
         try:
             df = pq.read_table(pq_path).to_pandas().fillna("")
             return _apply_filters(df, stage, params)
@@ -158,6 +166,7 @@ def _extract_params() -> dict:
         "link_methods":      _get_list("link_method"),
         "match_types":       _get_list("match_type"),
         "doi_verified_vals": _get_list("doi_verified"),
+        "link_confidences":  _get_list("link_confidence"),
         "sources":           _get_list("source"),
         "q":                 request.args.get("q", "").strip().lower(),
         "no_doi":            request.args.get("no_doi", "") == "1",
@@ -174,7 +183,27 @@ def _get_stages() -> list[str]:
 
 @check_bp.route("/check")
 def check_page():
-    return render_template("check.html", active_page="check")
+    """The Check page, with its outcome options read from the schema.
+
+    They used to be a hardcoded list, and six of its ten values matched no row:
+    it offered `success` and `failure` where the pipeline writes `successful` and
+    `failed`, so the two largest categories — 1,178 and 652 rows — filtered to
+    nothing. Rendering the closed vocabulary instead means a value cannot drift
+    out of the filter without moving in `shared/schema.py` first.
+    """
+    from shared.schema import OUTCOME_CATEGORIES, OUTCOME_VALUES
+
+    def _label(value: str) -> str:
+        return value.replace("_", " ").capitalize()
+
+    # Replication verdicts first (the common case), then the joined reproduction
+    # axes, which are numerous and read as a group.
+    replication = sorted(OUTCOME_CATEGORIES)
+    reproduction = sorted(set(OUTCOME_VALUES) - set(OUTCOME_CATEGORIES))
+    return render_template(
+        "check.html", active_page="check",
+        outcome_options=[(v, _label(v)) for v in replication + reproduction],
+        confidence_options=[("high", "High"), ("medium", "Medium"), ("low", "Low")])
 
 
 @check_bp.route("/api/check/search")
