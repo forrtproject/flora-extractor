@@ -1,16 +1,27 @@
 """The engine's single input path: pool batches with the text overlay applied.
 
-The pool's own `abstract_text` is primary evidence — it is what the snapshot
-actually shipped. An overlay is recovered text from somewhere else, so it FILLS
-and never replaces: a row whose pool text is non-empty comes back untouched even
-when the overlay holds a different string for it. That asymmetry is the whole
-contract; a coalesce in the other direction would let a backfill source quietly
-rewrite the corpus the scan was measured on.
+An overlay row REPLACES the pool's own `abstract_text`, empty or not. Every
+overlay row was written deliberately by a backfill this project ran, and the rows
+that need replacing rather than filling are exactly the boilerplate abstracts
+("International audience", bare keyword lists) that a fill-only overlay would
+leave sitting in front of the screen's voters. `overlay_hash` is a routing
+release input either way, so the text a release routed under is named whichever
+side supplied it.
+
+This is the opposite of the fill-only rule this docstring described until
+2026-09-01. `_apply_overlay` had already stopped obeying that rule — the code and
+its own comment are the behaviour; this paragraph was simply stale.
+
+Nor is the overlay confined to no-text rows. `overlay.worklist()` takes every
+routed row whose `pending_reason` is `no_text` PLUS every ADMITTED row that
+identifies an OSF record, text or no text: the OSF phase fetches the registration
+template line the `osf-registration-*` specs match on, and no abstract
+substitutes for it. OSF is therefore the bulk of a real overlay.
 
 The overlay is loaded once, as a `work_id -> text` dict, and applied per batch.
-Overlays are small relative to the pool by construction (only no-text rows are
-ever backfilled), so the dict is a few hundred MB at worst against 5.1M pool
-rows; joining a 5.1M-row table per 50k-row batch is what this avoids.
+It stays small relative to the pool — only backfilled rows are ever in it — so
+the dict is a few hundred MB at worst against 5.1M pool rows; joining a
+5.1M-row table per 50k-row batch is what this avoids.
 """
 
 from pathlib import Path
@@ -32,7 +43,7 @@ def iter_pool_batches(pool_dir: Path, overlay_dir: Optional[Path] = None,
                       batch_size: int = 50_000,
                       aliases: Optional[dict[int, int]] = None,
                       ) -> Iterator[pa.RecordBatch]:
-    """Every pool batch under *pool_dir*, overlay text coalesced over empty cells.
+    """Every pool batch under *pool_dir*, overlay text applied over the pool's own.
 
     With no *overlay_dir* this is exactly `pq.ParquetFile(...).iter_batches()` —
     the same stream `build_routing()` reads on its own — so the overlay is an

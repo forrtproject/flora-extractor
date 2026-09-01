@@ -174,7 +174,7 @@ def api_ladder():
     """Stage 3's resolution ladder: its version, its revisions, and what counts resolved.
 
     The numbered revisions are the comment block `EXTRACT_LADDER_VERSION` sits under —
-    the running record of why each rung behaves the way it does.
+    the running record of why each step behaves the way it does.
     """
     from extract.link_original import EXTRACT_LADDER_VERSION
     from shared.schema import RESOLVED_LINK_METHODS

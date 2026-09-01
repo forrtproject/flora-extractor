@@ -157,7 +157,7 @@ async function renderLadder() {
         <tbody>${d.resolved_link_methods.map((m) =>
           `<tr><td class="mono">${esc(m)}</td></tr>`).join("")}</tbody>
       </table></div>
-      <h3>Why each rung behaves the way it does</h3>
+      <h3>Why each step behaves the way it does</h3>
       <p>The running record kept beside the ladder version, newest first.</p>
       <ol class="ladder">${d.revisions.map((r) => `
         <li><span class="n">${r.n}</span><p>${esc(r.text)}</p></li>`).join("")}

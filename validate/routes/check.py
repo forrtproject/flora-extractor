@@ -25,16 +25,35 @@ from shared.dashboard_cache import DASHBOARD_DIR
 
 check_bp = Blueprint("check", __name__)
 
-_STAGES = {
+_MAIN_STAGES = {
     "extracted":      DATA_DIR / "extracted.csv",
     "extracted-test": DATA_DIR / "extracted-test.csv",
 }
 
-# Which column holds the "type/status" filter for each stage
-_TYPE_COL = {
-    "extracted":      "type",
-    "extracted-test": "type",
-}
+
+def _set_aside_stages() -> dict:
+    """Every set-aside CSV as its own Check stage, keyed by its filename stem.
+
+    The rows the export files away are NOT in `extracted.csv` — that is what setting
+    them aside means — so before this they were countable on the dashboard and
+    unreadable anywhere. They carry the same columns, so the whole Check surface works
+    over them unchanged, and the dashboard's cards can link straight in.
+
+    Built from `SET_ASIDE_DESTINATIONS`, the one place a destination is named, so a
+    file the export learns to write cannot go missing here.
+    """
+    from shared.schema import SET_ASIDE_DESTINATIONS
+
+    return {filename[:-4]: DATA_DIR / filename
+            for filename in sorted(set(SET_ASIDE_DESTINATIONS.values()))}
+
+
+SET_ASIDE_STAGES = _set_aside_stages()
+_STAGES = {**_MAIN_STAGES, **SET_ASIDE_STAGES}
+
+# Which column holds the "type/status" filter for each stage. Every stage here is
+# rendered from EXTRACTED_COLS, so they all answer to the same column.
+_TYPE_COL = {name: "type" for name in _STAGES}
 
 
 def _to_year_int(y: str) -> Optional[int]:
@@ -200,9 +219,27 @@ def check_page():
     # axes, which are numerous and read as a group.
     replication = sorted(OUTCOME_CATEGORIES)
     reproduction = sorted(set(OUTCOME_VALUES) - set(OUTCOME_CATEGORIES))
+    # The link-method list was hardcoded and had drifted badly: it offered
+    # `author_year_match`, which the pipeline has not written in any current row, and
+    # omitted `llm_references`, `llm_title_search` and `llm_author_year_search` —
+    # together 92% of the shipped rows. Rendering the closed vocabulary means a method
+    # cannot drift out of the filter without moving in `shared/schema.py` first.
+    from shared.schema import LINK_METHOD_VALUES, RESOLVED_LINK_METHODS
+
+    resolved = sorted(RESOLVED_LINK_METHODS)
+    other = sorted(set(LINK_METHOD_VALUES) - RESOLVED_LINK_METHODS)
+
+    stage_options = [(k, _label(k), _STAGES[k].exists()) for k in _MAIN_STAGES]
+    aside_options = [(k, _label(k), _STAGES[k].exists()) for k in SET_ASIDE_STAGES]
+
     return render_template(
         "check.html", active_page="check",
         outcome_options=[(v, _label(v)) for v in replication + reproduction],
+        link_method_options=[(v, _label(v), True) for v in resolved]
+                            + [(v, _label(v), False) for v in other],
+        match_type_options=[(v, _label(v)) for v in
+                            ("single_original", "multiple_original")],
+        stage_options=stage_options, aside_options=aside_options,
         confidence_options=[("high", "High"), ("medium", "Medium"), ("low", "Low")])
 
 
