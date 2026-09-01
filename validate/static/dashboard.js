@@ -65,7 +65,7 @@ function dist(counts, field) {
     const href = field && checkHref(field, k);
     return href
       ? `<a class="r drill" ${style} href="${href}"
-           title="Open these rows in Check">${inner}</a>`
+           title="Open these rows">${inner}</a>`
       : `<div class="r" ${style}>${inner}</div>`;
   }).join("") + `</div>`;
 }
@@ -90,7 +90,7 @@ function donut(counts, centreLabel, field) {
       <span>${esc(k)}</span><b>${num(v)}</b><em>${pct(v, total)}%</em>`;
     const href = field && checkHref(field, k);
     return href
-      ? `<a class="r drill" href="${href}" title="Open these rows in Check">${inner}</a>`
+      ? `<a class="r drill" href="${href}" title="Open these rows">${inner}</a>`
       : `<div class="r">${inner}</div>`;
   }).join("");
   return `<div class="chartwrap">
@@ -149,7 +149,10 @@ async function loadFlow() {
   const c = f.completeness || {};
   const gapRows = [];
   if ("no_text" in c) {
-    gapRows.push(["matched a screen rule, no abstract (no_text)", c.no_text, null]);
+    // Not a Check link: a no_text work has no row in any CSV — it never reached
+    // Stage 3. Stage 2 lists the routing rows themselves, which is all there is.
+    gapRows.push(["matched a screen rule, no abstract (no_text)", c.no_text,
+                  "/stage2#pending"]);
   }
   if ("blank_abstract_r" in c) {
     gapRows.push(["rendered rows with no abstract", c.blank_abstract_r,
@@ -161,7 +164,7 @@ async function loadFlow() {
   const gapsHtml = `<div class="dist">` + gapRows.map(([k, v, href]) => {
     const inner = `<span>${esc(k)}</span><b>${num(v)}</b><em></em>`;
     return href ? `<a class="r drill" href="${href}"
-        title="Open these rows in Check">${inner}</a>`
+        title="Open these rows">${inner}</a>`
       : `<div class="r">${inner}</div>`;
   }).join("") + `</div>`;
 
@@ -169,7 +172,7 @@ async function loadFlow() {
     width: c.by_pile ? "" : "full",
     hint: "no_text is recoverable coverage — those works would have been screened had "
         + "text existed. A blank abstract is the same gap further downstream: the "
-        + "screen and every abstract-stage rung read that field.",
+        + "screen and every abstract-stage step read that field.",
   });
   if (c.by_pile) html += panel("Routed piles", dist(c.by_pile));
   $("completeness").innerHTML = html;
@@ -179,7 +182,11 @@ async function loadFlow() {
   $("set-aside").innerHTML = sets.map(([file, s]) => `
     <details class="setcard${s.rows ? "" : " empty"}">
       <summary>
-        <span class="setname">${esc(s.title)}</span>
+        ${s.rows
+          ? `<a class="setname" href="/check?stage=${encodeURIComponent(
+               file.replace(/\.csv$/, ""))}"
+               title="Open these rows">${esc(s.title)}</a>`
+          : `<span class="setname">${esc(s.title)}</span>`}
         <b>${num(s.rows)}</b>
         <span class="setfile">${esc(file)}</span>
       </summary>

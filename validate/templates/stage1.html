@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block title %}FLoRA — Stage 1, discovery{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='docs.css') }}"/>
+<link rel="stylesheet" href="{{ url_for('static', filename='stage.css') }}"/>
+{% endblock %}
+
+{% block content %}
+<div class="docs">
+  <aside class="toc" aria-label="Contents">
+    <div class="toc-inner">
+      <p class="toc-title">Contents</p>
+      <ol>
+        <li><a href="#map">Where Stage 1 sits</a></li>
+        <li><a href="#what">What Stage 1 is</a></li>
+        <li><a href="#gate">The gate — what we search for</a></li>
+        <li><a href="#pool">The survivor pool</a></li>
+        <li><a href="#storage">Where it is stored</a></li>
+        <li><a href="#handoff">How Stage 2 reads it</a></li>
+        <li><a href="#commands">Running it</a></li>
+      </ol>
+      <p class="toc-foot">Gate and schema read from the running code; counts read
+      from the pool on this machine.<br><br>
+      Deeper: <a href="https://github.com/forrtproject/flora-extractor/blob/main/docs/code-flow/stage1-search.md"
+      target="_blank" rel="noopener">stage1-search.md</a> — the per-function walk
+      through the scan.</p>
+
+      <div class="toc-issues">
+        <p class="toc-title">Open issues</p>
+        <div id="issues-body" class="issues-loading">Asking GitHub…</div>
+      </div>
+    </div>
+  </aside>
+
+  <main class="doc-body">
+    <header class="doc-head">
+      <h1>Stage 1 — discovery</h1>
+      <p class="lede">One scan of the whole OpenAlex corpus, one keyword gate, one
+      artifact. Everything the rest of the pipeline will ever see is decided here —
+      a paper this stage drops can never be recovered by any later stage.</p>
+    </header>
+
+    <section id="map">
+      <h2>Where Stage 1 sits</h2>
+      <p>The whole pipeline, with the live count at each hand-off and the artifact it
+      is read from. Stage 1 is the highlighted band: it ends at the survivor pool, and
+      nothing downstream ever touches the snapshot again.</p>
+      <div id="map-body" class="loading">Reading the pool and the routing store…</div>
+    </section>
+
+    <section id="what">
+      <h2>What Stage 1 is</h2>
+      <p>OpenAlex publishes its whole corpus as column-projectable parquet on S3 —
+      about 725 GB. <code>search/snapshot_scan.py</code> streams every partition once,
+      applies a single vectorized gate, and writes the rows that pass into the
+      <strong>survivor pool</strong>. That scan takes 13–21 hours and is run once per
+      gate, not once per campaign.</p>
+      <div class="callout">
+        <p><strong>You almost never run this stage.</strong> The pool is shared
+        through a private Hugging Face dataset repo, so joining the project means
+        pulling a few GB rather than re-reading 725 GB. The scan is only re-run when
+        the gate itself changes.</p>
+      </div>
+      <p>Stage 1 <em>searches</em> and does not filter. It applies no exclusion
+      pattern, no phrase guard and no year cut — every exclusion decision belongs to
+      Stage 2's rule book, which reads the pool. That separation is deliberate: one
+      rule set, in one place, over a corpus that kept everything the search found.</p>
+      <p class="rule-of-law">Stage 1 is tuned for <strong>recall</strong>. Precision is
+      Stage 2's job.</p>
+    </section>
+
+    <section id="gate">
+      <h2>The gate — what we search for</h2>
+      <p>Two arms, unioned. A work that trips <em>either</em> is a survivor; nothing
+      else about it is judged here. Both are read live from
+      <code>filter/phrase_detection.py</code>, which is the one vocabulary Stage 1 and
+      Stage 2 share.</p>
+      <div id="gate-body" class="loading">Reading the vocabulary…</div>
+    </section>
+
+    <section id="pool">
+      <h2>The survivor pool</h2>
+      <p>What the gate kept, and what each row carries. The pool holds enough metadata
+      to rebuild a candidate row without ever re-opening the snapshot.</p>
+      <div id="pool-body" class="loading">Reading parquet footers…</div>
+      <h3>What a pool row holds</h3>
+      <p>The schema is <code>_POOL_SCHEMA</code> in <code>search/snapshot_scan.py</code>.
+      The three <code>hit_*</code> booleans are the gate's own record of <em>why</em>
+      each row was kept, which is what makes the per-arm counts above possible at all.</p>
+      <div id="schema-body" class="loading">Reading _POOL_SCHEMA…</div>
+    </section>
+
+    <section id="storage">
+      <h2>Where it is stored</h2>
+      <p>Three artifacts: the parquet dataset, the provenance sidecar that says what
+      the dataset <em>is</em>, and the text overlay that fills in abstracts the
+      snapshot did not ship.</p>
+      <div id="storage-body" class="loading">Reading the pool directory…</div>
+    </section>
+
+    <section id="handoff">
+      <h2>How Stage 2 reads it</h2>
+      <p>Stage 2 never re-reads the snapshot and never loads the pool into memory. It
+      streams it in batches through one function, with the overlay applied on the way
+      past.</p>
+      <div class="handoff-code">
+        <p class="frag-label">filter/engine/pool_reader.py</p>
+        <pre>iter_pool_batches(pool_dir, overlay_dir, batch_size=50_000, aliases)
+    → yields pyarrow RecordBatches, overlay text applied over the pool's own</pre>
+      </div>
+      <div class="callout">
+        <p><strong>An overlay row wins over the pool's own text</strong>, empty or not
+        (<code>_apply_overlay</code>). Every overlay row was written deliberately by a
+        backfill this project ran, and the rows that need <em>replacing</em> rather
+        than filling are exactly the boilerplate abstracts — "International audience",
+        bare keyword lists — that a fill-only overlay would leave sitting in front of
+        the screen's voters.</p>
+      </div>
+      <div class="callout">
+        <p><strong>The backfill worklist is not only the no-text rows.</strong>
+        <code>overlay.worklist()</code> takes every routed row whose
+        <code>pending_reason</code> is <code>no_text</code>, <em>plus</em> every
+        <em>admitted</em> row that identifies an OSF record — text or no text. The OSF
+        phase does not fetch an abstract; it fetches the registration template line the
+        two <code>osf-registration-*</code> specs match on, and no abstract substitutes
+        for it. That is why OSF dominates the overlay's source counts above.</p>
+      </div>
+      <h3>The pool is part of the release id</h3>
+      <p>A routing release is the sha256 of six inputs. Two of them are Stage 1's, so
+      a different pool or a different overlay mints a different release rather than
+      silently overwriting the old one's decisions.</p>
+      <div id="release-body" class="loading">Reading release.py…</div>
+    </section>
+
+    <section id="commands">
+      <h2>Running it</h2>
+      <p>In practice you run the first one and never the second.</p>
+      <div id="commands-body"></div>
+    </section>
+  </main>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='stage_common.js') }}" defer></script>
+<script src="{{ url_for('static', filename='stage1.js') }}" defer></script>
+{% endblock %}

@@ -20,6 +20,12 @@
   <span class="brand">FLoRA</span>
   <a href="{{ url_for('dashboard.dashboard_page') }}"
      class="{{ 'active' if active_page == 'dashboard' else '' }}">Dashboard</a>
+  <a href="{{ url_for('stage1_page.stage1_page') }}"
+     class="{{ 'active' if active_page == 'stage1' else '' }}">Stage 1</a>
+  <a href="{{ url_for('stage2_page.stage2_page') }}"
+     class="{{ 'active' if active_page == 'stage2' else '' }}">Stage 2</a>
+  <a href="{{ url_for('stage3_page.stage3_page') }}"
+     class="{{ 'active' if active_page == 'stage3' else '' }}">Stage 3</a>
   <a href="{{ url_for('check.check_page') }}"
      class="{{ 'active' if active_page == 'check' else '' }}">Check</a>
   <a href="{{ url_for('docs_page.docs_page') }}"

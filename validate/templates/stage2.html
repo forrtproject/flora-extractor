@@ -1,0 +1,286 @@
+{% extends "base.html" %}
+{% block title %}FLoRA — Stage 2, routing and screening{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='docs.css') }}"/>
+<link rel="stylesheet" href="{{ url_for('static', filename='stage.css') }}"/>
+{% endblock %}
+
+{% block content %}
+<div class="docs">
+  <aside class="toc" aria-label="Contents">
+    <div class="toc-inner">
+      <p class="toc-title">Contents</p>
+      <ol>
+        <li><a href="#map">Where Stage 2 sits</a></li>
+        <li><a href="#funnel">The 5 million, step by step</a></li>
+        <li><a href="#law">The one rule about rules</a></li>
+        <li><a href="#piles">The five piles</a></li>
+        <li><a href="#rulebook">The rule book</a></li>
+        <li><a href="#counts">Matched, won, outranked</a></li>
+        <li><a href="#pending">Why 89% is pending</a></li>
+        <li><a href="#domains">What a rule failed to govern</a></li>
+        <li><a href="#screen">The screen</a></li>
+        <li><a href="#prompts">What the screen actually sends</a></li>
+        <li><a href="#handoff">The hand-off to Stage 3</a></li>
+        <li><a href="#release">Release ids and re-runs</a></li>
+        <li><a href="#commands">Running it</a></li>
+      </ol>
+      <p class="toc-foot">Rules and piles read from the specs the engine loads; counts
+      read from this machine's routing store and the screen's verdict rows.<br><br>
+      Deeper: <a href="https://github.com/forrtproject/flora-extractor/blob/main/docs/filter-engine.md"
+      target="_blank" rel="noopener">filter-engine.md</a> and
+      <a href="https://github.com/forrtproject/flora-extractor/blob/main/filter/spec/CONVENTIONS.md"
+      target="_blank" rel="noopener">CONVENTIONS.md</a>.</p>
+
+      <div class="toc-issues">
+        <p class="toc-title">Open issues</p>
+        <div id="issues-body" class="issues-loading">Asking GitHub…</div>
+      </div>
+    </div>
+  </aside>
+
+  <main class="doc-body">
+    <header class="doc-head">
+      <h1>Stage 2 — routing and screening</h1>
+      <p class="lede">Five million keyword survivors go in; a few thousand papers worth
+      an LLM's full attention come out. This is the stage that decides what the project
+      spends money on, and it is built so that a cheap rule can never make that call
+      on its own.</p>
+    </header>
+
+    <section id="map">
+      <h2>Where Stage 2 sits</h2>
+      <p>The whole pipeline, with the live count at each hand-off. Stage 2 is the two
+      highlighted bands — it takes the survivor pool and produces the screened rows
+      Stage 3 reads.</p>
+      <div id="map-body" class="loading">Reading the routing store…</div>
+    </section>
+
+    <section id="funnel">
+      <h2>The 5 million, step by step</h2>
+      <p>Every row of the pool, followed to the point where it either stops or reaches
+      Stage 3. Each step names what removed the rows and what it cost.</p>
+      <div id="funnel-body" class="loading">Reading the routing store and the verdicts…</div>
+      <div class="callout">
+        <p><strong>Nothing here is deleted.</strong> A discarded work keeps its row in
+        the routing table with the rule that discarded it and the text that matched, so
+        any pile can be re-read, sampled and measured. "Discard" means "not sent to an
+        LLM", not "removed from the corpus".</p>
+      </div>
+    </section>
+
+    <section id="law">
+      <h2>The one rule about rules</h2>
+      <p class="rule-of-law">Rules may only <strong>route</strong> or
+      <strong>discard</strong>. Only an LLM screen may <strong>admit</strong>.</p>
+      <p>This is the constraint the whole stage is built around, and it is worth being
+      precise about what it means. A keyword rule can say "this is definitely not a
+      paper" and drop it. A keyword rule can say "this looks worth reading" and put it
+      in a queue. What a keyword rule can never do is say "this <em>is</em> a
+      replication" — that judgment costs two model calls, and it is the only judgment
+      that lets a row travel onward.</p>
+      <p>The bundle is therefore a <strong>whitelist</strong>: nothing is screened
+      unless a positive rule admits it to a screening pile, and nothing reaches Stage 3
+      unless the screen then votes it through.</p>
+    </section>
+
+    <section id="piles">
+      <h2>The five piles</h2>
+      <p>Every routed work lands in exactly one. The pile decides what the work costs
+      and what it can still become.</p>
+      <div id="piles-body" class="loading">Reading conventions.json…</div>
+    </section>
+
+    <section id="rulebook">
+      <h2>The rule book</h2>
+      <p>Declarative JSON in <code>filter/spec/</code>, evaluated with pyarrow compute
+      over the pool. Precedence resolves multi-match: <strong>higher wins</strong>, and
+      a work matching six rules is normal — the full set is kept, because overlap
+      between rules is what diagnostics measure.</p>
+      <p>Two columns below are the ones to read together. <strong>Matched</strong> is
+      how many works the rule's pattern hit. <strong>Won</strong> is how many it
+      actually claimed — the rest were taken by a higher-precedence rule. A rule with a
+      large gap is not broken; it is being outranked, which is usually the design.</p>
+      <div id="rulebook-body" class="loading">Reading filter/spec…</div>
+      <div class="callout">
+        <p><strong>Shadow rules are evaluated but never win.</strong> A
+        <code>shadow: true</code> spec is scored against every row and its matches are
+        recorded, so it can be measured on real data before it is trusted to move
+        anything. Promoting one is a one-line spec change — and the measurement that
+        justifies it is why the record exists.</p>
+      </div>
+    </section>
+
+    <section id="counts">
+      <h2>Matched, won, outranked</h2>
+      <p>A rule can match hundreds of thousands of works and claim far fewer. That gap
+      is not a rule failing to classify anything — it is the engine resolving overlap,
+      which it is supposed to do. The four counts in the table above are an exact
+      identity, so every missing row has a named cause:</p>
+      <div class="identity">
+        <b>matched</b><span class="op">=</span><b>won</b><span class="op">+</span>
+        <b>downgraded</b><span class="op">+</span><b>outranked</b>
+      </div>
+      <p>Each row of the pool is scored against <em>every</em> rule, and multi-match is
+      normal — that is why overlap can be measured at all. But a work lands in exactly
+      one pile, chosen by the <strong>highest-precedence non-shadow rule that matched
+      it</strong>. So a rule that matched a work has three possible fates for it:</p>
+      <div class="why">
+        <div class="whyrow c"><span class="wk">won</span>
+          <p>This rule was the highest-precedence match, so it chose the pile. These
+          are the rows the rule actually decided.</p></div>
+        <div class="whyrow a"><span class="wk">downgraded</span>
+          <p>This rule won the row and sent it to a screening pile — but the work had
+          no abstract, so the engine moved it to <code>pending/no_text</code> rather
+          than screen it blind. The rule's decision was overridden by the one policy
+          that outranks every rule.</p></div>
+        <div class="whyrow b"><span class="wk">outranked</span>
+          <p>Another rule with a higher precedence also matched this work and claimed
+          it first. Nothing went wrong: broad rules are <em>meant</em> to be outranked
+          by specific ones, which is what precedence numbers are for.</p></div>
+      </div>
+      <div class="worked" id="counts-body">Reading the routing store…</div>
+      <div class="callout">
+        <p><strong>A shadow rule shows no wins at all</strong> — it is evaluated against
+        every row and its matches are recorded, but it never claims one. Its
+        <b>Matched</b> is a forecast: what it <em>would</em> take if it were promoted.
+        That number is the measurement a promotion is argued from.</p>
+      </div>
+      <p>The one thing this table cannot tell you is whether a rule is
+      <em>right</em>. A rule that wins 355,211 rows into <code>discard</code> is
+      confidently deciding a third of a million works, and only sampling that pile
+      says whether it should have. That is what
+      <code>filter.engine diagnose</code> and the domain check below are for.</p>
+    </section>
+
+    <section id="pending">
+      <h2>Why 89% is pending</h2>
+      <p><code>pending</code> is the biggest pile by a wide margin, and it is
+      <em>not</em> a rejection. It is the engine saying nothing has judged these works
+      yet. There are exactly two reasons, both assigned by the engine and never by a
+      spec.</p>
+      <div id="pending-body" class="loading">Reading the routing store…</div>
+      <div class="callout">
+        <p><strong><code>no_text</code> is recoverable coverage, not a verdict.</strong>
+        A work whose abstract is empty has said nothing, and absence of evidence must
+        not convert into a proceed — so a screening pile is downgraded rather than
+        screened blind. Supply the text through the overlay and the work routes into
+        its screening pile on the next run.</p>
+      </div>
+      <p>The downgrade has one deliberate exemption. An OSF record's <em>title is its
+      description</em> — "Exact Replication of Rinck &amp; Becker (2007)" — and probing
+      OSF showed most of the missing text does not exist to be fetched: of 40 sampled,
+      22% had no description, no files, no wiki and no child components anywhere. Those
+      rows are sent to the screen on their titles, which the classify prompt is built to
+      handle. A row with no title either is still downgraded: there is nothing to read.</p>
+    </section>
+
+    <section id="domains">
+      <h2>What a rule failed to govern</h2>
+      <p>A rule can match thousands of works and still miss most of the population it
+      claims to be about. A spec may declare a <code>domain</code> — the rows it is
+      <em>about</em>, evaluated the same way as its match but changing no routing — so
+      the two can be compared after a route.</p>
+      <div id="domains-body" class="loading">Reading domain coverage…</div>
+      <div class="callout">
+        <p><strong>The third number is the one to read.</strong> Works inside the rule's
+        declared domain that the rule did <em>not</em> match, and that some other rule
+        sent to a paying pile. This measurement was written on 2026-08-08, after a
+        campaign paid for the failure it now names: an OSF discard matched 1,308 works
+        and looked healthy, while 878 registrations it should have governed were
+        admitted by a generic text rule instead — about 450 preregistrations each bought
+        a two-voter screen and a full Stage 3 extraction, and settled as
+        <code>cannot_be_determined</code>, because a preregistration reports no outcome.</p>
+      </div>
+    </section>
+
+    <section id="screen">
+      <h2>The screen</h2>
+      <p>The only step that may admit a paper. Two models read the title and abstract
+      and each answer a fixed schema; a gate turns the two votes into one decision.</p>
+      <div id="screen-body" class="loading">Reading the voter configuration…</div>
+      <h3>The gate</h3>
+      <p>Defined once, as <code>screen_gate()</code>. It is deliberately the most
+      conservative rule that still discards anything:</p>
+      <div id="gate-body" class="loading">Reading screen_gate…</div>
+      <h3>Claimed before it spends</h3>
+      <p>Screening runs as a claimed job: a machine claims a batch through the state
+      authority <em>before</em> the first voter is asked, so two machines can never pay
+      for the same paper. Without <code>--run</code> nothing is claimed, fetched or
+      spent — the runner prints the row count, the token-length distribution of the
+      abstracts it would send, and what that would cost.</p>
+      <p>Each raw response is written to disk <em>before</em> the verdict row that names
+      it, and a verdict is written per work, so an interrupted run re-claims only the
+      works that have no verdict yet.</p>
+      <h3>The cheap tier is dormant</h3>
+      <p>A second, discard-only tier exists over the <code>screen_cheap</code> pile. All
+      three <code>screen_cheap</code> specs are <code>shadow</code>, so no live row
+      reaches it. It may only discard, and only on two explicit noes — one keep, an
+      unrecognised label, an unreadable reply or a provider failure all pass the row
+      through unchanged. Its <code>proceed</code> never admits: it means "on to the
+      expensive screen".</p>
+      <div id="cheap-body" class="loading">Reading the cheap voters…</div>
+    </section>
+
+    <section id="prompts">
+      <h2>What the screen actually sends</h2>
+      <p>The exact text, read from <code>shared/prompts.py</code>. Click a prompt to
+      read it whole — the assembly and every fragment it splices, which together are
+      exactly what the version hash covers.</p>
+      <div id="prompts-body" class="loading">Reading shared/prompts.py…</div>
+    </section>
+
+    <section id="handoff">
+      <h2>The hand-off to Stage 3</h2>
+      <p>Stage 3 does not screen. It reads the screen's answer off the row it is handed,
+      which is why the verdict has to travel with the work rather than be recomputed.</p>
+      <div class="callout">
+        <p><strong>There is no hand-off file.</strong> Stage 3 builds its worklist
+        <em>in process</em>: the extract tier asks the state authority which works the
+        screen admitted, then rebuilds each row straight off the pool with
+        <code>iter_export_rows</code> + <code>screen_columns</code> — the same two
+        functions a CSV export would use. Writing a CSV and parsing it back would be a
+        third representation of the same thing, and a place for the two to drift.</p>
+      </div>
+      <div id="handoff-body" class="loading">Reading the hand-off contract…</div>
+      <div class="callout">
+        <p><strong>A row travels on a verdict, not on a routing decision.</strong> A
+        work the rules routed into a screening pile but no live expensive-screen run
+        ever decided is <em>not</em> exported. Routing says "this deserves an LLM's
+        attention"; only the validated pair says "this reaches Stage 3". A work whose
+        votes are still short of a gate decision reads as incomplete and belongs with
+        the unscreened — a half-screened row is exactly what the screened-only
+        hand-off exists to hold back.</p>
+      </div>
+      <p>Verdicts are read <em>across releases</em>, deliberately: a verdict follows the
+      work, and the release scopes the piles rather than the evidence. But only within
+      the current <strong>screening generation</strong> — the hash of the voter pair and
+      the classify prompt. Swap a voter or edit the prompt and the old answers stop
+      counting, those works become claimable again, and they no longer steer the
+      hand-off.</p>
+    </section>
+
+    <section id="release">
+      <h2>Release ids and re-runs</h2>
+      <p>A routing release is the sha256 of six inputs. Anything that could move a row
+      between piles is in there, so two runs with the same id are the same routing, and
+      a changed input mints a new id instead of silently overwriting the old decisions.</p>
+      <div id="release-body" class="loading">Reading the release record…</div>
+      <p>Routing is <strong>derived data</strong> — the next <code>route</code> run
+      recomputes it from the pool and the specs. That is why a live tier verdict is
+      never written into the routing table: it would be erased. Verdicts are applied
+      where the rows leave the engine instead.</p>
+    </section>
+
+    <section id="commands">
+      <h2>Running it</h2>
+      <div id="commands-body"></div>
+    </section>
+  </main>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='stage_common.js') }}" defer></script>
+<script src="{{ url_for('static', filename='stage2.js') }}" defer></script>
+{% endblock %}

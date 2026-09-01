@@ -149,3 +149,41 @@ def token_usage_record() -> "tuple[dict, Provenance]":
     from shared import token_usage
     return token_usage.all_usage(), _prov("token_usage.json", "live",
                                           as_of=_mtime(TOKEN_PATH))
+
+
+def pool_totals_live() -> "tuple[dict | None, Provenance]":
+    """Survivor-pool row/file/byte counts, read from parquet footers on this request.
+
+    Footer-only and memoised for a minute (`dashboard_cache.pool_totals`), which is why
+    the pool can be on a request path at all — the per-column breakdowns cannot, and
+    come from `pool_stats` instead.
+    """
+    from shared.dashboard_cache import pool_totals
+
+    try:
+        totals = pool_totals()
+    except Exception as exc:                       # a panel state, never a 500
+        return None, absent("survivor pool", str(exc))
+    if totals is None:
+        return None, absent("survivor pool", "no pool on this machine — "
+                                             "`python -m search.pool_sync --pull`")
+    return totals, _prov("survivor pool", "live", as_of=None)
+
+
+def pool_stats() -> "tuple[dict, Provenance]":
+    """The pool's per-arm and per-year breakdowns, from stats.json.
+
+    Computed by a refresh, never by a request: it reads five columns off every
+    partition. The machine is named from the recorded `pool_dir` for the same reason
+    `stats_json` names it from the store path — a breakdown someone else's pool
+    produced must not read as this one's.
+    """
+    data, prov = stats_json()
+    pool = data.get("pool") or {}
+    if not pool:
+        return {}, absent("stats.json",
+                          "pool breakdowns not computed here — `python -c \"from "
+                          "shared.dashboard_cache import refresh, POOL_STAGE; "
+                          "refresh(POOL_STAGE)\"`")
+    return pool, _prov("stats.json", "cached", as_of=prov.get("as_of"),
+                       machine=_machine_of(pool.get("pool_dir", "")))

@@ -1,0 +1,277 @@
+{% extends "base.html" %}
+{% block title %}FLoRA — Stage 3, linking and coding{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='docs.css') }}"/>
+<link rel="stylesheet" href="{{ url_for('static', filename='stage.css') }}"/>
+{% endblock %}
+
+{% block content %}
+<div class="docs">
+  <aside class="toc" aria-label="Contents">
+    <div class="toc-inner">
+      <p class="toc-title">Contents</p>
+      <ol>
+        <li><a href="#map">Where Stage 3 sits</a></li>
+        <li><a href="#what">The two questions</a></li>
+        <li><a href="#ladder">The resolution ladder</a></li>
+        <li><a href="#descent">When a step does not end the row</a></li>
+        <li><a href="#documents">Getting the document</a></li>
+        <li><a href="#outcome">Coding the outcome</a></li>
+        <li><a href="#checks">Checking its own work</a></li>
+        <li><a href="#prompts">Every prompt this stage sends</a></li>
+        <li><a href="#setaside">Rows that do not ship</a></li>
+        <li><a href="#verdicts">Verdicts, generations and re-runs</a></li>
+        <li><a href="#export">The export</a></li>
+        <li><a href="#commands">Running it</a></li>
+      </ol>
+      <p class="toc-foot">Ladder, vocabularies and models read from the running code;
+      counts read from <code>data/extracted.csv</code> on this machine.<br><br>
+      Deeper: <a href="https://github.com/forrtproject/flora-extractor/blob/main/docs/code-flow/stage3-extract.md"
+      target="_blank" rel="noopener">stage3-extract.md</a>.</p>
+
+      <div class="toc-issues">
+        <p class="toc-title">Open issues</p>
+        <div id="issues-body" class="issues-loading">Asking GitHub…</div>
+      </div>
+    </div>
+  </aside>
+
+  <main class="doc-body">
+    <header class="doc-head">
+      <h1>Stage 3 — linking and coding</h1>
+      <p class="lede">For each paper the screen admitted, answer two questions:
+      <em>which original study did this re-test</em>, and <em>what happened</em>. This
+      is the stage that produces the actual research output, and the only stage that
+      reads whole papers.</p>
+    </header>
+
+    <section id="map">
+      <h2>Where Stage 3 sits</h2>
+      <p>Stage 3 takes the works the screen passed and turns each into one permanent
+      verdict; a separate export renders those verdicts into the CSV that leaves this
+      repository.</p>
+      <div id="map-body" class="loading">Reading the pipeline counts…</div>
+    </section>
+
+    <section id="what">
+      <h2>The two questions</h2>
+      <p>They are answered together but judged separately. A paper's target can be
+      certain while its outcome is not, and the reverse never happens — an outcome is
+      only ever coded against a link the pipeline accepted.</p>
+      <div class="why">
+        <div class="whyrow c"><span class="wk">the link</span>
+          <p><strong>Which original?</strong> Resolved by a ladder of steps, cheapest
+          first. Writes <code>doi_o</code>, <code>title_o</code>,
+          <code>authors_o</code>, <code>study_o</code> and the
+          <code>link_method</code> that found them.</p></div>
+        <div class="whyrow a"><span class="wk">the outcome</span>
+          <p><strong>What happened?</strong> Coded from the same reading that found the
+          link. A replication gets one axis; a reproduction gets two.</p></div>
+      </div>
+      <div class="callout">
+        <p><strong>One row per replication–original pair.</strong> A paper that
+        re-tests three different originals becomes three rows. Several studies
+        <em>of one original</em> stay one row, with the study numbers collapsed into
+        <code>study_o</code>.</p>
+      </div>
+      <div id="models-body" class="loading">Reading the model configuration…</div>
+    </section>
+
+    <section id="ladder">
+      <h2>The resolution ladder</h2>
+      <p>Steps in cost order. The row takes the first one that resolves and stops
+      there, so a paper whose title states its target never costs a model call, and
+      only the papers that resist everything cheaper reach the last step and get their
+      full text downloaded. <strong>The counts are how many shipped rows each step
+      actually produced</strong>, which is the honest picture of where the work
+      happens.</p>
+      <div id="ladder-body" class="loading">Reading link_original.py…</div>
+      <div class="callout">
+        <p><strong>Why the search steps sit at the bottom.</strong> OpenAlex bills by
+        request shape, and the spread is three orders of magnitude: a lookup by DOI is
+        free, a filter query is 1×, a free-text <em>search</em> is 10×, and a content
+        download is 100×. So a title search is the single most expensive thing a row
+        can do short of downloading the paper — which is exactly why it is tried after
+        everything a cached candidate list can answer.</p>
+      </div>
+      <h3>What the ladder has learned</h3>
+      <p>The running record kept beside the ladder version — newest first. Each entry
+      is a change to how an original is found, and why.</p>
+      <div id="revisions-body" class="loading">Reading the changelog…</div>
+    </section>
+
+    <section id="descent">
+      <h2>When a step does not end the row</h2>
+      <p>A step ends the row only when it <em>both</em> resolved the link
+      <em>and</em> settled the outcome. This is the single most confusing thing about
+      the ladder, and it exists for a concrete reason: the abstract often names the
+      original clearly while saying nothing about how the replication turned out.</p>
+      <div id="descent-body" class="loading">Reading OUTCOME_DESCENT…</div>
+      <p>So the ladder <strong>carries</strong> the accepted link and keeps descending
+      towards the closing sections that state the verdict. When the full-text step does
+      answer, its reading replaces the carried one — except that a later
+      <em>unsettled</em> outcome never overwrites an earlier settled one.</p>
+      <div class="callout">
+        <p><strong>A carried link outranks a withheld rule pick at every no-answer
+        exit.</strong> No PDF, no document, no context, an incomplete screen, a
+        provider failure — an outage below an accepted link no longer writes
+        <code>target_pending</code> over it. A provider failure is not an answer, so it
+        does not restore a withheld pick either.</p>
+      </div>
+    </section>
+
+    <section id="documents">
+      <h2>Getting the document</h2>
+      <p>The full-text step needs the paper. A waterfall tries every source in priority
+      order and stops at the first that returns something that passes its own content
+      check.</p>
+      <div id="pdf-body" class="loading">Reading extracted.csv…</div>
+      <div class="callout">
+        <p><strong>A document need not be a PDF, but every source has a content check a
+        record page fails.</strong> Four sources hand back a sections dict instead of a
+        file, and each is paired with the test that says whether what came back is a
+        document at all. A repository landing page restates the abstract and adds
+        citation chrome; coding a row from one looks like full text and is not — so the
+        HTML check <em>subtracts</em> the abstract rather than thresholding the total.
+        Measured 2026-08-07: five landing pages carried 0–1,706 characters beyond their
+        abstracts, three real full texts carried 49,193–71,641.</p>
+      </div>
+      <p>A result that fails its check is no document: the row ends at
+      <code>no_fulltext_available</code> and the failure is never cached as a success.
+      Blank <code>pdf_source</code> on a shipped row is not a gap — it means the row
+      resolved before the full-text step was ever needed.</p>
+    </section>
+
+    <section id="outcome">
+      <h2>Coding the outcome</h2>
+      <p>Two vocabularies, because a replication and a reproduction are different
+      questions. They are different scales and are never summed.</p>
+      <div id="vocab-body" class="loading">Reading the schema…</div>
+      <div class="callout">
+        <p><strong><code>uninformative</code> is the authors' verdict;
+        <code>cannot_be_determined</code> is ours.</strong> The first says the study
+        itself could not settle the question. The second says we could not tell from
+        what we read.</p>
+      </div>
+      <p>A reproduction's <code>outcome</code> is its two settled axis values joined,
+      which is why the flat outcome list hides which axis failed. <code>technical
+      failure</code> exists on the computation axis because the most common real
+      reproduction outcome in economics is being defeated by the materials — no data,
+      no code, an unrunnable workflow — and the old grid could only record that as a
+      numerical disagreement nobody observed.</p>
+    </section>
+
+    <section id="checks">
+      <h2>Checking its own work</h2>
+      <p>Three independent checks run before a row is allowed to settle, each aimed at
+      a different way a link can be wrong.</p>
+      <div class="why">
+        <div class="whyrow c"><span class="wk">DOI verify</span>
+          <p>The metadata <code>doi_o</code> actually points to is fetched (CrossRef,
+          then OpenAlex) and compared with the resolved record. Mismatches are
+          re-resolved from title and author in three tiers, strictest first — a wrong
+          correction is worse than a flag. Runs <em>once</em>, inside the tier, and the
+          answer is stored on the row.</p></div>
+        <div class="whyrow a"><span class="wk">keyed confirm</span>
+          <p>DOI verification checks the record against its own metadata, never against
+          the target the paper <em>named</em> — so the wrong entry picked from the right
+          list passes it. A separate cold call is shown only the study, the quoted
+          evidence and the record. A confident "not the named target" demotes the row
+          to <code>keyed_link_disputed</code>, keeping both readings for a human.</p></div>
+        <div class="whyrow b"><span class="wk">search grade</span>
+          <p>Every accepted pooled-search link gets one of four grades —
+          <code>clearly_target</code>, <code>likely_target</code>,
+          <code>unlikely_target</code>, <code>clearly_not_target</code>. The grade sets
+          <code>link_confidence</code> and is appended to <code>link_evidence</code>. It
+          never changes the link and drops no row: graded rather than binary, because
+          the binary check flagged 0 rows in 200 on this class.</p></div>
+      </div>
+      <div id="confidence-body" class="loading">Reading extracted.csv…</div>
+    </section>
+
+    <section id="prompts">
+      <h2>Every prompt this stage sends</h2>
+      <p>Read from <code>shared/prompts.py</code>. Click one to read it whole — the
+      assembly and every fragment it splices, which together are exactly what the
+      version hash covers, so this page and the cache key cannot disagree.</p>
+      <div class="callout">
+        <p><strong>One prompt per vocabulary, asking both questions.</strong> The
+        abstract, reference-list and full-text steps all send the <em>same</em> target
+        prompt — only the evidence block differs, never the task or the acceptance
+        rule. That is why a target found from an abstract and one found from a PDF are
+        comparable answers.</p>
+      </div>
+      <div id="prompts-body" class="loading">Reading shared/prompts.py…</div>
+    </section>
+
+    <section id="setaside">
+      <h2>Rows that do not ship</h2>
+      <p>A verdict is permanent whatever it says, but not every verdict is a row the
+      validation import should receive. The export partitions those into named files —
+      each one a question someone can answer, not a bin.</p>
+      <div id="setaside-body" class="loading">Reading the set-aside files…</div>
+    </section>
+
+    <section id="verdicts">
+      <h2>Verdicts, generations and re-runs</h2>
+      <p>Stage 3 runs as a claimed, budget-gated tier. Each work ends in one permanent
+      verdict row whose payload can rebuild its CSV rows offline. <strong>The verdict
+      row is the checkpoint</strong> — not a file, and not a position in a CSV.</p>
+      <div class="why">
+        <div class="whyrow c"><span class="wk">--redo</span>
+          <p>Re-extract works you name. <strong>Adds</strong> to the worklist — it
+          re-admits works the checkpoint had subtracted.</p></div>
+        <div class="whyrow c"><span class="wk">--redo-status</span>
+          <p>Re-extract a <em>population</em>: any result verdict or any link method.
+          Named, never inferred — each changelog entry above carries the command that
+          reopens what it fixed.</p></div>
+        <div class="whyrow a"><span class="wk">a new generation</span>
+          <p>Editing a prompt or a model mints a new extract generation, which reopens
+          <em>every</em> work at once, because it changes what the pipeline asks.</p></div>
+      </div>
+      <div class="callout">
+        <p><strong>A ladder change is not a generation change, deliberately.</strong>
+        <code>EXTRACT_LADDER_VERSION</code> was in the fingerprint until 2026-08-10 and
+        is not any more. A ladder edit reaches a population its author already knows —
+        ladder 23 addressed the 105 rows ladder 22 was measured over — while reopening
+        every settled work costs a whole campaign's wall clock for 3,025 works. So the
+        reopen is named on the command line rather than inferred.</p>
+      </div>
+      <div class="note">Before any run that spends: exercise changed code in
+      <code>--mode validation</code> first (real verdicts the live export ignores),
+      read the implementation of any worklist-changing flag, and run the same command
+      without <code>--run</code> to see what it would buy. All three rules were written
+      after they were broken.</div>
+    </section>
+
+    <section id="export">
+      <h2>The export</h2>
+      <p><code>data/extracted.csv</code> is the end of this repository. It is written
+      <strong>whole, once</strong> — sorted, through a temp file and one rename — by
+      the only writer there is. Nothing appends to it.</p>
+      <div id="export-body" class="loading">Reading extracted.csv…</div>
+      <p>The export renders only the works the named release put in an admitted pile,
+      and drops the ones the current screen discards. A verdict outlives the routing
+      that bought it: a work today's rule book discards would otherwise keep reaching
+      the validation import forever. The FLoRA and validated skip lists are applied at
+      render too, so a paper that enters FLoRA after extraction stops shipping.</p>
+      <div class="callout">
+        <p><strong>Where the pipeline stops.</strong> Human validation lives in the
+        separate <code>flora-validation</code> repo; its <code>csv_to_db.py</code>
+        reads this file and writes the Supabase validation tables. This repository only
+        ever <em>reads</em> those tables back, for the dashboard.</p>
+      </div>
+    </section>
+
+    <section id="commands">
+      <h2>Running it</h2>
+      <div id="commands-body"></div>
+    </section>
+  </main>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='stage_common.js') }}" defer></script>
+<script src="{{ url_for('static', filename='stage3.js') }}" defer></script>
+{% endblock %}

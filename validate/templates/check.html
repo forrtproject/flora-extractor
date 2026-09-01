@@ -107,6 +107,10 @@
   background:var(--accent); color:#fff; border-color:var(--accent);
 }
 .stage-pill input { display:none; }
+.stage-pill.aside { font-size:11.5px; padding:4px 9px; }
+.stage-pill.missing { opacity:.45; }
+.aside-pills { margin-top:4px; }
+.ms-panel label.ms-other { opacity:.72; }
 
 /* Stage badge in table */
 .stage-tag {
@@ -226,8 +230,20 @@
     <!-- Stage selector -->
     <span class="filter-section-label">Stage (select one or more)</span>
     <div class="stage-pills" id="stagePills">
-      <label class="stage-pill active"><input type="checkbox" name="stage" value="extracted" checked> Extracted</label>
-      <label class="stage-pill"><input type="checkbox" name="stage" value="extracted-test"> Extracted-Test</label>
+      {% for value, label, exists in stage_options %}
+      <label class="stage-pill{{ ' active' if value == 'extracted' else '' }}{{ '' if exists else ' missing' }}">
+        <input type="checkbox" name="stage" value="{{ value }}"
+               {{ 'checked' if value == 'extracted' else '' }}> {{ label }}</label>
+      {% endfor %}
+    </div>
+    <span class="filter-section-label" style="margin-top:10px">Set aside by the export
+      — rows that never reach validation</span>
+    <div class="stage-pills aside-pills" id="asidePills">
+      {% for value, label, exists in aside_options %}
+      <label class="stage-pill aside{{ '' if exists else ' missing' }}"
+             {{ 'title=\"no rows: the export writes no file for an empty pile\"' if not exists else '' }}>
+        <input type="checkbox" name="stage" value="{{ value }}"> {{ label }}</label>
+      {% endfor %}
     </div>
 
     <!-- Row 1: year + type + multi-select filters -->
@@ -268,12 +284,10 @@
         <button type="button" class="ms-trigger" data-ms="link_method">Any</button>
         <div class="ms-panel" data-ms-panel="link_method">
           <button type="button" class="ms-clear" onclick="clearMs('link_method')">Clear</button>
-          <label><input type="checkbox" data-ms-val="link_method" value="author_year_match"> Author/year match</label>
-          <label><input type="checkbox" data-ms-val="link_method" value="llm_cited_candidates"> LLM abstract</label>
-          <label><input type="checkbox" data-ms-val="link_method" value="llm_fulltext"> LLM fulltext</label>
-          <label><input type="checkbox" data-ms-val="link_method" value="no_original_found"> No original found</label>
-          <label><input type="checkbox" data-ms-val="link_method" value="target_pending"> Target pending</label>
-          <label><input type="checkbox" data-ms-val="link_method" value="api_error"> API error</label>
+          {% for value, label, resolved in link_method_options %}
+          <label{{ ' class="ms-other"' if not resolved else '' }}>
+            <input type="checkbox" data-ms-val="link_method" value="{{ value }}"> {{ label }}</label>
+          {% endfor %}
         </div>
       </div>
 
@@ -283,9 +297,9 @@
         <button type="button" class="ms-trigger" data-ms="match_type">Any</button>
         <div class="ms-panel" data-ms-panel="match_type">
           <button type="button" class="ms-clear" onclick="clearMs('match_type')">Clear</button>
-          <label><input type="checkbox" data-ms-val="match_type" value="single_original"> Single original</label>
-          <label><input type="checkbox" data-ms-val="match_type" value="multiple_match"> Multiple match</label>
-          <label><input type="checkbox" data-ms-val="match_type" value="multiple_original"> Multiple original</label>
+          {% for value, label in match_type_options %}
+          <label><input type="checkbox" data-ms-val="match_type" value="{{ value }}"> {{ label }}</label>
+          {% endfor %}
         </div>
       </div>
 
@@ -742,6 +756,17 @@ function updateDownloadLink() {
 function applyUrlFilters() {
   var url = new URLSearchParams(window.location.search);
   if (![...url.keys()].length) return false;
+
+  // `stage` is a checkbox group like the rest but lives outside the ms- machinery,
+  // and it REPLACES the default rather than adding to it: a link that says
+  // "show me target_pending" must not also show every extracted row.
+  var stages = url.getAll('stage');
+  if (stages.length) {
+    document.querySelectorAll('.stage-pill input').forEach(function(cb) {
+      cb.checked = stages.indexOf(cb.value) !== -1;
+      cb.closest('.stage-pill').classList.toggle('active', cb.checked);
+    });
+  }
 
   ['type','outcome','link_method','match_type','doi_verified','source',
    'link_confidence'].forEach(function(name) {

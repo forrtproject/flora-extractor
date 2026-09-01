@@ -31,8 +31,17 @@ def create_app(test_config: dict | None = None) -> Flask:
     from validate.routes.api_validation import validation_bp
     from validate.routes.api_docs import docs_bp
     from validate.routes.docs import docs_page_bp
+    from validate.routes.api_stage1 import stage1_bp
+    from validate.routes.stage1 import stage1_page_bp
+    from validate.routes.api_stage2 import stage2_bp
+    from validate.routes.stage2 import stage2_page_bp
+    from validate.routes.api_stage3 import stage3_bp
+    from validate.routes.stage3 import stage3_page_bp
     for blueprint in (dashboard_bp, check_bp, concerns_bp, flow_bp,
-                      analysis_bp, validation_bp, docs_bp, docs_page_bp):
+                      analysis_bp, validation_bp, docs_bp, docs_page_bp,
+                      stage1_bp, stage1_page_bp,
+                      stage2_bp, stage2_page_bp,
+                      stage3_bp, stage3_page_bp):
         app.register_blueprint(blueprint)
 
     @app.route("/pdf/<path:filename>")

@@ -174,7 +174,7 @@ def api_flow():
         stages.append(_stage("rendered", "rendered rows", len(df), csv_prov))
         completeness["rendered_rows"] = len(df)
         # Both are "what the row never had". A blank abstract is the downstream face
-        # of the router's `no_text`: the screen and every abstract-stage rung read it,
+        # of the router's `no_text`: the screen and every abstract-stage step read it,
         # so a row without one reached the ladder already short of evidence.
         for column, key in (("doi_r", "blank_doi_r"), ("abstract_r", "blank_abstract_r")):
             if column in df.columns:

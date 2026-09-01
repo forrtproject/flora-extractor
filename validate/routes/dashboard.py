@@ -83,7 +83,7 @@ _SET_ASIDE_COPY: dict[str, dict] = {
     },
     "search_link_unconfirmed.csv": {
         "title": "Search Link Unconfirmed",
-        "why": "The original was found by a search rung (llm_title_search or "
+        "why": "The original was found by a search step (llm_title_search or "
                "llm_author_year_search) and the cold confirmation call graded the link "
                "likely_target, unlikely_target or clearly_not_target rather than "
                "clearly_target. The link, the outcome and the grade are all on the row; "

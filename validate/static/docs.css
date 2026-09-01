@@ -46,22 +46,23 @@
 }
 .toc ol { list-style: none; margin: 0; padding: 0; counter-reset: toc; }
 .toc li { counter-increment: toc; }
-.toc a {
+.toc ol a {
   display: block; padding: 5px 0 5px 26px; position: relative;
   font-size: 13px; color: var(--doc-muted); text-decoration: none;
   border-left: 1px solid var(--border); line-height: 1.35;
 }
-.toc a::before {
+.toc ol a::before {
   content: counter(toc); position: absolute; left: 9px;
   font-size: 10.5px; color: var(--doc-faint); font-variant-numeric: tabular-nums;
 }
-.toc a:hover { color: var(--text); }
-.toc a.current {
+.toc ol a:hover { color: var(--text); }
+.toc ol a.current {
   color: var(--accent); border-left-color: var(--accent); font-weight: 600;
 }
 .toc-foot {
   margin-top: 14px; font-size: 11px; line-height: 1.5; color: var(--doc-faint);
 }
+.toc-foot a { color: var(--accent); }
 
 /* reading column */
 .doc-body { min-width: 0; }
@@ -230,7 +231,7 @@ table.doc tr:hover td { background: var(--row-hover); }
   .docs { grid-template-columns: 1fr; gap: 24px; padding: 18px 18px 72px; }
   .toc { position: static; }
   .toc ol { display: flex; flex-wrap: wrap; gap: 2px 6px; }
-  .toc a { border-left: 0; padding: 4px 8px; }
-  .toc a::before { display: none; }
+  .toc ol a { border-left: 0; padding: 4px 8px; }
+  .toc ol a::before { display: none; }
   .doc-head h1 { font-size: 27px; }
 }

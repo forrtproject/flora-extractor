@@ -1,0 +1,409 @@
+/* stage1.css — the pipeline map and the Stage 1 panels.
+   Extends docs.css: everything this page can borrow (tables, callouts, pills, pre,
+   the TOC and the reading column) is already there and is not restated here. */
+
+/* ── the pipeline map ───────────────────────────────────────────────────────
+   A vertical rail, because the story is a collapse: 250M-ish rows in, 3k out.
+   The bar is LOG-scaled and says so — on a linear scale every node after the
+   pool is a hairline and the shape reads as "nothing happens after Stage 1",
+   which is the opposite of true. */
+.map { margin: 22px 0 0; }
+.mapnode {
+  display: grid; grid-template-columns: 1fr auto; gap: 4px 14px;
+  align-items: baseline; padding: 12px 15px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  position: relative;
+}
+.mapnode.here { border-color: var(--accent); box-shadow: var(--shadow); }
+.mapnode.here::before {
+  content: attr(data-here); position: absolute; top: -8px; left: 13px;
+  font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--accent); background: var(--bg); padding: 0 6px; border-radius: 3px;
+}
+.mapname { font-size: 14px; font-weight: 650; color: var(--text); }
+.mapcount {
+  font-size: 19px; font-weight: 700; color: var(--text);
+  font-variant-numeric: tabular-nums; letter-spacing: -0.01em;
+}
+.mapcount.none { font-size: 13px; font-weight: 500; color: var(--doc-faint); }
+.mapnote {
+  grid-column: 1 / -1; margin: 0 !important; font-size: 12.5px;
+  color: var(--doc-muted); max-width: none !important; line-height: 1.5;
+}
+.mapnote code { font-size: 11.5px; }
+.mapbar {
+  grid-column: 1 / -1; height: 4px; border-radius: 2px;
+  background: var(--border-2); margin-top: 8px;
+}
+.mapbar > span { display: block; height: 100%; border-radius: 2px; background: var(--accent); }
+.mapnode.here .mapbar > span { background: var(--accent); }
+.mapsrc {
+  grid-column: 1 / -1; font: 10.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--doc-faint); text-transform: uppercase; letter-spacing: .05em;
+}
+.mapedge {
+  display: grid; grid-template-columns: 30px 1fr; align-items: center;
+  gap: 10px; padding: 7px 15px; color: var(--doc-muted); font-size: 12.5px;
+}
+.mapedge .arrow { text-align: center; color: var(--doc-faint); font-size: 15px; }
+.mapedge b { color: var(--text); font-weight: 600; }
+.mapscale { margin-top: 10px; font-size: 11.5px; color: var(--doc-faint); }
+
+/* ── stat strip (pool totals, gate arms) ────────────────────────────────── */
+.stats { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); margin: 16px 0; }
+.stat {
+  padding: 11px 14px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 8px;
+}
+.stat .k {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--doc-faint); display: block; margin-bottom: 4px;
+}
+.stat .v {
+  font-size: 20px; font-weight: 700; color: var(--text);
+  font-variant-numeric: tabular-nums; letter-spacing: -0.01em;
+}
+.stat .s { display: block; margin-top: 3px; font-size: 12px; color: var(--doc-muted); }
+
+/* ── the gate's two arms ────────────────────────────────────────────────── */
+.arm {
+  border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
+  padding: 14px 16px; margin-bottom: 12px;
+}
+.arm-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+.arm-head h4 { margin: 0; font-size: 14px; font-weight: 650; color: var(--text); }
+.arm-head .hits {
+  font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--doc-muted); font-variant-numeric: tabular-nums;
+}
+.arm > p { font-size: 13.5px; color: var(--doc-muted); max-width: none; margin: 0 0 10px; }
+.stems { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.stems li {
+  font: 12.5px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 2px 8px; border-radius: 5px;
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
+}
+.stems li.nonlatin { border-color: var(--accent); }
+
+/* ── file / path rows ───────────────────────────────────────────────────── */
+.paths { display: grid; gap: 10px; margin: 16px 0; }
+.path {
+  padding: 12px 15px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 8px;
+}
+.path h4 { margin: 0 0 4px; font-size: 13.5px; font-weight: 650; color: var(--text); }
+.path .loc {
+  font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--accent); word-break: break-all; display: block; margin-bottom: 6px;
+}
+.path p { margin: 0; font-size: 13px; color: var(--doc-muted); max-width: none; }
+.path dl { margin: 8px 0 0; display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; }
+.path dt { font-size: 11.5px; color: var(--doc-faint); text-transform: uppercase; letter-spacing: .04em; }
+.path dd {
+  margin: 0; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text); word-break: break-all;
+}
+
+/* ── state notes: absent is never a zero ────────────────────────────────── */
+.note {
+  font-size: 12.5px; line-height: 1.6; color: var(--doc-muted);
+  padding: 10px 13px; border-radius: 7px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-left: 3px solid var(--pile-hold); margin: 12px 0;
+}
+.note.ok { border-left-color: var(--pile-admit); }
+.note.bad { border-left-color: var(--pile-drop); }
+.note code { font-size: 11.5px; }
+
+/* ── year strip ─────────────────────────────────────────────────────────── */
+.years { display: flex; align-items: flex-end; gap: 1px; height: 78px; margin: 14px 0 6px; }
+.years .y { flex: 1 1 0; background: var(--accent); border-radius: 1px 1px 0 0; min-height: 1px; opacity: .85; }
+.years .y:hover { opacity: 1; }
+.yearaxis { display: flex; justify-content: space-between; font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--doc-faint); }
+
+.cmdlist { display: grid; gap: 10px; margin-top: 16px; }
+.cmdrow {
+  padding: 11px 14px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 8px;
+}
+.cmdrow code {
+  display: block; margin-bottom: 5px; background: none; border: 0; padding: 0;
+  font-size: 12.5px; color: var(--accent);
+}
+.cmdrow p { margin: 0; font-size: 13px; color: var(--doc-muted); max-width: none; }
+
+/* ── open issues, under the contents list ───────────────────────────────── */
+.toc-issues { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--border); }
+/* The list scrolls inside the sticky rail rather than lengthening the page: a stage
+   with eleven open issues otherwise pushed the contents list off screen, and the
+   sidebar's whole point is being reachable from anywhere in the document. Capped
+   against the viewport so it shrinks on short screens instead of overflowing. */
+.toc-issues .issues {
+  max-height: min(320px, 42vh); overflow-y: auto; padding-right: 6px;
+  scrollbar-width: thin; scrollbar-color: var(--border-2) transparent;
+  overscroll-behavior: contain;
+}
+.toc-issues .issues::-webkit-scrollbar { width: 8px; }
+.toc-issues .issues::-webkit-scrollbar-thumb {
+  background: var(--border-2); border-radius: 4px;
+}
+/* The rail itself must not exceed the viewport once the list is in it. */
+.toc { max-height: calc(100vh - 40px); overflow-y: auto; scrollbar-width: thin; }
+.issues { list-style: none; margin: 0; padding: 0; }
+.issues li { margin-bottom: 7px; }
+.issues a {
+  display: grid; grid-template-columns: auto 1fr; gap: 7px;
+  align-items: baseline; text-decoration: none; color: var(--doc-muted);
+  font-size: 12.5px; line-height: 1.4;
+}
+.issues a:hover { color: var(--text); }
+.issues a:hover .ttl { text-decoration: underline; text-underline-offset: 2px; }
+.issues .num {
+  font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--doc-faint); font-variant-numeric: tabular-nums;
+}
+/* Two lines, then ellipsis: a 232px rail cannot hold these titles, and a wrapped
+   wall of them buries the contents list the panel sits under. */
+.issues .ttl {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.issues-loading, .issues-none {
+  font-size: 12px; line-height: 1.55; color: var(--doc-faint); margin: 0;
+}
+.issues-hint { font-size: 11.5px; color: var(--doc-faint); }
+
+/* ── the funnel: five million rows, step by step ────────────────────────────
+   A step is a survivor count; a drop is what removed rows between two steps. They
+   alternate so the arithmetic is visible on screen — a funnel whose steps do not
+   reconcile is one nobody can check. */
+.funnel { margin: 20px 0 0; }
+.fstep {
+  padding: 13px 16px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 8px; border-left: 3px solid var(--border-2);
+}
+.fstep.start { border-left-color: var(--doc-faint); }
+.fstep.mid   { border-left-color: var(--accent); }
+.fstep.end   { border-left-color: var(--pile-admit); }
+.fstep-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.fstep-label { font-size: 14px; font-weight: 650; color: var(--text); }
+.fstep-count {
+  font-size: 23px; font-weight: 700; color: var(--text);
+  font-variant-numeric: tabular-nums; letter-spacing: -0.02em;
+}
+.fstep-sub, .fstep-note {
+  margin: 3px 0 0 !important; max-width: none !important;
+  font-size: 12.5px; line-height: 1.5; color: var(--doc-muted);
+}
+.fstep-note { margin-top: 7px !important; color: var(--doc-faint); }
+.fdrop {
+  display: grid; grid-template-columns: 92px 1fr; gap: 12px; align-items: baseline;
+  padding: 9px 16px 9px 0; margin-left: 16px;
+  border-left: 2px dashed var(--border-2);
+}
+.fdrop-count {
+  text-align: right; font-variant-numeric: tabular-nums;
+  font: 600 13.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--pile-drop);
+}
+.fdrop-body { font-size: 12.5px; line-height: 1.55; color: var(--doc-muted); }
+.fdrop-body b { color: var(--text); font-weight: 600; }
+.fdrop-body code { font-size: 11.5px; }
+
+/* ── pending reasons ─────────────────────────────────────────────────────── */
+.reason {
+  padding: 12px 15px; margin-bottom: 10px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 8px;
+}
+.reason-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 12px; margin-bottom: 5px;
+}
+.reason-head code { font-size: 12.5px; }
+.reason-count {
+  font-size: 17px; font-weight: 700; color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.reason p { margin: 0; font-size: 13px; line-height: 1.6; color: var(--doc-muted); max-width: none; }
+.sub { font-size: 11.5px; font-weight: 400; color: var(--doc-faint); }
+
+/* ── the gate's three outcomes ───────────────────────────────────────────── */
+.gaterules { display: grid; gap: 9px; margin: 14px 0; }
+.gaterule {
+  display: grid; grid-template-columns: 108px 1fr; gap: 14px; align-items: baseline;
+  padding: 11px 15px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 8px; border-left: 3px solid var(--border-2);
+}
+.gaterule.drop { border-left-color: var(--pile-drop); }
+.gaterule.keep { border-left-color: var(--pile-admit); }
+.gaterule.hold { border-left-color: var(--pile-hold); }
+.gaterule .gk {
+  font: 600 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-transform: uppercase; letter-spacing: .05em; color: var(--text);
+}
+.gaterule p { margin: 0; font-size: 13px; line-height: 1.6; color: var(--doc-muted); max-width: none; }
+
+/* ── rule book table extras ──────────────────────────────────────────────── */
+.shadow-row td { opacity: .72; }
+.tag {
+  font: 9.5px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-transform: uppercase; letter-spacing: .06em; color: var(--pile-hold);
+  border: 1px solid currentColor; border-radius: 3px; padding: 0 4px; margin-left: 4px;
+}
+table.doc td.num.warn { color: var(--pile-drop); font-weight: 600; }
+.stat .v.small { font-size: 13px; word-break: break-all; }
+.sub-note { font-size: 12.5px; color: var(--doc-muted); margin-top: 10px; }
+.issues-count {
+  margin: 8px 0 0; font-size: 11px; color: var(--doc-faint);
+}
+.fpending {
+  padding: 11px 15px; margin-top: 10px; border-radius: 7px;
+  background: var(--surface-2); border: 1px dashed var(--border-2);
+  font-size: 12.5px; line-height: 1.55; color: var(--doc-faint);
+}
+
+/* ── the rule book: a countable summary that opens into what the spec says ──
+   Seven columns shared by the header strip and every summary, so the numbers stay in
+   line while each row is independently expandable. */
+.rulehead, .rule2 > summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 132px 52px 78px 68px 68px 82px;
+  gap: 10px; align-items: center;
+}
+.rulehead {
+  padding: 7px 14px; font-size: 11px; text-transform: uppercase;
+  letter-spacing: .05em; color: var(--doc-muted); font-weight: 600;
+  border-bottom: 1px solid var(--border-2);
+}
+.rulehead .num, .rule2 > summary .num { text-align: right; font-variant-numeric: tabular-nums; }
+.rule2 {
+  border: 1px solid var(--border); border-top: 0; background: var(--surface);
+  overflow: hidden;
+}
+.rule2:first-of-type { border-top: 1px solid var(--border); border-radius: 8px 8px 0 0; }
+.rule2:last-of-type { border-radius: 0 0 8px 8px; }
+.rule2 > summary {
+  cursor: pointer; padding: 9px 14px; list-style: none;
+  font-size: 13px; color: var(--doc-muted);
+}
+.rule2 > summary::-webkit-details-marker { display: none; }
+.rule2 > summary:hover { background: var(--surface-2); }
+.rule2[open] > summary { background: var(--surface-2); border-bottom: 1px solid var(--border); }
+.rule2 .rid {
+  font: 600 12.5px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text); overflow-wrap: anywhere;
+}
+.rule2.shadow-row > summary .rid { color: var(--doc-muted); font-weight: 500; }
+.rule2 .rule-detail { padding: 2px 14px 14px; }
+.rule2 .rule-detail p {
+  font-size: 13.5px; line-height: 1.65; color: var(--doc-muted);
+  max-width: none; margin: 12px 0 0;
+}
+.rule2 .shadow-note { font-size: 12.5px; color: var(--pile-hold); }
+
+/* The matched = won + downgraded + outranked identity, spelled out. */
+.identity {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  padding: 13px 16px; margin: 16px 0;
+  background: var(--surface); border: 1px solid var(--border-2); border-radius: 8px;
+  font: 13.5px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text);
+}
+.identity .op { color: var(--doc-faint); }
+.identity b { font-weight: 700; }
+.why { display: grid; gap: 10px; margin: 14px 0; }
+.whyrow {
+  display: grid; grid-template-columns: 118px 1fr; gap: 14px; align-items: baseline;
+  padding: 12px 15px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 8px; border-left: 3px solid var(--border-2);
+}
+.whyrow.a { border-left-color: var(--pile-hold); }
+.whyrow.b { border-left-color: var(--pile-drop); }
+.whyrow.c { border-left-color: var(--doc-faint); }
+.whyrow .wk {
+  font: 600 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-transform: uppercase; letter-spacing: .04em; color: var(--text);
+}
+.whyrow p { margin: 0; font-size: 13px; line-height: 1.6; color: var(--doc-muted); max-width: none; }
+.worked {
+  padding: 12px 15px; margin-top: 12px; border-radius: 7px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  font-size: 13px; line-height: 1.65; color: var(--doc-muted);
+}
+.worked b { color: var(--text); }
+
+/* ── Stage 3: the ladder as numbered steps ─────────────────────────────────── */
+.steps { list-style: none; margin: 18px 0 0; padding: 0; display: grid; gap: 9px; }
+.step {
+  display: grid; grid-template-columns: 30px 1fr; gap: 12px; align-items: start;
+  padding: 12px 15px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 8px; border-left: 3px solid var(--accent);
+}
+.step.cold { border-left-color: var(--border-2); opacity: .72; }
+.step .rn {
+  font: 700 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--doc-faint); text-align: right; font-variant-numeric: tabular-nums;
+}
+.rhead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 9px; margin-bottom: 4px; }
+.rname { font-size: 14px; font-weight: 650; color: var(--text); }
+.rhead code { font-size: 11.5px; }
+.rcount {
+  margin-left: auto; font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--doc-muted); font-variant-numeric: tabular-nums;
+}
+.step p { margin: 0; font-size: 13px; line-height: 1.6; color: var(--doc-muted); max-width: none; }
+.rcost {
+  display: inline-block; margin-top: 6px;
+  font: 11.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--doc-faint);
+}
+.tag.warn { color: var(--pile-drop); }
+
+/* ── ranked distributions ──────────────────────────────────────────────────── */
+.dist { display: grid; gap: 4px; margin: 12px 0; }
+.distrow {
+  display: grid; grid-template-columns: minmax(0, 168px) 1fr 62px 52px;
+  gap: 10px; align-items: center; font-size: 12.5px;
+}
+.distrow.muted { opacity: .55; }
+.distrow .dk { color: var(--text); overflow-wrap: anywhere; font-size: 12px; }
+.dbar { height: 9px; background: var(--surface-2); border-radius: 5px; overflow: hidden; }
+.dbar > span { display: block; height: 100%; background: var(--accent); border-radius: 5px; }
+.distrow .dv {
+  text-align: right; font-variant-numeric: tabular-nums; color: var(--text); font-weight: 600;
+}
+.distrow .dp { text-align: right; font-size: 11.5px; color: var(--doc-faint); }
+.twoup { display: grid; gap: 22px; grid-template-columns: repeat(auto-fit, minmax(258px, 1fr)); }
+
+/* ── set-aside files ───────────────────────────────────────────────────────── */
+.aside {
+  padding: 12px 15px; margin-bottom: 9px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 8px; border-left: 3px solid var(--pile-hold);
+}
+.aside.empty { border-left-color: var(--border-2); opacity: .66; }
+.aside-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  margin-bottom: 5px;
+}
+.aside-head code { font-size: 12.5px; }
+.aside-count {
+  font-size: 17px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums;
+}
+.aside p { margin: 0; font-size: 13px; line-height: 1.6; color: var(--doc-muted); max-width: none; }
+.aside-meta { margin-top: 6px !important; font-size: 11.5px !important; color: var(--doc-faint) !important; }
+.aside-meta code { font-size: 10.5px; }
+.prompt-note {
+  font-size: 13px; line-height: 1.6; color: var(--doc-muted);
+  margin: 12px 0 0; padding: 10px 13px; border-radius: 7px;
+  background: var(--surface-2); border: 1px solid var(--border);
+}
+
+/* ── the ladder changelog, collapsed ───────────────────────────────────────── */
+.changelog > summary {
+  cursor: pointer; list-style: none; padding: 9px 0; margin-top: 4px;
+  font-size: 13px; color: var(--accent); border-top: 1px solid var(--border);
+}
+.changelog > summary::-webkit-details-marker { display: none; }
+.changelog > summary:hover { color: var(--accent-hover); }
+.changelog .cg-hint { color: var(--doc-faint); }
+.changelog .cg-shut { display: none; }
+.changelog[open] .cg-open { display: none; }
+.changelog[open] .cg-shut { display: inline; }
