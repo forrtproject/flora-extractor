@@ -163,3 +163,16 @@ def test_a_completed_study_status_changes_nothing():
             {"study_status": status, "outcome": "successful", "confident": True},
             record_type="replication", has_text=True)
         assert block["outcome"] == "successful", status
+
+
+def test_aggregation_does_not_lose_a_prospective_verdict():
+    """The fallback chain is exhaustive by construction: a value missing from it falls
+    through to cannot_be_determined — the exact verdict the prospective veto exists to
+    prevent. Measured 2026-09-02: 7 of 27 correctly-answered rows were lost this way."""
+    from extract.run_extract import _aggregate_outcomes as agg
+    assert agg(["prospective_registration", "cannot_be_determined"]) == "prospective_registration"
+    assert agg(["cannot_be_determined", "prospective_registration"]) == "prospective_registration"
+    # not_a_replication is the stronger statement about the record and still wins.
+    assert agg(["prospective_registration", "not_a_replication"]) == "not_a_replication"
+    # A substantive verdict means the study ran, so it outranks a plan claim.
+    assert agg(["prospective_registration", "successful"]) == "successful"

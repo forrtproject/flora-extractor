@@ -288,7 +288,14 @@ _GENERATION_EQUIVALENCES: dict[str, tuple[str, ...]] = {
     # `dd7572887420ef65` rides along because the entry must be keyed by the CURRENT
     # generation (there is a test): the chain is flattened rather than stacked, so the
     # 2026-08-15 gpt-5.4-mini verdicts stay current through this edit too.
-    "243ae515c654b6e5": ("5b716d061bb336f5", "dd7572887420ef65"),
+    # `243ae515c654b6e5` is the intermediate generation from the first half of this
+    # edit, when only the two TARGET prompts asked study_status and the two standalone
+    # coders did not — measured 2026-09-02 in the sandbox at a 26% catch rate, because
+    # a plan resolved by a deterministic rule is coded by the standalone prompt and was
+    # never asked. It shipped nowhere; it is listed so the sandbox verdicts bought
+    # under it stay readable rather than reading as a foreign generation.
+    "ca0706ef44827229": ("061cb5ca8e1888b6", "243ae515c654b6e5",
+                         "5b716d061bb336f5", "dd7572887420ef65"),
 }
 
 

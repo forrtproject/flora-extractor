@@ -207,6 +207,12 @@ EXTRACT_ADDED_COLS = [
     # It exists because journal_r cannot answer the question — OpenAlex labels every
     # OSF-hosted object "OSF Preprints", so a project reads as a preprint. Blank means
     # "not on OSF", NOT "unknown".
+    "study_status",        # str   — completed | prospective | "" (never asked). The
+                           #         model's own answer about whether the work has been
+                           #         RUN; "prospective" is what sets outcome =
+                           #         prospective_registration. Kept as a column because
+                           #         a blank and a "completed" are different facts, and
+                           #         tuning the prompt needs to tell them apart.
     "osf_type",            # str   — preprint | project_or_registration | "" (not OSF)
 ]
 # pair_id is placed first so it is the leading identifier in extracted.csv.
