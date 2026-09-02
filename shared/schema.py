@@ -207,6 +207,12 @@ EXTRACT_ADDED_COLS = [
     # It exists because journal_r cannot answer the question — OpenAlex labels every
     # OSF-hosted object "OSF Preprints", so a project reads as a preprint. Blank means
     # "not on OSF", NOT "unknown".
+    "study_status",        # str   — completed | prospective | "" (never asked). The
+                           #         model's own answer about whether the work has been
+                           #         RUN; "prospective" is what sets outcome =
+                           #         prospective_registration. Kept as a column because
+                           #         a blank and a "completed" are different facts, and
+                           #         tuning the prompt needs to tell them apart.
     "osf_type",            # str   — preprint | project_or_registration | "" (not OSF)
 ]
 # pair_id is placed first so it is the leading identifier in extracted.csv.
@@ -349,6 +355,11 @@ SET_ASIDE_DESTINATIONS = {
     "target_pending": "target_pending.csv",
     "prescreen_discard": "prescreen_discard.csv",
     "not_a_replication": "not_a_replication.csv",
+    # A replication that has not been run yet. Its own file rather than a corner of
+    # not_a_replication.csv: these are candidates to REVISIT once the study reports,
+    # not false positives to forget, and a validator asked to look at them is doing a
+    # different job. Settles the work — nothing is gained by re-extracting a plan.
+    "prospective_registration": "prospective_registration.csv",
     "api_error": "api_error.csv",
     "no_original_found": "no_original_found.csv",
     "self_link": "unresolved_self_links.csv",
@@ -454,6 +465,18 @@ OUTCOME_CATEGORIES = set(OUTCOME_LABELS.values()) | {
     # Emitted when the full-text outcome pass answers record_type_check="neither":
     # the paper does not check the named original at all.
     "not_a_replication",
+    # Emitted when the model answers study_status="prospective": the record describes a
+    # replication that has not been RUN yet — an OSF preregistration, a Stage 1
+    # registered report, an analysis plan. It names an original and reports no result,
+    # which is exactly the shape that settled as `cannot_be_determined` and reached a
+    # human validator with nothing to validate.
+    #
+    # A separate value rather than `not_a_replication`, because the two are different
+    # facts: `not_a_replication` says the paper never re-tests the named original,
+    # while this says it intends to and has not yet. Such a plan may well become a
+    # replication worth having, and quarantining it under its own name keeps that
+    # visible instead of burying it among the false positives.
+    "prospective_registration",
 }
 
 # The spellings this pipeline used before the FLoRA rename, mapped to the labels that
@@ -589,6 +612,8 @@ def normalise_outcome_block(result: dict, record_type: str,
     rtc = _outcome_text(result.get("record_type_check")).strip().lower() if has_text else ""
     target_check = (_outcome_text(result.get("target_check")).strip().lower()
                     if has_text else "")
+    # Ungated on purpose — see the veto below.
+    study_status = _outcome_text(result.get("study_status")).strip().lower()
 
     axes = dict(EMPTY_OUTCOME_AXES)
     if is_repro:
@@ -636,6 +661,25 @@ def normalise_outcome_block(result: dict, record_type: str,
         axes = dict(EMPTY_OUTCOME_AXES)
         phrase, source = "", ""
 
+    # The second veto: the record describes a replication that has not been RUN.
+    #
+    # Read WITHOUT the `has_text` gate that guards `record_type_check`, deliberately,
+    # and the difference matters. That gate exists so a model shown only an abstract
+    # cannot veto a paper on methods it never read — a judgment about what the study
+    # DID. This is a judgment about what the record IS, and a title is legitimate
+    # evidence for it: "Replication and Extension Pre-registration of Newman et al.
+    # (2011)" states its own status outright. Gating it on the discussion would make it
+    # unreachable for exactly the rows it was written for — 61% of the escaping OSF
+    # population has no abstract at all, let alone a full text (measured 2026-09-02).
+    #
+    # Last, so it wins over a verdict the model also offered: a plan that speculates
+    # about its expected result still has no result. `not_a_replication` is left
+    # standing, because "does not test this original" is the stronger statement.
+    if outcome != "not_a_replication" and study_status == "prospective":
+        outcome = "prospective_registration"
+        axes = dict(EMPTY_OUTCOME_AXES)
+        phrase, source = "", ""
+
     confident = result.get("outcome_confident", result.get("confident"))
     if not isinstance(confident, bool):
         confident = _outcome_text(confident).strip().lower() == "true"
@@ -649,6 +693,7 @@ def normalise_outcome_block(result: dict, record_type: str,
         **axes,
         "record_type_check":  rtc,
         "target_check":       target_check,
+        "study_status":       study_status,
     }
 
 

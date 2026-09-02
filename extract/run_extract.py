@@ -852,6 +852,11 @@ def _apply_outcome(row: dict, outcome: dict) -> dict:
         "out_quote_source":   outcome.get("out_quote_source",   ""),
         "outcome_reasoning":  outcome.get("outcome_reasoning",  ""),
         "outcome_llm_model":  str(outcome.get("llm_model",      "") or ""),
+        # The answer that decides whether this row ships at all. Kept because a
+        # verdict nobody can audit is a verdict nobody can tune: "the model was asked
+        # and said completed" and "the model was never asked" are different facts, and
+        # without the column they render identically as a blank.
+        "study_status":       str(outcome.get("study_status",     "") or ""),
         **{col: outcome.get(col, "") for col in _OUTCOME_AXIS_COLS},
     })
     if outcome.get("record_type"):
@@ -971,7 +976,16 @@ def _aggregate_outcomes(outcomes: list[str]) -> str:
         return "mixed"
     if substantive:
         return substantive[0]
-    for fallback in ("uninformative", "descriptive only", "not_a_replication"):
+    # `prospective_registration` sits LAST, after not_a_replication: both are
+    # statements about the record rather than verdicts about a finding, and "does not
+    # test this original" is the stronger of the two. It must be here at all because
+    # the fallback chain is exhaustive by construction — a value missing from it falls
+    # through to cannot_be_determined, which is exactly the verdict this whole feature
+    # exists to stop a plan from getting. Measured 2026-09-02: 7 of 27 rows the model
+    # correctly answered `prospective` shipped as cannot_be_determined for want of
+    # this line.
+    for fallback in ("uninformative", "descriptive only", "not_a_replication",
+                     "prospective_registration"):
         if fallback in outcomes:
             return fallback
     return "cannot_be_determined"

@@ -481,6 +481,52 @@ about the call changes. A legacy hit is re-stored under the current key carrying
 key it came from — so every response on disk stays traceable to what produced it; the
 legacy entry is left in place for other checkouts and the shared HF cache.
 
+### Prospective OSF registrations
+
+A planned replication — an OSF preregistration, a Stage 1 registered report, an
+analysis plan — names an original and reports no result. Before 2026-09-02 such a
+record settled as `cannot_be_determined` and reached a human validator with nothing to
+validate.
+
+**They are caught by the LLM, not by a rule, and that was measured rather than
+assumed.** Five candidate signals were tried over the ~1,698 works that escape the
+`osf-registration-protocol` discard, and all five fail:
+
+| Signal | Reach |
+| ------ | ----- |
+| `^OSF registration template: ` (the live Stage 2 rule) | 5.7% of its own domain |
+| URL shape (`v2/nodes` vs `v2/registrations`) | 92% ambiguous |
+| Title markers (`pre-registration`, `Stage 1\|2`, `registered report`) | 5.3% |
+| Abstract wording | 61% have no abstract at all |
+| The OSF API's registration state | **1 of 40 works** |
+
+The API result is the decisive one: probing 40 guids found **34 projects, 1
+registration**. A project has no registration template and no `registration_supplement`,
+so there is nothing to ask the API for — people deposit preregistrations as projects.
+Do not re-probe it for this.
+
+**The mechanism.** The two target+outcome prompts ask `study_status`
+(`completed` | `prospective`). `normalise_outcome_block()` reads it **ungated by
+`has_text`**, unlike `record_type_check`: that gate stops a model shown only an abstract
+from vetoing a paper on methods it never read, and this is a judgment about what the
+record IS rather than what its methods did. Gating it would make it unreachable for
+exactly the rows it was written for. The verdict becomes `outcome =
+prospective_registration`, and `classify_row()` files it in
+`prospective_registration.csv` — its own quarantine, because a plan is a candidate to
+revisit when the study reports, not a false positive to forget.
+
+**The prompt is biased toward `completed`.** A false `prospective` quarantines a real
+replication, which is the costly direction; a false `completed` leaves today's
+behaviour unchanged. The prompt says so explicitly, and says that a finished study whose
+outcome cannot be determined is still `completed` — an unreadable result is not an unrun
+study.
+
+Why they reach Stage 3 at all: an OSF record with no abstract whose title says
+"replication study" is matched by `replication-claim-title-*` on the TITLE, and the
+no-text downgrade that would normally hold it exempts OSF records
+(`_screenable_on_its_title` in `filter/engine/route.py`), because their titles are their
+descriptions.
+
 ### Re-asking a changed prompt over one population
 
 A prompt edit has three possible blast radii, not two. The default is all-or-nothing —

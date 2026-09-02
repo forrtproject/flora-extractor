@@ -268,7 +268,34 @@ _GENERATION_EQUIVALENCES: dict[str, tuple[str, ...]] = {
     # works settled under mini. Those verdicts stay current: the question is the
     # same, the mini answers were bought under an evaluated configuration, and every
     # verdict stamps the models that produced it. The residue is bought under luna.
-    "5b716d061bb336f5": ("dd7572887420ef65",),
+    # 2026-09-02: the two target+outcome prompts gained a `study_status` field, so a
+    # record that is a PLAN rather than a finished study can be filed as
+    # `prospective_registration` instead of settling as `cannot_be_determined` and
+    # reaching a human validator with nothing to validate.
+    #
+    # The edit ADDS a question; it changes no answer to the questions already asked.
+    # A work whose outcome the old prompt settled would settle the same way now — the
+    # outcome enum, the acceptance rule and the evidence blocks are untouched. What the
+    # old answers cannot do is answer the NEW question, and that is what the targeted
+    # reopen is for: the population is nameable
+    # (`--redo-status outcome=cannot_be_determined,abstract_r=`) and costs a fraction
+    # of the 3,025 works a full reopen would re-buy.
+    #
+    # So the claim this entry makes: every work NOT reopened would still get its
+    # recorded outcome. True for the outcome, and deliberately incomplete for
+    # study_status — a settled work outside the named population keeps a blank status,
+    # which reads as "never asked", not as "completed".
+    # `dd7572887420ef65` rides along because the entry must be keyed by the CURRENT
+    # generation (there is a test): the chain is flattened rather than stacked, so the
+    # 2026-08-15 gpt-5.4-mini verdicts stay current through this edit too.
+    # `243ae515c654b6e5` is the intermediate generation from the first half of this
+    # edit, when only the two TARGET prompts asked study_status and the two standalone
+    # coders did not — measured 2026-09-02 in the sandbox at a 26% catch rate, because
+    # a plan resolved by a deterministic rule is coded by the standalone prompt and was
+    # never asked. It shipped nowhere; it is listed so the sandbox verdicts bought
+    # under it stay readable rather than reading as a foreign generation.
+    "ca0706ef44827229": ("061cb5ca8e1888b6", "243ae515c654b6e5",
+                         "5b716d061bb336f5", "dd7572887420ef65"),
 }
 
 

@@ -76,6 +76,11 @@ _SET_ASIDE_COPY = {
         "A pooled-search link whose confirmation grade was short of clearly_target. "
         "The grade sets link_confidence and is appended to link_evidence; the row is "
         "held back rather than dropped."),
+    "prospective_registration.csv": (
+        "A replication that has not been run yet: an OSF preregistration, a Stage 1 "
+        "registered report, an analysis plan. It names an original and reports no "
+        "result, so there is nothing for a validator to check — revisit when the "
+        "study reports rather than treating it as a false positive."),
     "not_a_replication.csv": (
         "The screen or the outcome coder concluded this is not a replication or "
         "reproduction at all."),

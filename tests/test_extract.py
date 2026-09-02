@@ -466,9 +466,12 @@ class TestOutcomePromptOffersEveryCategory:
         from shared.schema import outcome_categories_for
         block = self._schema_block(build_outcome_prompt("t", "a"))
         for category in outcome_categories_for("replication"):
-            # not_a_replication is the full-text pass's is_genuine_attempt veto, not
-            # an option the model picks from the outcome enum.
-            if category == "not_a_replication":
+            # Two categories are VETOES rather than options the model picks from the
+            # outcome enum: not_a_replication comes from the full-text pass's
+            # is_genuine_attempt check, and prospective_registration from
+            # study_status. Neither belongs in the outcome list, and offering them
+            # there would invite the model to pick a verdict instead of a status.
+            if category in ("not_a_replication", "prospective_registration"):
                 continue
             assert f'"{category}"' in block, category
 
