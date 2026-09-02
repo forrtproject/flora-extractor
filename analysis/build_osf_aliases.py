@@ -97,7 +97,8 @@ from typing import Iterable, Optional
 from filter.engine.workids import load_aliases, work_id
 from shared.config import SNAPSHOT_POOL_DIR
 from shared.pdf_sources import osf_registration_guid
-from shared.utils import clean_doi
+from shared.utils import (OSF_OWN_PREFIXES, OSF_REGISTRATION_PREFIX,  # noqa: F401
+                          clean_doi)
 
 SPEC_DIR = Path(__file__).resolve().parent.parent / "filter" / "spec"
 ALIASES = SPEC_DIR / "aliases.json"
@@ -105,20 +106,11 @@ ALIASES = SPEC_DIR / "aliases.json"
 # The largest group merged without a human reading it first. Measured maximum: 12.
 MAX_GROUP_SIZE = 12
 
-# The OSF registration registrant — the canonical rule's tier 2.
-OSF_REGISTRATION_PREFIX = "10.17605"
-
-# Every registrant under which this pool holds a DOI that encodes an `osf.io` guid:
-# the registrations, OSF Preprints and the branded preprint servers it hosts
-# (PsyArXiv `10.31234`, SocArXiv `10.31235`, EarthArXiv `10.31223`, …). Measured over
-# the pool, and not the whole predicate — `is_osf_family_doi()` also accepts a DOI whose
-# suffix encodes the guid, so a server OSF adds later needs no edit here.
-OSF_OWN_PREFIXES = {
-    "10.1149", "10.17605", "10.31219", "10.31220", "10.31221", "10.31222", "10.31223",
-    "10.31224", "10.31225", "10.31226", "10.31227", "10.31228", "10.31229", "10.31230",
-    "10.31231", "10.31232", "10.31233", "10.31234", "10.31235", "10.31236", "10.31237",
-    "10.31730", "10.32942", "10.33767", "10.34055", "10.35542", "10.35543", "10.37044",
-}
+# The registrant sets live in shared/utils.py, beside `osf_type()`, which needs the
+# same facts to say whether a row is a preprint or a project. Imported rather than
+# repeated: two copies of a 28-registrant list is exactly the thing that drifts.
+# `is_osf_family_doi()` below is still not the whole predicate — it also accepts a DOI
+# whose suffix encodes the guid, so a server OSF adds later needs no edit in either file.
 
 # The SCORE replication-type labels, normalised, as the 2024-01-10 batch rename left
 # them: each set is one label written two ways over time. Only these two pairs occur in

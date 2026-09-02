@@ -445,6 +445,8 @@ def _base_row(filter_row: pd.Series, match_type: str, match_conf: str,
         # Blank unless a producer with a link fills them in: a row written without a
         # ladder result (front door, api_error) acquired and parsed nothing.
         "pdf_source":    "",
+        "pdf_url":       "",
+        "pdf_name":      "",
         "parse_method":  "",
         "original_rank": 1,
         "n_originals":   1,
@@ -462,8 +464,15 @@ def _provenance(link: dict) -> dict:
     failed attempt, and on the row the column names a document or says nothing.
     """
     source = str(link.get("pdf_source", "") or "")
+    source = "" if source in {"none", "unknown"} else source
     return {
-        "pdf_source":   "" if source in {"none", "unknown"} else source,
+        "pdf_source":   source,
+        # Where it came from and which of that tier's files: both blank whenever the
+        # tier is, so the trio never names a document the row did not get. The URL is
+        # what makes the row checkable by hand — a reader who doubts an outcome can
+        # open exactly what the model read.
+        "pdf_url":      str(link.get("pdf_url", "") or "") if source else "",
+        "pdf_name":     str(link.get("pdf_name", "") or "") if source else "",
         "parse_method": str(link.get("parse_method", "") or ""),
     }
 
@@ -2095,6 +2104,8 @@ def _observe_link(observed: "dict | None", link: dict) -> None:
         "unidentified_count": int(link.get("unidentified_count") or 0),
         "link_llm_model": str(link.get("llm_model", "") or ""),
         "pdf_source": str(link.get("pdf_source", "") or ""),
+        "pdf_url": str(link.get("pdf_url", "") or ""),
+        "pdf_name": str(link.get("pdf_name", "") or ""),
         "parse_method": str(link.get("parse_method", "") or ""),
         "link_evidence": str(link.get("llm_evidence", "") or ""),
         "grobid_discussion": bool(link.get("grobid_discussion")),

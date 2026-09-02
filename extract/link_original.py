@@ -1653,6 +1653,7 @@ def _build_output(doi_r:     str,
         # ── PDF ───────────────────────────────────────────────────────────────
         "pdf_url"               : pdf.get("pdf_url",    ""),
         "pdf_source"            : pdf.get("pdf_source", "none"),
+        "pdf_name"              : pdf.get("pdf_name",   ""),
         "pdf_path"              : pdf.get("pdf_path",   ""),
         "pdf_ok"                : bool(pdf.get("pdf_ok", False)),
         "pdf_url_tried"         : json.dumps(pdf.get("pdf_url_tried", []),

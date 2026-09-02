@@ -102,7 +102,7 @@ from shared.flora_skip import (VALIDATED_SKIP_NAME, default_flora_skip_dois,
                                load_validated_skip)
 from shared.schema import (EXTRACTED_COLS, SET_ASIDE_DESTINATIONS, YEAR_COLS,
                            canonical_outcome, set_aside_dir, year_str)
-from shared.utils import clean_doi
+from shared.utils import clean_doi, osf_type
 
 DEFAULT_OUT = DATA_DIR / "extracted.csv"
 
@@ -279,6 +279,12 @@ def _normalise(row: dict) -> dict:
     database's vocabulary says `successful`, and a stored verdict is not re-bought to
     correct a spelling. `canonical_outcome` leaves everything else — the reproduction
     joins, `pending`, `api_error` — as it came.
+
+    `osf_type` is DERIVED here for the same reason and not read off the payload: it is
+    a fact about doi_r and url_r, both of which every row already carries, so deriving
+    it costs no call and answers for rows extracted long before the column existed.
+    Computing it in `_normalise` rather than in `render` also keeps the `--check` drift
+    digest (which normalises each row) reporting the same value the file gets.
     """
     out = {col: "" for col in EXTRACTED_COLS}
     for col, value in row.items():
@@ -288,6 +294,7 @@ def _normalise(row: dict) -> dict:
         if col in out:
             out[col] = year_str(out[col])
     out["outcome"] = canonical_outcome(out.get("outcome"))
+    out["osf_type"] = osf_type(out.get("doi_r", ""), out.get("url_r", ""))
     return out
 
 

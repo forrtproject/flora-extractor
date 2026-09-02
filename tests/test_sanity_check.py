@@ -203,3 +203,28 @@ def test_a_malformed_row_is_reported_as_what_it_is(tmp_path, monkeypatch):
     s = sc.run_sanity_check(ex, deep=False)
     assert s["flagged"]["target_pending"] == 1
     assert s["rows_clean"] == 0
+
+
+def test_a_resolved_link_whose_outcome_is_api_error_is_quarantined(tmp_path,
+                                                                   monkeypatch):
+    """A provider failure in the outcome-coding call is a failure, wherever it lands.
+
+    The row links its original and verifies it, so no link_method rule sees anything
+    wrong — but `outcome` is api_error and `outcome_reasoning` is empty, so the row
+    ships to validation asserting a finding nothing read. Two such rows were in the
+    2026-08 campaign's extracted.csv."""
+    monkeypatch.setattr(sc, "DATA_DIR", tmp_path)
+    ex = tmp_path / "extracted.csv"
+    _write(ex, [
+        {"doi_r": "10.1/coded", "doi_o": "10.2/o", "outcome": "failed",
+         "doi_o_verification": "verified", "openalex_id_r": "W1",
+         "link_method": "single_candidate_after_requery"},
+        {"doi_r": "10.1/broke", "doi_o": "10.2/o2", "outcome": "api_error",
+         "doi_o_verification": "verified", "openalex_id_r": "W2",
+         "link_method": "single_candidate_after_requery"},
+    ])
+
+    s = sc.run_sanity_check(ex, deep=False)
+
+    assert s["flagged"]["api_error"] == 1
+    assert s["rows_clean"] == 1

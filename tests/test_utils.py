@@ -5,8 +5,38 @@ import pytest
 from analysis.apa_resolver import format_apa_reference
 from shared.utils import (author_surname, bare_work_id, citation_fragment,
                           clean_citation_title, clean_search_query, non_article_doi,
-                          non_article_title, non_article_type, sentence_spans,
-                          usable_title)
+                          non_article_title, non_article_type, osf_type,
+                          sentence_spans, usable_title)
+
+
+class TestOsfType:
+    """The registrant, then the URL shape — see osf_type() for the measured rationale."""
+
+    def test_registration_registrant_is_never_a_preprint(self):
+        """The 395 rows OpenAlex labels "OSF Preprints" on this registrant."""
+        assert osf_type("10.17605/osf.io/ab12c") == "project_or_registration"
+
+    def test_branded_preprint_servers_are_preprints(self):
+        for doi in ("10.31234/osf.io/xy78z",   # PsyArXiv
+                    "10.31235/osf.io/xy78z",   # SocArXiv
+                    "10.31223/osf.io/xy78z"):  # EarthArXiv
+            assert osf_type(doi) == "preprint", doi
+
+    def test_bare_guid_url_without_a_doi_is_not_a_preprint(self):
+        """The 726 no-DOI rows: OSF serves preprints under /preprints/, nothing else."""
+        assert osf_type("", "https://osf.io/ab12c") == "project_or_registration"
+
+    def test_preprint_url_shape_wins_when_there_is_no_doi(self):
+        assert osf_type("", "https://osf.io/preprints/psyarxiv/xy78z") == "preprint"
+
+    def test_the_doi_decides_even_when_a_url_disagrees(self):
+        """The registrant is a fact about who minted the DOI; a landing page is not."""
+        assert osf_type("10.17605/osf.io/ab12c",
+                        "https://osf.io/preprints/psyarxiv/xy78z") == "project_or_registration"
+
+    def test_non_osf_rows_are_blank_not_unknown(self):
+        assert osf_type("10.1037/abc0000123", "https://doi.org/10.1037/abc0000123") == ""
+        assert osf_type("", "") == ""
 
 
 class TestNonArticleType:

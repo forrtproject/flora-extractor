@@ -317,10 +317,17 @@ async function loadConcerns() {
   const c = await getJSON("/api/dashboard/concerns");
   const raised = c.concerns.filter((x) => x.count > 0).sort((a, b) => b.count - a.count);
   const clear = c.concerns.length - raised.length;
+  // The COUNT is what a reader aims at — it is the biggest thing in the row and it is
+  // the thing they want to see the rows behind. Linking only the label left the number
+  // dead, so the whole count+label pair is the target where there is somewhere to go.
   $("concerns").innerHTML = raised.map((x) => `<li class="concern ${esc(x.severity)}">
-      <span class="count">${num(x.count)}</span>
-      <span class="label">${x.check_url
-        ? `<a href="${esc(x.check_url)}">${esc(x.label)}</a>` : esc(x.label)}</span>
+      ${x.check_url
+        ? `<a class="concern-link" href="${esc(x.check_url)}"
+             title="Open these rows in Check"
+             ><span class="count">${num(x.count)}</span
+             ><span class="label">${esc(x.label)}</span></a>`
+        : `<span class="count">${num(x.count)}</span>
+           <span class="label">${esc(x.label)}</span>`}
       ${x.note ? `<div class="note">${esc(x.note)}</div>` : ""}
       ${x.command ? `<code>${esc(x.command)}</code>` : ""}
     </li>`).join("");
