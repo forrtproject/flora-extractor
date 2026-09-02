@@ -159,7 +159,12 @@ def classify_row(row: Mapping) -> Optional[str]:
         return "prescreen_discard"
     if str(row.get("outcome", "") or "") == "not_a_replication":
         return "not_a_replication"
-    if method == "api_error":
+    # Either column: the ladder never got an answer (link_method), or it linked the
+    # paper and the outcome-coding call failed after retries (outcome). Both mean a
+    # provider failure is the row's verdict, and the second used to ship — two rows in
+    # the 2026-08 campaign reached the validation import with outcome=api_error and an
+    # empty outcome_reasoning, because only link_method was asked.
+    if method == "api_error" or str(row.get("outcome", "") or "") == "api_error":
         return "api_error"
     if method == "no_original_found":
         return "no_original_found"

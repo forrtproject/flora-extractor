@@ -139,6 +139,72 @@ def non_article_doi(doi: str) -> str:
     return ""
 
 
+# ── What kind of OSF object a row is ─────────────────────────────────────────
+# OpenAlex names the HOST, not the object: `primary_location.source.display_name` is
+# "OSF Preprints" for everything OSF serves, whether it is a preprint, a project or a
+# registration, and that string becomes `journal_r` (`_row_from_snapshot()` in
+# search/snapshot_scan.py). Measured over the 1,674 OSF rows in the exported CSVs, it
+# mislabels 395 `10.17605` DOIs — the projects/registrations registrant — as preprints,
+# while leaving 219 DOIs minted by genuine preprint servers with no journal at all.
+# OpenAlex also contradicts itself on that registrant: 395 rows say "OSF Preprints" and
+# 313 say "Open Science Framework" for identically-minted `10.17605` DOIs. Who MINTED
+# the DOI is therefore a better signal than what OpenAlex calls the source, and it
+# needs no network call — which matters because the OSF API is unreliable.
+
+# The registrant OSF mints project and registration DOIs under. Telling those two
+# apart is Stage 2's job (the `osf-registration-*` specs); from the DOI alone they are
+# one thing, so this does not pretend to separate them.
+OSF_REGISTRATION_PREFIX = "10.17605"
+
+# Every registrant under which the pool holds a DOI encoding an `osf.io` guid: the
+# registrations above plus the branded preprint servers OSF hosts (PsyArXiv 10.31234,
+# SocArXiv 10.31235, EarthArXiv 10.31223, …). Measured over the pool.
+OSF_OWN_PREFIXES = frozenset({
+    "10.1149", "10.17605", "10.31219", "10.31220", "10.31221", "10.31222", "10.31223",
+    "10.31224", "10.31225", "10.31226", "10.31227", "10.31228", "10.31229", "10.31230",
+    "10.31231", "10.31232", "10.31233", "10.31234", "10.31235", "10.31236", "10.31237",
+    "10.31730", "10.32942", "10.33767", "10.34055", "10.35542", "10.35543", "10.37044",
+})
+
+# Derived, so the two cannot drift apart: everything OSF mints that is not the
+# registration registrant is one of its preprint servers.
+OSF_PREPRINT_PREFIXES = OSF_OWN_PREFIXES - {OSF_REGISTRATION_PREFIX}
+
+# A preprint differs in URL SHAPE, not in kind: OSF serves preprints at
+# `osf.io/preprints/<server>/<guid>` and everything else at a bare `osf.io/<guid>`
+# (the same distinction `osf_registration_guid()` in shared/pdf_sources.py parses).
+# That shape is what decides the 726 OSF-labelled rows carrying no DOI at all.
+_OSF_URL_RE = re.compile(r"(?:^|/|\.)osf\.io/", re.IGNORECASE)
+_OSF_PREPRINT_URL_RE = re.compile(r"osf\.io/preprints/", re.IGNORECASE)
+
+OSF_PREPRINT = "preprint"
+OSF_PROJECT_OR_REGISTRATION = "project_or_registration"
+
+
+def osf_type(doi: str, url: str = "") -> str:
+    """Which kind of OSF object a row is, or "" when it is not on OSF.
+
+    `preprint` is what FLoRA wants; `project_or_registration` tells a validator to go
+    looking for the preprint or published paper rather than code the project as a
+    study. The DOI is asked first, because the registrant is a fact about who minted
+    it; the URL only decides rows that carry no DOI.
+
+    Deliberately NOT a claim about whether the work is a replication — a project may
+    well hold one. It replaces a wrong label with an honest one, nothing more.
+    """
+    doi = clean_doi(doi)
+    prefix = doi.split("/", 1)[0] if doi else ""
+    if prefix == OSF_REGISTRATION_PREFIX:
+        return OSF_PROJECT_OR_REGISTRATION
+    if prefix in OSF_PREPRINT_PREFIXES:
+        return OSF_PREPRINT
+    target = (url or "").strip()
+    if not _OSF_URL_RE.search(target):
+        return ""
+    return (OSF_PREPRINT if _OSF_PREPRINT_URL_RE.search(target)
+            else OSF_PROJECT_OR_REGISTRATION)
+
+
 # "Replication Data for: X", "Replication data set for X", and the Dataverse volume
 # form "Vol. 16(2): Replication Data for: X". Anchored at the start and requiring the
 # noun phrase whole, so "Replication Data Analysis in Psychology" — a paper about

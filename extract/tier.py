@@ -715,11 +715,29 @@ def works_with_status(client: ClaimsClient, statuses: Iterable[str],
     the same class. Reopening every settled work to reach them cost a campaign's wall
     clock; this asks for the class.
 
-    A status is either a RESULT VERDICT — the work's whole ending, `RESULT_VERDICTS` —
-    or a LINK METHOD, which names a row: `unidentified_original` and
+    A status is one of three things. A RESULT VERDICT — the work's whole ending,
+    `RESULT_VERDICTS`. A LINK METHOD, which names a row: `unidentified_original` and
     `keyed_link_disputed` are both `provisional` endings, and a ladder change that
-    reaches one does not reach the other. A work matches a link method when any row of
-    its result carries it, so the finer name is the one to reach for.
+    reaches one does not reach the other. Or `field=value` over any column of the
+    exported row, which is what a PROMPT edit needs.
+
+    The third form exists because the first two cannot name what a prompt decides. A
+    ladder change alters how an original is FOUND, and its population is a link
+    method. A prompt change alters what the model CONCLUDES, and its population is a
+    conclusion: `outcome=cannot_be_determined` is every row the outcome prompt could
+    not settle, `abstract_r=` every row it had nothing to read. Without it the only
+    ways to re-ask a changed prompt were to reopen every settled work — a whole
+    campaign's spend — or to leave the old answers standing.
+
+    It pairs with `_GENERATION_EQUIVALENCES`, and neither half works alone: editing a
+    prompt moves `extract_generation()`, which reopens everything by itself, so the
+    declaration is what holds the settled works still while this names the few to
+    re-buy. The recipe is "Re-asking a changed prompt over one population" in
+    CLAUDE.md.
+
+    A work matches when ANY row of its result matches, so the finer name is the one to
+    reach for. Values are compared against the RENDERED row — what appears in
+    extracted.csv — case-insensitively and stripped; an empty value means blank.
 
     Same reading of the store as `settled_work_ids` — latest result, current
     generation, one mode — because a work the worklist would offer anyway needs no
@@ -727,22 +745,62 @@ def works_with_status(client: ClaimsClient, statuses: Iterable[str],
     """
     from filter.engine.tiers import _by_work
 
+    from shared.schema import EXTRACTED_COLS
+
+    # A token is one of three things. The two bare forms are unchanged; `field=value`
+    # is the third, and it exists because the first two cannot name the populations a
+    # PROMPT edit reaches. A ladder change reaches a link method; a prompt change
+    # reaches whatever the prompt decided — `outcome=cannot_be_determined` is the row
+    # the outcome prompt failed to settle, and `abstract_r=` is the row it had nothing
+    # to read. Neither is a verdict, and neither could be asked for before.
     wanted = {str(v).strip() for v in statuses if str(v).strip()}
-    unknown = wanted - set(RESULT_VERDICTS) - LINK_METHOD_VALUES
+    fields: list[tuple[str, str]] = []
+    bare: set[str] = set()
+    for token in wanted:
+        if "=" in token:
+            name, _, value = token.partition("=")
+            name = name.strip()
+            if name not in EXTRACTED_COLS:
+                raise ValueError(
+                    f"not a column of the exported row: {name}\n"
+                    f"  columns: {', '.join(EXTRACTED_COLS)}")
+            # Compared against the RENDERED row, so the value is the one that appears
+            # in extracted.csv. An empty value means blank, which is how a row with no
+            # abstract is named: `abstract_r=`.
+            fields.append((name, value.strip().lower()))
+        else:
+            bare.add(token)
+    unknown = bare - set(RESULT_VERDICTS) - LINK_METHOD_VALUES
     if unknown:
         raise ValueError(
-            f"not a result verdict or a link method: {', '.join(sorted(unknown))}\n"
+            f"not a result verdict, a link method or a column selector: "
+            f"{', '.join(sorted(unknown))}\n"
             f"  verdicts:     {', '.join(RESULT_VERDICTS)}\n"
-            f"  link methods: {', '.join(sorted(LINK_METHOD_VALUES))}")
-    methods = wanted & LINK_METHOD_VALUES
-    verdicts = wanted & set(RESULT_VERDICTS)
+            f"  link methods: {', '.join(sorted(LINK_METHOD_VALUES))}\n"
+            f"  or field=value over any column of extracted.csv, e.g. "
+            f"outcome=cannot_be_determined (blank value means empty: abstract_r=)")
+    methods = bare & LINK_METHOD_VALUES
+    verdicts = bare & set(RESULT_VERDICTS)
 
     claims = client.claims(tier=TIER_EXTRACT)
     generations = {c["id"]: (c.get("meta") or {}).get("generation") for c in claims}
     in_mode = {c["id"] for c in claims
                if ((c.get("meta") or {}).get("mode") or "live") == mode}
-    rows = [r for r in client.verdicts(TIER_EXTRACT, with_payload=bool(methods))
+    want_payload = bool(methods or fields)
+    rows = [r for r in client.verdicts(TIER_EXTRACT, with_payload=want_payload)
             if r.get("claim_id") in in_mode]
+
+    def _matches(row: dict) -> bool:
+        """Whether one rendered row answers to any link method or column selector.
+
+        A work matches when ANY of its rows does, the same rule link methods already
+        used: a paper with three originals is one work, and a prompt that failed to
+        settle one of them is a reason to re-ask the whole work.
+        """
+        if str(row.get("link_method") or "") in methods:
+            return True
+        return any(str(row.get(name) or "").strip().lower() == value
+                   for name, value in fields)
 
     named: set[int] = set()
     for work, rows_ in _by_work(TIER_EXTRACT, rows, generations).items():
@@ -750,11 +808,10 @@ def works_with_status(client: ClaimsClient, statuses: Iterable[str],
         if decision["outcome"] in verdicts:
             named.add(work)
             continue
-        if not methods or decision["row"] is None:
+        if not want_payload or decision["row"] is None:
             continue
         payload = decision["row"].get("payload") or {}
-        if any(str(r.get("link_method") or "") in methods
-               for r in render_payload(payload)):
+        if any(_matches(r) for r in render_payload(payload)):
             named.add(work)
     return named
 
@@ -1307,10 +1364,11 @@ def main(argv: Optional[list[str]] = None) -> int:
                         help="Comma-separated work ids: re-extract despite the "
                              "checkpoint, and supersede each work's previous result row.")
     parser.add_argument("--redo-status", default=None,
-                        help="Comma-separated result verdicts or link methods "
-                             "(e.g. unidentified_original, no_original_found): redo "
-                             "every work whose latest result ended that way. How a "
-                             "ladder change reopens the rows it was written for.")
+                        help="Reopen a POPULATION: a result verdict, a link method, or "
+                             "field=value over any column of extracted.csv "
+                             "(outcome=cannot_be_determined, abstract_r= for "
+                             "blank). Comma-separated. ADDS to the worklist; "
+                             "only --only restricts it.")
     parser.add_argument("--allow-extra-works", action="store_true",
                         help="Run the full worklist even though --redo/--redo-status "
                              "named a smaller population.")

@@ -687,8 +687,54 @@ def test_a_status_name_that_does_not_exist_is_refused():
     fixed" when it had asked for a class that cannot exist."""
     from unittest.mock import MagicMock
 
-    with pytest.raises(ValueError, match="not a result verdict or a link method"):
+    with pytest.raises(ValueError, match="not a result verdict, a link method"):
         tier_mod.works_with_status(MagicMock(), ["unidentified_originals"])
+
+
+def test_redo_status_takes_a_column_selector_for_what_a_prompt_decided():
+    """The population a PROMPT edit reaches is a conclusion, not a verdict or a link
+    method: every row the outcome prompt could not settle, or had nothing to read.
+    Neither is nameable by the two bare forms, which is why the third exists."""
+    from unittest.mock import MagicMock
+
+    gen = tier_mod.extract_generation()
+    claims = [{"id": "c", "meta": {"mode": "live", "generation": gen}}]
+    rows = [
+        # Settled, but the outcome prompt gave up on it.
+        {"claim_id": "c", "work_id": 1, "verdict": RESOLVED, "id": "v1",
+         "created_at": "2026-08-06T00:00:00Z",
+         "payload": {"input": {"abstract_r": "an abstract"},
+                     "targets": [{"outcome": "cannot_be_determined"}]}},
+        # Settled with a real verdict, and there was text to read.
+        {"claim_id": "c", "work_id": 2, "verdict": RESOLVED, "id": "v2",
+         "created_at": "2026-08-06T00:00:00Z",
+         "payload": {"input": {"abstract_r": "an abstract"},
+                     "targets": [{"outcome": "successful"}]}},
+        # Nothing to read: the row the prompt was never given evidence for.
+        {"claim_id": "c", "work_id": 3, "verdict": RESOLVED, "id": "v3",
+         "created_at": "2026-08-06T00:00:00Z",
+         "payload": {"input": {"abstract_r": ""},
+                     "targets": [{"outcome": "successful"}]}},
+    ]
+    client = MagicMock()
+    client.claims.return_value = claims
+    client.verdicts.return_value = rows
+
+    assert tier_mod.works_with_status(client, ["outcome=cannot_be_determined"]) == {1}
+    # An empty value means blank — how a row with no abstract is named.
+    assert tier_mod.works_with_status(client, ["abstract_r="]) == {3}
+    # The forms compose, and the bare ones still mean what they meant.
+    assert tier_mod.works_with_status(
+        client, ["outcome=cannot_be_determined", "abstract_r="]) == {1, 3}
+    assert tier_mod.works_with_status(client, [RESOLVED]) == {1, 2, 3}
+
+
+def test_a_column_selector_naming_no_such_column_is_refused():
+    """A misspelled column would filter to nothing and read as "already fixed"."""
+    from unittest.mock import MagicMock
+
+    with pytest.raises(ValueError, match="not a column of the exported row"):
+        tier_mod.works_with_status(MagicMock(), ["abstract=missing"])
 
 
 def test_one_errored_target_stops_a_multi_target_work_settling():

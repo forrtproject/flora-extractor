@@ -149,6 +149,17 @@ EXTRACT_ADDED_COLS = [
                            #          semanticscholar | core | europepmc | landing_* |
                            #          serpapi | playwright | openalex_xml | epmc_xml |
                            #          osf_registration | html_landing); blank when none
+    "pdf_url",             # str   — the URL the document was actually fetched from, as
+                           #         `acquire_pdf` reported it. The one column that
+                           #         makes a full-text row checkable by hand: a reader
+                           #         who doubts an outcome can open exactly what the
+                           #         model read. Blank whenever pdf_source is.
+    "pdf_name",            # str   — the document's own file name, where the tier knew
+                           #         one (OSF storage lists them) or the URL ended in
+                           #         one. Blank for a structured source and for a
+                           #         guid-shaped download URL: pdf_source names the
+                           #         tier, this names WHICH of its files was read —
+                           #         an OSF project routinely holds several.
     "parse_method",        # str   — winning parser from best_parse_result()
                            #         (openalex_xml | epmc_xml | pdfminer | grobid |
                            #          docpluck | opendataloader | markitdown | docx);
@@ -188,6 +199,15 @@ EXTRACT_ADDED_COLS = [
     "type",                # str   — replication | reproduction
     "original_rank",       # int   — 1 for single; 1,2,3... for multi-original papers
     "n_originals",         # int   — total originals in this paper (1 for single)
+
+    # What kind of OSF object the replication is, when it is on OSF at all. DERIVED at
+    # render time from doi_r and url_r (`osf_type()` in shared/utils.py), never stored
+    # in a verdict payload: it is a fact about the identifier, so it needs no
+    # re-extraction and it corrects rows extracted before this column existed.
+    # It exists because journal_r cannot answer the question — OpenAlex labels every
+    # OSF-hosted object "OSF Preprints", so a project reads as a preprint. Blank means
+    # "not on OSF", NOT "unknown".
+    "osf_type",            # str   — preprint | project_or_registration | "" (not OSF)
 ]
 # pair_id is placed first so it is the leading identifier in extracted.csv.
 # Value: md5(doi_r + "|" + doi_o).hexdigest() — full 32-char hex in the CSV;

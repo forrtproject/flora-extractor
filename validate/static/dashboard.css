@@ -305,3 +305,11 @@ a.r:visited { color: var(--text); }
 .concern .label a { color: var(--text); text-decoration: none; }
 .concern .label a:hover { color: var(--accent); text-decoration: underline;
                           text-underline-offset: 3px; }
+
+/* A concern row with somewhere to go: the count and the label are one target, so the
+   number a reader aims at is the thing that actually opens the rows behind it. */
+.concern .concern-link {
+  display: contents; text-decoration: none; color: inherit;
+}
+.concern .concern-link:hover .label { text-decoration: underline; text-underline-offset: 2px; }
+.concern .concern-link:hover .count { color: var(--accent); }

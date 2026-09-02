@@ -481,6 +481,66 @@ about the call changes. A legacy hit is re-stored under the current key carrying
 key it came from — so every response on disk stays traceable to what produced it; the
 legacy entry is left in place for other checkouts and the shared HF cache.
 
+### Re-asking a changed prompt over one population
+
+A prompt edit has three possible blast radii, not two. The default is all-or-nothing —
+edit and every settled work reopens, or do not edit — and neither is right when the
+edit only addresses rows you can already name.
+
+**The third option is two declarations used together, and neither works alone.**
+
+1. **Hold the settled works still.** Editing a prompt moves `extract_generation()`, and
+   that by itself reopens every work. Declare the new generation as accepting the old
+   one's verdicts — `_GENERATION_EQUIVALENCES[new] = (old,)` in `extract/tier.py`, keyed
+   by the CURRENT generation so a later edit matches nothing and reopens strictly.
+2. **Name the few to re-buy.** `--redo-status` ADDS those works back to the worklist.
+
+Without (1) you reopen everything; without (2) you reopen nothing. Run
+`.venv/bin/python -m extract.tier` with no `--run` first — it prints the worklist size
+for free, and that is the check that says what a run will actually buy.
+
+**`--redo-status` takes three kinds of name.** The first two describe what the LADDER
+did; the third describes what a PROMPT concluded, which is the population a prompt edit
+actually reaches:
+
+| Form | Names | Reach for it when |
+| ---- | ----- | ----------------- |
+| a result verdict | the work's whole ending (`RESULT_VERDICTS`) | the change reaches an ending — `no_original_found`, `api_error` |
+| a link method | one row of a result | the change reaches how an original was FOUND — a ladder bump |
+| `field=value` | any column of the exported row | the change reaches what a model CONCLUDED |
+
+The third form compares against the RENDERED row — what appears in `extracted.csv` —
+case-insensitively and stripped, and an **empty value means blank**. A work matches when
+ANY of its rows does, so a paper with three originals is reopened whole when one of them
+is named. A column that does not exist is refused rather than matching nothing, because
+a typo that silently reopens zero works reads exactly like "already fixed".
+
+```bash
+# Every row the outcome prompt could not settle, plus every row it had nothing to read.
+.venv/bin/python -m extract.tier --run --redo-status outcome=cannot_be_determined,abstract_r=
+```
+
+**Worked example — editing the outcome prompt for one class.**
+
+```bash
+.venv/bin/python -c "from extract.tier import extract_generation; print(extract_generation())"
+# ... edit the prompt in shared/prompts.py ...
+.venv/bin/python -c "from extract.tier import extract_generation; print(extract_generation())"
+# add _GENERATION_EQUIVALENCES[<new>] = ("<old>",) in extract/tier.py, with the reason
+.venv/bin/python -m extract.tier --redo-status outcome=cannot_be_determined   # dry run
+.venv/bin/python -m extract.tier --run --redo-status outcome=cannot_be_determined
+```
+
+**When NOT to declare the equivalence.** If the edit changes what the prompt concludes
+for rows outside the population you named, the old verdicts are stale and holding them
+still ships answers the current prompt would not give. The equivalence is a claim that
+every work you did not reopen would still get its recorded answer. Make that claim
+deliberately, in a comment beside the entry, the way the 2026-08-15 model swap does.
+
+This is a different mechanism from the next section. `_GENERATION_PROMPT_EQUIVALENCES`
+is for an edit that provably changes NO answer, so nothing is re-asked at all; this is
+for an edit that changes answers for a population you can name.
+
 ### Editing a prompt without invalidating its cache
 
 A prompt edit that provably cannot change any answer — a category renamed, a typo, a

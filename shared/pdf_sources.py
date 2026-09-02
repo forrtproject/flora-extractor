@@ -58,6 +58,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
+from urllib.parse import unquote, urlsplit
 
 import requests
 
@@ -306,6 +307,18 @@ def _read_provenance(doi: str) -> dict:
     except Exception as e:
         log.debug("PDF provenance unreadable for %s: %s", doi, e)
     return {}
+
+
+def _url_file_name(url: str) -> str:
+    """The last path segment of *url* when it names a file, else "".
+
+    The fallback for the tiers that do not know a file's own name. A direct download
+    ends in one ("2301.12345v1.pdf"); a guid-shaped one does not
+    ("osf.io/download/abc123/"), and neither does a structured source's API URL — so
+    the dot is the test, and a tier with nothing to say says nothing.
+    """
+    tail = unquote(urlsplit(url).path.rstrip("/").rsplit("/", 1)[-1])
+    return tail if "." in tail else ""
 
 
 def _write_provenance(doi: str, source: str, url: str, title_check: str = "",
@@ -2441,6 +2454,9 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
     Returns:
         pdf_url        str
         pdf_source     str
+        pdf_name       str          — the document's own file name where anything knew
+                                      one: the name the tier reported (OSF storage), or
+                                      the URL's last segment. "" when neither says.
         pdf_path       str | None
         pdf_ok         bool
         pdf_url_tried  list[str]
@@ -2454,6 +2470,7 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
     dl        = {"success": False, "path": None, "reason": ""}
     pdf_url   = ""
     pdf_src   = ""
+    pdf_name  = ""
     all_tried: list[str] = []
     oa_xml    = None
 
@@ -2486,13 +2503,14 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
 
     def _try(url: str, label: str, referer: str = "", want_title: str = "",
              name: str = "") -> bool:
-        nonlocal dl, pdf_url, pdf_src
+        nonlocal dl, pdf_url, pdf_src, pdf_name
         all_tried.append(url)
         # A tier fetching ANOTHER paper's document checks the bytes against that
         # paper's title, not the row's; everything else asks for the row's own.
         dl = download_pdf(url, doi=doi_r, title=want_title or title, referer=referer)
         if dl["success"]:
             pdf_url, pdf_src = url, label
+            pdf_name = name or _url_file_name(url)
             # Also written on a download_pdf cache hit, which is how a PDF saved
             # before this record existed acquires one.
             _write_provenance(doi_r or url_r, label, url, dl.get("title_check", ""),
@@ -2516,6 +2534,7 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
         return {
             "pdf_url"       : pdf_url,
             "pdf_source"    : pdf_src if dl["success"] else (pdf_src or "none"),
+            "pdf_name"      : pdf_name,
             "pdf_path"      : str(dl["path"]) if dl.get("path") else None,
             "pdf_ok"        : dl["success"],
             "pdf_url_tried" : all_tried,
@@ -2578,6 +2597,7 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
                        "source": "cache", "reason": ""}
             pdf_url = prov["url"]
             pdf_src = prov["source"]
+            pdf_name = prov.get("name") or _url_file_name(pdf_url)
             if pdf_url:
                 all_tried.append(pdf_url)
             log.debug("  [%s] PDF already on disk (source=%s)", doi_r, pdf_src)
@@ -2873,6 +2893,7 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
         if pw_result["success"]:
             pdf_url = f"https://doi.org/{doi_r}" if doi_r else url_r
             pdf_src = "playwright"
+            pdf_name = _url_file_name(pdf_url)
             dl      = pw_result
             all_tried.append(pdf_url)
             _write_provenance(doi_r or url_r, "playwright", pdf_url,

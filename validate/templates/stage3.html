@@ -222,9 +222,11 @@
           <p>Re-extract works you name. <strong>Adds</strong> to the worklist — it
           re-admits works the checkpoint had subtracted.</p></div>
         <div class="whyrow c"><span class="wk">--redo-status</span>
-          <p>Re-extract a <em>population</em>: any result verdict or any link method.
-          Named, never inferred — each changelog entry above carries the command that
-          reopens what it fixed.</p></div>
+          <p>Re-extract a <em>population</em>. Three kinds of name: a result verdict
+          (the work's whole ending), a link method (one row of it), or
+          <code>field=value</code> over any column of the exported row. Named, never
+          inferred — each changelog entry above carries the command that reopens what
+          it fixed.</p></div>
         <div class="whyrow a"><span class="wk">a new generation</span>
           <p>Editing a prompt or a model mints a new extract generation, which reopens
           <em>every</em> work at once, because it changes what the pipeline asks.</p></div>
@@ -237,6 +239,51 @@
         every settled work costs a whole campaign's wall clock for 3,025 works. So the
         reopen is named on the command line rather than inferred.</p>
       </div>
+      <h3>Re-asking a changed prompt over one population</h3>
+      <p>Editing a prompt looks like it has two settings — reopen everything, or leave
+      the old answers standing. There is a third, and it is the one to reach for when an
+      edit only addresses rows you can already name. It is <strong>two declarations used
+      together, and neither works alone</strong>.</p>
+      <div class="why">
+        <div class="whyrow a"><span class="wk">1 · hold</span>
+          <p>Editing a prompt moves the generation, and that by itself reopens every
+          work. Declare the new generation as accepting the old one's verdicts —
+          <code>_GENERATION_EQUIVALENCES[new] = (old,)</code>, keyed by the current
+          generation so a <em>later</em> edit matches nothing and reopens strictly.</p></div>
+        <div class="whyrow c"><span class="wk">2 · name</span>
+          <p><code>--redo-status</code> adds just the works you want back to the
+          worklist. Without step 1 you reopen everything; without step 2, nothing.</p></div>
+      </div>
+      <p>The two older forms of <code>--redo-status</code> describe what the
+      <em>ladder</em> did. The third describes what a <em>prompt</em> concluded, which
+      is the population a prompt edit actually reaches:</p>
+      <div class="scroll"><table class="doc">
+        <thead><tr><th>Form</th><th>Names</th><th>Reach for it when</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">a result verdict</td>
+              <td>the work's whole ending</td>
+              <td>the change reaches an ending — <code>no_original_found</code>,
+                  <code>api_error</code></td></tr>
+          <tr><td class="mono">a link method</td>
+              <td>one row of a result</td>
+              <td>the change reaches how an original was <em>found</em> — a ladder bump</td></tr>
+          <tr><td class="mono">field=value</td>
+              <td>any column of the exported row</td>
+              <td>the change reaches what a model <em>concluded</em></td></tr>
+        </tbody>
+      </table></div>
+      <div class="cmdlist"><div class="cmdrow">
+        <code>.venv/bin/python -m extract.tier --run --redo-status outcome=cannot_be_determined,abstract_r=</code>
+        <p>Every row the outcome prompt could not settle, plus every row it had nothing
+        to read. Values match the rendered row, case-insensitively; an empty value means
+        blank. A work matches when any of its rows does.</p>
+      </div></div>
+      <div class="note">A column that does not exist is <b>refused</b>, not silently
+      matched against nothing — a typo that reopens zero works reads exactly like
+      "already fixed". And the equivalence is a claim that every work you did
+      <em>not</em> reopen would still get its recorded answer: make it deliberately, in
+      a comment beside the entry.</div>
+
       <div class="note">Before any run that spends: exercise changed code in
       <code>--mode validation</code> first (real verdicts the live export ignores),
       read the implementation of any worklist-changing flag, and run the same command

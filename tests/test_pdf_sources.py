@@ -956,7 +956,22 @@ def test_a_manuscript_in_osf_storage_beats_the_registration_form():
 
     assert out["pdf_source"] == "osf_files"
     assert out["pdf_url"] == "https://osf.io/download/ms/"
+    # WHICH of the project's files: the download URL is a guid, so the listing's own
+    # name is the only thing that says what was read.
+    assert out["pdf_name"] == "Replication_report.docx"
     reg.assert_not_called()
+
+
+@pytest.mark.parametrize("url,expected", [
+    ("https://arxiv.org/pdf/2301.12345v1.pdf", "2301.12345v1.pdf"),
+    ("https://osf.io/download/abc123/", ""),          # a guid names no file
+    ("https://example.org/a%20paper.pdf?x=1", "a paper.pdf"),
+    ("", ""),
+])
+def test_the_url_names_the_file_only_when_it_ends_in_one(url, expected):
+    """The fallback for every tier OSF storage is not: a direct download's last path
+    segment IS the file name, a guid-shaped one is not, and blank beats a guess."""
+    assert ps._url_file_name(url) == expected
 
 
 def test_an_osf_listing_outage_is_not_recorded_as_a_failure(_oa_cache_in_tmp):
