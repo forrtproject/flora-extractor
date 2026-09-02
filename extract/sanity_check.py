@@ -159,6 +159,12 @@ def classify_row(row: Mapping) -> Optional[str]:
         return "prescreen_discard"
     if str(row.get("outcome", "") or "") == "not_a_replication":
         return "not_a_replication"
+    # After not_a_replication, because "does not test this original" is the stronger
+    # statement about a row that somehow carries both. Before api_error and the
+    # link-state buckets below: a plan that also hit a provider failure is still a
+    # plan, and filing it under a transient failure would put it back in the worklist.
+    if str(row.get("outcome", "") or "") == "prospective_registration":
+        return "prospective_registration"
     # Either column: the ladder never got an answer (link_method), or it linked the
     # paper and the outcome-coding call failed after retries (outcome). Both mean a
     # provider failure is the row's verdict, and the second used to ship — two rows in
@@ -181,7 +187,8 @@ _BUCKET_FILES = tuple(
     (name, SET_ASIDE_DESTINATIONS[name]) for name in (
         "screen_disagreement", "non_article",
         "unidentified_original", "keyed_link_disputed",
-        "target_pending", "prescreen_discard", "not_a_replication", "api_error",
+        "target_pending", "prescreen_discard", "not_a_replication",
+        "prospective_registration", "api_error",
         "no_original_found", "self_link", "doi_mismatch"))
 
 

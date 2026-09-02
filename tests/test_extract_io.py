@@ -127,3 +127,39 @@ def test_an_axis_value_outside_the_vocabulary_is_still_unsettled():
          "confident": True},
         record_type="reproduction", has_text=True)
     assert block["outcome_computation"] == "cannot_be_determined"
+
+
+# ── normalise_outcome_block: the prospective-registration veto ────────────────
+# The population this was written for is OSF records admitted on their TITLE, with no
+# abstract and no full text, so the veto must fire with has_text=False. That is the
+# whole point of reading study_status ungated — see the comment beside it in
+# shared/schema.py.
+
+def test_a_prospective_study_status_vetoes_the_outcome_without_any_text():
+    block = normalise_outcome_block(
+        {"study_status": "prospective", "outcome": "successful", "confident": True},
+        record_type="replication", has_text=False)
+    assert block["outcome"] == "prospective_registration"
+    # A plan that speculates about its expected result still has no result.
+    assert block["outcome_phrase"] == ""
+    assert block["out_quote_source"] == ""
+    assert block["study_status"] == "prospective"
+
+
+def test_not_a_replication_outranks_prospective():
+    """"Does not test this original" is the stronger statement: a record that is both
+    a plan and not about the named original belongs with the false positives."""
+    block = normalise_outcome_block(
+        {"study_status": "prospective", "record_type_check": "neither"},
+        record_type="replication", has_text=True)
+    assert block["outcome"] == "not_a_replication"
+
+
+def test_a_completed_study_status_changes_nothing():
+    """The veto must be inert on every row that is not a plan — this runs over the
+    whole corpus, and a status the model did not answer must never move an outcome."""
+    for status in ("completed", "", "unclear", None):
+        block = normalise_outcome_block(
+            {"study_status": status, "outcome": "successful", "confident": True},
+            record_type="replication", has_text=True)
+        assert block["outcome"] == "successful", status

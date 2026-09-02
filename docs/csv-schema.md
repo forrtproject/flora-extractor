@@ -209,6 +209,22 @@ provenance appended after it — plus:
 | `n_originals` | int | Total number of originals for this paper |
 | `osf_type` | string | `preprint` \| `project_or_registration` \| empty when the row is not on OSF. **Derived at render time** from `doi_r` and `url_r` (`osf_type()` in `shared/utils.py`), never stored in a verdict payload — so it needs no re-extraction and answers for rows extracted before the column existed. It exists because `journal_r` cannot: OpenAlex names the HOST, labelling every OSF-served object `OSF Preprints`, so a project reads as a preprint (measured: 1,095 rows mislabelled that way, while 220 genuine preprint-server DOIs carried no journal at all). A `project_or_registration` row tells a validator to look for the preprint or published paper rather than code the project as a study; telling a registration from a project is Stage 2's job (the `osf-registration-*` specs). Empty means "not on OSF", **not** "unknown" |
 
+#### `prospective_registration`
+
+The record describes a replication that has **not been run yet** — an OSF
+preregistration, a Stage 1 registered report, an analysis plan. Set from the target
+prompt's `study_status` field, not picked from the outcome enum, and set *without* the
+`has_text` gate that guards `record_type_check`: judging that a record is a plan is a
+claim about what it IS, not about methods the model never read, and a title
+("Replication and Extension Pre-registration of Newman et al. (2011)") is legitimate
+evidence for it. 61% of the population this was written for has no abstract at all.
+
+Such a row is quarantined to `prospective_registration.csv` rather than
+`not_a_replication.csv`: the two are different facts. `not_a_replication` says the
+paper never re-tests the named original; this says it intends to and has not yet, so
+it is a candidate to revisit when the study reports rather than a false positive to
+forget. It SETTLES the work — nothing is gained by re-extracting a plan.
+
 ### `link_method` values
 
 Each rule-based method is recorded under its own name: their reliability differs

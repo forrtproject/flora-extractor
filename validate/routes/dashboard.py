@@ -57,6 +57,16 @@ _SET_ASIDE_COPY: dict[str, dict] = {
         "action": "Recoverable by better reference parsing or acquisition (#188); re-run with "
                   "--redo-status unidentified_original once that improves.",
     },
+    "prospective_registration.csv": {
+        "title": "Prospective Registration",
+        "why": "The model answered study_status=prospective: the record describes a replication "
+               "that has not been RUN yet — an OSF preregistration, a Stage 1 registered report, "
+               "an analysis plan. It names an original and reports no result. Most are OSF "
+               "projects admitted on their title alone, because their abstract is empty and the "
+               "no-text downgrade exempts OSF records.",
+        "action": "Revisit when the study reports — these are candidates to gain, not false "
+                  "positives to forget. Validating one now has nothing to validate.",
+    },
     "not_a_replication.csv": {
         "title": "Not a Replication",
         "why": "The full-text outcome pass answered record_type_check=neither — the text does not "
