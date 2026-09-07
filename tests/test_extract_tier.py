@@ -18,6 +18,7 @@ import pytest
 
 from extract import tier as tier_mod
 from extract.tier import (API_ERROR, NOT_A_REPLICATION, NO_ORIGINAL_FOUND,
+                          PROSPECTIVE_REGISTRATION,
                           PROVISIONAL, RESOLVED, TARGET_PENDING, ExtractWork,
                           extract_generation, generation_inputs)
 from filter.engine.claims import ClaimLeaseLost
@@ -172,7 +173,8 @@ def _rows(*verdicts) -> list[dict]:
 
 @pytest.mark.parametrize("verdict,settles", [
     (RESOLVED, True), (PROVISIONAL, True), (NOT_A_REPLICATION, True),
-    (NO_ORIGINAL_FOUND, True), (TARGET_PENDING, False), (API_ERROR, False),
+    (NO_ORIGINAL_FOUND, True), (PROSPECTIVE_REGISTRATION, True),
+    (TARGET_PENDING, False), (API_ERROR, False),
 ])
 def test_only_a_conclusive_ending_settles_a_work(verdict, settles):
     """`target_pending` and `api_error` are the two endings a re-run is meant to
@@ -251,7 +253,10 @@ def test_the_generation_is_pinned_by_its_inputs():
         "build_search_confirm_prompt",
         # The reference list these two produce IS the key namespace the
         # reference-list rung picks a target out of.
-        "PDF_REFERENCES_PROMPT", "PDF_IMAGE_REFERENCES_PROMPT"}
+        "PDF_REFERENCES_PROMPT", "PDF_IMAGE_REFERENCES_PROMPT",
+        # The only question asked of a work with no abstract and no acquirable
+        # document; its answer decides that work's outcome and its destination file.
+        "build_study_status_prompt"}
     assert set(inputs["models"]) == {"linking", "outcome", "pdf_parse"}
     # The efforts are IN the model ids, or two runs at different reasoning levels
     # would share a generation (`cache_model_id`).
@@ -782,3 +787,25 @@ def test_a_declared_generation_equivalence_is_keyed_by_the_current_generation():
             f"_GENERATION_EQUIVALENCES entry {key!r} does not match the current "
             f"generation {extract_generation()!r}; a generation input has moved "
             f"since it was declared — re-review the equivalence or delete it")
+
+
+@pytest.mark.parametrize("rows,expected", [
+    # The Stage 3.5 exit: unresolved by construction, and a plan rather than a row
+    # the ladder failed on. Settling it is what keeps `--redo-status target_pending`
+    # and the next generation from re-buying an answer that cannot change.
+    ([{"link_method": "target_pending", "outcome": "prospective_registration"}],
+     PROSPECTIVE_REGISTRATION),
+    # Unchanged: a row nothing resolved and nothing identified as a plan.
+    ([{"link_method": "target_pending", "outcome": "pending"}], TARGET_PENDING),
+    # Unchanged: a full reading that resolved the link AND found a plan already
+    # settled as RESOLVED, and the new ending must not demote it.
+    ([{"link_method": "llm_fulltext", "outcome": "prospective_registration"}],
+     RESOLVED),
+    # Unchanged: an incomplete answer settles nothing, whatever else the rows say.
+    ([{"link_method": "api_error", "outcome": "prospective_registration"}], API_ERROR),
+])
+def test_a_plan_gets_its_own_settling_ending(rows, expected):
+    verdict = tier_mod._verdict_for(rows, {})
+    assert verdict == expected
+    settles = verdict not in tier_mod.UNSETTLING_VERDICTS
+    assert settles is (expected not in (TARGET_PENDING, API_ERROR))

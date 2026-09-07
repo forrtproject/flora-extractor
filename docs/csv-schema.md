@@ -207,7 +207,52 @@ provenance appended after it — plus:
 | `type` | string | `replication` \| `reproduction` \| empty. Decided by the front-door screen (a `both` classification is recorded as `replication`, since such a paper collects new data), falling back to Stage 2's `paper_type`. **Empty** when a screen ran and neither decided — the screen proceeded without a qualifying vote on a row Stage 2 left at `needs_review`; such a row is coded on the replication vocabulary but carries no type and is not imported. When **no screen ran at all** and Stage 2 named no vocabulary, `_record_type()` in `extract/run_extract.py` falls back to `replication` rather than leaving the field empty. Also selects the outcome vocabulary — a reproduction is coded on the computation/robustness grid |
 | `original_rank` | int | 1 for single-original; 1, 2, 3… for multi-original |
 | `n_originals` | int | Total number of originals for this paper |
+| `study_status` | string | `completed` \| `prospective` \| empty when nothing asked. The model's own answer about whether the work has been RUN; `prospective` is what sets `outcome = prospective_registration`. A blank and a `completed` are different facts — "never asked" against "asked and answered" — and tuning the prompt needs to tell them apart, which is why the answer is kept even when it changes nothing |
+| `study_status_reasoning` | string | One sentence: what in the title decided the status. Written **only** by the title-only call at Stage 3.5, so it is blank on every row that carried an abstract or a document — those answered `study_status` inside a reading whose reasoning is already in `outcome_reasoning`. On a `no_evidence` row it is the only evidence a reader has for the verdict |
+| `study_status_model` | string | The model that answered the title-only status question; blank when it was never asked. Makes a re-grade after a prompt or model change auditable, and is how a reader tells the two producers of `study_status` apart |
 | `osf_type` | string | `preprint` \| `project_or_registration` \| empty when the row is not on OSF. **Derived at render time** from `doi_r` and `url_r` (`osf_type()` in `shared/utils.py`), never stored in a verdict payload — so it needs no re-extraction and answers for rows extracted before the column existed. It exists because `journal_r` cannot: OpenAlex names the HOST, labelling every OSF-served object `OSF Preprints`, so a project reads as a preprint (measured: 1,095 rows mislabelled that way, while 220 genuine preprint-server DOIs carried no journal at all). A `project_or_registration` row tells a validator to look for the preprint or published paper rather than code the project as a study; telling a registration from a project is Stage 2's job (the `osf-registration-*` specs). Empty means "not on OSF", **not** "unknown" |
+
+#### `prospective_registration`
+
+The record describes a replication that has **not been run yet** — an OSF
+preregistration, a Stage 1 registered report, an analysis plan. Set from the target
+prompt's `study_status` field, not picked from the outcome enum, and set *without* the
+`has_text` gate that guards `record_type_check`: judging that a record is a plan is a
+claim about what it IS, not about methods the model never read, and a title
+("Replication and Extension Pre-registration of Newman et al. (2011)") is legitimate
+evidence for it. 61% of the population this was written for has no abstract at all.
+
+Such a row is quarantined to `prospective_registration.csv` rather than
+`not_a_replication.csv`: the two are different facts. `not_a_replication` says the
+paper never re-tests the named original; this says it intends to and has not yet, so
+it is a candidate to revisit when the study reports rather than a false positive to
+forget. It SETTLES the work — nothing is gained by re-extracting a plan.
+
+Two different calls can set it, and `study_status_model` says which. On a row that
+carries an abstract or a document, it is a field of the combined target+outcome prompt,
+answered inside a reading that also names the original. On a row with **neither** —
+no abstract, and no document from any acquisition tier — the ladder stops at Stage 3.5
+before the rungs that would infer an original from a title alone, and asks
+`build_study_status_prompt` that one question by itself. `study_status_reasoning` then
+carries the only sentence anybody has about why the record was filed as a plan, which
+is why it is a column rather than payload detail.
+
+#### `no_evidence`
+
+Not an outcome but a `link_method`: the record carries no abstract, and no document
+could be acquired from any tier. Its title is the whole of what the pipeline has.
+
+It is deliberately not `target_pending`. That ending rests on a re-run finding what
+this one missed — a document that was briefly unreachable, a provider that timed out —
+and a current-generation `target_pending` rests in the worklist for exactly that
+reason. `no_evidence` says the record itself is empty, so it SETTLES: the evidence
+arrives only if the study reports, which enters the pool as a new work rather than as a
+re-extraction of this one. Quarantined to `no_evidence.csv`; excluded from DB import.
+
+Measured over the 555 textless works extracted by 2026-09-04: those that acquired a
+document settled an outcome in 127 of 217 rows (59%, against a 77% baseline for works
+that have an abstract); those that acquired none settled 1 row in 43 (2%). The document,
+not the abstract, is what predicts whether a textless record can be coded.
 
 ### `link_method` values
 
@@ -233,6 +278,7 @@ sharply, so a consumer has to be able to tell them apart.
 | `screen_disagreement` | **Historical, no longer emitted.** The front door's gate (`screen_gate()` in `shared/llm_client.py`) has no disagreement terminal state: a confident split now proceeds down the ladder. Rows written before the v3.2 screen still carry the value, and the export still partitions them into `data/screen_disagreement.csv` |
 | `author_year_match_legacy` | Legacy row written before the split; the specific rule-based method cannot be recovered retroactively (see `tools/migrate_link_methods.py`) |
 | `no_original_found` | Pipeline could not identify an original study |
+| `no_evidence` | No abstract and no acquirable document — the ladder stopped at Stage 3.5 before any rung that would reason from the title alone. Settles the work; see above |
 | `target_pending` | Original DOI must be supplied manually. Also written when only one of the two front-door classifiers answered — a single vote carries no agreement signal, so the row waits for a re-run instead of being filed as a disagreement |
 | `api_error` | Extraction failed after retries, including a front-door screen where **both** classifiers failed |
 

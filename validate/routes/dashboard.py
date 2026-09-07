@@ -57,6 +57,29 @@ _SET_ASIDE_COPY: dict[str, dict] = {
         "action": "Recoverable by better reference parsing or acquisition (#188); re-run with "
                   "--redo-status unidentified_original once that improves.",
     },
+    "no_evidence.csv": {
+        "title": "No Evidence",
+        "why": "The record carries no abstract, and no document could be acquired from any "
+               "source — OSF file storage, the registration form, CrossRef, the publisher "
+               "landing page, none of them. Its title is the whole of what the pipeline has, "
+               "so the ladder stops before the rungs that would infer an original from that "
+               "title alone: measured over 555 such works, the ones with a document settled an "
+               "outcome 59% of the time and the ones without settled 1 row in 43.",
+        "action": "Nothing to re-run — the same evidence buys the same answer, which is why "
+                  "these settle rather than resting in target_pending. They become extractable "
+                  "only if the study itself reports, which arrives as a new work. Worth reading "
+                  "as a list to confirm the population really is empty records.",
+    },
+    "prospective_registration.csv": {
+        "title": "Prospective Registration",
+        "why": "The model answered study_status=prospective: the record describes a replication "
+               "that has not been RUN yet — an OSF preregistration, a Stage 1 registered report, "
+               "an analysis plan. It names an original and reports no result. Most are OSF "
+               "projects admitted on their title alone, because their abstract is empty and the "
+               "no-text downgrade exempts OSF records.",
+        "action": "Revisit when the study reports — these are candidates to gain, not false "
+                  "positives to forget. Validating one now has nothing to validate.",
+    },
     "not_a_replication.csv": {
         "title": "Not a Replication",
         "why": "The full-text outcome pass answered record_type_check=neither — the text does not "

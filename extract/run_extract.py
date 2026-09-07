@@ -271,6 +271,9 @@ _METHOD_MAP = {
     "no_candidates_found":            "target_pending",
     "needs_fulltext":                 "target_pending",
     "no_fulltext_available":          "target_pending",
+    # Stage 3.5: no abstract and no document anywhere. Its own method so the export
+    # can file it apart from the rows the ladder merely failed to resolve this run.
+    "no_evidence":                    "no_evidence",
     "none":                           "target_pending",
     "llm_none":                       "target_pending",
 }
@@ -346,7 +349,20 @@ def _link_confidence(link: dict) -> str:
 # ── Data adapters ─────────────────────────────────────────────────────────────
 
 def _build_cands_df(row: pd.Series) -> pd.DataFrame:
-    """Build a minimal cands_df for link_original.run_for_doi from a filtered.csv row."""
+    """Build a minimal cands_df for link_original.run_for_doi from a filtered.csv row.
+
+    The row is emptied of NaN first, and neither a `.get` default nor `or ""` is a
+    substitute. The default never fires for the case that matters — a pool row whose
+    key EXISTS carrying None (`_row_from_snapshot` fills `abstract_r` from
+    `_abstract_text`, typed Optional and None for a record with no usable inverted
+    index) — and pandas stores that None as NaN, which is TRUTHY, so `or ""` passes it
+    through to `str()` as the string "nan". A row with no abstract at all therefore
+    read as a row that has one: it was sent to the LLM as the paper's abstract, and it
+    walked past `run_for_doi`'s Stage 3.5 gate, the one place that stops a row with
+    nothing to read from buying two free-text searches at 10x a filter query.
+    """
+    if hasattr(row, "fillna"):
+        row = row.fillna("")
     return pd.DataFrame([{
         "doi_r":                 str(row.get("doi_r", "")),
         "study_r":               str(row.get("title_r", row.get("study_r", ""))),
@@ -776,6 +792,17 @@ def _save_parse_cache(cache_id: str, doi_r: str = "", openalex_id: str = "",
 _NO_LINK_METHODS = {"target_pending", "api_error", "no_original_found"}
 
 
+def _status_cols(link: dict) -> dict:
+    """The title-only status call's own two columns, off the resolver dict.
+
+    Only `run_for_doi`'s Stage 3.5 exit sets them, so they are blank everywhere else —
+    which is the point: a row filed as a plan on the strength of its title alone is the
+    one row whose reader has no other evidence to check the verdict against.
+    """
+    return {"study_status_reasoning": str(link.get("study_status_reasoning", "") or ""),
+            "study_status_model": str(link.get("study_status_model", "") or "")}
+
+
 def _outcome_without_coding(link_method: str, link: dict) -> "dict | None":
     """The outcome for a row that must not be outcome-coded, or None to code it.
 
@@ -817,12 +844,33 @@ def _outcome_without_coding(link_method: str, link: dict) -> "dict | None":
         return _skip("not_a_replication", "low", "abstract",
                      str(link.get("llm_reasoning", "") or ""),
                      str(link.get("llm_model", "") or ""))
+    # A textless row whose document waterfall came back empty (`run_for_doi` Stage
+    # 3.5). The ladder stopped above every rung that would have reasoned from the
+    # title, and asked the one question a title can answer instead. `prospective` is
+    # an ANSWER about what the record is, so it is the row's outcome and
+    # `classify_row` files the work in prospective_registration.csv; `completed` and
+    # a failed call both leave the row exactly where an unresolved row already went.
+    status = str(link.get("study_status") or "")
+    if status == "prospective":
+        return {**_skip("prospective_registration", "high", "title",
+                        str(link.get("study_status_reasoning", "") or ""),
+                        str(link.get("study_status_model", "") or "")),
+                "study_status": status, **_status_cols(link)}
+    if link_method == "no_evidence":
+        # Says what is true of the RECORD, not of the run. The generic tail below
+        # reads "no resolved original link", which invites a reader to look for the
+        # link that was missed; there is no abstract and no document to find one in.
+        return {**_skip("pending", "low", "",
+                        "outcome not coded: the record carries no abstract and no "
+                        "document could be acquired from any source"),
+                "study_status": status, **_status_cols(link)}
     if link_method == "screen_disagreement":
         return _skip("pending", "low", "",
                      "outcome not coded: the two classifiers disagreed on whether "
                      "this is a replication — set aside for review")
-    return _skip("pending", "low", "",
-                 f"outcome not coded: no resolved original link ({link_method})")
+    return {**_skip("pending", "low", "",
+                    f"outcome not coded: no resolved original link ({link_method})"),
+            "study_status": status, **_status_cols(link)}
 
 
 def _apply_outcome(row: dict, outcome: dict) -> dict:
@@ -852,6 +900,13 @@ def _apply_outcome(row: dict, outcome: dict) -> dict:
         "out_quote_source":   outcome.get("out_quote_source",   ""),
         "outcome_reasoning":  outcome.get("outcome_reasoning",  ""),
         "outcome_llm_model":  str(outcome.get("llm_model",      "") or ""),
+        # The answer that decides whether this row ships at all. Kept because a
+        # verdict nobody can audit is a verdict nobody can tune: "the model was asked
+        # and said completed" and "the model was never asked" are different facts, and
+        # without the column they render identically as a blank.
+        "study_status":       str(outcome.get("study_status",     "") or ""),
+        "study_status_reasoning": str(outcome.get("study_status_reasoning", "") or ""),
+        "study_status_model":     str(outcome.get("study_status_model",     "") or ""),
         **{col: outcome.get(col, "") for col in _OUTCOME_AXIS_COLS},
     })
     if outcome.get("record_type"):
@@ -971,7 +1026,16 @@ def _aggregate_outcomes(outcomes: list[str]) -> str:
         return "mixed"
     if substantive:
         return substantive[0]
-    for fallback in ("uninformative", "descriptive only", "not_a_replication"):
+    # `prospective_registration` sits LAST, after not_a_replication: both are
+    # statements about the record rather than verdicts about a finding, and "does not
+    # test this original" is the stronger of the two. It must be here at all because
+    # the fallback chain is exhaustive by construction — a value missing from it falls
+    # through to cannot_be_determined, which is exactly the verdict this whole feature
+    # exists to stop a plan from getting. Measured 2026-09-02: 7 of 27 rows the model
+    # correctly answered `prospective` shipped as cannot_be_determined for want of
+    # this line.
+    for fallback in ("uninformative", "descriptive only", "not_a_replication",
+                     "prospective_registration"):
         if fallback in outcomes:
             return fallback
     return "cannot_be_determined"
@@ -1444,9 +1508,13 @@ def _guard_original_link(row: dict) -> dict:
     # not_a_replication has no original by design — the reference screen concluded
     # the paper never replicated anything. Asking it for a doi_o would rewrite the
     # row to target_pending and --resolved-only would then discard the finding.
+    # `no_evidence` is here for the same reason and it is the one that BITES: the
+    # row has no doi_o and no title_o because nothing was ever read, so the guard's
+    # rule 4 fires on every one of them and rewrites the method it just earned —
+    # 243 gate exits produced 0 no_evidence verdicts before this line named it.
     if row.get("link_method") in {"target_pending", "api_error", "no_original_found",
                                   "not_a_replication", "screen_disagreement",
-                                  "prescreen_discard"}:
+                                  "prescreen_discard", "no_evidence"}:
         return row
 
     doi_r = clean_doi(str(row.get("doi_r", "") or ""))

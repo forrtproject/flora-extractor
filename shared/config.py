@@ -3,7 +3,37 @@ config.py — Centralised configuration for the disambiguation pipeline.
 """
 import os
 import logging
+import sys
 from pathlib import Path
+
+
+def _widen_console_encoding() -> None:
+    """Let this project's output survive a legacy Windows console code page.
+
+    Every CLI here prints the characters its own docs use — `→` in the tier's cost
+    estimate, `≈`, `·`, an em dash — and on a Windows console those go to cp1252,
+    which cannot encode them. The failure is the worst shape available: the work
+    completes, the result is printed, and then `UnicodeEncodeError` takes the process
+    down on the way out. Observed 2026-09-02, when a `--redo-status` DRY RUN printed
+    "1,233 work(s) reopened" and then died rendering the estimate below it.
+
+    Fixed here, at the one import every entry point already makes, rather than in each
+    `main()` — a per-CLI fix is a list the next CLI is missing from. Only widens: a
+    stream that can already encode UTF-8 is left alone, and any failure to reconfigure
+    is ignored, because output encoding must never be the thing that stops a run.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if stream is None or not hasattr(stream, "reconfigure"):
+                continue
+            if (stream.encoding or "").lower().replace("-", "") in ("utf8", "utf8mb4"):
+                continue
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:      # a redirected or closed stream is not a config error
+            pass
+
+
+_widen_console_encoding()
 
 # Two files, one mechanism. .env is gitignored and holds secrets and per-machine
 # settings; .env.defaults is committed and holds the shared, non-secret project

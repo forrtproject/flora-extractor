@@ -236,14 +236,27 @@ Outcome fields on each target object:
 - "outcome_confident": true or false — whether you would stake the verdict on the
   evidence as written.
 - "outcome_reasoning": one sentence saying why this category and not the nearest
-  alternative.{record_type_check_field}
+  alternative.
+- "study_status": "completed" or "prospective" — whether this work has been RUN.
+  Answer "prospective" when the record IS a plan document: a title of the form
+  "Pre-registration of X", "Protocol for X", "Analysis plan for X", "Stage 1 ...", or
+  text describing only what will be done ("we will recruit", "data collection is
+  planned"). Answer "completed" otherwise. Two mistakes to avoid, both common:
+  (a) "Preregistered replication of X" and "Registered Replication Report of X"
+  describe a FINISHED study that was preregistered — "preregistered" names the method,
+  not the record's status; only "pre-registrATION of X", naming the document itself,
+  is prospective. (b) A finished study whose result you cannot see in the evidence you
+  were given is still "completed": absence of a reported result is NOT evidence the
+  study is unrun — that is what "cannot_be_determined" on the outcome is for. Never
+  infer "prospective" from the fact that no findings are quoted.
+{record_type_check_field}
 
 A matched target looks like this:
-{"key": "@smith2009", "match_certain": true, "target_as_named": "Smith & Jones (2009), Study 2", "study_numbers": "2", "replication_study_numbers": "1", "evidence_quote": "we conducted a direct replication of Smith and Jones (2009, Study 2)", "outcome": "«failure»", "outcome_phrase": "The original effect did not emerge in either of our samples.", "out_quote_source": "abstract", "outcome_confident": true, "outcome_reasoning": "The authors report the target effect as absent rather than reduced."}
+{"key": "@smith2009", "match_certain": true, "target_as_named": "Smith & Jones (2009), Study 2", "study_numbers": "2", "replication_study_numbers": "1", "evidence_quote": "we conducted a direct replication of Smith and Jones (2009, Study 2)", "outcome": "«failure»", "outcome_phrase": "The original effect did not emerge in either of our samples.", "out_quote_source": "abstract", "outcome_confident": true, "outcome_reasoning": "The authors report the target effect as absent rather than reduced.", "study_status": "completed"}
 
 A target you can see but cannot match to a listed record looks like this — note that
 key is the JSON value null, not the text "null", and that it is coded all the same:
-{"key": null, "match_certain": false, "target_as_named": "Ramirez (2014), the delay-discounting result", "study_numbers": "", "replication_study_numbers": "", "evidence_quote": "we re-analysed the delay-discounting data reported by Ramirez (2014)", "outcome": "cannot_be_determined", "outcome_phrase": "", "out_quote_source": "", "outcome_confident": false, "outcome_reasoning": "The evidence supplied never says how the re-analysis came out."}"""
+{"key": null, "match_certain": false, "target_as_named": "Ramirez (2014), the delay-discounting result", "study_numbers": "", "replication_study_numbers": "", "evidence_quote": "we re-analysed the delay-discounting data reported by Ramirez (2014)", "outcome": "cannot_be_determined", "outcome_phrase": "", "out_quote_source": "", "outcome_confident": false, "outcome_reasoning": "The evidence supplied never says how the re-analysis came out.", "study_status": "completed"}"""
 
 _TARGET_OUTCOME_FIELDS = _vocab(_TARGET_OUTCOME_FIELDS_SRC, OUTCOME_LABELS)
 
@@ -263,7 +276,20 @@ axes, each with its own quote and its own quote source:
 - "out_quote_robust_source": as above, for the robustness quote
 - "outcome_confident": true or false — whether you would stake both verdicts on the
   evidence as written
-- "outcome_reasoning": one sentence naming both verdicts{record_type_check_field}
+- "outcome_reasoning": one sentence naming both verdicts
+- "study_status": "completed" or "prospective" — whether this work has been RUN.
+  Answer "prospective" when the record IS a plan document: a title of the form
+  "Pre-registration of X", "Protocol for X", "Analysis plan for X", "Stage 1 ...", or
+  text describing only what will be done ("we will recruit", "data collection is
+  planned"). Answer "completed" otherwise. Two mistakes to avoid, both common:
+  (a) "Preregistered replication of X" and "Registered Replication Report of X"
+  describe a FINISHED study that was preregistered — "preregistered" names the method,
+  not the record's status; only "pre-registrATION of X", naming the document itself,
+  is prospective. (b) A finished study whose result you cannot see in the evidence you
+  were given is still "completed": absence of a reported result is NOT evidence the
+  study is unrun — that is what "cannot_be_determined" on the outcome is for. Never
+  infer "prospective" from the fact that no findings are quoted.
+{record_type_check_field}
 
 Quote 1-4 complete consecutive sentences per axis, copied word for word from the
 evidence supplied; name only a section you were given. Do not return a combined
@@ -728,7 +754,20 @@ Return exactly {field_count} fields:
 - "outcome_phrase": the verbatim passage that proves the outcome, or ""
 - "out_quote_source": where that passage was copied from
 - "confident": true or false
-- "outcome_reasoning": one sentence{check_fields}
+- "outcome_reasoning": one sentence
+- "study_status": "completed" or "prospective" — whether this work has been RUN.
+  Answer "prospective" when the record IS a plan document: a title of the form
+  "Pre-registration of X", "Protocol for X", "Analysis plan for X", "Stage 1 ...", or
+  text describing only what will be done ("we will recruit", "data collection is
+  planned"). Answer "completed" otherwise. Two mistakes to avoid, both common:
+  (a) "Preregistered replication of X" and "Registered Replication Report of X"
+  describe a FINISHED study that was preregistered — "preregistered" names the method,
+  not the record's status; only "pre-registrATION of X", naming the document itself,
+  is prospective. (b) A finished study whose result you cannot see in the evidence you
+  were given is still "completed": absence of a reported result is NOT evidence the
+  study is unrun — that is what "cannot_be_determined" on the outcome is for. Never
+  infer "prospective" from the fact that no findings are quoted.
+{check_fields}
 
 Use these field names, and match every categorical value exactly as listed.
 
@@ -746,7 +785,16 @@ Field meanings:
 - "confident" — whether you would stake the verdict on the evidence as written. Answer true
   only when the text states the conclusion plainly; answer false when your answer rests on
   inference, or when a different reading of the same sentences would change it.
-- "outcome_reasoning" — one sentence saying why this category and not the nearest alternative.{check_meanings}
+- "outcome_reasoning" — one sentence saying why this category and not the nearest alternative.
+- "study_status" — whether this work has actually been RUN. Answer "prospective"
+  only when the record is a PLAN: a preregistration, a Stage 1 registered report, an
+  analysis plan or a protocol, which says what WILL be done rather than what was
+  found. Titles like "Pre-registration of ...", "Stage 2 - ...", "Registered Report",
+  or a description in the future tense ("we will collect", "this study aims to
+  replicate") are the signal. Answer "completed" for everything else, INCLUDING a
+  finished study whose outcome you cannot determine from the evidence given — an
+  unreadable result is not the same as an unrun study. When it is not settled,
+  answer "completed".{check_meanings}
 
 Example of the required JSON structure:
 
@@ -942,7 +990,20 @@ Return exactly {field_count} fields:
 - "confident": true or false — whether you would stake both verdicts on the evidence as
   written. Answer false when either verdict rests on inference, or when a different reading of
   the same sentences would change it.
-- "outcome_reasoning": one sentence naming both verdicts{check_fields}
+- "outcome_reasoning": one sentence naming both verdicts
+- "study_status": "completed" or "prospective" — whether this work has been RUN.
+  Answer "prospective" when the record IS a plan document: a title of the form
+  "Pre-registration of X", "Protocol for X", "Analysis plan for X", "Stage 1 ...", or
+  text describing only what will be done ("we will recruit", "data collection is
+  planned"). Answer "completed" otherwise. Two mistakes to avoid, both common:
+  (a) "Preregistered replication of X" and "Registered Replication Report of X"
+  describe a FINISHED study that was preregistered — "preregistered" names the method,
+  not the record's status; only "pre-registrATION of X", naming the document itself,
+  is prospective. (b) A finished study whose result you cannot see in the evidence you
+  were given is still "completed": absence of a reported result is NOT evidence the
+  study is unrun — that is what "cannot_be_determined" on the outcome is for. Never
+  infer "prospective" from the fact that no findings are quoted.
+{check_fields}
 
 Use these field names, and match every categorical value exactly as listed.
 
@@ -1380,6 +1441,55 @@ def build_search_confirm_prompt(title_r: str, abstract_snip: str,
         "evidence_quote": evidence_quote or "(none recorded)",
         "record_block": "\n".join(lines),
     })
+
+
+_STUDY_STATUS_TEMPLATE = """You are told the TITLE of a research record and nothing else. Decide whether the work it names has already been RUN, or is a plan for a study that has not been.
+
+Title: {title_r}
+
+This is the whole evidence. There is no abstract, no description and no document —
+the record's own repository holds none. Judge the title alone.
+
+Answer with JSON and nothing else:
+{
+  "study_status": "<completed|prospective>",
+  "reasoning": "<one sentence: what in the title decided it>"
+}
+
+Answer "prospective" when the title says the record IS a plan document:
+"Pre-registration of X", "Protocol for X", "Analysis plan for X", "Stage 1 ...".
+
+Answer "completed" otherwise. Two mistakes to avoid, both common:
+(a) "Preregistered replication of X" and "Registered Replication Report of X" name a
+FINISHED study that was preregistered — "preregistered" describes the method, not the
+record's status. Only "pre-registrATION of X", naming the document itself, is
+prospective.
+(b) A finished study whose result you cannot see is still "completed". You have been
+given no result for ANY of these records, so absence of one says nothing at all. Never
+infer "prospective" from the fact that no findings are quoted.
+
+When the title does not settle it, answer "completed". A wrong "prospective" files a
+real replication away as a plan; a wrong "completed" leaves the record exactly where it
+would have been anyway.
+"""
+
+
+def build_study_status_prompt(title_r: str) -> str:
+    """Has this record been RUN — asked of a title, because a title is all there is.
+
+    The one question put to a row with no abstract and no acquirable document. The
+    combined target+outcome prompts ask `study_status` too, but they ask it alongside
+    "which original" and "did it succeed", and those two are unanswerable from a title:
+    measured over the 555 textless works extracted by 2026-09-04, a row that acquired
+    no document settled an outcome in 1 of 43 rows (2%), against 59% for one that did.
+    So the ladder stops before those rungs and asks only this, which a title CAN
+    support — "Pre-registration of Newman et al. (2011)" states its own status outright.
+
+    Biased toward "completed" in the same direction and for the same reason as the
+    combined prompts: a false "prospective" quarantines a real replication, a false
+    "completed" changes nothing about where the row lands.
+    """
+    return _fill(_STUDY_STATUS_TEMPLATE, {"title_r": title_r or "(no title)"})
 
 
 def build_outcome_prompt(title_r: str, abstract_snip: str,

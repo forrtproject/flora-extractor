@@ -137,7 +137,10 @@ def classify_row(row: Mapping) -> Optional[str]:
     The link_method rules come first and the outcome rule last of the discard buckets:
     WHERE a row stands in the pipeline decides which file it belongs in, and what its
     outcome column happens to say is a fact about that file's contents, not about its
-    identity.
+    identity. `prospective_registration` is the one exception, and it sits above the
+    link_method rules rather than below: a textless row with no acquirable document
+    ends at target_pending whatever it is, so the outcome is the only column that
+    distinguishes a plan from a row nothing could resolve.
 
     The two `--deep` buckets (`non_article_type`, `unregistered_doi_o`) are not here:
     each needs a network lookup, so they are not a property of the row.
@@ -153,6 +156,22 @@ def classify_row(row: Mapping) -> Optional[str]:
         return "unidentified_original"
     if method == "keyed_link_disputed":
         return "keyed_link_disputed"
+    # Above `target_pending`, and that ordering is load-bearing. A textless row whose
+    # document waterfall came back empty ends as target_pending whatever it is
+    # (run_extract's _NO_LINK_MAP), and `run_for_doi` Stage 3.5 asks exactly such a
+    # row the one question a title can answer. The outcome is therefore the only
+    # column that separates a plan from a row nothing could resolve, and filing the
+    # plan under the ladder's generic no-answer would hide the only thing the pipeline
+    # learned about it. Above api_error for the older reason: a plan that also hit a
+    # provider failure is still a plan, and filing it under a transient failure would
+    # put it back in the worklist.
+    #
+    # It never competes with the not_a_replication rule below — `outcome` is one
+    # column and no row carries both values.
+    if str(row.get("outcome", "") or "") == "prospective_registration":
+        return "prospective_registration"
+    if method == "no_evidence":
+        return "no_evidence"
     if method == "target_pending":
         return "target_pending"
     if method == "prescreen_discard":
@@ -181,7 +200,8 @@ _BUCKET_FILES = tuple(
     (name, SET_ASIDE_DESTINATIONS[name]) for name in (
         "screen_disagreement", "non_article",
         "unidentified_original", "keyed_link_disputed",
-        "target_pending", "prescreen_discard", "not_a_replication", "api_error",
+        "target_pending", "prescreen_discard", "not_a_replication",
+        "prospective_registration", "api_error",
         "no_original_found", "self_link", "doi_mismatch"))
 
 

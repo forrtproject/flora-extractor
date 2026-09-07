@@ -25,7 +25,7 @@ from shared.schema import (EXTRACTED_COLS, LINK_METHOD_VALUES, RESOLVED_LINK_MET
 _QUARANTINED = {"screen_disagreement", "unidentified_original",
                 "keyed_link_disputed", "target_pending",
                 "not_a_replication", "prescreen_discard", "no_original_found",
-                "api_error"}
+                "no_evidence", "api_error"}
 
 
 def test_every_link_method_is_classified_exactly_once():
