@@ -615,6 +615,18 @@ OSF_TEMPLATE_UNSPECIFIED = "unspecified"
 _OSF_API = "https://api.osf.io/v2/registrations/{guid}/"
 # The projects/components endpoint, tried when the registrations one says 404.
 _OSF_NODE_API = "https://api.osf.io/v2/nodes/{guid}/"
+# The project's wiki, tried when its `description` field is empty. OSF stores a
+# project's prose in either place and the two are unrelated: `10.17605/osf.io/6bw6x`
+# ("Uncertainty and pain: a replication study") has a 0-character description and a
+# 1,453-character wiki that names its target outright — "we sought to replicate the
+# study by Yoshida et al. (2013)" — plus the citation and the journal it was published
+# in. The record reached `no_evidence` with all of that one request away.
+_OSF_WIKI_API = "https://api.osf.io/v2/nodes/{guid}/wikis/"
+# Below this a wiki page is a stub ("see the paper", a bare link) rather than an
+# account of the study. The project descriptions this arm already accepts run to a
+# median of 252 chars, so the floor is deliberately under that: the question is
+# whether a reader learns anything, not whether the text is long.
+_OSF_WIKI_MIN_CHARS = 200
 
 
 def _osf_guid(identifier: str) -> Optional[str]:
@@ -788,7 +800,77 @@ def _fetch_osf_node(guid: str, headers: dict) -> tuple[Optional[str], str]:
         return None, "transient"
     description = str(((resp.json().get("data") or {}).get("attributes")
                        or {}).get("description") or "").strip()
-    return (description, "ok") if description else (None, "empty")
+    if description:
+        return description, "ok"
+    # No description: the prose may still be in the wiki, which is a different
+    # endpoint and was invisible to this phase until 2026-09-07. Only asked when the
+    # description is empty, so a record that already answers keeps the text it has and
+    # costs no extra request.
+    return _fetch_osf_wiki(guid, headers)
+
+
+def _fetch_osf_wiki(guid: str, headers: dict) -> tuple[Optional[str], str]:
+    """The project's wiki as its abstract, for a project whose description is empty.
+
+    Two requests: the wiki INDEX, then the content of each page it lists, because the
+    index carries a page's name and size but never its text. Pages are joined in the
+    order OSF returns them, which puts `home` first for every project sampled.
+
+    Same error contract as the other two arms, and for the same reason: 404 and 410 are
+    the record saying it holds no wiki, everything else is about our access or the
+    host and must not be checkpointed as a miss. A page whose CONTENT fetch fails is
+    skipped rather than failing the record — a wiki with three pages and one unreadable
+    one still says more than a title does — but if no page could be read at all the
+    answer is transient, because "we could not read it" is not "there is nothing here".
+    """
+    resp, status = _request_with_retry(
+        f"OSF wiki {guid}",
+        lambda: _SESSION.get(_OSF_WIKI_API.format(guid=guid), timeout=30,
+                             headers=headers))
+    if status == "transient":
+        return None, "transient"
+    if resp.status_code == 401 or (resp.status_code == 403 and not OSF_TOKEN):
+        log.warning("OSF refused the credential for wiki %s (HTTP %d) — stopping "
+                    "the phase; check OSF_TOKEN.", guid, resp.status_code)
+        return None, "stop"
+    if resp.status_code == 403:
+        log.info("OSF wiki %s is private to this token — skipped, not checkpointed",
+                 guid)
+        return None, "transient"
+    if resp.status_code in (404, 410):
+        return None, "empty"
+    if resp.status_code >= 400:
+        return None, "transient"
+
+    pages = (resp.json().get("data") or [])
+    if not pages:
+        return None, "empty"
+
+    texts, unreadable = [], 0
+    for page in pages:
+        url = (page.get("links") or {}).get("download")
+        if not url:
+            continue
+        # `stop_on` because a wiki page is MARKDOWN, not JSON: _request_with_retry
+        # treats a 2xx whose body will not parse as a transient anomaly and burns
+        # three attempts on it, which is what this arm did on its first live call.
+        # Any answer under 400 settles the matter here — the body is the text.
+        page_resp, page_status = _request_with_retry(
+            f"OSF wiki page {guid}",
+            lambda url=url: _SESSION.get(url, timeout=30, headers=headers),
+            stop_on=lambda r: r.status_code < 400)
+        if page_status == "transient" or page_resp.status_code >= 400:
+            unreadable += 1
+            continue
+        text = (page_resp.text or "").strip()
+        if text:
+            texts.append(text)
+
+    if not texts:
+        # Every page failed to fetch: that is our access, not the record's emptiness.
+        return (None, "transient") if unreadable else (None, "empty")
+    joined = "\n\n".join(texts).strip()
+    return (joined, "ok") if len(joined) >= _OSF_WIKI_MIN_CHARS else (None, "empty")
 
 
 # ---------------------------------------------------------------------------

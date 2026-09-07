@@ -406,3 +406,96 @@ def test_request_with_retry_gives_up_as_transient_but_hands_back_4xx(monkeypatch
 
     not_found = DummyResponse({}, status_code=404)
     assert fa._request_with_retry("test", lambda: not_found) == (not_found, "ok")
+
+
+# ---------------------------------------------------------------------------
+# The OSF wiki arm — a project whose prose is not in its description
+# ---------------------------------------------------------------------------
+
+_WIKI_PROSE = (
+    "In the current study we sought to replicate the study by Yoshida et al. "
+    "(2013) by presenting vicarious information prior to the delivery of noxious "
+    "electrocutaneous stimuli. We tested whether the expectation of more or less "
+    "pain would bias pain perception towards the vicarious information."
+)
+
+
+def _osf_router(monkeypatch, *, description="", wiki_pages=None,
+                wiki_status=200, page_text=_WIKI_PROSE):
+    """Route the three OSF endpoints this arm can touch, recording the calls."""
+    calls = []
+
+    def fake_get(url, timeout=None, **kwargs):
+        calls.append(url)
+        if "/registrations/" in url:
+            return DummyResponse(status_code=404)          # a project, not a registration
+        if url.endswith("/wikis/"):
+            if wiki_status != 200:
+                return DummyResponse(status_code=wiki_status)
+            return DummyResponse({"data": wiki_pages if wiki_pages is not None else []})
+        if "waterbutler" in url or "/download" in url:
+            # A wiki page is MARKDOWN. DummyResponse.json() would happily return {},
+            # which hid a real bug: _request_with_retry rejects a 2xx whose body will
+            # not parse and burned three attempts on the first live call.
+            page = DummyResponse(text=page_text)
+            page.json = _raises_not_json
+            return page
+        return DummyResponse({"data": {"attributes": {"description": description}}})
+
+    monkeypatch.setattr(fa._SESSION, "get", fake_get)
+    return calls
+
+
+def _raises_not_json():
+    raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+
+_ONE_PAGE = [{"attributes": {"name": "home"},
+              "links": {"download": "https://osf.io/download/w1/"}}]
+
+
+def test_an_empty_description_falls_through_to_the_wiki(monkeypatch):
+    """OSF keeps a project's prose in either place and the two are unrelated.
+    `10.17605/osf.io/6bw6x` has a 0-character description and a 1,453-character wiki
+    that names its target outright; it reached `no_evidence` with that one request
+    away."""
+    calls = _osf_router(monkeypatch, description="", wiki_pages=_ONE_PAGE)
+
+    text, status = fa._fetch_osf_registration("10.17605/osf.io/6bw6x")
+
+    assert status == "ok"
+    assert "Yoshida" in text
+    assert any(u.endswith("/wikis/") for u in calls)
+
+
+def test_a_project_with_a_description_never_asks_for_the_wiki(monkeypatch):
+    """The wiki is a FALLBACK. A record that already answers keeps the text it has
+    and costs no extra request."""
+    calls = _osf_router(monkeypatch, description="A real project description.",
+                        wiki_pages=_ONE_PAGE)
+
+    text, status = fa._fetch_osf_registration("10.17605/osf.io/abcde")
+
+    assert (text, status) == ("A real project description.", "ok")
+    assert not any(u.endswith("/wikis/") for u in calls)
+
+
+def test_a_stub_wiki_is_empty_rather_than_an_abstract(monkeypatch):
+    """"See the paper" is not an account of the study, and writing it as an abstract
+    would put a stub in front of the screen's voters."""
+    _osf_router(monkeypatch, description="", wiki_pages=_ONE_PAGE,
+                page_text="See the paper.")
+
+    assert fa._fetch_osf_registration("10.17605/osf.io/abcde") == (None, "empty")
+
+
+def test_no_wiki_at_all_is_a_definitive_miss(monkeypatch):
+    _osf_router(monkeypatch, description="", wiki_pages=[])
+    assert fa._fetch_osf_registration("10.17605/osf.io/abcde") == (None, "empty")
+
+
+def test_an_unreadable_wiki_is_transient_not_a_miss(monkeypatch):
+    """A 403 on the wiki index is about our access, not the record's emptiness —
+    checkpointing it would record "no abstract" for something we never read."""
+    _osf_router(monkeypatch, description="", wiki_status=403)
+    assert fa._fetch_osf_registration("10.17605/osf.io/abcde") == (None, "transient")
