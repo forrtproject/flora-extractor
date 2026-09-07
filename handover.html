@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FLoRA Extractor — Pipeline status &amp; handover (2026-08-16)</title>
+<title>FLoRA Extractor — Pipeline status &amp; handover (2026-09-07)</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌸</text></svg>">
 <style>
   :root {
@@ -49,11 +49,12 @@
 <main>
 
 <h1>FLoRA Extractor — pipeline status &amp; handover</h1>
-<p class="sub">Last updated 2026-08-16, on <code>main</code>. Numbers are as of
-2026-08-16 21:00 UTC. The lockdown campaign
-(<code>docs/handover-campaign-2026-08.md</code>) is complete: routing, screening and
-extraction are all settled on the current release, and <code>data/extracted.csv</code>
-is the render of those verdicts.
+<p class="sub">Last updated 2026-09-07, on <code>main</code> at <code>2abae79</code>.
+Numbers are as of 2026-09-07 21:00 UTC. Routing, screening and extraction remain
+settled: the extract dry run reports <b>0 open works</b>, and
+<code>data/extracted.csv</code> is the render of those verdicts. What changed since
+2026-08-16 is the OSF work of 2026-09-07 (PRs #206 and #207) and, with it, the
+<b>release id — twice</b>. Use <code>2e31c9543026</code>.
 Every number on this page was read off a file or a read-only command, not inferred from
 the code. Section 1 explains how the pipeline works. Section 2 says where it stands
 today. Section 3 is the runbook. Sections 4 and 5 cover open work and where the rest of
@@ -138,16 +139,17 @@ humans review them. The final product is the Supabase <code>validated</code> tab
 <h2>2. Where things stand today</h2>
 
 <div class="kpis">
-  <div class="kpi"><b>7,760</b><span>works admitted by the current release, <code>16d370746b45</code> — all screened: 880 discarded, 6,880 proceed</span></div>
-  <div class="kpi"><b>5,928 / 5,928</b><span>extraction worklist settled under the current generation (campaign completed 2026-08-16); the dry run reports 0 open works</span></div>
-  <div class="kpi"><b>3,147</b><span>rows in <code>data/extracted.csv</code>, rendered 2026-08-16 from release <code>16d370746b45</code> under the current outcome policy (issue #198)</span></div>
+  <div class="kpi"><b>7,760</b><span>works admitted by the current release, <code>2e31c9543026</code> — all screened: 880 discarded, 6,880 proceed</span></div>
+  <div class="kpi"><b>0 open</b><span>extraction worklist settled under the current generation; the dry run on <code>2e31c9543026</code> reports 0 open works. There is NO extraction backlog — growth comes from a wider pool, a rule change, or a named reopen, not from re-running this release</span></div>
+  <div class="kpi"><b>3,040</b><span>rows in <code>data/extracted.csv</code> over 2,733 works, rendered 2026-09-07 from release <code>2e31c9543026</code></span></div>
+  <div class="kpi"><b>219 / 81</b><span>rows in the two newest set-asides — <code>no_evidence.csv</code> (no abstract and no acquirable document) and <code>prospective_registration.csv</code> (a plan, not a finished study)</span></div>
   <div class="kpi"><b>5,128,211</b><span>works in the survivor pool (5,146,160 rows in 2,232 parquet files; 14,744 works are OSF-guid aliases of another and 3,205 merge on a shared DOI)</span></div>
 </div>
 
 <div class="note">
 <b>The 2026-08 campaign is complete.</b> Every work the release admits and the screen
 passes has a current-generation verdict, and the CSV on disk is the plain render,
-<code>python -m extract.export --release 16d370746b45</code>: it prints no
+<code>python -m extract.export --release 2e31c9543026</code>: it prints no
 <code>rows from a superseded generation</code> line. The export drops the works the
 current screen discards (85 after the re-screen: an earlier screen had passed them and
 an earlier generation had extracted them, and the worklist never reopens a discarded
@@ -155,9 +157,10 @@ work) and the works on the skip lists, and prints both counts.
 </div>
 
 <ul>
-  <li><b>Release:</b> <code>16d370746b45</code> — piles: 558,749 discard,
-      4,561,702 pending, 7,760 screen_expensive; overlay hash <code>011bba95582f</code>
-      (9 chunks, including the OSF registration and project descriptions). The
+  <li><b>Release:</b> <code>2e31c9543026</code> — piles: 558,749 discard,
+      4,561,702 pending, 7,760 screen_expensive; overlay hash <code>afc3eeb75ad5</code>
+      (11 chunks: the OSF registration and project descriptions, plus the project
+      WIKIS recovered on 2026-09-07). The
       alias file <code>filter/spec/aliases.json</code> (14,744 entries, issue
       <a href="https://github.com/forrtproject/flora-extractor/issues/200">#200</a>)
       is applied at routing, so several OpenAlex works naming one OSF record are one
@@ -278,6 +281,87 @@ release's screened rows can be exported ad hoc as a record with
 <code>python -m filter.engine export-csv --out &lt;file&gt; --release &lt;id&gt;</code>.
 </div>
 
+<h2>2b. What changed on 2026-09-07 (read this first)</h2>
+
+<div class="note">
+<b>The release id changed twice.</b> <code>overlay_hash</code> is one of the six inputs
+<code>routing_release()</code> hashes, so each OSF backfill minted a new release. The
+store now holds three and only the newest is live:
+<ul>
+  <li><code>16d370746b45</code> — overlay <code>011bba95582f</code> — stale, pre-dates both backfills</li>
+  <li><code>3ef655c03ac5</code> — overlay <code>cb14a68650fd</code> — stale, the 23-work recovery only</li>
+  <li><b><code>2e31c9543026</code> — overlay <code>afc3eeb75ad5</code> — LIVE, use this</b></li>
+</ul>
+<code>--release</code> is now REQUIRED: the tier refuses when the store holds more than
+one. The binding check refuses a mismatch rather than mislabelling rows, so a stale id
+fails loudly.
+</div>
+
+<p><b>On another machine, pull the overlay before routing.</b> The recovered OSF text
+lives in the overlay, and the overlay is a release-id input — skip it and your
+<code>route</code> mints a different id and none of the stored verdicts line up:</p>
+
+<pre><code>.venv/bin/python -m search.pool_sync --pull --overlay-only
+.venv/bin/python -m shared.cache_sync --pull
+.venv/bin/python -m filter.engine route     # expect 2e31c9543026...</code></pre>
+
+<p>Both are already published to <code>lukaswallrich/flora-survivor-pool</code>: overlay
+<code>afc3eeb75ad5</code> (11 chunks, 3,344 rows) plus the LLM and abstract caches.</p>
+
+<h3>Two gaps closed, both measured first</h3>
+
+<p><b>The textless-row gate (PR #206).</b> A row with no abstract now meets the document
+waterfall <em>before</em> the rungs that would reason from its title. Measured over the
+555 textless works extracted by 2026-09-04: one that acquired a document settled an
+outcome in 127 of 217 rows (59%, against a 77% baseline for works that have an
+abstract); one that acquired none, in 1 of 43 (2%). The document is the predictor, not
+the abstract. A row that stops is asked the one question a title can support — plan, or
+study that ran — and ends at <code>no_evidence</code>: its own settling verdict and its
+own file.</p>
+
+<p><b>The OSF wiki (PR #207).</b> OSF keeps a project's prose in the
+<code>description</code> <em>or</em> the wiki, and the pipeline only ever read the
+first. Across 568 distinct OSF guids in the textless population, <b>109 hold a wiki of
+&ge;200 chars and only 9 hold a description.</b> The backfill recovered <b>103</b>, and
+that text lands in <code>abstract_r</code>, so a validator reads what the model read.</p>
+
+<div class="warn">
+<b>Four traps that cost real time on 2026-09-07.</b>
+<ul>
+  <li><b><code>--redo</code> and <code>--redo-status</code> ADD to the worklist; only
+      <code>--only</code> restricts.</b> A validation run was refused because it would
+      have dragged 5,791 unnamed works along with the 75 named. Pair them, and dry-run
+      first.</li>
+  <li><b><code>--redo-status field=value</code> reads the RENDERED row.</b>
+      <code>abstract_r=</code> matches what is in <code>extracted.csv</code> right now,
+      so re-export first and the population silently empties. Reopen BEFORE you
+      render.</li>
+  <li><b><code>no_evidence</code> SETTLES.</b> Those works are subtracted from the
+      worklist, so recovering them needs an explicit <code>--redo</code>. The verdict
+      was argued on the grounds that a re-run buys the same answer — true only while
+      our reach is unchanged, so after any fetcher improvement this population has to be
+      reopened deliberately.</li>
+  <li><b><code>acquire_pdf</code> suppresses a tier for 14 days</b> after it returns
+      empty, per (DOI, tier). A corrected file filter could not fire because
+      <code>osf_files</code> was held until 2026-09-18; clearing
+      <code>cache/pdf/retry_*.json</code> released it. If a fix to acquisition seems to
+      do nothing, check this first.</li>
+</ul>
+</div>
+
+<h3>What is worth reopening</h3>
+<p>The corpus is settled, so these are the only named populations with headroom:</p>
+<pre><code># 140 rendered rows still carry a blank abstract_r and now have wiki text available
+.venv/bin/python -m extract.tier --run --release 2e31c9543026 --redo-status abstract_r=
+
+# optional: recheck the 219 that had nothing at all
+.venv/bin/python -m extract.tier --run --release 2e31c9543026 --redo-status no_evidence</code></pre>
+<p>Run either BEFORE <code>extract.export</code>, for the reason in the second trap
+above. Of 343 works holding a <code>.pdf</code>/<code>.docx</code>, only 2 have a
+filename that reads like the paper — the rest are consent forms, codebooks and Qualtrics
+exports, so do not widen <code>_OSF_NAME_EXCLUDE</code> without measuring what it
+currently protects.</p>
+
 <h2>3. Runbook — how to put entries through the pipeline</h2>
 
 <h3>3.0 One-time setup</h3>
@@ -322,8 +406,9 @@ python -m filter.engine status         # lists all releases and their pile count
 
 <p>The store holds many releases, so every release-bound command refuses to run without
 <code>--release</code>. Use <code>--release latest</code> for the newest release, or
-name one — a unique prefix is enough (<code>--release 16d3</code>). The current
-release is <code>16d370746b45</code> (a re-route after any filter-spec change mints a new
+name one — a unique prefix is enough (<code>--release 2e31</code>). The current
+release is <code>2e31c9543026</code> (a re-route after any filter-spec change — or any
+OVERLAY change, which is what happened twice on 2026-09-07 — mints a new
 one — the tier refuses a release whose spec bundle has moved, and says so).</p>
 
 <pre><code>python -m filter.engine screen --tier screen_expensive --release &lt;id&gt;        # dry run: cost estimate
