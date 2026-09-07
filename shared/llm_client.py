@@ -27,7 +27,8 @@ import requests
 from .config import (
     GEMINI_API_KEYS, PDF_PARSE_MODEL, PDF_PARSE_EFFORT, SCREENING_MODEL_1, LINKING_MODEL,
     GEMINI_USE_FLEX, GEMINI_FLEX_TIMEOUT, GEMINI_PAID_KEY_SLOTS, GEMINI_RATE_SEC,
-    LINKING_EFFORT, SCREENING_EFFORT_1, SCREENING_EFFORT_2,
+    LINKING_EFFORT, OUTCOME_MODEL, OUTCOME_EFFORT,
+    SCREENING_EFFORT_1, SCREENING_EFFORT_2,
     LLM_CACHE_DIR,
     OPENAI_API_KEY, OPENAI_RATE_SEC,
     OPENAI_USE_FLEX, OPENAI_FLEX_TIMEOUT,
@@ -42,6 +43,7 @@ from .prompts import (
     author_year_candidate_keys,
     build_author_year_pick_prompt, build_classify_prompt, build_keyed_confirm_prompt,
     build_repro_target_outcome_prompt, build_search_confirm_prompt,
+    build_study_status_prompt,
     build_target_outcome_prompt, prompt_version, SEARCH_CONFIRM_GRADES,
 )
 from .schema import canonical_outcome, normalise_outcome_block
@@ -1752,6 +1754,55 @@ def confirm_search_original(doi_r: str, title_r: str, abstract_r: str,
     write_cache(LLM_CACHE_DIR, key, {"verdict": verdict, "reasoning": reasoning})
     return {"verdict": verdict, "reasoning": reasoning, "llm_model": LINKING_MODEL,
             "llm_error": "", "provider_failure": False}
+
+
+STUDY_STATUS_VALUES = ("completed", "prospective")
+
+
+def classify_study_status(doi_r: str, title_r: str) -> dict:
+    """Has this record been RUN? Asked of a title, for a row that has nothing else.
+
+    The one call the ladder makes for a work with no abstract and no acquirable
+    document (`run_for_doi` Stage 3.5). Cold and single-field on purpose: the combined
+    target+outcome prompts ask the same question, but they ask it beside "which
+    original" and "did it succeed", and a title cannot answer those — 1 of 43 such
+    rows settled an outcome, against 59% for a row that acquired a document.
+
+    Returns {"study_status": str | None, "reasoning": str, "llm_model": str,
+             "llm_error": str, "provider_failure": bool}. `study_status` is None when
+    there is no usable answer, and the two None cases are kept apart the way
+    `confirm_search_original` keeps them: a provider failure is a fact about the run,
+    an out-of-vocabulary reply is a fact about nothing. Neither is cached; both valid
+    answers are.
+    """
+    prompt = build_study_status_prompt(title_r)
+    key = content_key("studystatus", doi_r or title_r,
+                      prompt_version("build_study_status_prompt"),
+                      cache_model_id(OUTCOME_MODEL, OUTCOME_EFFORT), prompt)
+    cached = read_cache(LLM_CACHE_DIR, key)
+    if cached is not None:
+        return {"study_status": cached.get("study_status"),
+                "reasoning": str(cached.get("reasoning", "") or ""),
+                "llm_model": OUTCOME_MODEL, "llm_error": "",
+                "provider_failure": False}
+
+    result, _provider, llm_error = call_model(prompt, OUTCOME_MODEL,
+                                              reasoning_effort=OUTCOME_EFFORT)
+    if not result:
+        return {"study_status": None, "reasoning": "", "llm_model": "",
+                "llm_error": llm_error, "provider_failure": True}
+
+    status = str(result.get("study_status", "") or "").strip().lower()
+    if status not in STUDY_STATUS_VALUES:
+        return {"study_status": None, "reasoning": "", "llm_model": OUTCOME_MODEL,
+                "llm_error": f"reply carried no status from "
+                             f"{'/'.join(STUDY_STATUS_VALUES)}: {status[:60]!r}",
+                "provider_failure": False}
+
+    reasoning = str(result.get("reasoning", "") or "")[:500]
+    write_cache(LLM_CACHE_DIR, key, {"study_status": status, "reasoning": reasoning})
+    return {"study_status": status, "reasoning": reasoning,
+            "llm_model": OUTCOME_MODEL, "llm_error": "", "provider_failure": False}
 
 
 def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,

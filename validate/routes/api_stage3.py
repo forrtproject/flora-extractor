@@ -62,6 +62,11 @@ _SET_ASIDE_COPY = {
     "api_error.csv": (
         "A provider failed after its retries. Never a verdict about the paper — the "
         "next run retries it immediately."),
+    "no_evidence.csv": (
+        "The record carries no abstract, and no document could be acquired from any "
+        "tier. Its title is the whole of what the pipeline has, so the ladder stops "
+        "before the rungs that would infer an original from a title alone. Settles the "
+        "work, unlike target_pending: there is nothing here for a re-run to find."),
     "no_original_found.csv": (
         "The ladder read the paper and concluded it names no identifiable original."),
     "unidentified_original.csv": (

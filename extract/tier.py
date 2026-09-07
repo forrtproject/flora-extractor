@@ -125,8 +125,22 @@ NOT_A_REPLICATION = "not_a_replication"
 NO_ORIGINAL_FOUND = "no_original_found"
 TARGET_PENDING = "target_pending"
 API_ERROR = "api_error"
+# A record that is a PLAN: `run_for_doi`'s Stage 3.5 asked a textless, documentless
+# row the one question a title can answer and it said `prospective`. Its own ending
+# rather than `target_pending`, which is what the row's link_method says: the ladder
+# did not fail to find a target, it found a study that has not been run. The
+# distinction is what makes the work settle — `--redo-status target_pending` and the
+# next generation would otherwise reopen every plan alongside the genuinely
+# unanswered rows, re-buying an answer that cannot change until the study reports.
+PROSPECTIVE_REGISTRATION = "prospective_registration"
+# A record with nothing to read: no abstract, and no document from any acquisition
+# tier (`run_for_doi` Stage 3.5). It SETTLES, unlike the `target_pending` it used to
+# be filed as — that ending rests on the hope that a re-run finds what this one
+# missed, and here there is nothing to find. The evidence arrives only if the study
+# itself reports, which is a new pool row and a new work, not a re-extraction.
+NO_EVIDENCE = "no_evidence"
 RESULT_VERDICTS = (RESOLVED, PROVISIONAL, NOT_A_REPLICATION, NO_ORIGINAL_FOUND,
-                   TARGET_PENDING, API_ERROR)
+                   PROSPECTIVE_REGISTRATION, NO_EVIDENCE, TARGET_PENDING, API_ERROR)
 
 # The two endings that do not SETTLE a work. Every other ending does, and takes the
 # work out of the worklist for good. These two are reopenable, at two different
@@ -202,7 +216,13 @@ _GENERATION_PROMPTS = ("build_target_outcome_prompt",
                        # reference-list rung picks a target out of, so an edit to
                        # either changes which originals a row can name.
                        "PDF_REFERENCES_PROMPT",
-                       "PDF_IMAGE_REFERENCES_PROMPT")
+                       "PDF_IMAGE_REFERENCES_PROMPT",
+                       # The title-only status call (`run_for_doi` Stage 3.5). It is
+                       # the ONLY thing asked of a work with no abstract and no
+                       # acquirable document, and its answer decides that work's
+                       # outcome and which file it ships to, so an edit to it must
+                       # reopen the works it decided.
+                       "build_study_status_prompt")
 
 
 # ── Declared answer-preserving prompt edits (issue #171) ─────────────────────
@@ -294,8 +314,20 @@ _GENERATION_EQUIVALENCES: dict[str, tuple[str, ...]] = {
     # a plan resolved by a deterministic rule is coded by the standalone prompt and was
     # never asked. It shipped nowhere; it is listed so the sandbox verdicts bought
     # under it stay readable rather than reading as a foreign generation.
-    "ca0706ef44827229": ("061cb5ca8e1888b6", "243ae515c654b6e5",
-                         "5b716d061bb336f5", "dd7572887420ef65"),
+    # 2026-09-04: `build_study_status_prompt` joined the fingerprint. It is a NEW
+    # question — the one thing asked of a work with no abstract and no acquirable
+    # document, once `run_for_doi` Stage 3.5 stopped such a row above the abstract and
+    # search rungs. It changes no answer to any question already asked: every rung a
+    # work WITH text or a document reaches is untouched, and this call is unreachable
+    # for such a work.
+    #
+    # So the claim: every work not reopened would still get its recorded verdict. The
+    # population that would answer differently is nameable and small — the textless
+    # works, `--redo-status abstract_r=`, 555 extracted so far of 881 admitted —
+    # against 3,025 a strict reopen would re-buy.
+    "010cf32bb63351e1": ("ca0706ef44827229", "061cb5ca8e1888b6",
+                         "243ae515c654b6e5", "5b716d061bb336f5",
+                         "dd7572887420ef65"),
 }
 
 
@@ -431,7 +463,15 @@ def _verdict_for(rows: list[dict], observed: dict) -> str:
         return RESOLVED
     if any(m in PROVISIONAL_LINK_METHODS for m in methods):
         return PROVISIONAL
-    for ending in (NOT_A_REPLICATION, NO_ORIGINAL_FOUND, TARGET_PENDING, API_ERROR):
+    # Below the two link endings and above the unresolved ones, because it only ever
+    # replaces `target_pending`: a resolved row that a full reading found to be a plan
+    # keeps RESOLVED, and only the Stage 3.5 exit — unresolved by construction — lands
+    # here. Both settle, so this changes no existing work's fate; it changes which
+    # populations `--redo-status` can name apart.
+    if any(str(r.get("outcome", "") or "") == "prospective_registration" for r in rows):
+        return PROSPECTIVE_REGISTRATION
+    for ending in (NOT_A_REPLICATION, NO_ORIGINAL_FOUND, NO_EVIDENCE,
+                   TARGET_PENDING, API_ERROR):
         if ending in methods:
             return ending
     return TARGET_PENDING

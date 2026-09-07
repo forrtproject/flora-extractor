@@ -11,6 +11,8 @@ from extract.link_original import (
     _extract_cit_contexts, _extract_title_target, _resolve_by_title_pattern,
     run_for_doi,
 )
+import extract.run_extract as run_extract
+import extract.sanity_check as sanity_check
 from extract.run_extract import _map_method
 from shared.prompts import TARGET_INTRO_CHARS, build_target_outcome_prompt
 
@@ -1344,3 +1346,153 @@ class TestAnOriginalCannotPostdateItsReplication:
                 "10.1/rep", "gustatory disgust and moral judgment", "Another study",
                 2024)
         assert resolved and resolved["resolved_doi_o"] == "10.1177/2515245919881152"
+
+
+# ── Stage 3.5: a textless row meets the document waterfall first ─────────────
+
+_NO_DOC = {"pdf_path": None, "openalex_xml": None, "pdf_source": "none",
+           "pdf_url": "", "pdf_ok": False, "pdf_url_tried": []}
+
+
+def _textless_row(abstract: str = "") -> pd.DataFrame:
+    return pd.DataFrame([{
+        "doi_r": "10.17605/osf.io/abcde",
+        "study_r": "Pre-registration of Smith (2010), Time flies from left to right",
+        "abstract_r": abstract, "year_r": "2020", "openalex_id_r": "W1",
+        "url_r": "https://osf.io/abcde", "author_year_pattern_r": "",
+    }])
+
+
+def _run_textless(pdf: dict, status: dict, abstract: str = ""):
+    """run_for_doi over a row with no abstract, with the waterfall and the status
+    call stubbed. Every rung below Stage 3.5 is stubbed to raise, so a call that
+    reaches one fails the test rather than passing quietly."""
+    def _must_not_run(*a, **k):
+        raise AssertionError("a rung below Stage 3.5 ran for a documentless row")
+
+    with patch.object(link_original, "find_all_candidates", return_value=[]), \
+         patch.object(link_original, "fetch_referenced_works_metadata", return_value=[]), \
+         patch.object(link_original, "fetch_opencitations_references", return_value=[]), \
+         patch.object(link_original, "acquire_pdf", return_value=pdf) as acquire, \
+         patch.object(link_original, "classify_study_status",
+                      return_value=status) as ask, \
+         patch.object(link_original, "resolve_targets_and_outcomes", _must_not_run), \
+         patch.object(link_original, "_search_title_for_original", _must_not_run):
+        row = run_for_doi("10.17605/osf.io/abcde", cands_df=_textless_row(abstract))
+    return row, acquire, ask
+
+
+class TestTextlessRowsStopAtTheDocument:
+    """The document is the predictor, not the abstract: measured over the 555
+    textless works extracted by 2026-09-04, one that acquired a document settled an
+    outcome in 127 of 217 rows and one that acquired none in 1 of 43."""
+
+    def test_no_abstract_and_no_document_stops_above_the_search_rungs(self):
+        row, acquire, ask = _run_textless(
+            _NO_DOC, {"study_status": "completed", "reasoning": "names a study",
+                      "llm_model": "m", "llm_error": "", "provider_failure": False})
+        # `no_evidence`, not `target_pending`: nothing here resolves on a re-run.
+        assert _map_method(row["resolution_method"]) == "no_evidence"
+        assert sanity_check.classify_row(
+            {"link_method": "no_evidence", "outcome": "pending"}) == "no_evidence"
+        assert row["study_status_reasoning"] == "names a study"
+        assert row["study_status_model"] == "m"
+        # The waterfall ran exactly once, and nothing below it did.
+        assert acquire.call_count == 1
+        assert ask.call_count == 1
+
+    def test_a_prospective_answer_becomes_the_rows_outcome(self):
+        row, _acquire, _ask = _run_textless(
+            _NO_DOC, {"study_status": "prospective", "reasoning": "it is a plan",
+                      "llm_model": "m", "llm_error": "", "provider_failure": False})
+        assert row["study_status"] == "prospective"
+        outcome = run_extract._outcome_without_coding("no_evidence", row)
+        assert outcome["outcome"] == "prospective_registration"
+        # A plan still beats the no_evidence bucket: the outcome rule sits above the
+        # link-state rules, so the one thing learned about the row decides its file.
+        assert sanity_check.classify_row(
+            {"link_method": "no_evidence",
+             "outcome": outcome["outcome"]}) == "prospective_registration"
+
+    def test_a_failed_status_call_leaves_the_row_where_it_already_was(self):
+        """A provider failure must not invent a verdict: the row ends exactly where a
+        documentless row ended before this gate existed."""
+        row, _acquire, _ask = _run_textless(
+            _NO_DOC, {"study_status": None, "reasoning": "", "llm_model": "",
+                      "llm_error": "503", "provider_failure": True})
+        assert row["study_status"] == ""
+        assert run_extract._outcome_without_coding(
+            "no_evidence", row)["outcome"] == "pending"
+
+    def test_a_row_with_an_abstract_never_reaches_the_gate(self):
+        """The gate is for rows with nothing to read. One with an abstract must
+        descend the ordinary ladder, so the status call is never made."""
+        with patch.object(link_original, "find_all_candidates", return_value=[]), \
+             patch.object(link_original, "fetch_referenced_works_metadata",
+                          return_value=[]), \
+             patch.object(link_original, "fetch_opencitations_references",
+                          return_value=[]), \
+             patch.object(link_original, "screen_references_with_llm",
+                          return_value=_screen_result()), \
+             patch.object(link_original, "acquire_pdf", return_value=_NO_DOC), \
+             patch.object(link_original, "resolve_targets_and_outcomes",
+                          return_value={"resolved": False,
+                                        "resolution_method": "llm_no_target",
+                                        "llm_source": "gemini"}), \
+             patch.object(link_original, "_search_title_for_original",
+                          return_value=None), \
+             patch.object(link_original, "classify_study_status") as ask:
+            run_for_doi("10.17605/osf.io/abcde",
+                        cands_df=_textless_row("A real abstract."))
+        assert ask.call_count == 0
+
+
+def test_a_none_abstract_reaches_the_gate_as_empty():
+    """A pool row with no usable inverted index carries abstract_r=None, which pandas
+    stores as NaN. NaN is truthy, so `or ""` does not catch it and `str()` yields the
+    string "nan" — a row with nothing to read reading as a row that has an abstract,
+    walking past Stage 3.5 and buying two searches at 10x a filter query."""
+    for empty in ("", None, float("nan")):
+        built = run_extract._build_cands_df(
+            pd.Series({"doi_r": "10.1/x", "title_r": "T", "abstract_r": empty}))
+        assert built.iloc[0]["abstract_r"] == "", repr(empty)
+    kept = run_extract._build_cands_df(
+        pd.Series({"doi_r": "10.1/x", "title_r": "T", "abstract_r": "Real."}))
+    assert kept.iloc[0]["abstract_r"] == "Real."
+
+
+def test_a_textless_documentless_row_survives_the_original_link_guard():
+    """The whole ladder-to-verdict path, not just `run_for_doi`'s return value.
+
+    `_guard_original_link` rewrites any row with no doi_o and no usable title_o to
+    target_pending, and a `no_evidence` row has neither BY CONSTRUCTION — nothing was
+    ever read to name an original from. Without the guard's exemption the method the
+    Stage 3.5 exit earned is overwritten one call later, silently: a sandbox pass
+    logged 243 gate exits and stored 0 no_evidence verdicts. Asserting on
+    `run_for_doi` alone does not catch it, so this drives `_process_row`.
+    """
+    import extract.run_extract as rx
+    import extract.tier as tier_mod
+
+    status = {"study_status": "completed", "reasoning": "names a finished study",
+              "llm_model": "m", "llm_error": "", "provider_failure": False}
+    row = pd.Series({
+        "doi_r": "10.17605/osf.io/abcde", "title_r": "Replication of Smith (2010)",
+        "abstract_r": "", "year_r": "2020", "openalex_id_r": "W1",
+        "url_r": "https://osf.io/abcde", "screen_verdict": "proceed",
+        "screen_record_type": "replication", "paper_type": "replication",
+    })
+    with patch.object(link_original, "find_all_candidates", return_value=[]),          patch.object(link_original, "fetch_referenced_works_metadata", return_value=[]),          patch.object(link_original, "fetch_opencitations_references", return_value=[]),          patch.object(link_original, "acquire_pdf", return_value=_NO_DOC),          patch.object(link_original, "classify_study_status", return_value=status),          patch.object(rx, "_verify_row", side_effect=lambda r: r):
+        observed = {}
+        rows = rx._process_row(row, "10.17605/osf.io/abcde", no_llm=False, no_pdf=False,
+                               no_reproductions=False, resolved_only=False,
+                               observed=observed)
+        final = [rx._finalise_row(r) for r in rows]
+
+    assert [r["link_method"] for r in final] == ["no_evidence"]
+    assert final[0]["study_status_reasoning"] == "names a finished study"
+    assert final[0]["study_status_model"] == "m"
+    verdict = tier_mod._verdict_for(final, observed)
+    assert verdict == "no_evidence"
+    assert verdict not in tier_mod.UNSETTLING_VERDICTS
+    assert sanity_check.classify_row(final[0]) == "no_evidence"

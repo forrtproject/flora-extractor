@@ -32,7 +32,8 @@ from shared.config import GROBID_CACHE_DIR, LLM_CACHE_DIR, OA_CACHE_DIR, PARSE_C
 from shared.disambiguation import is_umbrella_paper, jaccard_similarity
 from shared import token_counter
 from shared.llm_client import (
-    SCREEN_QUALIFYING, resolve_targets_and_outcomes, screen_references_with_llm,
+    SCREEN_QUALIFYING, classify_study_status, resolve_targets_and_outcomes,
+    screen_references_with_llm,
 )
 from shared.pdf_parsing import (
     parse_all as _parse_all,
@@ -522,7 +523,28 @@ OUTCOME_DESCENT = True
 #      project that deposited nothing else it is still the best statement of the target,
 #      which is 106 of the 331 OSF-file works in the 2026-08-13 export. The file's own
 #      name is also kept in the document's provenance sidecar (2026-08-13)
-EXTRACT_LADDER_VERSION: int = 26
+#  27  a row with NO ABSTRACT meets the document waterfall before the rungs that would
+#      reason from its title (Stage 3.5). The document is the predictor, not the
+#      abstract: measured over the 555 textless works extracted by 2026-09-04, one that
+#      acquired a document settled an outcome in 127 of 217 rows (59%, against a 77%
+#      baseline for works that have an abstract) and one that acquired none in 1 of 43
+#      (2%). The rungs skipped are the expensive ones — the abstract call, then a
+#      CrossRef and an OpenAlex free-text search at 10x a filter query each, then up to
+#      three more at 10x to verify whatever they linked. It costs no extra call:
+#      acquire_pdf already ran on every one of these rows, just after the money was
+#      spent, and Stage 5 reuses this result. A row that DOES acquire a document falls
+#      through unchanged, and must: 214 of the 217 rows such works contribute to
+#      extracted.csv are linked by a search over a target the abstract rung named from
+#      the title, and only 3 by the full-text rung.
+#
+#      A row that stops is asked the one question a title can answer — plan, or study
+#      that ran (`build_study_status_prompt`) — and ends at `no_evidence` rather than
+#      `target_pending`: that ending rests on a re-run finding what this one missed,
+#      and here there is nothing to find until the study itself reports, which arrives
+#      as a new work. `prospective` files it in prospective_registration.csv instead
+#      (2026-09-07)
+#      reopen: --redo-status abstract_r=
+EXTRACT_LADDER_VERSION: int = 27
 
 
 # Columns to pass through from the input row (no renaming). Only columns
@@ -1273,6 +1295,54 @@ def run_for_doi(doi_r:              str,
         log.info("[%s] gate: %s withheld — the paper's text does not rule out a second "
                  "target", doi_r, stage3["resolution_method"])
 
+    # ── Stage 3.5: a textless row meets the document waterfall first ─────────
+    # A row with no abstract carries only its TITLE into every rung between here and
+    # Stage 5, and two of them are the most expensive things the ladder can do: the
+    # abstract call, then a CrossRef and an OpenAlex free-text search at 10x a filter
+    # query each, then up to three more at 10x to verify whatever they linked.
+    #
+    # The document is the predictor, not the abstract. Measured over the 555 textless
+    # works extracted by 2026-09-04 (extracted.csv plus every set-aside): a work that
+    # acquired a document settled an outcome in 127 of 217 rows (59%, against a 77%
+    # baseline for works that have an abstract), and one that acquired none in 1 of 43
+    # (2%). The 42 rows the second group did ship carry a high-confidence, verified,
+    # `clearly_target`-graded link inferred from a title string with nothing to check
+    # it against — the systematic error this file's Stage 4.6 comment warns about.
+    #
+    # So the probe is hoisted above the rungs that would reason from the title, and it
+    # costs nothing a run was not already paying: `acquire_pdf` runs on every one of
+    # these rows today, just after the money is spent, and it is the same cached call
+    # either way — Stage 5 reuses this result rather than re-probing.
+    #
+    # A row that DOES get a document falls through unchanged. It must: 214 of the 217
+    # rows in the first group are linked by a search over a target the abstract rung
+    # named from the title, and only 3 by the full-text rung, so skipping Stage 4 for
+    # them would drop the link and keep only the outcome.
+    pdf_early: "dict | None" = None
+    if not abstract_r.strip() and not no_pdf:
+        pdf_early = acquire_pdf(doi_r, study_r, openalex_id=oa_id_r,
+                                url_r=str(cands_row.get("url_r", "") or ""))
+        if not pdf_early.get("pdf_path") and not pdf_early.get("openalex_xml"):
+            log.info("[%s] textless row and no document (%s) — stopping above the "
+                     "search rungs", doi_r, pdf_early.get("pdf_source", "none"))
+            # The one question a title CAN answer, and the only reason this row is
+            # worth an LLM call at all: is this a plan, or a study that ran? A
+            # `prospective` answer files the work in prospective_registration.csv —
+            # a candidate to revisit when the study reports — instead of leaving it
+            # indistinguishable from every other row the ladder could not resolve.
+            status = ({} if no_llm else
+                      classify_study_status(doi_r, study_r))
+            # `no_evidence`, not the `no_fulltext_available` the Stage 5 exit uses:
+            # that one means a row WITH an abstract failed to acquire a document, and
+            # a re-run may well get one. This means the record carries nothing to read
+            # at all, which no re-run changes until the study itself reports.
+            return _exit(_unresolved(
+                "no_evidence",
+                study_status=str(status.get("study_status") or ""),
+                study_status_reasoning=str(status.get("reasoning") or ""),
+                study_status_model=str(status.get("llm_model") or ""),
+            ), pdf_early)
+
     # ── Stage 4: Abstract-level LLM ──────────────────────────────────────────
     if not no_llm:
         # The TITLE is read for the citation as well as the abstract. The gate exists
@@ -1441,8 +1511,9 @@ def run_for_doi(doi_r:              str,
         log.info("[%s] no_pdf mode — abstract/rules insufficient, writing target_pending", doi_r)
         return _exit(_unresolved("needs_fulltext"))
 
-    pdf = acquire_pdf(doi_r, study_r, openalex_id=oa_id_r,
-                      url_r=str(cands_row.get("url_r", "") or ""))
+    pdf = pdf_early if pdf_early is not None else acquire_pdf(
+        doi_r, study_r, openalex_id=oa_id_r,
+        url_r=str(cands_row.get("url_r", "") or ""))
     log.info("[%s] PDF: %s (%s)", doi_r, pdf["pdf_source"], pdf["pdf_url"])
 
     pdf_path       = Path(pdf["pdf_path"]) if pdf.get("pdf_path") else None
@@ -1731,4 +1802,12 @@ def _build_output(doi_r:     str,
         "llm_reasoning"         : resolution.get("llm_reasoning",  ""),
         "llm_prompt"            : resolution.get("llm_prompt",     ""),
         "llm_error"             : resolution.get("llm_error",      ""),
+
+        # ── Stage 3.5: the one question a textless, documentless row was asked ──
+        # Kept on the row because a verdict nobody can audit is a verdict nobody can
+        # tune: "asked and answered completed" and "never asked" are different facts
+        # and both render as a blank outcome. `_outcome_without_coding` reads these.
+        "study_status"          : resolution.get("study_status", ""),
+        "study_status_reasoning": resolution.get("study_status_reasoning", ""),
+        "study_status_model"    : resolution.get("study_status_model", ""),
     }

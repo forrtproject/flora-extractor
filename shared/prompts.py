@@ -1443,6 +1443,55 @@ def build_search_confirm_prompt(title_r: str, abstract_snip: str,
     })
 
 
+_STUDY_STATUS_TEMPLATE = """You are told the TITLE of a research record and nothing else. Decide whether the work it names has already been RUN, or is a plan for a study that has not been.
+
+Title: {title_r}
+
+This is the whole evidence. There is no abstract, no description and no document —
+the record's own repository holds none. Judge the title alone.
+
+Answer with JSON and nothing else:
+{
+  "study_status": "<completed|prospective>",
+  "reasoning": "<one sentence: what in the title decided it>"
+}
+
+Answer "prospective" when the title says the record IS a plan document:
+"Pre-registration of X", "Protocol for X", "Analysis plan for X", "Stage 1 ...".
+
+Answer "completed" otherwise. Two mistakes to avoid, both common:
+(a) "Preregistered replication of X" and "Registered Replication Report of X" name a
+FINISHED study that was preregistered — "preregistered" describes the method, not the
+record's status. Only "pre-registrATION of X", naming the document itself, is
+prospective.
+(b) A finished study whose result you cannot see is still "completed". You have been
+given no result for ANY of these records, so absence of one says nothing at all. Never
+infer "prospective" from the fact that no findings are quoted.
+
+When the title does not settle it, answer "completed". A wrong "prospective" files a
+real replication away as a plan; a wrong "completed" leaves the record exactly where it
+would have been anyway.
+"""
+
+
+def build_study_status_prompt(title_r: str) -> str:
+    """Has this record been RUN — asked of a title, because a title is all there is.
+
+    The one question put to a row with no abstract and no acquirable document. The
+    combined target+outcome prompts ask `study_status` too, but they ask it alongside
+    "which original" and "did it succeed", and those two are unanswerable from a title:
+    measured over the 555 textless works extracted by 2026-09-04, a row that acquired
+    no document settled an outcome in 1 of 43 rows (2%), against 59% for one that did.
+    So the ladder stops before those rungs and asks only this, which a title CAN
+    support — "Pre-registration of Newman et al. (2011)" states its own status outright.
+
+    Biased toward "completed" in the same direction and for the same reason as the
+    combined prompts: a false "prospective" quarantines a real replication, a false
+    "completed" changes nothing about where the row lands.
+    """
+    return _fill(_STUDY_STATUS_TEMPLATE, {"title_r": title_r or "(no title)"})
+
+
 def build_outcome_prompt(title_r: str, abstract_snip: str,
                          original_authors: str = "", original_year: str = "",
                          original_title: str = "", text_snip: str = "",

@@ -527,6 +527,48 @@ no-text downgrade that would normally hold it exempts OSF records
 (`_screenable_on_its_title` in `filter/engine/route.py`), because their titles are their
 descriptions.
 
+**The exemption admits records with nothing in them, so Stage 3 tests the document
+before it spends on the title.** 881 pool rows in `screen_expensive` on release
+16d370746b45 have no abstract after the overlay (570 distinct works — 22 work ids
+carry a textless row AND a sibling row that has text, so a count of rows overstates
+the population). Text recovery is exhausted, not skipped: 808 of the 876 OSF ones
+already hold an `osf:` row in the abstract store, which is a definitive miss.
+
+What separates a codeable record from an empty one is the DOCUMENT, not the abstract.
+Measured over the 555 textless works extracted by 2026-09-04, counted off
+`extracted.csv` and every set-aside file:
+
+| Textless work | Works | Rows with a settled outcome |
+| ------------- | ----- | --------------------------- |
+| acquired a document | 316 | 127 of 217 — 59% |
+| acquired none | 239 | 1 of 43 — 2% |
+| *(baseline: works that have an abstract)* | 2,832 | 2,218 of 2,885 — 77% |
+
+So `run_for_doi` hoists the waterfall to Stage 3.5 for a row with no abstract, above
+the abstract call and the two free-text searches at 10x a filter query. It costs no
+extra call — `acquire_pdf` ran on every one of these rows anyway, just after the money
+was spent, and Stage 5 reuses the result. A row that acquires a document falls through
+unchanged, and must: 214 of the 217 rows such works contribute are linked by a search
+over a target the ABSTRACT rung named from the title, and only 3 by the full-text rung.
+
+A row that stops is asked the one question a title can support —
+`build_study_status_prompt`, one field, biased to `completed` for the same reason the
+combined prompts are. It ends at `no_evidence` (its own settling verdict and
+`no_evidence.csv`), or at `prospective_registration.csv` when the answer is
+`prospective`. `no_evidence` is deliberately not `target_pending`: that ending rests on
+a re-run finding what this one missed, and here there is nothing to find until the study
+reports, which arrives as a new work.
+
+Two traps this walked into, both worth knowing before touching the path again.
+`_build_cands_df` rendered a None/NaN `abstract_r` as the string `"nan"` — NaN is
+TRUTHY, so `or ""` does not catch it — which sent the literal "nan" to the model as an
+abstract and would have no-opped the gate on part of its own population; it needs
+`fillna`. And `_guard_original_link` rewrites any row with no `doi_o` and no usable
+`title_o` to `target_pending`, which every `no_evidence` row is by construction: a
+sandbox pass logged 243 gate exits and stored 0 `no_evidence` verdicts until the method
+was named in that guard's exemption set. Asserting on `run_for_doi`'s return value does
+not catch it — the regression test drives `_process_row`.
+
 ### Re-asking a changed prompt over one population
 
 A prompt edit has three possible blast radii, not two. The default is all-or-nothing —
@@ -685,9 +727,13 @@ must never cache the empty one.
 
 **The big artifact is the survivor pool, not a CSV.** The pool is a few GB of parquet
 and is shared through Hugging Face; the OpenAlex snapshot it is scanned out of is
-725 GB. Nothing in `data/` is close to that: `data/extracted.csv` is a few hundred
-KB, and an ad-hoc `export-csv` record of a release's screened rows a few thousand
-rows (its manifest sidecar names the exact count for the file on disk).
+725 GB. Nothing in `data/` is close to that: `data/extracted.csv` is ~12 MB over
+3,027 rows (2026-09-07 — it carries the abstract and the evidence quotes, so it grew
+by two orders of magnitude from the "few hundred KB" this line used to claim, while
+the ROW count barely moved), and an ad-hoc `export-csv` record of a release's screened
+rows a few thousand rows (its manifest sidecar names the exact count for the file on
+disk). Count rows with a CSV reader, never `wc -l`: abstracts carry embedded newlines,
+so the line count reads 5,472 for a 3,145-row file.
 
 The multi-GB `filtered.csv` this section was written for is the RETIRED pre-engine
 file — the DVC-tracked `filtered.zip` still holds it at 1.7 GB. Stage 3 never reads a

@@ -213,6 +213,15 @@ EXTRACT_ADDED_COLS = [
                            #         prospective_registration. Kept as a column because
                            #         a blank and a "completed" are different facts, and
                            #         tuning the prompt needs to tell them apart.
+    # The two fields the TITLE-ONLY status call writes, and only it: the combined
+    # target+outcome prompts answer `study_status` inside a reading whose reasoning is
+    # already in `outcome_reasoning`, so these stay blank on every row but the ones
+    # `run_for_doi`'s Stage 3.5 exit produced. They are columns rather than payload
+    # detail because that call is the whole verdict for such a row — the sentence it
+    # gave is the only evidence a reader has for why the work was filed as a plan, and
+    # the model id is what makes a re-grade after a prompt change auditable.
+    "study_status_reasoning",  # str — one sentence: what in the title decided it
+    "study_status_model",      # str — the model that answered; "" when never asked
     "osf_type",            # str   — preprint | project_or_registration | "" (not OSF)
 ]
 # pair_id is placed first so it is the leading identifier in extracted.csv.
@@ -338,6 +347,14 @@ LINK_METHOD_VALUES = RESOLVED_LINK_METHODS | {
     # terminal state, so a split now proceeds down the ladder. Rows on disk still
     # carry the value, and the export still partitions them by it.
     "screen_disagreement",
+    # A textless row whose document waterfall came back empty (`run_for_doi` Stage
+    # 3.5). Deliberately NOT folded into target_pending: that value means the ladder
+    # did not resolve a target THIS TIME and a re-run may, while this one means the
+    # record carries no evidence to resolve one FROM — no abstract, and no document at
+    # any tier. The two want different things from a reader, and the counts only stay
+    # legible apart: 190 of the 2,329 target_pending rows on 2026-09-04 were this.
+    # Quarantined to no_evidence.csv; excluded from DB import.
+    "no_evidence",
     "target_pending", "api_error",
 }
 
@@ -360,6 +377,11 @@ SET_ASIDE_DESTINATIONS = {
     # not false positives to forget, and a validator asked to look at them is doing a
     # different job. Settles the work — nothing is gained by re-extracting a plan.
     "prospective_registration": "prospective_registration.csv",
+    # A record with nothing to read: no abstract, and no document from any tier. Its
+    # own file rather than a corner of target_pending.csv, because "we could not
+    # resolve it" and "there is nothing here to resolve" are different findings and a
+    # reader triaging the pending pile should not have to separate them by hand.
+    "no_evidence": "no_evidence.csv",
     "api_error": "api_error.csv",
     "no_original_found": "no_original_found.csv",
     "self_link": "unresolved_self_links.csv",

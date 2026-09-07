@@ -57,6 +57,19 @@ _SET_ASIDE_COPY: dict[str, dict] = {
         "action": "Recoverable by better reference parsing or acquisition (#188); re-run with "
                   "--redo-status unidentified_original once that improves.",
     },
+    "no_evidence.csv": {
+        "title": "No Evidence",
+        "why": "The record carries no abstract, and no document could be acquired from any "
+               "source — OSF file storage, the registration form, CrossRef, the publisher "
+               "landing page, none of them. Its title is the whole of what the pipeline has, "
+               "so the ladder stops before the rungs that would infer an original from that "
+               "title alone: measured over 555 such works, the ones with a document settled an "
+               "outcome 59% of the time and the ones without settled 1 row in 43.",
+        "action": "Nothing to re-run — the same evidence buys the same answer, which is why "
+                  "these settle rather than resting in target_pending. They become extractable "
+                  "only if the study itself reports, which arrives as a new work. Worth reading "
+                  "as a list to confirm the population really is empty records.",
+    },
     "prospective_registration.csv": {
         "title": "Prospective Registration",
         "why": "The model answered study_status=prospective: the record describes a replication "
