@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-09-07T08:16:46",
+  "updated_at": "2026-09-07T14:55:35",
   "filtered": {
     "available": true,
     "store": "D:\\Uni\\UM\\flora-extractor\\cache\\engine\\engine.duckdb",
@@ -13,11 +13,11 @@
     }
   },
   "extracted": {
-    "total": 3027,
+    "total": 3040,
     "target_pending_count": 0,
     "by_match_type": {
-      "single_original": 2490,
-      "multiple_original": 537
+      "single_original": 2499,
+      "multiple_original": 541
     },
     "by_link_method": {
       "citation_context_match": 1,
@@ -32,40 +32,40 @@
       "no_original_found": 0,
       "target_pending": 0,
       "api_error": 0,
-      "_other": 2783
+      "_other": 2796
     },
     "by_model": {
-      "gpt": 3000,
+      "gpt": 3013,
       "none": 27
     },
     "by_outcome": {
-      "successful": 1165,
-      "failed": 645,
-      "mixed": 406,
+      "successful": 1168,
+      "failed": 646,
+      "mixed": 409,
       "descriptive only": 21,
       "statistically successful but flawed": 6,
       "uninformative": 12,
-      "cannot_be_determined": 701,
+      "cannot_be_determined": 707,
       "not_a_replication": 0,
       "pending": 0,
       "api_error": 0,
       "_other": 71
     },
     "by_doi_verification": {
-      "verified": 3018,
+      "verified": 3031,
       "corrected": 8,
       "api_error": 1
     },
     "by_type": {
-      "replication": 2862,
+      "replication": 2874,
       "reproduction": 125,
-      "": 40
+      "": 41
     },
     "by_outcome_replication": {
-      "successful": 1165,
-      "cannot_be_determined": 647,
-      "failed": 645,
-      "mixed": 406,
+      "successful": 1168,
+      "cannot_be_determined": 653,
+      "failed": 646,
+      "mixed": 409,
       "descriptive only": 21,
       "uninformative": 12,
       "statistically successful but flawed": 6
@@ -84,17 +84,17 @@
       "technical failure, not checked": 1
     },
     "by_year": {
-      "2023": 266,
+      "2023": 267,
+      "2025": 230,
       "2020": 229,
-      "2025": 229,
-      "2022": 226,
-      "2021": 220,
+      "2022": 227,
+      "2021": 221,
       "2024": 217,
       "2018": 196,
-      "2019": 187,
+      "2019": 192,
       "2017": 139,
-      "2026": 122,
-      "2016": 108,
+      "2026": 124,
+      "2016": 110,
       "2015": 76,
       "2014": 72,
       "2012": 65,

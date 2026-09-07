@@ -1370,3 +1370,36 @@ def test_both_epmc_routes_answering_nothing_records_the_stamp():
                              pmcid="PMC123", fulltext=None,
                              download_reason="not_a_pdf")
     assert "europepmc" in log
+
+
+# ---------------------------------------------------------------------------
+# "X with supplement" is the paper, not the supplement
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("name,excluded", [
+    # The only false exclusion in the 2026-09-07 audit of 235 no_evidence works: a
+    # real manuscript with no positive word in its name to rescue it, demoted purely
+    # because it says it bundles its supplement.
+    ("Kutscher & Feldman 2019 CogEmo past behavior & regret-exceptionality "
+     "replication & extension-w-supplement.pdf", False),
+    # "_" is a word character, so a \b before the keyword never matched this shape.
+    ("manuscript_with_supplement.pdf", False),
+    ("paper incl supplements.pdf", False),
+    ("report+supplement.pdf", False),
+    # Still excluded: none of these claim to CONTAIN the paper.
+    ("Supplementary_Material_1.pdf", True),
+    ("CECIL_supplements_20260525.pdf", True),
+    ("Supplemental Online Materials.pdf", True),
+    ("supplement.pdf", True),
+    ("Supplementary materials for the paper.pdf", True),
+    # A second exclusion word excludes whatever the supplement mention says: this is
+    # a Qualtrics export, and it sat one row from the manuscript above in the audit.
+    ("Idson_et_al_2000_Qualtrics_Replication__Extension.docx", True),
+    ("Replication study materials.docx", True),
+    ("Analyses_Main.pdf", True),
+    ("Appendix.docx", True),
+    ("main_manuscript.pdf", False),
+])
+def test_a_bundled_supplement_does_not_make_a_file_a_supplement(name, excluded):
+    from shared.pdf_sources import _name_is_excluded
+    assert _name_is_excluded(name) is excluded
