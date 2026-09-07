@@ -928,6 +928,17 @@ _OSF_FILE_SUFFIXES = (".pdf", ".docx")
 _OSF_NAME_POSITIVE = re.compile(
     r"(?i)manuscript|preprint|report|paper|final|\bmain\b|thesis"
     r"|stage\s*2|\brrr\b|article|\bprint\b")
+# "X-w-supplement.pdf" is the PAPER carrying its supplement, not the supplement.
+# The exclusion below reads the whole filename, so a manuscript that says it bundles
+# one was demoted on the strength of that word alone: the only case in the 2026-09-07
+# audit of 235 no_evidence works was
+# "Kutscher & Feldman 2019 ... regret-exceptionality replication & extension-w-supplement.pdf",
+# a real manuscript with no positive word in its name to rescue it. Only the BUNDLING
+# forms are neutralised — a bare "Supplementary_Material_1.pdf" still excludes, and so
+# does "CECIL_supplements_2026.pdf", because neither claims to contain the paper.
+_OSF_BUNDLED_SUPPLEMENT = re.compile(
+    r"(?i)(?<![A-Za-z])(?:with|w|incl(?:uding)?|and)[-_ ]*supplements?\b|[+&][-_ ]*supplements?\b")
+
 _OSF_NAME_EXCLUDE = re.compile(
     r"(?i)supplement|material|measure|instruction|question|transcript|codebook"
     r"|wrangl|correspondence|ethic|qualtrics|survey|analys|appendix|syntax"
@@ -939,6 +950,22 @@ _OSF_NAME_EXCLUDE = re.compile(
 # 10.17605/osf.io/zya9n was coded from an analytic-plan DOCX). Such files are ranked
 # behind every other candidate, not dropped: for a project that never deposited
 # a final report they are still the best available statement of the target.
+def _name_is_excluded(name: str) -> bool:
+    """Whether this filename names an accessory rather than the paper.
+
+    An exclusion word that is only there to say the file BUNDLES its supplement does
+    not make the file a supplement, so a name whose every exclusion hit is such a
+    mention is not excluded. Anything else — a second exclusion word, a bare
+    "supplementary materials" — excludes as before.
+    """
+    hits = list(_OSF_NAME_EXCLUDE.finditer(name))
+    if not hits:
+        return False
+    bundled = {(m.start(), m.end()) for m in _OSF_BUNDLED_SUPPLEMENT.finditer(name)}
+    return any(not any(b[0] <= h.start() and h.end() <= b[1] for b in bundled)
+               for h in hits)
+
+
 _OSF_NAME_PREREG = re.compile(
     r"(?i)prereg|pre-reg|stage\s*-?\s*1|snapshot|protocol|registration"
     r"|\bplan\b|analytic|proposal")
@@ -1115,7 +1142,7 @@ def rank_osf_files(files: list[dict], title: str = "") -> list[dict]:
         stem = re.sub(r"[_\-.,&]+", " ", name.rsplit(".", 1)[0])
         score = len(set(m.group(0).lower()
                         for m in _OSF_NAME_POSITIVE.finditer(name)))
-        if _OSF_NAME_EXCLUDE.search(name):
+        if _name_is_excluded(name):
             # One positive word does not survive an exclusion: "final test
             # questions.pdf" carries "final" and is a questionnaire. Two positive
             # signals do — that is a manuscript whose name happens to mention its
