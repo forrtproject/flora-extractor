@@ -173,6 +173,22 @@ def test_url_regex_is_a_match_key_held_to_the_same_regex_rules():
     assert any("domain.url_regex" in e and "RE2 cannot run it" in e for e in errors)
 
 
+def test_doi_in_must_be_a_list_of_non_empty_dois():
+    """`doi_in` carries a curated allow-list, so the refusals are about the LIST:
+    a bare string (one DOI written without brackets) and an empty entry both read as
+    "match nothing" at route time, which is indistinguishable from a rule that is
+    working. It reads no text, so it never pulls a live discard into the
+    `abstract_missing` guard."""
+    assert validate_spec(_valid_spec(match={"doi_in": ["10.1037/abc123"]})) == []
+    assert validate_spec(_valid_spec(domain={"doi_in": ["10.1037/abc123"]})) == []
+    for bad in ("10.1037/abc123", ["10.1037/abc123", ""], [7]):
+        errors = validate_spec(_valid_spec(match={"doi_in": bad}))
+        assert any("doi_in" in e for e in errors), bad
+    assert validate_spec(_valid_spec(
+        pile="discard", precedence=900, match={"doi_in": ["10.1037/abc123"]},
+        measured=[{"level": "trusted", "rationale": "fixture"}])) == []
+
+
 def test_pending_is_not_a_legal_spec_pile():
     errors = validate_spec(_valid_spec(pile="pending"))
     assert any("'pending' is never a spec target" in e for e in errors)

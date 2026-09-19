@@ -250,6 +250,9 @@ def _match_batch(block: MatchBlock, ctx: BatchContext) -> pa.Array:
             hit = pc.or_(pc.starts_with(ctx.doi, prefix + "/"), pc.equal(ctx.doi, prefix))
             prefix_hit = pc.or_(prefix_hit, pc.fill_null(hit, False))
         mask = pc.and_(mask, prefix_hit)
+    if block.doi_in:
+        listed = pa.array(block.doi_in, type=pa.string())
+        mask = pc.and_(mask, pc.fill_null(pc.is_in(ctx.doi, value_set=listed), False))
     if block.doi_regex is not None:
         mask = pc.and_(mask, _re_match(ctx.doi, block.doi_regex))
     if block.title_regex is not None:
@@ -373,6 +376,11 @@ def _block_evidence(block: MatchBlock, ctx: BatchContext) -> list[str]:
             registrant = (doi or "").split("/", 1)[0]
             if not out[index] and registrant in block.doi_prefix:
                 out[index] = registrant
+    if block.doi_in:
+        listed = set(block.doi_in)
+        for index, doi in enumerate(ctx.doi.to_pylist()):
+            if not out[index] and doi in listed:
+                out[index] = doi
     for label, pattern, column in (("doi_regex", block.doi_regex, ctx.doi),
                                    ("title_regex", block.title_regex, ctx.title),
                                    ("abstract_regex", block.abstract_regex, ctx.abstract),

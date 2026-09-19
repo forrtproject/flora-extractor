@@ -23,7 +23,30 @@ the command, pasteable from the project root, and what proves it worked.
 
 ## Open
 
-(none)
+- [ ] **Score the Metascience Observatory rule against the pool, then decide whether
+      it ships.** `analysis/mo_observatory/curated-observatory.json` names the 2,987
+      Observatory replication DOIs that are not already in published FLoRA or the
+      validation tables — 2,416 of which this repo has never written a row for. The
+      candidate sits OUTSIDE `filter/spec/`, so it is in no bundle and has changed no
+      release; nothing about it is real until it is measured.
+      `.venv/bin/python -m analysis.arm_evidence --spec analysis/mo_observatory/curated-observatory.json`
+      reads two numbers: how many of the named DOIs are pool rows at all, and how many
+      of those the live release does NOT already admit. The second is what the rule
+      buys. If it is near zero the rule ships nothing and the file should be deleted
+      rather than promoted — the works are either already admitted (and the answer is
+      Stage 3 capacity, not routing) or absent from the pool (and the answer is the
+      Stage 1 search gate, which no filter spec can reach).
+      If it is worth having: `git mv analysis/mo_observatory/curated-observatory.json
+      filter/spec/`, add the id to the policy table in `tests/test_engine_spec.py`
+      (`EXPECTED`, and `test_the_expensive_screen_has_exactly_two_routes` becomes three
+      routes), then `.venv/bin/python -m filter.engine route` — which mints a release —
+      then `screen --tier screen_expensive --run --release <new>` and
+      `.venv/bin/python -m extract.tier` (no `--run`) to see the worklist it opened.
+      Done when either the file is deleted with the measured reason recorded here, or
+      the extract dry run reports the works it admitted.
+
+      Regenerating the list needs the source CSV, which is gitignored (13 MB):
+      `curl -sSL -o analysis/mo_observatory/replications_database_2026_09_04_184008.csv https://raw.githubusercontent.com/delton137/metascience-observatory/main/data/replications_database_2026_09_04_184008.csv`
 
 ## Done
 
