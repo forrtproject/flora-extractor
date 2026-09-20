@@ -20,10 +20,12 @@ import pytest
 from analysis.arm_evidence import (
     MIN_LABELLED,
     DECORATION,
+    Arm,
     pattern_arms,
     render,
     run,
 )
+from filter.engine.spec import FilterSpec
 from search.snapshot_scan import _POOL_SCHEMA
 
 # Two arms with a deliberate overlap: `alpha` and `beta` share row W3, so total
@@ -167,3 +169,20 @@ def test_runs_without_a_routing_store(env):
     assert report["release"] is None
     assert report["arms"][0]["admitted"] is None
     assert "unavailable" in render(report)
+
+
+def test_an_arm_that_reads_no_text_is_scored_over_the_whole_pool(env):
+    """The FLoRA labels are added BACK to what the text prefilter kept, never used
+    as the scan's scope. An arm with no text pattern has no prefilter, so `keep`
+    must stay empty and the arm must see all five pool rows — `10.1/b` and `10.1/e`
+    are outside the label list, and scoring over the labels alone would report 3.
+
+    Observed 2026-09-20 on a curated `doi_in` rule: 11 pool matches reported against
+    2,369 real ones, which reads exactly like "this rule buys nothing"."""
+    spec = FilterSpec.from_dict({
+        "id": "listed", "description": "an allow-list arm",
+        "match": {"doi_in": ["10.1/a", "10.1/b", "10.1/c", "10.1/e"]},
+        "pile": "screen_expensive", "precedence": 970})
+    report = run([Arm(id="arm01", label="doi_in", spec=spec)], **env)
+
+    assert report["arms"][0]["pool"] == 4
