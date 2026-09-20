@@ -194,12 +194,31 @@ def build_spec(dois: Iterable[str]) -> dict:
     Observatory mixes replications and reproductions under one `replication_type`
     column anyway, so naming either would be a guess.
 
-    Precedence 970 puts it above every live discard, which is the only reason to ship
-    it: a work the phrase rules already admit needs no curated rule, so everything
-    this can buy is a work some rule currently drops. That includes `not-a-paper-doi`
-    (960) and `osf-registration-protocol` (935) — deliberately, because the list names
-    specific works rather than a pattern, and the screen is still the thing that
-    decides. It is the widest claim in the bundle and it is why the rule is temporary.
+    Precedence 745 sits inside the `replication-claim-*` band, above `title-broad`
+    (740) and below `title-strong` (750), and it is deliberately NOT above the
+    discards. The first draft put it at 970 to outrank them, on the reasoning that a
+    curated list names works rather than a pattern so it should override a rule that
+    only guessed. Measured against release `2e31c9543026`, that claim buys exactly
+    ONE work: of the 2,396 listed works in the pool, a single one is discarded (by
+    `osf-registration-protocol`). A precedence is a claim about which rules this one
+    must outrank, and outranking every definitional discard for one work is not a
+    claim worth making.
+
+    What the rule actually buys is 1,346 works that NO rule matched — `pending` with
+    `no_filter_matched` — and carry abstract text. The rest of the arithmetic, all
+    off release `2e31c9543026`:
+
+        2,396  listed works in the pool
+          579  already admitted to screen_expensive
+        1,508  pending/no_filter_matched      <- what only a curated list reaches
+                 1,346 carry text             <- the real buy
+                   164 would land in no_text
+          308  pending/no_text                <- a claim rule matched; still no text
+            1  discarded
+
+    The 308 are not rescued by shipping this: the no-text downgrade is engine policy
+    over any screening pile (`_screenable_on_its_title` in `filter/engine/route.py`
+    exempts titled OSF records only), so they would be downgraded again.
     """
     listed = sorted(set(dois))
     return {
@@ -211,16 +230,17 @@ def build_spec(dois: Iterable[str]) -> dict:
             "so the two voters see them. A recall prior from another pipeline, not "
             "evidence about any individual work: the Observatory is itself largely "
             "LLM-extracted and one of its sources is a June 2026 FLoRA import. It "
-            "names works rather than a pattern, so it outranks every discard — "
-            "including not-a-paper-doi and osf-registration-protocol — and the screen "
-            "remains the only thing that admits. Regenerate with "
+            "It sits in the replication-claim band rather than above the discards: "
+            "measured on release 2e31c9543026, outranking them buys ONE work, and "
+            "1,346 of the 1,508 it does buy are works no rule matched at all. The "
+            "screen remains the only thing that admits. Regenerate with "
             "`python -m analysis.mo_observatory --spec`. DELETE IT once the works it "
             "names have been screened and extracted: a frozen list of DOIs teaches "
             "the bundle nothing and will silently re-admit works a later discard was "
             "written to drop."),
         "match": {"doi_in": listed},
         "pile": "screen_expensive",
-        "precedence": 970,
+        "precedence": 745,
         "shadow": False,
         "measured": [],
     }

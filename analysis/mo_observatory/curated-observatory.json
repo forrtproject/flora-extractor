@@ -1,6 +1,6 @@
 {
   "id": "curated-observatory",
-  "description": "TEMPORARY, CURATED: the replication DOIs of the Metascience Observatory database (replications_database_2026_09_04_184008.csv) that are not already in published FLoRA or the validation tables, routed to the expensive screen so the two voters see them. A recall prior from another pipeline, not evidence about any individual work: the Observatory is itself largely LLM-extracted and one of its sources is a June 2026 FLoRA import. It names works rather than a pattern, so it outranks every discard — including not-a-paper-doi and osf-registration-protocol — and the screen remains the only thing that admits. Regenerate with `python -m analysis.mo_observatory --spec`. DELETE IT once the works it names have been screened and extracted: a frozen list of DOIs teaches the bundle nothing and will silently re-admit works a later discard was written to drop.",
+  "description": "TEMPORARY, CURATED: the replication DOIs of the Metascience Observatory database (replications_database_2026_09_04_184008.csv) that are not already in published FLoRA or the validation tables, routed to the expensive screen so the two voters see them. A recall prior from another pipeline, not evidence about any individual work: the Observatory is itself largely LLM-extracted and one of its sources is a June 2026 FLoRA import. It It sits in the replication-claim band rather than above the discards: measured on release 2e31c9543026, outranking them buys ONE work, and 1,346 of the 1,508 it does buy are works no rule matched at all. The screen remains the only thing that admits. Regenerate with `python -m analysis.mo_observatory --spec`. DELETE IT once the works it names have been screened and extracted: a frozen list of DOIs teaches the bundle nothing and will silently re-admit works a later discard was written to drop.",
   "match": {
     "doi_in": [
       "10.1001/archgenpsychiatry.2009.155",
@@ -2993,7 +2993,7 @@
     ]
   },
   "pile": "screen_expensive",
-  "precedence": 970,
+  "precedence": 745,
   "shadow": false,
   "measured": []
 }
