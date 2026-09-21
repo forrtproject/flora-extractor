@@ -323,7 +323,34 @@ def test_the_shard_shrink_check_downloads_nothing_it_cannot_act_on(
     assert cs._MANIFEST in dry.get("downloaded", [])
     assert [f for f in dry.get("downloaded", []) if f.endswith(".tar.gz")] == []
 
+    # Blind — the manifest could not be read. A PARTIAL push is refused there
+    # (issue #209: the manifest it would write names only this part, un-publishing
+    # every other part's shards), and the refusal comes before any transfer, so the
+    # claim this test makes about the shrink check holds on that path too.
     blind = _fake_hub(monkeypatch, {},
                       download_errors={cs._MANIFEST: _HubHTTPError("503 Service Unavailable")})
-    cs.push_cache([cs.PARTS["llm"]])
+    with pytest.raises(RuntimeError, match="un-publish"):
+        cs.push_cache([cs.PARTS["llm"]])
     assert [f for f in blind.get("downloaded", []) if f.endswith(".tar.gz")] == []
+
+
+def test_a_partial_push_keeps_the_parts_it_did_not_touch(_isolated_cache, monkeypatch):
+    """The manifest is the only index `pull_cache` reads, so a part missing from it
+    is a part no puller can reach — the shards stay in the repo, unreachable.
+
+    A `--parts abstracts` push must therefore carry the llm entry forward. It went
+    wrong in production on 2026-09-08: the manifest named `abstracts` alone while 16
+    `cache/llm` and 16 `cache/openalex` shards sat in the repo, so every pull after
+    it reported one shard and silently re-bought everything else."""
+    _llm_entry(_isolated_cache, "a.json", "A")
+    calls = _fake_hub(monkeypatch, {})
+    cs.push_cache([cs.PARTS["llm"]])
+    assert set(_manifest(calls)["parts"]) == {"llm"}
+
+    # A second push of a DIFFERENT part, against the manifest the first one wrote.
+    calls2 = _fake_hub(monkeypatch, {}, store=dict(calls["remote"]))
+    cs.push_cache([cs.PARTS[cs.ABSTRACTS_PART]])
+
+    parts = _manifest(calls2)["parts"]
+    assert set(parts) == {"llm", cs.ABSTRACTS_PART}
+    assert parts["llm"] == _manifest(calls)["parts"]["llm"]

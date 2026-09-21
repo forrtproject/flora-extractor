@@ -318,7 +318,17 @@ def cache_manifest(parts: list[Part], shard_hashes: dict[str, dict[str, str]],
         "capabilities": capabilities(),
         "abstract_sources": sources,
         "abstract_rows": rows,
-        "parts": {part.name: shard_hashes.get(part.name, {}) for part in parts},
+        # Every part the REPO holds, not every part this push touched. The manifest
+        # is the only index a pull reads (`pull_cache` iterates `parts` and nothing
+        # else), so a key missing here un-publishes a shard that is still sitting in
+        # the repo — the bytes stay, and no puller can ever reach them again. The
+        # caller hands in `{**known, **hashes}` precisely so this does not happen;
+        # keying off `parts` threw that away. Observed on the 2026-09-08 push: a
+        # manifest naming `abstracts` alone, with 16 `cache/llm` and 16
+        # `cache/openalex` shards present and unreachable, so every collaborator who
+        # pulled after it silently re-bought answers the repo already held.
+        "parts": {name: shards for name, shards in sorted(shard_hashes.items())
+                  if shards},
     }
 
 
@@ -389,10 +399,25 @@ def push_cache(parts: list[Part], repo: Optional[str] = None,
         remote_manifest = read_remote_json(hf, repo_id, _MANIFEST, token)
     except RemoteReadError as exc:
         manifest_unreadable = True
-        # A push only ever ADDS shards, so an unreadable manifest costs efficiency,
-        # not correctness: assume nothing is there and re-upload. It does disable the
-        # shard shrink guard, which would otherwise download the whole remote cache to
-        # rediscover what the manifest holds — say so rather than let it go quiet.
+        # A push only ever ADDS shards, so an unreadable manifest costs efficiency
+        # for a WHOLE-cache push: assume nothing is there and re-upload. It does
+        # disable the shard shrink guard, which would otherwise download the whole
+        # remote cache to rediscover what the manifest holds — say so rather than
+        # let it go quiet.
+        #
+        # For a PARTIAL push it costs correctness, and that is issue #209 by another
+        # door: the manifest this push writes is built from what it knows, `known`
+        # is empty, and every part it is not pushing is un-published — its shards
+        # stay in the repo where no pull can reach them. Refuse instead. The caller
+        # loses nothing that a retry, or a full push, does not give back.
+        if {p.name for p in parts} != set(PARTS):
+            raise RuntimeError(
+                f"{exc} Refusing a PARTIAL push against a manifest that could not be "
+                f"read: the manifest names what a pull can reach, so writing one from "
+                f"this push alone would un-publish "
+                f"{', '.join(sorted(set(PARTS) - {p.name for p in parts}))} — their "
+                f"shards would stay in the repo, invisible to every puller (issue "
+                f"#209). Retry, or push every part.")
         log.warning("%s Pushing every shard rather than assuming what is already "
                     "there, and skipping the shard shrink check (it needs the "
                     "manifest); run --pull first if this machine's cache may be a "
