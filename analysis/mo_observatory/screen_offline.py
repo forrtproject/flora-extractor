@@ -40,8 +40,7 @@ from pathlib import Path
 from typing import Optional
 
 from shared import abstract_store
-from shared.config import SCREENING_MODEL_1, SCREENING_MODEL_2
-from shared.llm_client import classify_replication, provider_for, screen_voters
+from shared.llm_client import classify_replication, screen_voters
 from shared.utils import clean_doi
 
 csv.field_size_limit(10 ** 9)
