@@ -34,6 +34,7 @@ EXPECTED = {
     "osf-registration-protocol": ("discard", 935, None, False),
     "replication-claim-cited-title": ("screen_expensive", 760, None, False),
     "replication-claim-title-strong": ("screen_expensive", 750, None, False),
+    "curated-observatory": ("screen_expensive", 745, None, False),
     "replication-claim-title-broad": ("screen_expensive", 740, None, False),
     "replication-claim-text": ("screen_expensive", 730, None, True),
     "replication-claim-residual": ("screen_expensive", 710, None, True),
@@ -95,13 +96,20 @@ def test_admission_sits_between_the_two_kinds_of_discard():
             assert precedence[rule] < precedence[admission], (rule, admission)
 
 
-def test_the_expensive_screen_has_exactly_two_routes():
-    """The four `replication-claim-*` tiers are the phrase route, ordered
-    narrowest-claim-first. `osf-registration-completed` is the only other one, and
-    it admits on a registration template rather than on anything the text says —
-    which is why it outranks the whole family."""
+def test_the_expensive_screen_has_exactly_three_routes():
+    """The `replication-claim-*` tiers are the phrase route, ordered
+    narrowest-claim-first. `osf-registration-completed` admits on a registration
+    template rather than on anything the text says — which is why it outranks the
+    whole family. `curated-observatory` admits on a DOI list and sits INSIDE the
+    family's band, below the strong title tier: measured, outranking the discards
+    bought one work."""
     expensive = [s.id for s in load_specs(SPEC_DIR) if s.pile == "screen_expensive"]
-    assert expensive == ["osf-registration-completed", *_CLAIM_TIERS]
+    assert expensive == ["osf-registration-completed",
+                         "replication-claim-cited-title",
+                         "replication-claim-title-strong",
+                         "curated-observatory",
+                         "replication-claim-title-broad",
+                         "replication-claim-text", "replication-claim-residual"]
 
 
 def test_the_live_claim_tiers_are_the_narrowest_prefix_of_the_family():

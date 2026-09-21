@@ -158,6 +158,11 @@ CORPUS = [
          title="Supplementary material from \"A direct replication of the Smith "
                "(2019) effect\"",
          abstract="Tables and analysis code accompanying the replication."),
+    # curated-observatory (745): a listed DOI on text no claim arm matches, which
+    # is the population the list was promoted to buy
+    _row(work="https://openalex.org/W28", doi="10.1001/archgenpsychiatry.2009.155",
+         title="Serotonin transporter genotype and depression",
+         abstract="A cohort study of stressful life events."),
 ]
 
 
