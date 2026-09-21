@@ -135,3 +135,49 @@ abstracts and the gate had nothing else to read. Europe PMC held 86% of the miss
 text. That is a Stage 1 question — whether the gate should read a second abstract source
 before deciding — and it generalises past this list to every work in the snapshot with
 no abstract.
+
+---
+
+## Where we both produce an answer, how often do we agree?
+
+The 229 proceeds were run through Stage 3's own ladder (`extract_offline.py` →
+`_process_row()`), which resolved 225 of 276 rows. Against the Observatory's own
+columns:
+
+**The original.** 164 of the 215 rows where both name a DOI point at the same original
+— **76%**. We find nothing on 54 rows; the Observatory gives no DOI on 7.
+
+**The outcome**, with ours mapped onto their vocabulary (`successful`→success,
+`failed`→failure, `mixed` and `statistically successful but flawed`→inconclusive):
+
+| | MO success | MO failure | MO inconclusive | MO reversal |
+| --- | ---: | ---: | ---: | ---: |
+| ours success | **90** | 2 | 18 | 0 |
+| ours failure | 2 | **48** | 10 | 1 |
+| ours inconclusive | 6 | 0 | **8** | 0 |
+
+**79% agreement (146/185), and only 4 rows (2%) flatly contradict** — one database
+saying success where the other says failure. The rest of the gap is decisiveness, not
+direction: 28 rows where we commit and they record `inconclusive`, 6 the other way.
+
+Read the four contradictions before trusting that 2%:
+
+* `10.1016/j.drugalcdep.2018.03.013` and `10.1177/0163278712448772` — **we linked a
+  different original**, so the two databases are not contradicting each other about the
+  same claim. Both rows carry `link_confidence: low`, which is the pipeline saying so.
+* `10.1001/archneurol.2010.350` — same original, genuine disagreement. Our quote ("The
+  association of rs1990622 with AAO explains, in part, the wide range in the AAO…")
+  reads as support; theirs says failure. A human should settle it.
+* `10.3758/bf03193943` — *"Transient covert attention does alter appearance: A reply to
+  Schneider (2006)"*. We coded `failed` from a quote that actually defends the original
+  effect. **This one looks like our error**, and it is the genre that invites it: a
+  reply defending a finding against a critique is not a replication reporting a failure.
+
+So the honest reading of 2% is: one probable error of ours, one real disagreement, and
+two cases of linking different originals. The rate is not a validation of either
+database — the sample is 185 rows, and nobody has hand-checked them.
+
+**Caveat on the join.** The Observatory carries one row per replication–original pair,
+so a work with several originals has several results; the outcome comparison takes its
+first row carrying a result. Where we resolved a different original than that row names,
+the comparison is between answers about different claims.
