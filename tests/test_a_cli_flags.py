@@ -24,8 +24,11 @@ class TestNoLlmExtractOutcome:
         assert result["outcome"] == "cannot_be_determined"
         assert result["out_quote_source"] == ""
 
-    def test_no_llm_still_returns_keyword_hit(self):
-        """With no_llm=True, keyword matches still work."""
+    def test_no_llm_does_not_code_from_a_keyword_hit(self):
+        """`--no-llm` leaves the outcome undetermined even where a pattern matches
+        cleanly, which this abstract does. Coding it was the old behaviour; the scan
+        codes whichever sentence a pattern lands in, and over 214 works that was wrong
+        6 times out of 6 at confidence "high" (KEYWORD_OUTCOME_FALLBACK)."""
         result = extract_outcome(
             "10.1234/test2",
             abstract_r="We failed to replicate the original finding.",
@@ -33,4 +36,5 @@ class TestNoLlmExtractOutcome:
             title_r="Test",
             no_llm=True,
         )
-        assert result["outcome"] == "failed"
+        assert result["outcome"] == "cannot_be_determined"
+        assert result["llm_model"] == ""
