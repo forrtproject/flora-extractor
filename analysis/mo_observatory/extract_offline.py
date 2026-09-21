@@ -78,13 +78,29 @@ def _vote_of(row: dict) -> tuple[str, bool]:
 
 
 def worklist(screened: Path, include_unclear: bool) -> list[dict]:
-    """The screened works whose verdict is settled as proceed, as pipeline rows."""
+    """The screened works whose verdict is proceed, as pipeline rows.
+
+    The verdict is read off `screen_verdict` when the pair completed. It falls back to
+    voter 1's own classification when it did not: `screen_gate()` discards only on
+    unanimity, so a first voter who did not say `none` settles a proceed alone — which
+    is what made this measurable before the second voter had a key at all.
+    """
     wanted = _PROCEEDS + (("unclear",) if include_unclear else ())
     rows = []
     with screened.open(newline="", encoding="utf-8-sig") as handle:
         for raw in csv.DictReader(handle):
             label, confident = _vote_of(raw)
-            if label not in wanted:
+            verdict = (raw.get("screen_verdict") or "").strip()
+            if verdict == "discard":
+                continue
+            if verdict == "proceed":
+                # The pair's own answer. `screen_record_type` is blank where neither
+                # voter gave a qualifying label — an `unclear`/`none` split that
+                # proceeds without saying what the work IS.
+                label = (raw.get("screen_record_type") or "").strip() or "unclear"
+                if label not in wanted:
+                    continue
+            elif label not in wanted:
                 continue
             # `record_type` drives `_record_type()` and the reproduction vocabulary;
             # "both" maps to replication exactly as the screen's own resolver does.

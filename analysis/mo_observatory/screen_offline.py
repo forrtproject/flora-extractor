@@ -123,9 +123,15 @@ def screen_one(row: dict) -> dict:
         "screen_votes": "; ".join(
             f"{v.get('model', '?')}={v.get('classification')}"
             f"{'/confident' if v.get('confident') else ''}" for v in votes),
-        "screen_evidence": (result.get("evidence_quote")
+        # `classify_replication()` returns these under llm_* — the names Stage 3's
+        # SCREEN_COLS are built from. Reading `evidence_quote`/`reasoning` off the
+        # result silently wrote blanks for every row.
+        "screen_evidence": (result.get("llm_evidence")
                             or (votes[0].get("quote") if votes else "") or "")[:500],
-        "screen_reasoning": (result.get("reasoning") or "")[:500],
+        "screen_reasoning": (result.get("llm_reasoning")
+                             or "  ||  ".join(
+                                 f"{v.get('model', '?')}: {v.get('reasoning', '')}"
+                                 for v in votes if v.get("reasoning")))[:700],
         "mo_result": row["raw"].get("result") or "",
         "mo_type": row["raw"].get("replication_type") or "",
         "mo_year": row["raw"].get("replication_year") or "",
