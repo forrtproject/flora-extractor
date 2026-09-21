@@ -23,8 +23,31 @@ the command, pasteable from the project root, and what proves it worked.
 
 ## Open
 
-- [ ] **Ship the Metascience Observatory rule: merge #208, promote, route, screen,
-      extract.** Step-by-step, with the numbers to check at each step and the
+- [ ] **Finish extracting the Observatory works: ~1,048 of 1,198 still open.**
+      Status 2026-09-21: #208 merged, rule promoted (`eb9b892`), routed as release
+      `c048ab6483d3` (`screen_expensive` 7,760 → 9,105), screened live — 1,469 works,
+      **1,346 proceed / 123 discard (92% admitted)**. The extract run settled ~150 works
+      and stopped cleanly on `OPENAI_DAILY_TOKEN_BUDGET` (resets midnight UTC); the
+      export was rendered (3,040 → 3,163 rows, 101 new works). Resume — **under Python
+      3.13, not `.venv`** (see the handover's Environment section; the dry run must print
+      `generation    010cf32bb63351e1`):
+
+      ```bash
+      PY=/home/lukas/.venvs/flora313/bin/python
+      $PY -m extract.tier --release c048ab6483d3 --only "$(cat analysis/mo_observatory/extract_only_2026-09-21.txt)"   # dry run
+      $PY -m extract.tier --run --release c048ab6483d3 --batch-label observatory-2026-09-21 --only "$(cat analysis/mo_observatory/extract_only_2026-09-21.txt)"
+      $PY -m extract.export --release c048ab6483d3
+      ```
+
+      The `--only` list is the worklist MINUS 27 junk OpenAlex records that carry a real
+      paper's DOI under another paper's title (`analysis/mo_observatory/doi_title_mismatch.csv`,
+      30 of the rule's 1,790 admissions). `doi_in` cannot tell them apart and the screen
+      passed them; extracting one fuses two papers. They stay open until a rule discards
+      them. Expect real spend: the first 150 works used far more gpt-5.6-luna tokens per
+      work than the dry run's per-rung assumption. Done when the dry run above offers 0.
+
+      Original entry, for the numbers: **Ship the Metascience Observatory rule: merge
+      #208, promote, route, screen, extract.** Step-by-step, with the numbers to check at each step and the
       environment gotchas: **[`docs/handover-observatory-screen.md`](docs/handover-observatory-screen.md)**.
       The decision is made — measured, it buys 1,346 works no rule reaches. The
       scoring half is DONE (2026-09-20, against release `2e31c9543026`,

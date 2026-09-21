@@ -12,6 +12,12 @@ throwaway work about the 710 Observatory DOIs that are NOT in the pool and are n
 into it. Do not confuse the two: nothing here touches those, and nothing there touches
 these.
 
+**Status 2026-09-21 (evening): steps 1–3 are DONE, step 4 is part-way.** Release
+`c048ab6483d3`; the screen admitted 1,346 of 1,469 (92%); extraction stopped on the daily
+OpenAI token cap with ~1,048 works open. The resume commands, and the 27 junk records
+the `--only` list holds out, are in `PENDING_RUNS.md`. Two claims below were wrong and
+are corrected in place: what the screen dry run prices, and which Python runs Stage 3.
+
 ---
 
 ## What is already done
@@ -85,11 +91,13 @@ after this needs it. Check the report: `screen_expensive` up ~1,346, and
 .venv/bin/python -m filter.engine screen --tier screen_expensive --release <new>
 ```
 
-No `--run` prints the worklist size and a priced estimate for free. **The 7,760 works
-already screened will not be re-bought**: `decided_work_ids()` subtracts works already
-decided, keyed by a question hash, so only the newly admitted ones are offered. If the
-dry run offers ~8,000 rather than ~1,300, something has changed the screening generation
-— find out what before spending.
+No `--run` prints a priced estimate for free — **of the whole pile, not of what a run
+buys.** The dry run is allowed to run with no state authority, so `_batch()` in
+`filter/engine/tiers.py` subtracts nothing on that path: on 2026-09-21 it printed 9,105
+rows ≈ $13.93 while the `--run` worklist held 1,469 works ≈ $2.31. `decided_work_ids()`
+subtracts the already-screened works, keyed by a question hash, only under `--run`. To
+see the real number without spending, call `_batch(..., run=True)` read-only and pass
+the result to `estimate()`; nothing is claimed until the runner claims it.
 
 Smoke test before the real run, as the previous campaign did:
 
@@ -127,6 +135,18 @@ extractions is cheap insurance.
 ---
 
 ## Environment — read this before running anything
+
+**Stage 3 must NOT run under this box's `.venv` (Python 3.12.3).** `prompt_version()`
+hashes `ast.unparse()` of each builder, and 3.12 renders the f-string prompts
+differently from 3.11, 3.13 and 3.14, which all agree with the maintainer's machine.
+Seven Stage 3 builder prompts hash differently here, so `extract_generation()` is
+`396456b852b566d9` instead of the declared `010cf32bb63351e1`: the extract dry run
+offers all 5,928 works instead of the open ones, every `targetoutcome`/`outcome` cache
+key misses, and `test_a_declared_generation_equivalence_is_keyed_by_the_current_generation`
+fails. The screen is unaffected (the classify prompt hashes the same). Run
+`extract.tier`, `extract.export` and the audits from a 3.13 environment with the same
+packages — on this box `/home/lukas/.venvs/flora313/bin/python` — and check the dry run
+prints `generation    010cf32bb63351e1` before spending.
 
 **The box is set up.** `.venv` exists with every dependency; `.env` carries `HF_TOKEN`,
 `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `SUPABASE_SERVICE_KEY`,
