@@ -23,8 +23,11 @@ the command, pasteable from the project root, and what proves it worked.
 
 ## Open
 
-- [ ] **Decide whether the Metascience Observatory rule ships, then route and screen
-      it.** The scoring half is DONE (2026-09-20, against release `2e31c9543026`,
+- [ ] **Ship the Metascience Observatory rule: merge #208, promote, route, screen,
+      extract.** Step-by-step, with the numbers to check at each step and the
+      environment gotchas: **[`docs/handover-observatory-screen.md`](docs/handover-observatory-screen.md)**.
+      The decision is made — measured, it buys 1,346 works no rule reaches. The
+      scoring half is DONE (2026-09-20, against release `2e31c9543026`,
       reproduced locally from the pulled pool — same id, so the admission column is
       the live one). `analysis/mo_observatory/curated-observatory.json` names 2,987
       Observatory replication DOIs; 2,396 of them are pool works:
