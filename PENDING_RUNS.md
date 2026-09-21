@@ -48,12 +48,12 @@ the command, pasteable from the project root, and what proves it worked.
       Done when the extract dry run
       (`.venv/bin/python -m extract.tier`, no `--run`) reports the works it opened.
 
-      **Two things to settle before the screen runs, neither of them code.** The
-      shared HF cache holds only the `abstracts` shard — no `llm` shard — so a screen
-      on a fresh checkout re-buys every vote instead of reading the ones already paid
-      for; a `--push` from the machine that has them fixes it. And
+      **One thing to settle before the screen runs, and it is not code.**
       `SCREENING_MODEL_2` (`gpt-5.4-mini`) needs `OPENAI_API_KEY`, which is absent
-      from the working `.env`.
+      from the working `.env`. The cache is no longer a blocker: the shared repo did
+      hold the `llm` shards all along — the manifest had un-published them (#209) and
+      was repaired 2026-09-21, so a pull now reaches ~180,000 LLM answers including
+      the `classifyvote_*` entries, and a re-screen reads them rather than re-buying.
 
       Regenerating the list needs the source CSV, which is gitignored (13 MB):
       `curl -sSL -o analysis/mo_observatory/replications_database_2026_09_04_184008.csv https://raw.githubusercontent.com/delton137/metascience-observatory/main/data/replications_database_2026_09_04_184008.csv`
