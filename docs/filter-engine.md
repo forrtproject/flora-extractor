@@ -178,6 +178,7 @@ version. Verbatim shape:
   "description": "Why this rule exists and what it measured.",
   "match": {
     "doi_prefix": ["10.7910"],
+    "doi_in": [],
     "doi_regex": null,
     "title_regex": null,
     "abstract_regex": null,
@@ -215,7 +216,15 @@ Match semantics:
   are **RE2-safe** (no lookaround/backreferences — enforced by `validate_spec`)
   and case-insensitive by default (`(?i)` is prepended; `re2_error()` rejects at
   spec load anything RE2 cannot run).
-- `doi_prefix` matches after `clean_doi()`; `fields` is exact membership on pool
+- `doi_prefix` matches after `clean_doi()`. So does `doi_in`, which is a curated
+  allow-list of WHOLE DOIs — set membership, both sides cleaned, so a spec written
+  with a `https://doi.org/` form meets a pool row carrying an upper-case one. It
+  exists so a list of named works is not written as a `doi_regex` alternation:
+  thousands of escaped DOIs are unreviewable, and one unescaped `.` silently claims
+  a neighbouring DOI. A rule that names works rather than a pattern is a curated
+  source and should say so in its `description`, including when it should be
+  deleted (`filter/spec/curated-observatory.json`, if it is live).
+  `fields` is exact membership on pool
   columns (`type`, `publication_year`), except `fields.concept_ids`, which tests
   membership of bare concept ids in the row's `concepts` (both URL-form JSON and
   bare forms).

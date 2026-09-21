@@ -23,7 +23,55 @@ the command, pasteable from the project root, and what proves it worked.
 
 ## Open
 
-(none)
+- [ ] **Ship the Metascience Observatory rule: merge #208, promote, route, screen,
+      extract.** Step-by-step, with the numbers to check at each step and the
+      environment gotchas: **[`docs/handover-observatory-screen.md`](docs/handover-observatory-screen.md)**.
+      The decision is made — measured, it buys 1,346 works no rule reaches. The
+      scoring half is DONE (2026-09-20, against release `2e31c9543026`,
+      reproduced locally from the pulled pool — same id, so the admission column is
+      the live one). `analysis/mo_observatory/curated-observatory.json` names 2,987
+      Observatory replication DOIs; 2,396 of them are pool works:
+
+      |   | works |
+      | --- | --- |
+      | already admitted to `screen_expensive` | 579 |
+      | `pending` / `no_filter_matched`, WITH text — what the rule buys | **1,346** |
+      | `pending` / `no_filter_matched`, no text — would land in `no_text` | 164 |
+      | `pending` / `no_text` — a claim rule matched; not rescued by this | 308 |
+      | `discard` (`osf-registration-protocol`) | 1 |
+
+      So it is worth shipping: 1,346 works no rule reaches, against the 7,760 the
+      release currently admits. Promotion is
+      `git mv analysis/mo_observatory/curated-observatory.json filter/spec/`, then add
+      `"curated-observatory": ("screen_expensive", 745, None, False)` to `EXPECTED` in
+      `tests/test_engine_spec.py` and widen
+      `test_the_expensive_screen_has_exactly_two_routes`, then
+      `.venv/bin/python -m filter.engine route` (mints a release) and
+      `.venv/bin/python -m filter.engine screen --tier screen_expensive --run --release <new>`.
+      Done when the extract dry run
+      (`.venv/bin/python -m extract.tier`, no `--run`) reports the works it opened.
+
+      **One thing to settle before the screen runs, and it is not code.**
+      `SCREENING_MODEL_2` (`gpt-5.4-mini`) needs `OPENAI_API_KEY`, which is absent
+      from the working `.env`. The cache is no longer a blocker: the shared repo did
+      hold the `llm` shards all along — the manifest had un-published them (#209) and
+      was repaired 2026-09-21, so a pull now reaches ~180,000 LLM answers including
+      the `classifyvote_*` entries, and a re-screen reads them rather than re-buying.
+
+      Regenerating the list needs the source CSV, which is gitignored (13 MB):
+      `curl -sSL -o analysis/mo_observatory/replications_database_2026_09_04_184008.csv https://raw.githubusercontent.com/delton137/metascience-observatory/main/data/replications_database_2026_09_04_184008.csv`
+
+- [ ] **Decide what to do about the 14 `candidates-*.parquet` files in the shared
+      pool repo.** `lukaswallrich/flora-survivor-pool` carries them in the pool root
+      alongside the 2,232 `part-*.parquet` files — 1,363,959 rows of the retired
+      `CANDIDATES_COLS` corpus (`doi_r`, `title_r`, …). Every pool reader here globs
+      `*.parquet` over that directory, which is the failure the comment at
+      `search/snapshot_scan.py:269` explains the `_`-prefixed sidecar to avoid; a pull
+      also stamps `expected_files: 2246`, so a straight `route` refuses the pool as
+      partial. Locally they are moved to `cache/legacy_candidates/` and the sidecar
+      re-stamped to 2,232 with the recorded gate `d536bc51b9b2`. Fixing the REMOTE is
+      a push decision for whoever owns it. Done when a fresh `pool_sync --pull`
+      produces a directory that `filter.engine route` accepts untouched.
 
 ## Done
 

@@ -13,6 +13,7 @@ things to read first; the rest are one-off diagnostics kept for their findings.
 | --- | --- |
 | `arm_evidence.py` | The free scorer for a candidate filter pattern — see below. |
 | `rule_report.py` | The applied-rules overview for the whole live bundle — see below. |
+| `mo_observatory.py` | The overlap with the Metascience Observatory's replications database, and the curated `doi_in` rule that routes what it names to the expensive screen. Writes `mo_observatory/priority.csv` and a CANDIDATE spec outside `filter/spec/` — scoring it against the pool is `arm_evidence.py`'s job, promoting it is a `git mv`. |
 | `prescreen_eval/` | The issue #130 evaluation of the optional cheap pre-screen (`shared/prescreen.py`). `REPORT.md` is the finding and is cited from CLAUDE.md; `CASESETS.md` and `README.md` describe the gold sets; `build_casesets.py` / `enrich_casesets.py` / `eval_prescreen.py` rebuild them. The per-prompt, per-model run records (`pre_p*_*.json`) are under `archive/analysis/prescreen_eval/`. |
 | `screening_eval/` | The derivation of Stage 3's front-door voter pair and its prompt. `report_v33.md` scores the shipped v3.3 prompt (`prompt_v33.txt` is the evaluated copy of `_CLASSIFY_PROMPT`); `gate_sweep_v32.{md,py}` derive `screen_gate()`; `human_truth*.json` / `heldout_truth*.json` are the hand-coded labels. Superseded generations (v2–v3.2 prompts and reports) and the raw `voter_*.json` run records are under `archive/analysis/screening_eval/`. |
 

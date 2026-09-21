@@ -234,6 +234,27 @@ def test_evidence_is_recovered_for_matched_rows_and_never_decides_one(specs):
     assert all(match_evidence(spec, batch))
 
 
+def test_doi_in_is_an_allow_list_normalised_on_both_sides():
+    """`doi_in` names WORKS rather than a pattern, which is why a curated list uses
+    it instead of a `doi_regex` alternation: the comparison is set membership after
+    `clean_doi()` on both sides, so a spec written with a `https://doi.org/` form and
+    a pool row carrying an upper-case one still meet. A row with no DOI matches
+    nothing — the cleaned column is "" there, and "" is never in a validated list."""
+    spec = FilterSpec.from_dict({
+        "id": "curated", "description": "an allow-list",
+        "match": {"doi_in": ["https://doi.org/10.1037/ABC123", "10.1234/x"]},
+        "pile": "screen_expensive", "precedence": 970})
+    assert spec.match.doi_in == ("10.1037/abc123", "10.1234/x")
+    rows = [_row(doi="10.1037/abc123"), _row(doi="HTTPS://DOI.ORG/10.1037/abc123"),
+            _row(doi="10.1037/abc1234"), _row(doi=None)]
+    batch = _batch(rows)
+    assert eval_spec_batch(spec, batch).to_pylist() == [True, True, False, False]
+    assert eval_spec_rows(spec, rows) == [True, True, False, False]
+    # The evidence is the DOI itself: which entry of the list claimed the row is the
+    # only thing a curated rule has to say about it.
+    assert match_evidence(spec, batch)[:2] == ["10.1037/abc123", "10.1037/abc123"]
+
+
 def test_the_row_url_is_pulled_out_of_the_pool_json_exactly_as_row_url_reads_it():
     """`url_regex` reads a column the pool does not have.
 

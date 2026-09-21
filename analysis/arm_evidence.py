@@ -274,8 +274,16 @@ def _scan_file(path: Path, arms: list[Arm], prefilter: Optional[str],
     doi_column = None
     if flora is not None:
         doi_column = _clean_doi_array(table.column("doi").combine_chunks())
-        in_flora = pc.fill_null(pc.is_in(doi_column, value_set=flora), False)
-        keep = in_flora if keep is None else pc.or_(keep, in_flora)
+        if keep is not None:
+            # The label rows are added BACK to what the prefilter kept, so a FLoRA
+            # replication is scored even where the loosened pattern misses it. Only
+            # ever a widening: with no prefilter the whole file is already in scope,
+            # and narrowing to the labels here would silently score every arm that
+            # reads no text — `doi_in`, `doi_prefix`, `fields` — over 1,776 rows
+            # instead of 5.1M. Measured 2026-09-20: a curated `doi_in` arm reported
+            # 11 pool matches that way against 2,369 real ones.
+            keep = pc.or_(keep, pc.fill_null(
+                pc.is_in(doi_column, value_set=flora), False))
 
     if keep is not None:
         if not pc.any(keep).as_py():

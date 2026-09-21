@@ -25,6 +25,8 @@ from typing import Any, Optional
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from shared.utils import clean_doi
+
 SPEC_VERSION = 1
 
 # Files in `filter/spec/` that are policy or lookup data, not filters.
@@ -49,7 +51,7 @@ AUTONOMOUS_LEVELS = ("human", "downstream", "trusted")
 
 _SPEC_KEYS = frozenset({"id", "description", "match", "domain", "pile",
                         "vocabulary", "precedence", "shadow", "measured"})
-_MATCH_KEYS = frozenset({"doi_prefix", "doi_regex", "title_regex",
+_MATCH_KEYS = frozenset({"doi_prefix", "doi_in", "doi_regex", "title_regex",
                          "abstract_regex", "text_regex", "url_regex", "fields",
                          "abstract_missing", "any_of", "all_of", "none_of"})
 _NESTED_KEYS = ("any_of", "all_of", "none_of")
@@ -65,6 +67,11 @@ class MatchBlock:
     """One match object: every present condition ANDs with the others."""
 
     doi_prefix: tuple[str, ...] = ()
+    # A curated allow-list of whole DOIs, compared after `clean_doi()` on both
+    # sides. An alternation regex over `doi_regex` would route the same rows and
+    # is the wrong shape for a list: 3,000 escaped DOIs are not reviewable, and
+    # one unescaped dot matches a neighbouring DOI without anyone noticing.
+    doi_in: tuple[str, ...] = ()
     doi_regex: Optional[str] = None
     title_regex: Optional[str] = None
     abstract_regex: Optional[str] = None
@@ -83,6 +90,8 @@ class MatchBlock:
     def from_dict(cls, raw: dict) -> "MatchBlock":
         return cls(
             doi_prefix=tuple(raw.get("doi_prefix") or ()),
+            doi_in=tuple(d for d in (clean_doi(str(v))
+                                     for v in (raw.get("doi_in") or ())) if d),
             doi_regex=raw.get("doi_regex"),
             title_regex=raw.get("title_regex"),
             abstract_regex=raw.get("abstract_regex"),
@@ -188,6 +197,11 @@ def _validate_match(raw: Any, path: str, errors: list[str]) -> None:
     if prefixes is not None and (not isinstance(prefixes, list)
                                  or not all(isinstance(p, str) for p in prefixes)):
         errors.append(f"{path}.doi_prefix: must be a list of strings")
+    listed = raw.get("doi_in")
+    if listed is not None and (not isinstance(listed, list)
+                               or not all(isinstance(d, str) and d.strip()
+                                          for d in listed)):
+        errors.append(f"{path}.doi_in: must be a list of non-empty DOI strings")
     fields = raw.get("fields")
     if fields is not None:
         if not isinstance(fields, dict):
