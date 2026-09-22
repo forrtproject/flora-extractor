@@ -23,7 +23,10 @@ the command, pasteable from the project root, and what proves it worked.
 
 ## Open
 
-- [ ] **Finish extracting the Observatory works: ~1,048 of 1,198 still open.**
+- [ ] **Finish extracting the Observatory works: 275 of 1,198 still open** (2026-09-22:
+      773 settled in one day-cap of luna tokens; export 3,163 → 3,885 rows, 594 new works;
+      agreement with the Observatory in `analysis/mo_observatory/in_pool_agreement.csv`).
+      Original entry:
       Status 2026-09-21: #208 merged, rule promoted (`eb9b892`), routed as release
       `c048ab6483d3` (`screen_expensive` 7,760 → 9,105), screened live — 1,469 works,
       **1,346 proceed / 123 discard (92% admitted)**. The extract run settled ~150 works
