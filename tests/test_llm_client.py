@@ -526,6 +526,64 @@ def _openai_flex_env(monkeypatch, use_flex=True):
     monkeypatch.setattr(llm.time, "sleep", lambda s: None)
 
 
+def test_target_prompt_caches_only_shared_rules_on_gpt_56(monkeypatch):
+    from shared.prompts import build_target_outcome_prompt
+
+    _openai_flex_env(monkeypatch, use_flex=False)
+    prompt = build_target_outcome_prompt("A study", "Its abstract", [])
+    client = MagicMock()
+    client.chat.completions.create.return_value = _resp('{"ok": true}')
+
+    with patch("openai.OpenAI", return_value=client):
+        assert llm.call_openai(prompt, model="gpt-5.6-luna")[0] == {"ok": True}
+
+    request = client.chat.completions.create.call_args.kwargs
+    parts = request["messages"][0]["content"]
+    assert request["prompt_cache_options"] == {"mode": "explicit"}
+    assert parts[0]["prompt_cache_breakpoint"] == {"mode": "explicit"}
+    assert parts[0]["text"].endswith("\n\nPAPER\n\n")
+    assert parts[0]["text"] + parts[1]["text"] == prompt
+
+    with patch("openai.OpenAI", return_value=client):
+        assert llm.call_openai(prompt, model="gpt-5.4-mini")[0] == {"ok": True}
+    older_request = client.chat.completions.create.call_args.kwargs
+    assert older_request["messages"] == [{"role": "user", "content": prompt}]
+    assert "prompt_cache_options" not in older_request
+
+
+@pytest.mark.parametrize("builder_name", ["build_outcome_prompt",
+                                         "build_repro_outcome_prompt"])
+@pytest.mark.parametrize("fulltext", [False, True])
+def test_standalone_outcome_caches_rules_before_paper_evidence(
+        monkeypatch, builder_name, fulltext):
+    from shared import prompts
+
+    _openai_flex_env(monkeypatch, use_flex=False)
+    builder = getattr(prompts, builder_name)
+    client = MagicMock()
+    client.chat.completions.create.return_value = _resp('{"ok": true}')
+    prefixes = []
+    for number in (1, 2):
+        prompt = builder(
+            f"Study {number}", f"Abstract {number}",
+            original_authors=f"Author {number}", original_year="2010",
+            original_title=f"Original {number}",
+            text_snip=f"Discussion {number}" if fulltext else "")
+        with patch("openai.OpenAI", return_value=client):
+            assert llm.call_openai(prompt, model="gpt-5.6-luna")[0] == {"ok": True}
+        request = client.chat.completions.create.call_args.kwargs
+        parts = request["messages"][0]["content"]
+        assert request["prompt_cache_options"] == {"mode": "explicit"}
+        assert parts[0]["prompt_cache_breakpoint"] == {"mode": "explicit"}
+        assert parts[0]["text"].endswith(
+            "Base every judgment only on the evidence below.\n\n")
+        assert parts[0]["text"] + parts[1]["text"] == prompt
+        assert parts[1]["text"].startswith(
+            "AN EARLIER STAGE OF THE PIPELINE LINKED THIS PAPER TO:")
+        prefixes.append(parts[0]["text"])
+    assert prefixes[0] == prefixes[1]
+
+
 def test_openai_flex_is_sent_with_the_long_timeout(monkeypatch):
     _openai_flex_env(monkeypatch)
     calls: list = []
@@ -681,7 +739,7 @@ def test_openai_flex_fallback_records_one_call_of_usage(monkeypatch):
         assert llm.call_openai("prompt", model="m")[0] == {"ok": True}
 
     assert len(calls) == 2
-    assert recorded == [("openai", "m", 100, 20)]
+    assert recorded == [("openai", "m", 100, 20, 0, 0)]
     assert len(checks) == 1
 
 
@@ -1562,8 +1620,8 @@ def _gemini_blocked():
 
 
 @pytest.mark.parametrize("response,expected", [
-    (_gemini_truncated, ("gemini", "m", 900, 4100)),
-    (_gemini_blocked,   ("gemini", "m", 900, 0)),
+    (_gemini_truncated, ("gemini", "m", 900, 4100, 0)),
+    (_gemini_blocked,   ("gemini", "m", 900, 0, 0)),
 ], ids=["truncated", "blocked"])
 def test_gemini_records_tokens_on_every_billed_response(monkeypatch, response, expected):
     _flex_env(monkeypatch, use_flex=False, keys=("k1",))
@@ -1590,7 +1648,7 @@ def test_openrouter_records_a_truncated_response(monkeypatch):
         result, err = llm.call_openrouter("prompt", model="v/m")
 
     assert result is None and "truncated" in err
-    assert recorded == [("openrouter", "v/m", 900, 4096)]
+    assert recorded == [("openrouter", "v/m", 900, 4096, 0, 0)]
 
 
 def test_openrouter_retries_three_times_like_openai(monkeypatch):

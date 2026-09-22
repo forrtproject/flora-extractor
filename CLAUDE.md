@@ -416,6 +416,10 @@ Every LLM call records input/output tokens per day/provider/model in
 `OPENAI_DAILY_TOKEN_BUDGET` (default 9,500,000/day — the free allocation, resetting midnight UTC; `0` disables): when exhausted,
 `TokenBudgetExhausted` stops the run cleanly (rows written so far stay, sanity_check
 runs). Dashboard display of usage: issue #115.
+When a provider reports them, each model's record also accumulates `cached_in` and
+`cache_write_in`. Both are subsets of `in`; use them to assess provider prompt-cache
+costs, not as extra tokens in the daily cap. Older records have only `in` and `out`,
+so they cannot establish past cache savings.
 
 **OpenAlex is metered too, and not uniformly.** It bills credits per request against
 a daily budget that resets at midnight UTC (`shared/openalex_keys.py` owns the key
@@ -447,6 +451,18 @@ for an LLM call: the prompt version, the model, and the inputs sent:
 key = content_key("outcome", doi_r, prompt_version("build_outcome_prompt"),
                   cache_model_id(OUTCOME_MODEL, OUTCOME_EFFORT), prompt)
 ```
+
+This on-disk response cache skips an identical API call entirely. Provider prompt
+caching is separate: it discounts a shared input prefix on different papers while
+still generating each paper's own answer. The combined target/outcome prompts place
+their shared coding rules before `PAPER`; the standalone outcome prompts place
+theirs before the original-link evidence and paper text. For direct GPT-5.6 calls,
+`shared/llm_client.py` marks the end of those rules blocks as explicit prompt-cache
+breakpoints and leaves per-paper text outside the cache write. This changes the request's
+cache policy, not the concatenated prompt or its on-disk response-cache key. Earlier
+OpenAI models, Gemini and OpenRouter use their provider's implicit caching where
+available. Inspect `cached_in` and `cache_write_in` after a fresh run to verify hits;
+the cache is provider-owned and hits are not guaranteed.
 
 A model reaches a key only through `cache_model_id(model, effort)`, which appends the
 reasoning effort the call sends — how hard a model thinks changes its answer, so the

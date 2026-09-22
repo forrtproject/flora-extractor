@@ -12,7 +12,11 @@ Two jobs, one file on disk (cache/token_usage.json):
     OPENAI_DAILY_TOKEN_BUDGET before it spends, and raises TokenBudgetExhausted
     instead of calling. Gemini and OpenRouter are recorded but never capped.
 
-Shape:  {"2026-08-01": {"openai": {"gpt-5.4-mini": {"in": 1200, "out": 340}}}}
+Shape:  {"2026-08-01": {"openai": {"gpt-5.4-mini":
+         {"in": 1200, "out": 340, "cached_in": 900, "cache_write_in": 0}}}}
+The cache fields are omitted when the provider did not report a positive count;
+older records only have in/out. Cached and written tokens are subsets of in, not
+additional tokens. Use them for cost accounting, never for the daily token cap.
 
 Provider is a level of its own because the cap has to sum one provider's spend and a
 model id does not name its provider — gpt-5.4-mini reached through OpenRouter is not
@@ -76,7 +80,9 @@ def _write_all(state: dict) -> None:
 
 
 def record(provider: str, model: str,
-           input_tokens: int, output_tokens: int, day: str = "") -> None:
+           input_tokens: int, output_tokens: int, day: str = "",
+           *, cached_input_tokens: int = 0,
+           cache_write_input_tokens: int = 0) -> None:
     """Add one call's reported usage to the day's record."""
     if input_tokens <= 0 and output_tokens <= 0:
         return                    # the provider reported nothing; do not invent it
@@ -90,6 +96,11 @@ def record(provider: str, model: str,
             model or "unknown", {"in": 0, "out": 0})
         bucket["in"]  += max(input_tokens, 0)
         bucket["out"] += max(output_tokens, 0)
+        if cached_input_tokens > 0:
+            bucket["cached_in"] = bucket.get("cached_in", 0) + cached_input_tokens
+        if cache_write_input_tokens > 0:
+            bucket["cache_write_in"] = (bucket.get("cache_write_in", 0)
+                                        + cache_write_input_tokens)
         _write_all(state)
 
 

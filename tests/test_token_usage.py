@@ -77,6 +77,37 @@ def test_repeated_calls_accumulate_per_model_and_day():
     assert tu.usage("2026-08-02") == {"openai": {"gpt-5.4-mini": {"in": 100, "out": 100}}}
 
 
+def test_cache_counters_are_recorded_as_subsets_of_input():
+    tu.record("openai", "gpt-5.6-luna", 5000, 100, day="2026-08-01",
+              cached_input_tokens=3000, cache_write_input_tokens=1000)
+    tu.record("openai", "gpt-5.6-luna", 5000, 100, day="2026-08-01",
+              cached_input_tokens=4000)
+
+    assert tu.usage("2026-08-01")["openai"]["gpt-5.6-luna"] == {
+        "in": 10000, "out": 200, "cached_in": 7000, "cache_write_in": 1000}
+    assert tu.spent("openai", "2026-08-01") == 10200
+
+
+def test_openai_cache_counters_flow_from_response_to_usage_record(monkeypatch):
+    monkeypatch.setattr(llm, "OPENAI_API_KEY", "sk-test")
+    response = MagicMock()
+    response.usage = MagicMock(
+        prompt_tokens=5000, completion_tokens=100, total_tokens=5100,
+        prompt_tokens_details=MagicMock(cached_tokens=3000,
+                                        cache_write_tokens=1000))
+    response.choices = [MagicMock(finish_reason="stop",
+                                  message=MagicMock(content='{"ok": true}'))]
+    client = MagicMock()
+    client.chat.completions.create.return_value = response
+
+    with patch("openai.OpenAI", return_value=client):
+        assert llm.call_openai("prompt", model="gpt-5.6-luna")[0] == {"ok": True}
+
+    assert tu.usage()["openai"]["gpt-5.6-luna"] == {
+        "in": 5000, "out": 100, "cached_in": 3000,
+        "cache_write_in": 1000}
+
+
 def test_concurrent_calls_do_not_lose_each_other_s_tokens():
     """Every LLM call records, and Stage 3 and the filter engine's tiers both make
     those calls from a thread pool. The record is a read-modify-write of one file, so

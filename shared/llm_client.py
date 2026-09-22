@@ -24,28 +24,48 @@ from typing import Optional
 
 import requests
 
+from . import token_counter, token_usage
+from .cache import content_key, read_cache, write_cache
 from .config import (
-    GEMINI_API_KEYS, PDF_PARSE_MODEL, PDF_PARSE_EFFORT, SCREENING_MODEL_1, LINKING_MODEL,
-    GEMINI_USE_FLEX, GEMINI_FLEX_TIMEOUT, GEMINI_PAID_KEY_SLOTS, GEMINI_RATE_SEC,
-    LINKING_EFFORT, OUTCOME_MODEL, OUTCOME_EFFORT,
-    SCREENING_EFFORT_1, SCREENING_EFFORT_2,
+    GEMINI_API_KEYS,
+    GEMINI_FLEX_TIMEOUT,
+    GEMINI_PAID_KEY_SLOTS,
+    GEMINI_RATE_SEC,
+    GEMINI_USE_FLEX,
+    LINKING_EFFORT,
+    LINKING_MODEL,
     LLM_CACHE_DIR,
-    OPENAI_API_KEY, OPENAI_RATE_SEC,
-    OPENAI_USE_FLEX, OPENAI_FLEX_TIMEOUT,
-    OPENROUTER_API_KEY, OPENROUTER_RATE_SEC,
+    OPENAI_API_KEY,
+    OPENAI_FLEX_TIMEOUT,
+    OPENAI_RATE_SEC,
+    OPENAI_USE_FLEX,
+    OPENROUTER_API_KEY,
+    OPENROUTER_RATE_SEC,
+    OUTCOME_EFFORT,
+    OUTCOME_MODEL,
+    PDF_PARSE_EFFORT,
+    PDF_PARSE_MODEL,
+    SCREENING_EFFORT_1,
+    SCREENING_EFFORT_2,
+    SCREENING_MODEL_1,
     SCREENING_MODEL_2,
     log,
 )
-from . import token_counter, token_usage
-from .cache import content_key, read_cache, write_cache
-from .rate_limit import throttle
 from .prompts import (
+    _TARGET_TASK,
+    EVIDENCE_POLICY,
+    SEARCH_CONFIRM_GRADES,
     author_year_candidate_keys,
-    build_author_year_pick_prompt, build_classify_prompt, build_keyed_confirm_prompt,
-    build_repro_target_outcome_prompt, build_search_confirm_prompt,
+    build_author_year_pick_prompt,
+    build_classify_prompt,
+    build_keyed_confirm_prompt,
+    build_repro_target_outcome_prompt,
+    build_search_confirm_prompt,
     build_study_status_prompt,
-    build_target_outcome_prompt, prompt_version, SEARCH_CONFIRM_GRADES,
+    build_target_outcome_prompt,
+    prompt_version,
 )
+from .rate_limit import throttle
 from .schema import canonical_outcome, normalise_outcome_block
 from .target_keys import assign_target_keys
 from .utils import clean_doi
@@ -87,10 +107,21 @@ JSON_MAX_OUTPUT_TOKENS = 16384
 # OPENAI_DAILY_TOKEN_BUDGET; the other providers are recorded, not capped.
 
 
-def _record_tokens(provider: str, model: str, n_in: int, n_out: int) -> None:
+def _record_tokens(provider: str, model: str, n_in: int, n_out: int,
+                   cached_in: int = 0, cache_write_in: int = 0) -> None:
     """Charge a completed call to the run's stage total and the day's usage record."""
     token_counter.record(provider, n_in + n_out)
-    token_usage.record(provider, model, n_in, n_out)
+    token_usage.record(provider, model, n_in, n_out,
+                       cached_input_tokens=cached_in,
+                       cache_write_input_tokens=cache_write_in)
+
+
+def _reported_cache_tokens(details: object) -> tuple[int, int]:
+    """Read provider cache counters without mistaking absent fields for usage."""
+    cached = getattr(details, "cached_tokens", None)
+    written = getattr(details, "cache_write_tokens", None)
+    return (cached if isinstance(cached, int) and cached > 0 else 0,
+            written if isinstance(written, int) and written > 0 else 0)
 
 
 def _gemini_usage(body: dict) -> tuple[int, int]:
@@ -321,7 +352,10 @@ def _gemini_call(payload: dict, model: str, timeout: int,
                     break   # attempts spent on this key → try the next one
 
                 body = r.json()
-                _record_tokens("gemini", model, *_gemini_usage(body))
+                n_in, n_out = _gemini_usage(body)
+                cached = int((body.get("usageMetadata") or {}).get(
+                    "cachedContentTokenCount", 0) or 0)
+                _record_tokens("gemini", model, n_in, n_out, cached)
                 if key_idx > 0:
                     log.info("Gemini %s succeeded on %s", what, key_label)
                 return body, ""
@@ -487,6 +521,38 @@ def call_openai(prompt: str, model: str,
     last_error = "no attempts made"
     extra = {"reasoning_effort": reasoning_effort} if reasoning_effort else {}
 
+    # These prompts put long, invariant coding rules before per-paper evidence.
+    # GPT-5.6's implicit breakpoint at the end of one user message would also
+    # write the unique evidence (at 1.25x input price). Cache only the rules.
+    # The standalone outcome prompts have two stable variants each (abstract-only
+    # and full-text); their different evidence and field instructions are still
+    # entirely before the boundary. The concatenated prompt and on-disk response
+    # cache key remain the same.
+    cache_boundary = -1
+    if model.startswith("gpt-5.6"):
+        if prompt.startswith(EVIDENCE_POLICY + _TARGET_TASK):
+            marker = "\n\nPAPER\n\n"
+        elif prompt.startswith((
+            "You are coding the outcome of a replication study for a database of replication studies.",
+            "You are coding the outcome of a reproduction study for a database of reproduction studies.",
+        )):
+            marker = "Base every judgment only on the evidence below.\n\n"
+        else:
+            marker = ""
+        if marker:
+            index = prompt.find(marker)
+            if index >= 0:
+                cache_boundary = index + len(marker)
+    if cache_boundary >= 0:
+        messages = [{"role": "user", "content": [
+            {"type": "text", "text": prompt[:cache_boundary],
+             "prompt_cache_breakpoint": {"mode": "explicit"}},
+            {"type": "text", "text": prompt[cache_boundary:]},
+        ]}]
+        extra["prompt_cache_options"] = {"mode": "explicit"}
+    else:
+        messages = [{"role": "user", "content": prompt}]
+
     def _create(flex: bool):
         """One request, at flex tier or standard. Flex calls queue, so they get
         OPENAI_FLEX_TIMEOUT instead of the client default."""
@@ -500,7 +566,7 @@ def call_openai(prompt: str, model: str,
             # also makes the three providers ask the same question. See
             # _LEGACY_JSON_SYSTEM_MESSAGE in shared/prompts.py for why the retired
             # text still appears in every prompt_version() hash.
-            messages=[{"role": "user", "content": prompt}],
+            messages=messages,
             response_format={"type": "json_object"},
             max_completion_tokens=JSON_MAX_OUTPUT_TOKENS,
             **tier,
@@ -531,9 +597,12 @@ def call_openai(prompt: str, model: str,
                             "retrying at standard tier", flex_exc)
                 response = _create(False)
             if response.usage:
+                cached, written = _reported_cache_tokens(
+                    getattr(response.usage, "prompt_tokens_details", None))
                 _record_tokens("openai", model,
                                response.usage.prompt_tokens,
-                               response.usage.completion_tokens)
+                               response.usage.completion_tokens,
+                               cached, written)
                 log.debug("OpenAI usage: +%d tokens (day total: %d)",
                           response.usage.total_tokens, token_usage.spent("openai"))
             if response.choices[0].finish_reason == "length":
@@ -637,9 +706,12 @@ def call_openrouter(prompt: str, model: str,
             # Before the truncation check: a response cut off at the cap was served
             # and billed in full, and it is the most expensive shape there is.
             if response.usage:
+                cached, written = _reported_cache_tokens(
+                    getattr(response.usage, "prompt_tokens_details", None))
                 _record_tokens("openrouter", use_model,
                                response.usage.prompt_tokens,
-                               response.usage.completion_tokens)
+                               response.usage.completion_tokens,
+                               cached, written)
             if response.choices[0].finish_reason == "length":
                 log.warning("OpenRouter response hit the %d-token cap and was cut off — "
                             "the truncated JSON will fail to parse (model=%s)",
