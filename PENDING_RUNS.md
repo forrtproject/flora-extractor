@@ -23,7 +23,26 @@ the command, pasteable from the project root, and what proves it worked.
 
 ## Open
 
-- [ ] **Finish extracting the Observatory works: 275 of 1,198 still open** (2026-09-22:
+- [ ] **Decide what to do about the 14 `candidates-*.parquet` files in the shared
+      pool repo.** `lukaswallrich/flora-survivor-pool` carries them in the pool root
+      alongside the 2,232 `part-*.parquet` files — 1,363,959 rows of the retired
+      `CANDIDATES_COLS` corpus (`doi_r`, `title_r`, …). Every pool reader here globs
+      `*.parquet` over that directory, which is the failure the comment at
+      `search/snapshot_scan.py:269` explains the `_`-prefixed sidecar to avoid; a pull
+      also stamps `expected_files: 2246`, so a straight `route` refuses the pool as
+      partial. Locally they are moved to `cache/legacy_candidates/` and the sidecar
+      re-stamped to 2,232 with the recorded gate `d536bc51b9b2`. Fixing the REMOTE is
+      a push decision for whoever owns it. Done when a fresh `pool_sync --pull`
+      produces a directory that `filter.engine route` accepts untouched.
+
+## Done
+
+- [x] **Extract the Observatory works — DONE 2026-09-22.** 1,198 of 1,198 have a row; the
+      last 275 ran with `OPENAI_DAILY_TOKEN_BUDGET=0` on the command line (~$0.65). The dry run
+      offers only the 27 DOI twins held out under #210. Export 3,040 → 4,141 rows, 908 new
+      works. In-pool agreement with the Observatory: 69% same original, 74% of those same
+      outcome (`analysis/mo_observatory/in_pool_agreement.csv`).
+      Original entry:(2026-09-22:
       773 settled in one day-cap of luna tokens; export 3,163 → 3,885 rows, 594 new works;
       agreement with the Observatory in `analysis/mo_observatory/in_pool_agreement.csv`).
       Original entry:
@@ -87,19 +106,6 @@ the command, pasteable from the project root, and what proves it worked.
       Regenerating the list needs the source CSV, which is gitignored (13 MB):
       `curl -sSL -o analysis/mo_observatory/replications_database_2026_09_04_184008.csv https://raw.githubusercontent.com/delton137/metascience-observatory/main/data/replications_database_2026_09_04_184008.csv`
 
-- [ ] **Decide what to do about the 14 `candidates-*.parquet` files in the shared
-      pool repo.** `lukaswallrich/flora-survivor-pool` carries them in the pool root
-      alongside the 2,232 `part-*.parquet` files — 1,363,959 rows of the retired
-      `CANDIDATES_COLS` corpus (`doi_r`, `title_r`, …). Every pool reader here globs
-      `*.parquet` over that directory, which is the failure the comment at
-      `search/snapshot_scan.py:269` explains the `_`-prefixed sidecar to avoid; a pull
-      also stamps `expected_files: 2246`, so a straight `route` refuses the pool as
-      partial. Locally they are moved to `cache/legacy_candidates/` and the sidecar
-      re-stamped to 2,232 with the recorded gate `d536bc51b9b2`. Fixing the REMOTE is
-      a push decision for whoever owns it. Done when a fresh `pool_sync --pull`
-      produces a directory that `filter.engine route` accepts untouched.
-
-## Done
 
 - [x] **Re-screen every screened work under the new voter pair and gate** (voter 1
       is now `deepseek/deepseek-v4-flash@low`, the gate G-unanimous; evidence:
