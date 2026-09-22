@@ -533,6 +533,12 @@ def render_estimate(est: dict) -> str:
         "median length",
         "  Rough per-1k list prices from shared/config.py, summed over both voters.",
     ]
+    if est.get("priced_whole_pile"):
+        lines.append("  No state authority configured: this prices the WHOLE pile, "
+                     "not the open works a --run would buy.")
+    else:
+        lines.append("  Works this tier already decided are subtracted; another "
+                     "run's active claims are not.")
     if est["tier"] == TIER_CHEAP:
         lines.append("  Voter 2 is asked only when voter 1 said no, so this is an "
                      "upper bound.")
@@ -831,6 +837,7 @@ def run_tier(spec: TierSpec, client: ClaimsClient, release_id: str,
     tier = spec.name
     est = spec.estimate(works)
     if not run:
+        est["priced_whole_pile"] = client is None
         print(spec.render_estimate(est))
         return {"tier": tier, "mode": mode, "dry_run": True, "estimate": est,
                 "claim_id": None, "decided": 0, "outcomes": {}}
@@ -1474,21 +1481,29 @@ def _batch(con, client: ClaimsClient, release_id: str, tier: str,
     rejected one; the check that makes claiming SAFE is inside the RPC. "Claimed"
     means an active claim whose lease has not run out — a run killed before its
     completion path stops holding its works `CLAIM_TTL_HOURS` after it took them,
-    so it cannot exclude them from every future batch. A dry run
-    subtracts nothing it would need the server for — it is allowed to run against
-    no state authority at all, and a size estimate that quietly excluded another
-    run's batch would answer a question nobody asked.
+    so it cannot exclude them from every future batch.
+
+    A dry run subtracts the DECIDED works too, when a state authority is reachable
+    (`client` is None when none is configured, and then it prices the whole pile
+    and says so). Until 2026-09-22 it never did, so the estimate answered "what
+    does the pile cost" while `--run` bought only the open works: 9,105 rows ≈
+    $13.93 printed against 1,469 ≈ $2.31 spent. It does not subtract another
+    run's active claims — those works are still open, only held.
     """
     only = set(int(w) for w in work_ids) if work_ids is not None else None
-    if not run:
+    if not run and client is None:
         return pile_works(con, release_id, tier, pool_dir, overlay_dir, aliases,
                           only=only, limit=limit)
 
     routed = {row[0] for row in con.execute(
         "SELECT work_id FROM routing WHERE release_id = ? AND pile = ?",
         [release_id, tier]).fetchall()}
-    candidates = (only if only is not None else routed) - client.claimed_work_ids(
-        release_id, tier)
+    candidates = only if only is not None else routed
+    if run:
+        # Another run's active batch is subtracted only when this one is about to
+        # claim: a dry run prices what is OPEN, and a work someone else is holding
+        # for the next hour is still open work.
+        candidates = candidates - client.claimed_work_ids(release_id, tier)
     fetched = overlay_fetched_at(overlay_dir)
 
     # Whether a verdict still answers today's question is a fact about the TEXT, so

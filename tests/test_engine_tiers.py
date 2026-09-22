@@ -1405,6 +1405,29 @@ def test_a_legacy_verdict_counts_when_its_models_are_todays(con, pool, tmp_path)
     assert handoff_mod.decisions(other) == (set(), {})
 
 
+def test_a_dry_run_prices_the_open_works_not_the_pile(con, pool, capsys):
+    """Until 2026-09-22 the dry run never subtracted decided works, so it printed
+    the pile's price (9,105 rows ≈ $13.93) while --run bought 1,469 ≈ $2.31. With a
+    state authority it subtracts what the tier already decided — but not another
+    run's active claim, which is still open work."""
+    voter1, voter2 = _voter_models()
+    client = _decided_client("screen_expensive", "live", [
+        {"work_id": 12, "verdict": "replication", "model": voter1,
+         "confidence": "confident"},
+        {"work_id": 12, "verdict": "replication", "model": voter2,
+         "confidence": "confident"},
+    ])
+    client.claimed_work_ids.return_value = {11}
+    report = tiers.run_screen_expensive(con, client, RELEASE, pool_dir=pool)
+    assert report["dry_run"] is True
+    assert report["estimate"]["rows"] == 1
+    assert "already decided are subtracted" in capsys.readouterr().out
+    # No state authority: the whole pile, and the render says so.
+    report = tiers.run_screen_expensive(con, None, RELEASE, pool_dir=pool)
+    assert report["estimate"]["rows"] == 2
+    assert "WHOLE pile" in capsys.readouterr().out
+
+
 # ---------------------------------------------------------------------------
 # An incomplete screen is a failure, not a decision (#3)
 # ---------------------------------------------------------------------------

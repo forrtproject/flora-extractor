@@ -239,3 +239,28 @@ class TestTheOutcomeVocabularyRendering:
     def test_a_marker_no_vocabulary_defines_is_an_error(self):
         with pytest.raises(KeyError):
             prompts._vocab("one of «not_a_category»", prompts.OUTCOME_LABELS)
+
+
+class TestCanonicalForm:
+    def test_comments_and_docstrings_do_not_reach_the_version(self):
+        """Only text that can reach the model may move a version."""
+        from shared import prompts as P
+
+        def build(x: dict) -> str:
+            """A docstring."""
+            # a comment, and a '#' inside a string
+            return f"{x.get('k', 'default')} # not a comment"
+
+        assert P._canonical_source(build) == (
+            "def build(x: dict) -> str:\n"
+            "    return f\"{x.get('k', 'default')} # not a comment\"")
+
+    def test_every_frozen_version_is_still_current(self):
+        """A frozen entry maps a prompt's stable hash to the version its answers are
+        filed under. Once the prompt is edited the entry is dead — it matches
+        nothing, the new hash invalidates strictly — and must be deleted rather than
+        left implying a mapping it no longer provides."""
+        from shared import prompts as P
+        stale = [name for name, (stable, _) in P._FROZEN_VERSIONS.items()
+                 if P.prompt_version(name) != P._FROZEN_VERSIONS[name][1]]
+        assert stale == [], f"dead _FROZEN_VERSIONS entries (prompt edited): {stale}"

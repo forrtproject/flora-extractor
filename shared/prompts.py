@@ -27,9 +27,11 @@ wording here invalidates the answers produced by the previous wording.
 import ast
 import hashlib
 import inspect
+import io
 import re
 import sys
 import textwrap
+import tokenize
 from functools import lru_cache
 from types import FunctionType
 
@@ -1615,29 +1617,65 @@ PDF_IMAGE_REFERENCES_PROMPT = textwrap.dedent("""
 # builder is versioned the moment it is defined. PROMPT_NAMES is likewise derived
 # from the module contents at import.
 #
-# Canonicalisation runs the source through ast.unparse with docstrings stripped, so
-# reformatting, comments and docstrings do not invalidate a cache — only text that
-# can reach the model does.
+# Canonicalisation is the builder's own source text with its docstring, comments,
+# trailing whitespace and blank lines removed, so comments and docstrings do not
+# invalidate a cache — only text that can reach the model does. It is deliberately
+# NOT `ast.unparse`: that was the canonical form until 2026-09-22, and its rendering
+# of an f-string depends on the interpreter (3.12 writes `f'…{d.get(k, 'x')}'`,
+# 3.11/3.13/3.14 write `f"…"`), so the same checkout hashed seven Stage 3 prompts
+# differently on a 3.12 box, missed every cached answer and moved the extract
+# generation. Every version bought under that form is preserved by
+# `_FROZEN_VERSIONS` below.
 
 _MODULE = sys.modules[__name__]
 
 
-def _strip_docstrings(tree: ast.AST) -> ast.AST:
+def _canonical_source(fn: FunctionType) -> str:
+    source = textwrap.dedent(inspect.getsource(fn))
+    lines = source.splitlines()
+    # Comments go first, by token position, because a `#` inside a string is not
+    # a comment and only the tokenizer knows which is which.
+    for tok in tokenize.generate_tokens(io.StringIO(source).readline):
+        if tok.type == tokenize.COMMENT:
+            row, col = tok.start
+            lines[row - 1] = lines[row - 1][:col]
+    tree = ast.parse(source)
     for node in ast.walk(tree):
-        if not isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef,
-                                 ast.ClassDef)):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             continue
         body = node.body
         if (body and isinstance(body[0], ast.Expr)
                 and isinstance(body[0].value, ast.Constant)
                 and isinstance(body[0].value.value, str)):
-            node.body = body[1:] or [ast.Pass()]
-    return tree
+            for row in range(body[0].lineno, body[0].end_lineno + 1):
+                lines[row - 1] = ""
+    return "\n".join(line.rstrip() for line in lines if line.strip())
 
 
-def _canonical_source(fn: FunctionType) -> str:
-    tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
-    return ast.unparse(_strip_docstrings(tree))
+# ── Frozen versions ──────────────────────────────────────────────────────────
+# `name: (stable_hash, version_on_disk)`. The canonical form changed on 2026-09-22
+# (see above), which moved every version — and every LLM cache key and both tiers'
+# generation fingerprints with it — without changing one character any model is
+# sent. So each prompt's version under the NEW form is mapped, once, to the version
+# its answers are filed under. `prompt_version()` returns the frozen version only
+# while the prompt still hashes to exactly the recorded stable hash: an edit produces
+# a third value, matches nothing here, and invalidates strictly as it always did. An
+# entry whose stable hash no longer matches is dead and must be deleted
+# (tests/test_prompt_versions.py enforces it) — deleting it changes nothing.
+# Generated once (2026-09-22, Python 3.13) against the ast.unparse form; the two
+# plain string constants are omitted because their hash never went through it.
+_FROZEN_VERSIONS: dict[str, tuple[str, str]] = {
+    "build_author_year_pick_prompt": ("057eed1fefcb", "05e6a3033882"),
+    "build_classify_prompt": ("9bdd4fb8f91f", "fde7296fafad"),
+    "build_keyed_confirm_prompt": ("7afb003df03c", "abc811d2859b"),
+    "build_outcome_prompt": ("ad7b2bc26e1f", "556e48911415"),
+    "build_prescreen_prompt": ("c8776b9eb527", "df5f7aefb41c"),
+    "build_repro_outcome_prompt": ("b5d30374a700", "c6bb106a7307"),
+    "build_repro_target_outcome_prompt": ("13f4ec7e0c26", "01349eec56c7"),
+    "build_search_confirm_prompt": ("18e6f01de567", "e5e72b9e54fd"),
+    "build_study_status_prompt": ("dface4c1af3c", "47b62a0f3465"),
+    "build_target_outcome_prompt": ("d1be73917e70", "b1f887ddcc91"),
+}
 
 
 def _collect(fn: FunctionType, parts: dict[str, str]) -> None:
@@ -1696,7 +1734,9 @@ def prompt_version(name: str) -> str:
     # existing entries on disk were hashed under.
     parts["JSON_SYSTEM_MESSAGE"] = repr(_LEGACY_JSON_SYSTEM_MESSAGE)
     blob = "\n".join(f"{k}={parts[k]}" for k in sorted(parts))
-    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
+    stable = hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
+    recorded, frozen = _FROZEN_VERSIONS.get(name, ("", ""))
+    return frozen if stable == recorded else stable
 
 
 PROMPT_NAMES: tuple[str, ...] = tuple(sorted(
