@@ -34,6 +34,9 @@ genuine coverage gaps. 78 of the 651 are already ours, leaving **573**.
 | `curated_candidates.csv` | **The deliverable**: 214 works the screen calls replications or reproductions. |
 | `extract_offline.py` → `extracted_offline.csv` | Those 214 through `_process_row()` — the real Stage 3 ladder. |
 | `curated-observatory.json`, `priority.csv` | The Stage 2 candidate rule; about the pool works, not these. |
+| `observatory_doi_issues.py` → `observatory_doi_issues.csv` | The Observatory's own DOI problems (erratum/notice, issue DOI, unresolvable, another paper, S2 URLs, malformed), from `adjudication/doi_pairs.csv` plus a Crossref scan of every DOI in the export (`--fetch`, cached in `adjudication/out/`). |
+| `observatory_doi_sheet.py` | Writes that table + a notes tab to a private Google Sheet via `gws` (id in `observatory_doi_sheet_id.txt`; never shares it). |
+| `no_replication_doi.py` / `.md` | The 262 rows / 188 works whose replication has no DOI, by kind (handover step 11). |
 
 ## Three things to know before reading the numbers
 

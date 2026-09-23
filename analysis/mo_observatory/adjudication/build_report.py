@@ -1,8 +1,15 @@
 """Unblind the two judges' verdicts and render `report.html`.
 
-Reads `key.csv` (which answer was whose), `out/claude/*.json` and `out/codex/*.json`,
-the works/pairs tables from `agreement.py`, and `mo_vs_flora.csv`; writes
-`verdicts.csv` (one row per item, both judges unblinded) and `report.html`.
+Two populations, each judged blind by Claude + Codex:
+
+- our pipeline vs the Observatory — `key.csv`, `out/claude/`, `out/codex/` (gpt-5.6-sol);
+- shipped, human-curated FLoRA vs the Observatory — `key_flora.csv`, `out/claude/`,
+  `out/codex6/` (gpt-6-sol); original-study items only.
+
+Also reads the works/pairs tables from `agreement.py`, `original_title_sim.csv` (the
+different-original pairs that are one paper under two DOIs), `doi_pairs.csv` and
+`mo_vs_flora.csv`. Writes `verdicts.csv` (pipeline items, both judges unblinded) and
+`report.html`. The report stays local.
 
     .venv/bin/python -m analysis.mo_observatory.adjudication.build_report
 """
@@ -16,9 +23,17 @@ from pathlib import Path
 import pandas as pd
 
 from analysis.mo_observatory.adjudication.agreement import load
+from shared.utils import clean_doi
 
 HERE = Path(__file__).resolve().parent
+ROOT = HERE.parents[2]
+_DOI_URL = r"^https?://(dx\.)?doi\.org/"
 JUDGES = {"claude": "Claude (Opus 5.5)", "codex": "Codex (gpt-5.6-sol)"}
+# Per population: whose answer "ours" is, and which Codex model judged it.
+POP = {"pipeline": {"side": "FLoRA pipeline", "ours": "pipeline right",
+                    "judges": JUDGES},
+       "flora": {"side": "FLoRA (shipped, human-curated)", "ours": "FLoRA right",
+                 "judges": {"claude": "Claude (Opus 5.5)", "codex": "Codex (gpt-6-sol)"}}}
 SIDE = {"ours": "FLoRA pipeline", "mo": "Observatory"}
 STRATA = {
     "original": "Different original study",
@@ -27,7 +42,7 @@ STRATA = {
     "cbd": "Same original, we said “cannot be determined”",
 }
 VERDICT_ORDER = ["ours", "mo", "both", "neither", "cannot_tell", "missing"]
-VERDICT_LABEL = {"ours": "FLoRA right", "mo": "Observatory right", "both": "both defensible",
+VERDICT_LABEL = {"ours": "pipeline right", "mo": "Observatory right", "both": "both defensible",
                  "neither": "neither", "cannot_tell": "can't tell", "missing": "no answer"}
 
 
@@ -62,6 +77,9 @@ def verdicts(key_name: str = "key.csv", codex_dir: str = "codex") -> pd.DataFram
             for f in ("own_outcome", "confidence", "evidence_basis", "reasoning", "quote", "correct_original"):
                 r[f"{j}_{f}"] = a.get(f, "")
         cv, xv = r["claude_verdict"], r["codex_verdict"]
+        # key_flora.csv names FLoRA's side "flora"; the report calls every non-Observatory side "ours".
+        cv, xv = ("ours" if x == "flora" else x for x in (cv, xv))
+        r["claude_verdict"], r["codex_verdict"] = cv, xv
         r["consensus"] = cv if cv == xv else "split"
         rows.append(r)
     return pd.DataFrame(rows)
@@ -71,14 +89,19 @@ def _e(s: object) -> str:
     return html.escape(str(s or ""))
 
 
-def _tally(v: pd.DataFrame) -> str:
-    head = "".join(f"<th>{VERDICT_LABEL[c]}</th>" for c in VERDICT_ORDER if c != "missing")
+def _label(v: str, pop: str) -> str:
+    return POP[pop]["ours"] if v == "ours" else VERDICT_LABEL.get(v, v)
+
+
+def _tally(v: pd.DataFrame, pop: str = "pipeline") -> str:
+    judges = POP[pop]["judges"]
+    head = "".join(f"<th>{_label(c, pop)}</th>" for c in VERDICT_ORDER if c != "missing")
     out = [f"<table class='tally'><tr><th>stratum</th><th>n</th><th>who</th>{head}<th>split</th></tr>"]
     for s, label in STRATA.items():
         g = v[v.stratum == s]
         if g.empty:
             continue
-        for i, (col, who) in enumerate([("claude_verdict", JUDGES["claude"]), ("codex_verdict", JUDGES["codex"]),
+        for i, (col, who) in enumerate([("claude_verdict", judges["claude"]), ("codex_verdict", judges["codex"]),
                                         ("consensus", "both judges agree")]):
             cells = "".join(f"<td>{(g[col] == c).sum()}</td>" for c in VERDICT_ORDER if c != "missing")
             split = f"<td>{(g[col] == 'split').sum()}</td>" if col == "consensus" else "<td></td>"
@@ -89,7 +112,7 @@ def _tally(v: pd.DataFrame) -> str:
     return "".join(out)
 
 
-def _answers(it: dict, ours: pd.DataFrame, mo: pd.DataFrame) -> str:
+def _answers(it: dict, ours: pd.DataFrame, mo: pd.DataFrame, pop: str = "pipeline") -> str:
     o, m = ours[ours.doi_r == it["doi_r"]], mo[mo.doi_r == it["doi_r"]]
     if it["stratum"] == "original":
         oo = "<br>".join(f"{_e(r.title_o)} ({_e(r.year_o)}) <a href='https://doi.org/{_e(r.doi_o)}'>{_e(r.doi_o)}</a>"
@@ -104,31 +127,32 @@ def _answers(it: dict, ours: pd.DataFrame, mo: pd.DataFrame) -> str:
         mm = (f"<b>{_e('|'.join(sorted(set(mrows.result))))}</b> <span class='meta'>[{_e('|'.join(sorted(set(mrows.replication_type))))}]</span>"
               f"<br><i>{_e('; '.join(sorted(set(mrows.description) - {''}))[:300])}</i>")
         oo = f"<span class='meta'>Original: {_e(r.title_o)} ({_e(r.year_o)})</span><br>" + oo
-    return (f"<div class='answers'><div><h4>{SIDE['ours']}</h4>{oo}</div>"
+    return (f"<div class='answers'><div><h4>{POP[pop]['side']}</h4>{oo}</div>"
             f"<div><h4>{SIDE['mo']}</h4>{mm}</div></div>")
 
 
-def _judge(it: dict, j: str) -> str:
+def _judge(it: dict, j: str, pop: str = "pipeline") -> str:
     v = it[f"{j}_verdict"]
     extra = f" · own coding: {_e(it[f'{j}_own_outcome'])}" if it["stratum"] != "original" else ""
     corr = (f"<br><span class='meta'>Correct original instead: {_e(it[f'{j}_correct_original'])}</span>"
             if it[f"{j}_correct_original"] else "")
     quote = f"<blockquote>{_e(it[f'{j}_quote'])}</blockquote>" if it[f"{j}_quote"] else ""
-    return (f"<div class='judge'><h4>{JUDGES[j]}: <span class='v v-{v}'>{VERDICT_LABEL.get(v, v)}</span></h4>"
+    return (f"<div class='judge'><h4>{POP[pop]['judges'][j]}: <span class='v v-{v}'>{_label(v, pop)}</span></h4>"
             f"<span class='meta'>{_e(it[f'{j}_confidence'])} confidence · {_e(it[f'{j}_evidence_basis'])}{extra}</span>"
             f"<p>{_e(it[f'{j}_reasoning'])}</p>{quote}{corr}</div>")
 
 
-def _card(it: dict, ours: pd.DataFrame, mo: pd.DataFrame) -> str:
+def _card(it: dict, ours: pd.DataFrame, mo: pd.DataFrame, pop: str = "pipeline") -> str:
     rep = ours[ours.doi_r == it["doi_r"]].iloc[0]
     cons = it["consensus"]
     badge = ("<span class='v v-split'>judges split — needs a human</span>" if cons == "split"
-             else f"<span class='v v-{cons}'>both judges: {VERDICT_LABEL.get(cons, cons)}</span>")
-    return (f"<details class='card' data-stratum='{it['stratum']}' data-cons='{cons}'>"
+             else f"<span class='v v-{cons}'>both judges: {_label(cons, pop)}</span>")
+    cls = "card" if pop == "pipeline" else "card fl"
+    return (f"<details class='{cls}' data-stratum='{it['stratum']}' data-cons='{cons}'>"
             f"<summary><code>{it['id']}</code> {badge} {_e(rep.title_r)} <span class='meta'>({_e(rep.year_r)})</span></summary>"
             f"<p class='meta'><a href='https://doi.org/{_e(it['doi_r'])}'>{_e(it['doi_r'])}</a> · {_e(rep.journal_r)}"
             f" · full text given to judges: {'yes' if it['has_fulltext'] in (True, 'True') else 'no (looked up online)'}</p>"
-            f"{_answers(it, ours, mo)}<div class='judges'>{_judge(it, 'claude')}{_judge(it, 'codex')}</div></details>")
+            f"{_answers(it, ours, mo, pop)}<div class='judges'>{_judge(it, 'claude', pop)}{_judge(it, 'codex', pop)}</div></details>")
 
 
 CSS = """
@@ -145,91 +169,166 @@ blockquote{margin:.4em 0;padding-left:.8em;border-left:3px solid #ccc;color:#555
 .v-cannot_tell,.v-missing{background:#eee}.v-split{background:#fff3a8}
 .filters button{margin:.2em;padding:.2em .7em;border:1px solid #bbb;border-radius:4px;background:#fff;cursor:pointer}
 .filters button.on{background:#333;color:#fff}
+.summary{background:#f4f8ff;border-left:4px solid #6b8fd6;padding:.6em 1em;margin:1em 0}
 """
 JS = """
-function f(attr,val,btn){document.querySelectorAll('.card').forEach(c=>{c.style.display=(!val||c.dataset[attr]===val)?'':'none'});
+function f(attr,val,btn){document.querySelectorAll('.card:not(.fl)').forEach(c=>{c.style.display=(!val||c.dataset[attr]===val)?'':'none'});
 document.querySelectorAll('.filters button').forEach(b=>b.classList.remove('on'));btn.classList.add('on');}
 """
 
 
-def _findings(v: pd.DataFrame, ours: pd.DataFrame) -> str:
+def _findings(v: pd.DataFrame, ours: pd.DataFrame, n_refs: int) -> str:
     """The headline reading of the tally, plus the two checks that say whether to trust it."""
     dec = {j: v[v[f"{j}_verdict"].isin(["ours", "mo"])] for j in JUDGES}
     bias = {j: (d[f"{j}_verdict"] == d.A).mean() for j, d in dec.items()}
     o = v[v.stratum == "original"].merge(ours.drop_duplicates("doi_r")[["doi_r", "link_method", "link_confidence"]], on="doi_r")
     lost = o[o.consensus == "mo"]
+    refs = o[o.link_method == "llm_references"]
+    lo, hi = (refs.consensus == "mo").sum(), refs.consensus.isin(["mo", "split"]).sum()
     per = {s: v[v.stratum == s].consensus.value_counts() for s in STRATA}
     n = {s: (v.stratum == s).sum() for s in STRATA}
     return f"""
 <h3>What the judges found</h3>
 <ul>
 <li><b>Where the Observatory and our pipeline disagree, the Observatory is usually right.</b> Both judges side with it on
-{per['original'].get('mo', 0)} of {n['original']} different-original items (with us on {per['original'].get('ours', 0)}),
+{per['original'].get('mo', 0)} of {n['original']} different-original items (with us on {per['original'].get('ours', 0)},
+both defensible {per['original'].get('both', 0)}, split {per['original'].get('split', 0)}),
 {per['contradiction'].get('mo', 0)} of {n['contradiction']} flat contradictions (with us on {per['contradiction'].get('ours', 0)}), and
 {per['cbd'].get('mo', 0)} of {n['cbd']} items where we gave no verdict although the paper reports one.</li>
 <li><b>Our wrong originals are sibling references, picked with confidence.</b> Of {len(lost)} lost original items,
 {(lost.link_method == 'llm_references').sum()} came from the reference-list pick (<code>llm_references</code>) and
 {(lost.link_confidence == 'high').sum()} were at <code>link_confidence</code> high. The judges' reasons repeat one pattern: the pipeline chose
-the same authors' related paper, the source of the materials, or a background citation, rather than the study the paper says it re-tests.</li>
+the same authors' related paper, the source of the materials, or a background citation, rather than the study the paper says it re-tests.
+Over the {n_refs} shared papers our pipeline linked by <code>llm_references</code>, that is {lo} judged wrong by both judges
+({lo / n_refs:.1%}) and {hi} counting the splits ({hi / n_refs:.1%}) — a lower bound on the error rate of that step, since papers where
+both databases name the same wrong original are not measured.</li>
 <li><b>The success/inconclusive boundary is genuinely contested.</b> On those {n['inconclusive']} items the judges split on
-{per['inconclusive'].get('split', 0)}; there, neither database is clearly wrong.</li>
-<li><b>Scope of the claim.</b> The sample is drawn from disagreements only, so these rates describe the ~10% of papers where we diverge,
+{per['inconclusive'].get('split', 0)}; there, neither database is clearly wrong. The Observatory has no “mixed”: a replication whose main
+effect held and a secondary did not is “success” there and “mixed” here, and “inconclusive” also covers underpowered results.</li>
+<li><b>Scope of the claim.</b> The sample is drawn from disagreements only, so these rates describe the papers where we diverge,
 not either database overall. Checks: the judges agree with each other on {(v.consensus != 'split').mean():.0%} of items; when decisive,
 they chose the answer shown first {bias['claude']:.0%} (Claude) and {bias['codex']:.0%} (Codex) of the time, so there is no position bias.
 Items marked “judges split” need a human.</li>
 </ul>"""
 
 
+def _flora_frames(works: set[str]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Shipped FLoRA's rows renamed onto the pipeline's columns, and the Observatory's own
+    (not imported from FLoRA) rows, for the FLoRA-vs-Observatory items."""
+    fl = pd.read_csv(ROOT / "data/flora.csv", dtype=str, encoding="utf-8-sig").fillna("")
+    fl["doi_r"], fl["doi_o"] = fl.doi_r.map(clean_doi), fl.doi_o.map(clean_doi)
+    fl = fl[fl.doi_r.isin(works)]
+    ours = pd.DataFrame({"doi_r": fl.doi_r, "title_r": fl.title_r, "year_r": fl.year_r, "journal_r": fl.journal_r,
+                         "doi_o": fl.doi_o, "title_o": fl.title_o, "year_o": fl.year_o,
+                         "link_method": "FLoRA", "link_confidence": "human-curated"})
+    mo = pd.read_csv(HERE.parent / "replications_database_2026_09_04_184008.csv", dtype=str).fillna("")
+    mo = mo[~mo.source.str.contains("FLoRa", case=False)]
+    mo["doi_r"] = mo.replication_url.str.replace(_DOI_URL, "", regex=True).map(clean_doi)
+    mo["doi_o"] = mo.original_url.str.replace(_DOI_URL, "", regex=True).map(clean_doi)
+    return ours, mo[mo.doi_r.isin(works)]
+
+
+def _flora_section(fv: pd.DataFrame, fours: pd.DataFrame, fmo: pd.DataFrame) -> str:
+    c = fv.consensus.value_counts()
+    dp = pd.read_csv(HERE / "doi_pairs.csv", dtype=str).fillna("")
+    dp = dp[dp.population == "FLoRA vs Observatory"]
+    mis = dp[dp.pair == "mistake"]
+    mo_mis = (mis.class_b == "mistake").sum()
+    alt = dp.pair.str.contains("alternative").sum()
+    fmt = (dp.pair == "same DOI, formatting").sum()
+    cards = "".join(_card(it, fours, fmo, "flora") for it in fv.sort_values("consensus").to_dict("records"))
+    return f"""
+<h2>4. Shipped FLoRA vs the Observatory</h2>
+<p>The same question for FLoRA's own, human-curated entries (<code>data/flora.csv</code>), on the replications both databases hold
+where the Observatory did <i>not</i> import the row from FLoRA. Where the two name a <b>different paper</b> as the original,
+{len(fv)} items were judged blind the same way (Claude + Codex <code>gpt-6-sol</code>):</p>
+{_tally(fv, "flora")}
+<ul>
+<li><b>Observatory right {c.get('mo', 0)}, FLoRA right {c.get('ours', 0)}, both defensible {c.get('both', 0)}, split {c.get('split', 0)}.</b>
+The Observatory's wins are the same sibling-pick pattern as the pipeline's: the same authors' related paper, or a background citation,
+in place of the study the paper says it re-tests. Human validation is not catching that class either.</li>
+<li>Where the two name the <b>same title under different DOIs</b> ({len(dp)} pairs): {len(mis)} are a DOI mistake
+({mo_mis} on the Observatory's side), {alt} alternative identifiers (preprint, working paper, duplicate registration) and
+{fmt} formatting (FLoRA's <code>//</code> and <code>%3c</code>). FLoRA's corrections went to its data owner; the Observatory's
+DOI problems are listed in <code>analysis/mo_observatory/observatory_doi_issues.csv</code>.</li>
+</ul>
+{cards}"""
+
+
 def main() -> None:
     ours, mo = load()
     v = verdicts()
     v.to_csv(HERE / "verdicts.csv", index=False, encoding="utf-8-sig")
+    fv = verdicts("key_flora.csv", "codex6")
+    fours, fmo = _flora_frames(set(fv.doi_r))
     wk = pd.read_csv(HERE / "works.csv", dtype=str)
     pr = pd.read_csv(HERE / "pairs.csv", dtype=str)
     mf = pd.read_csv(HERE / "mo_vs_flora.csv")
+    sim = pd.read_csv(HERE / "original_title_sim.csv", dtype=str)
     comp = pr[(pr.kind == "agree") | pr.kind.str.startswith(("contradiction", "inconclusive", "reversal"))]
     done = {j: (v[f"{j}_verdict"] != "missing").sum() for j in JUDGES}
     mfc = mf[mf.comparable]
+    same = wk.original.str.startswith(("same", "overlap")).sum()
+    diff = wk.original.str.startswith("different").sum()
+    twins = sim[sim.sim.astype(float) >= 0.95].doi_r.nunique()
+    no_doi = wk.original.str.startswith("theirs: no original").sum()
+    methods = ours.groupby("doi_r").link_method.agg(lambda s: "|".join(sorted(set(s))))
+    n_refs = wk.doi_r.map(methods).str.contains("llm_references", na=False).sum()
+    ov = v[v.stratum == "original"].consensus.value_counts()
+    fc = fv.consensus.value_counts()
     intro = f"""
-<h1>FLoRA pipeline × Metascience Observatory — where we disagree, and who is right</h1>
-<p class='meta'>Generated from <code>analysis/mo_observatory/adjudication/</code>. Judged: Claude {done['claude']}/{len(v)},
-Codex {done['codex']}/{len(v)}.</p>
+<h1>FLoRA × Metascience Observatory — where we disagree, and who is right</h1>
+<p class='meta'>Generated from <code>analysis/mo_observatory/adjudication/</code> (<code>build_report.py</code>). Pipeline items judged:
+Claude {done['claude']}/{len(v)}, Codex {done['codex']}/{len(v)}; FLoRA items: {len(fv)}.</p>
+<div class='summary'><b>In short.</b> On the {len(wk):,} replications both hold, our pipeline and the Observatory name the same original
+for <b>{same / len(wk):.0%}</b> and, where both give one comparable verdict, the same outcome for <b>{(comp.kind == 'agree').mean():.0%}</b>.
+Of the {diff} papers with a different original, {twins} are the same paper under another DOI, so <b>{diff - twins}</b> genuinely differ —
+and there the Observatory is usually right: both blind judges side with it on {ov.get('mo', 0)} of {len(v[v.stratum == 'original'])},
+with us on {ov.get('ours', 0)}. FLoRA's own human-curated entries show the same pattern (Observatory right on {fc.get('mo', 0)} of
+{len(fv)}, FLoRA on {fc.get('ours', 0)}).</div>
 <h2>1. How often we agree</h2>
 <p>Over the <b>{len(wk):,}</b> Observatory replications our pipeline extracted, counted per paper against the
-<i>full</i> Observatory file (it stores one row per effect or lab; an earlier comparison kept one arbitrary row per paper):</p>
+<i>full</i> Observatory file. It stores one row per effect or lab (the ego-depletion multi-lab study has 24 rows), so a comparison
+of “one row per paper” must aggregate; an earlier version of this comparison kept one arbitrary row per paper and understated
+agreement (84% same original, 74% same outcome).</p>
 <table><tr><th>original study</th><th>papers</th><th>share</th></tr>
 {''.join(f"<tr><td>{_e(k)}</td><td>{n}</td><td>{n/len(wk):.0%}</td></tr>" for k, n in wk.original.value_counts().items())}
 </table>
-<p>Of the “different” ones, about a third turn out to be the same paper under two DOIs
-(identical titles: <code>10.1037//</code> vs <code>10.1037/</code>, JSTOR duplicates, working paper vs journal version,
-journal-issue DOIs) — they are not disagreements and are not judged below.</p>
+<p>At least one original in common: <b>{same:,} ({same / len(wk):.0%})</b>. Different: {diff}, of which <b>{twins}</b> are the
+same paper under two DOIs (identical titles: <code>10.1037//</code> vs <code>10.1037/</code>, JSTOR duplicates, working paper vs journal
+version, an erratum or journal-issue DOI in place of the article) — not disagreements, and not judged below. That leaves
+<b>{diff - twins}</b> papers whose original genuinely differs. {no_doi} more have no original DOI on the Observatory's side.</p>
 <p>On the original both name, the outcome agrees on <b>{(comp.kind=='agree').sum():,} of {len(comp):,} ({(comp.kind=='agree').mean():.0%})</b>
-where both give one comparable verdict. Not comparable: {(pr.kind=='theirs: several results (per effect/lab)').sum()} originals where the
+where both give one comparable verdict (FLoRA's “mixed” and “statistically successful but flawed” are mapped to the Observatory's
+“inconclusive”). Not comparable: {(pr.kind=='theirs: several results (per effect/lab)').sum()} originals where the
 Observatory records several results (per effect or lab), {(pr.kind=='reproduction (two-axis, unmapped)').sum()} reproductions coded on our two axes,
 {pr.kind.str.startswith('ours:').sum()} where we gave no verdict.</p>
 <h3>Calibration: the Observatory against FLoRA's human-curated entries</h3>
 <p>On the {len(mf):,} replications FLoRA already holds and the Observatory did <i>not</i> import from FLoRA, the Observatory names the same
 original for <b>{mf.same_original.mean():.0%}</b> and the same outcome for <b>{mfc.same_outcome.mean():.0%}</b> ({mfc.same_outcome.sum()}/{len(mfc)}).
-Outcome disagreement of this size is therefore normal between two careful sources, not a sign of pipeline error; the success/inconclusive
-boundary dominates it there as well.</p>
-<h2>2. Blinded adjudication of a stratified sample</h2>
-<p>{len(v)} divergent works, drawn per stratum. Each judge saw the paper (full text where we had it, otherwise it looked the paper up by DOI)
-and the two answers labelled A/B in random order, without knowing which source gave which. For outcome items “right” means
-<i>more defensible</i>; “both defensible” is the typical call on a partial replication.</p>
+Outcome disagreement of this size is therefore normal between two careful sources; the success/inconclusive boundary dominates it there as
+well.</p>
+<h2>2. Blinded adjudication: our pipeline vs the Observatory</h2>
+<p>{len(v)} divergent works: all {len(v[v.stratum == 'original'])} genuinely different originals, and a stratified sample of the outcome
+disagreements. Each judge saw the paper (full text where we had it, otherwise it looked the paper up by DOI) and the two answers labelled
+A/B in random order, without knowing which source gave which. For outcome items “right” means <i>more defensible</i>; “both defensible”
+is the typical call on a partial replication.</p>
 {_tally(v)}
-{_findings(v, ours)}
+{_findings(v, ours, n_refs)}
 """
     filters = ("<div class='filters'>Show: <button class='on' onclick=\"f('stratum','',this)\">all</button>"
                + "".join(f"<button onclick=\"f('stratum','{s}',this)\">{_e(l)}</button>" for s, l in STRATA.items())
                + "<button onclick=\"f('cons','split',this)\">judges split</button>"
-               + "<button onclick=\"f('cons','ours',this)\">both: FLoRA right</button>"
+               + "<button onclick=\"f('cons','ours',this)\">both: pipeline right</button>"
                + "<button onclick=\"f('cons','mo',this)\">both: Observatory right</button></div>")
     cards = "".join(_card(it, ours, mo) for it in v.sort_values(["stratum", "consensus"]).to_dict("records"))
     page = (f"<!doctype html><html><head><meta charset='utf-8'><title>FLoRA × Observatory adjudication</title>"
-            f"<style>{CSS}</style><script>{JS}</script></head><body>{intro}<h2>3. The items</h2>{filters}{cards}</body></html>")
+            f"<style>{CSS}</style><script>{JS}</script></head><body>{intro}<h2>3. The pipeline items</h2>{filters}{cards}"
+            f"{_flora_section(fv, fours, fmo)}</body></html>")
     (HERE / "report.html").write_text(page, encoding="utf-8")
-    print(f"report.html: {len(v)} items; claude {done['claude']}, codex {done['codex']}")
+    print(f"report.html: {len(v)} pipeline items (claude {done['claude']}, codex {done['codex']}); {len(fv)} FLoRA items")
     print(v.groupby("stratum")[["claude_verdict", "codex_verdict", "consensus"]].agg(lambda s: s.value_counts().to_dict()).to_string())
+    print("FLoRA:", fv.consensus.value_counts().to_dict())
 
 
 if __name__ == "__main__":
