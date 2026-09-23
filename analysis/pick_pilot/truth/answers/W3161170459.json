@@ -1,0 +1,16 @@
+{
+  "work_id": "W3161170459",
+  "originals": [
+    {
+      "key": "@li2020",
+      "citation": "Li, X., Liang, P., & Li, Z. (2020). Automatic identification of decisions from the Hibernate developer mailing list. Proceedings of EASE 2020.",
+      "doi": "10.1145/3383219.3383225",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "In this paper, we present a replication study of our previous work (EASE2020), which conducted experiments to automatically identify decisions from the Hibernate developer mailing list.",
+  "evidence_basis": "packet",
+  "notes": "Self-replication. @li2019b is an exploratory study on decisions (not the classification experiment); @fu2020 is this paper's own replication package."
+}

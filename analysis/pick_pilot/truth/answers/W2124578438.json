@@ -1,0 +1,16 @@
+{
+  "work_id": "W2124578438",
+  "originals": [
+    {
+      "key": "@graen1982",
+      "citation": "Graen, G. B., Liden, R. C., & Hoel, W. (1982). Role of leadership in the employee withdrawal process. Journal of Applied Psychology, 67(6), 868-872.",
+      "doi": "10.1037/0021-9010.67.6.868",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "",
+  "evidence_basis": "packet+online",
+  "notes": "Packet abstract truncated; secondary literature consistently describes Vecchio (1985) as failing to replicate Graen, Liden & Hoel (1982) LMX-turnover finding (bank tellers vs. systems analysts)."
+}

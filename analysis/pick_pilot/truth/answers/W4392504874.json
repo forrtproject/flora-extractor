@@ -1,0 +1,11 @@
+{
+  "work_id": "W4392504874",
+  "originals": [
+    {"key": "@scott2023", "citation": "Scott, D., Atkin, A. E., et al. (2023). The utility of cognitive testing to predict real world commercial driving risk. Transportation Research Interdisciplinary Perspectives / Journal of Transport & Health.", "doi": "", "on_list": true}
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "We directly replicated the study of commercial drivers reported in Scott et al. (2023.",
+  "evidence_basis": "packet",
+  "notes": "Self-replication; journal of the original not verified."
+}

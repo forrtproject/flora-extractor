@@ -1,0 +1,16 @@
+{
+  "work_id": "W2996503271",
+  "originals": [
+    {
+      "key": "@berg2018",
+      "citation": "van den Berg, L., Kalmijn, M., & Leopold, T. (2018). Family structure and early home leaving: A mediation analysis. European Journal of Population, 34(5), 873-900.",
+      "doi": "10.1007/s10680-017-9461-1",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "This study draws on longitudinal data from the German Family Panel (pairfam) to replicate and extend the analyses of van den Berg et al. (Eur J Popul 34(5):873-900, 2018. 10.1007/s10680-017-9461-1).",
+  "evidence_basis": "packet",
+  "notes": ""
+}

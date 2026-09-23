@@ -1,0 +1,16 @@
+{
+  "work_id": "W4313327776",
+  "originals": [
+    {
+      "key": "@kacin2021",
+      "citation": "Kacin, M., Cha, O., & Gauthier, I. (2021). Ensemble coding of average length and average orientation are correlated. Vision Research, 187, 94-101. (Study 1)",
+      "doi": "10.1016/j.visres.2021.04.010",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "Here, we used the same length- and orientation-averaging tasks and stimuli as in the Study 1 of Kacin et al. [12], with the only exception being that in every ensemble the locations of the lines did not vary and were, therefore, completely predictable. Our goal is to assess the replication of the observed shared variance in errors in length- and orientation-averaging",
+  "evidence_basis": "packet+online",
+  "notes": "Self-replication; full text via Europe PMC PMC9844274."
+}

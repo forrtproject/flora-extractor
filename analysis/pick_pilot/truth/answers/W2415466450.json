@@ -1,0 +1,22 @@
+{
+  "work_id": "W2415466450",
+  "originals": [
+    {
+      "key": "@khnen2002",
+      "citation": "Kühnen, U., & Oyserman, D. (2002). Thinking about the self influences thinking in general: Cognitive consequences of salient self-concept. Journal of Experimental Social Psychology.",
+      "doi": "10.1006/jesp.2001.1499",
+      "on_list": true
+    },
+    {
+      "key": "@oyserman2009",
+      "citation": "Oyserman, D., Sorensen, N., Reber, R., & Chen, S. X. (2009). Connecting and separating mind-sets: Culture as situated cognition. Journal of Personality and Social Psychology.",
+      "doi": "10.1037/a0015850",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "It has previously been reported that priming a collectivistic social orientation (compared with an individualistic one) boosts object-location memory (Kühnen & Oyserman, 2002; Oyserman, Sorensen, Reber, & Chen, 2009). We conducted 4 experiments to replicate this reported effect, using the same methods as in those initial reports.",
+  "evidence_basis": "packet",
+  "notes": ""
+}

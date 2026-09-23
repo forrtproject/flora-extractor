@@ -1,0 +1,16 @@
+{
+  "work_id": "W4212798822",
+  "originals": [
+    {
+      "key": "@mireles2016",
+      "citation": "Mireles, J. D., Cho, J.-H., & Xu, S. (2016). Extracting attack narratives from traffic datasets. International Conference on Cyber Conflict (CyCon U.S.).",
+      "doi": "10.1109/cyconus.2016.7836624",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "In this paper we explore this topic through the replication of a prior study “Extracting Attack Narratives from Traffic Datasets” by Mireles et al.",
+  "evidence_basis": "packet",
+  "notes": "The abstract's bracketed citation wrongly points to Athanasiades et al. 2003 (@athanasiades2003); the named study is Mireles et al. 2016."
+}

@@ -1,0 +1,22 @@
+{
+  "work_id": "W3209377451",
+  "originals": [
+    {
+      "key": "@schretlen2013",
+      "citation": "Schretlen, D. J., Varvaris, M., Ho, T. E., et al. (2013). Regional brain volume abnormalities in Lesch-Nyhan disease and its variants: a cross-sectional study. Lancet Neurology, 12(12), 1151-1158.",
+      "doi": "",
+      "on_list": true
+    },
+    {
+      "key": "@schretlen2014",
+      "citation": "Schretlen, D. J., Varvaris, M., Vannorsdall, T. D., et al. (2015). Brain white matter volume abnormalities in Lesch-Nyhan disease and its variants. Neurology.",
+      "doi": "",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "medium",
+  "quote": "First, using a different volumetric segmentation methodology from our prior study in a subset of participants who were all scanned on a single 3 Tesla machine, we replicated our previous findings of reduced total intracranial, cortical and subcortical GM, and WM volumes in patients with LND and LNV (Schretlen et al., 2013).",
+  "evidence_basis": "online",
+  "notes": "The paper's main aim is a new DTI analysis; the replication is a secondary volumetric check, apparently on a subset of previously studied participants (partly a re-analysis). The Discussion cites Schretlen et al. 2013 for the replicated volumes; the abstract's 'We previously found reduced brain white matter volume ... using voxel-based morphometry' is the white-matter VBM paper (cited as Schretlen et al., 2015; list entry @schretlen2014, online-first year). Borderline as a replication at all."
+}

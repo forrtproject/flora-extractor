@@ -1,0 +1,16 @@
+{
+  "work_id": "W3018465724",
+  "originals": [
+    {
+      "key": "@jaramillo2016",
+      "citation": "Jaramillo, T. C., Speed, H. E., Xuan, Z., et al. (2017). Novel Shank3 mutant exhibits behaviors with face validity for autism and altered striatal and hippocampal function. Autism Research, 10(1), 42-65.",
+      "doi": "10.1002/aur.1664",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "medium",
+  "quote": "Previously, we generated and characterized a mouse model deficient in a subset of major isoforms of Shank3 (Shank3E13) that behaviorally displayed excessive grooming, social interaction deficits, decreased rearing, locomotor deficits, and learning and memory deficits. ... In this study, we replicate many of these behaviors in Shank3 mutant mice.",
+  "evidence_basis": "packet+online",
+  "notes": "Self-replication of the Shank3E13 phenotype (cited as Jaramillo et al., 2017; list entry dated 2016 = online-first). Replication is a secondary component of a genetic-rescue study. Not @jaramillo2015 (exon 4-9 deletion)."
+}

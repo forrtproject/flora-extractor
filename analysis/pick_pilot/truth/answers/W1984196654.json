@@ -1,0 +1,16 @@
+{
+  "work_id": "W1984196654",
+  "originals": [
+    {
+      "key": "@flavin2006",
+      "citation": "Flavin, M. P., Dostaler, S. M., Simpson, K., Brison, R. J., & Pickett, W. (2006). Stages of development and injury patterns in the early years: a population-based analysis. BMC Public Health, 6, 187.",
+      "doi": "10.1186/1471-2458-6-187",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "The aim of our study was to use a local version of CHIRPP [3] to investigate the relationship between the developmental stage of young (pre-school) children ... in an attempt to replicate the Kingston study and compare our findings with those of the Canadian researchers.",
+  "evidence_basis": "packet+online",
+  "notes": "Read PMC2330035 full text; Kingston study reference is Flavin et al. 2006."
+}

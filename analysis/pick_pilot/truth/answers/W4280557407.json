@@ -1,0 +1,16 @@
+{
+  "work_id": "W4280557407",
+  "originals": [
+    {
+      "key": "@dowsett2014",
+      "citation": "Dowsett, A. J., & Burton, A. M. (2015). Unfamiliar face matching: Pairs out-perform individuals and provide a route to training. British Journal of Psychology, 106(3), 433-445.",
+      "doi": "10.1111/bjop.12103",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "In this first experiment, we sought to first replicate Dowsett and Burton's (2015) pairs training effect whereby pair performance is higher than individual performance on an unfamiliar face matching task, and that the pairs effect produces a lasting improvement, particularly for the poorer performers in each pair.",
+  "evidence_basis": "packet+online",
+  "notes": "Paper cites it as 2015 (issue year); list entry dated 2014 (online first). Full text read via Europe PMC PMC9203675."
+}

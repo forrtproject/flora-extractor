@@ -1,0 +1,16 @@
+{
+  "work_id": "W1969237464",
+  "originals": [
+    {
+      "key": "@jiang2010",
+      "citation": "Jiang, L., Liu, J., et al. (2010). Genome wide association studies for milk production traits in Chinese Holstein population. PLoS ONE.",
+      "doi": "10.1371/journal.pone.0013661",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "Genome-wide association studies with an Illumina Bovine50K chip have detected 105 SNPs associated with one or multiple milk production traits in the Chinese Holstein population.",
+  "evidence_basis": "packet",
+  "notes": "Post-GWAS validation of the C14H8orf33 signal (SNP Hapmap30383-BTC-005848) from the authors' group's GWAS (Jiang et al. 2010). @wang2013 is a sister post-GWAS study of another gene."
+}

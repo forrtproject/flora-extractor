@@ -1,0 +1,11 @@
+{
+  "work_id": "W4378232441",
+  "originals": [
+    {"key": "@serie2017", "citation": "Serie, D. J., Crook, J. E., et al. (2017). Genome-wide association study of cardiotoxicity in the NCCTG N9831 (Alliance) adjuvant trastuzumab trial. Pharmacogenetics and Genomics.", "doi": "10.1097/FPC.0000000000000302", "on_list": true}
+  ],
+  "not_a_replication": false,
+  "confidence": "medium",
+  "quote": "The N9831 GWAS study identified genetic associations of the maximum decline in LVEF at six novel loci (LDB2, BRINP1, chr6 intergenic, RAB22A, TRPC6, and LINC01060) in the subset of patients who were treated with chemotherapy plus trastuzumab (p < 1 × 10−5) and in the same patient group, with the CBR3 V244M variant (p < 0.05) ... we examined the same variants in DNA specimens from the NSABP B-31 trial.",
+  "evidence_basis": "packet+online",
+  "notes": "The re-tested associations come from the N9831 GWAS (Serie 2017). @norton2020 (TRPC6 and chemotherapy-related heart failure, also N9831) is cited in the discussion for the TRPC6 TWAS finding and could arguably be a second source of the doxorubicin/CHF association; the paper frames the replicated variants as from the Serie GWAS."
+}

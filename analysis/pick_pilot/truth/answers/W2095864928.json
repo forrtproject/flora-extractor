@@ -1,0 +1,16 @@
+{
+  "work_id": "W2095864928",
+  "originals": [
+    {
+      "key": "@knutson2004",
+      "citation": "Knutson, J. F., DeGarmo, D. S., & Reid, J. B. (2004). Social disadvantage and neglectful parenting as precursors to the development of antisocial and aggressive child behavior: Testing a theoretical model. Aggressive Behavior, 30, 187-205.",
+      "doi": "10.1002/ab.20016",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "medium",
+  "quote": "Multimethod and multisource indices of the predictive constructs ... were used in a test of a theoretical model using structural equation modeling.",
+  "evidence_basis": "packet",
+  "notes": "Self-replication inferred: title says 'A Replication and Extension' and the same authors' 2004 paper tested the same neglect/disadvantage-to-aggression model. Full text not read."
+}

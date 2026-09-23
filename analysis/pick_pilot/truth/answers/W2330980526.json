@@ -1,0 +1,16 @@
+{
+  "work_id": "W2330980526",
+  "originals": [
+    {
+      "key": "@radin1984",
+      "citation": "Radin, D. (1984). A possible proximity effect on human grip strength. Perceptual and Motor Skills.",
+      "doi": "",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "A double-blind experiment with 50 adults was conducted to replicate a finding that proximity to sugar reduces human grip strength.",
+  "evidence_basis": "packet",
+  "notes": "Title reuses Radin (1984)'s title verbatim with 'An Attempted Replication'; Radin is the only reference."
+}

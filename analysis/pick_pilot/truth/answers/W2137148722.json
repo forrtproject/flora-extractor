@@ -1,0 +1,16 @@
+{
+  "work_id": "W2137148722",
+  "originals": [
+    {
+      "key": "@chan2013b",
+      "citation": "Chan, J. C. C., Koop, G., & Potter, S. M. (2013). A new model of trend inflation. Journal of Business & Economic Statistics, 31(1), 94-106.",
+      "doi": "10.1080/07350015.2012.741549",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "An article by Chan et al. ( ) published in the Journal of Business and Economic Statistics introduces a new model for trend inflation. ... We reproduce their results using particle Markov chain Monte Carlo",
+  "evidence_basis": "packet",
+  "notes": "Reproduction; not @chan2013 (Chan's MA-SV paper)."
+}

@@ -1,0 +1,16 @@
+{
+  "work_id": "W1987244237",
+  "originals": [
+    {
+      "key": "@fjellstedt1973",
+      "citation": "Fjellstedt, N., & Sulzer-Azaroff, B. (1973). Reducing the latency of a child's responding to instructions by means of a token system. Journal of Applied Behavior Analysis.",
+      "doi": "10.1901/jaba.1973.6-125",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "Fjellstedt and Sulzer-Azaroff (1973) used differential reinforcement of short latencies to decrease a child's latency to comply with instructions. We replicated this contingency with a young man diagnosed with Asperger syndrome",
+  "evidence_basis": "packet",
+  "notes": ""
+}

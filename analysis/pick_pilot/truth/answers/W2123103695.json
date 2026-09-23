@@ -1,0 +1,16 @@
+{
+  "work_id": "W2123103695",
+  "originals": [
+    {
+      "key": "@mahon2001",
+      "citation": "Mahon, J. N., Winston, A. P., Palmer, R. L., & Harvey, P. K. (2001). Do broken relationships in childhood relate to bulimic women breaking off psychotherapy in adulthood? International Journal of Eating Disorders, 29(2), 139-149.",
+      "doi": "10.1002/1098-108x(200103)29:2<139::aid-eat1003>3.0.co;2-i",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "The primary goal of this study was to replicate the finding that experiences of childhood trauma have a dose-effect relationship with dropping out from psychotherapeutic treatment for bulimia nervosa. It also aimed to replicate logistic regression findings that parental break-up predicts dropping out. ... LR models were double cross-validated between this and an earlier cohort.",
+  "evidence_basis": "packet+online",
+  "notes": "Self-replication; the earlier cohort paper's abstract (Europe PMC) reports exactly the dose-effect trauma finding and parental break-up predictor."
+}

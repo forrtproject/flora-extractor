@@ -1,0 +1,22 @@
+{
+  "work_id": "W2158965732",
+  "originals": [
+    {
+      "key": "@initiative2007",
+      "citation": "Weedon, M. N., et al. (2007). A common variant of HMGA2 is associated with adult and childhood height in the general population. Nature Genetics, 39(10), 1245-1250.",
+      "doi": "10.1038/ng2121",
+      "on_list": true
+    },
+    {
+      "key": "@yang2009",
+      "citation": "Yang, T.-L., Guo, Y., et al. (2010). HMGA2 is confirmed to be associated with human adult height. Annals of Human Genetics, 74(1), 11-16.",
+      "doi": "10.1111/j.1469-1809.2009.00555.x",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "medium",
+  "quote": "Recent genome-wide association studies have identified a novel single-nucleotide polymorphism (SNP) rs1042725 in the high mobility group-A2 gene (HMGA2) and shown it to be associated with human height in Caucasian populations. We performed a replication study ... another SNP, rs7968902, in the gene achieved significance for its association in the same populations, and the effect was the same as that documented previously.",
+  "evidence_basis": "packet+online",
+  "notes": "Full text not accessed. rs1042725 is from the Weedon 2007 GWAS (also reported in Weedon 2008 @initiative2008 and Lettre 2008 @initiative2008b GWAS, which may be cited too). rs7968902/rs7968682 associations were reported by Yang et al. (published online 2009), whose design and wording this paper closely mirrors."
+}

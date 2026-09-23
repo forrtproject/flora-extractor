@@ -1,0 +1,16 @@
+{
+  "work_id": "W1966139138",
+  "originals": [
+    {
+      "key": "@simons2011",
+      "citation": "Simons, D. J., & Chabris, C. F. (2011). What people believe about how memory works: A representative survey of the U.S. population. PLoS ONE.",
+      "doi": "10.1371/journal.pone.0022757",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "We recently reported the results of a survey showing that a substantial proportion of the United States public held beliefs about memory that conflicted with those of memory experts... Here we replicated our telephone survey using Amazon Mechanical Turk",
+  "evidence_basis": "packet",
+  "notes": ""
+}

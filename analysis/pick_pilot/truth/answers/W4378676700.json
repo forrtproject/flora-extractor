@@ -1,0 +1,11 @@
+{
+  "work_id": "W4378676700",
+  "originals": [
+    {"key": "@gopal2022", "citation": "Gopal, B., & Cooper, S. (2022). POGIL-like Learning in Undergraduate Software Testing and DevOps - A Pilot Study. ITiCSE 2022.", "doi": "10.1145/3502718.3524804", "on_list": true}
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "We present in this paper our findings from replicating our previously published study of a process oriented guided inquiry based learning approach called POGIL-like in the topics of unit testing, integration testing and continuous integration ... In our original paper we employed POGIL-like in an in-person classroom.",
+  "evidence_basis": "packet+online",
+  "notes": "Self-replication of the in-person pilot. @gopal2022b is their peer-instruction replication, a different study. DOI of the original not verified."
+}

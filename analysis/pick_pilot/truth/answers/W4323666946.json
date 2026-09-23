@@ -1,0 +1,16 @@
+{
+  "work_id": "W4323666946",
+  "originals": [
+    {
+      "key": "@birch1986",
+      "citation": "Birch, L. L., & Billman, J. (1986). Preschool Children's Food Sharing with Friends and Acquaintances. Child Development, 57(2), 387-395.",
+      "doi": "10.2307/1130594",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "In order to do so, we replicated and extended the classical work of Birch and Billman in a Dutch sample.",
+  "evidence_basis": "packet",
+  "notes": "Title of the list entry matches the replicated paradigm exactly; @birch1980 (Birch, Zimmerman et al.) is a different paper. DOI from memory."
+}

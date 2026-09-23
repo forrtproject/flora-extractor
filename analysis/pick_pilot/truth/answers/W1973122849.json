@@ -1,0 +1,16 @@
+{
+  "work_id": "W1973122849",
+  "originals": [
+    {
+      "key": "@berg1988",
+      "citation": "Berg, L., Miller, J. P., et al. (1988). Mild senile dementia of the Alzheimer type: 2. Longitudinal assessment. Annals of Neurology.",
+      "doi": "10.1002/ana.410230511",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "This replication study confirmed our earlier conclusions that four of six clinical measures showed similar patterns over time and were useful throughout the study",
+  "evidence_basis": "packet",
+  "notes": "The earlier longitudinal study of 43 mild SDAT subjects is part 2 of the series; @berg1982 describes the study population/criteria."
+}

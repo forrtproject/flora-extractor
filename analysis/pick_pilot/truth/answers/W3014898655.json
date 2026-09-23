@@ -1,0 +1,16 @@
+{
+  "work_id": "W3014898655",
+  "originals": [
+    {
+      "key": "@dang2017b",
+      "citation": "Dang, J., Liu, Y., Liu, X., & Mao, L. (2017). The ego could be depleted, providing initial exertion is depleting: A preregistered experiment of the ego depletion effect. Social Psychology, 48(4), 242-245.",
+      "doi": "10.1027/1864-9335/a000308",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "A recent preregistered experiment with the Stroop task as the depleting task and the antisaccade task as the outcome task found a medium-level effect size. In the current research, we conducted a preregistered multilab replication of that experiment.",
+  "evidence_basis": "packet+online",
+  "notes": "Online sources confirm the procedure was that reported by Dang, Liu, Liu, and Mao (2017). Not @dang2017 (meta-analysis) or @hagger2016 (earlier RRR)."
+}

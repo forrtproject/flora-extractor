@@ -1,0 +1,16 @@
+{
+  "work_id": "W2987221369",
+  "originals": [
+    {
+      "key": "@aker2016",
+      "citation": "Aker, J. C., Boumnijel, R., McClelland, A., & Tierney, N. (2016). Payment mechanisms and antipoverty programs: Evidence from a mobile money cash transfer experiment in Niger. Economic Development and Cultural Change, 65(1), 1-37.",
+      "doi": "10.1086/687578",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "An experimental study suggests that the use of mobile money, Zap delivery, might improve intra-household socio-economic dynamics on Niger. Our replication study evaluates the impact of Zap delivery in contrast to more traditional delivery mechanism. We examined original author's findings",
+  "evidence_basis": "packet",
+  "notes": "Original not named in abstract but the only Niger mobile-money (Zap) experiment on the list; 3ie replication of Aker et al."
+}

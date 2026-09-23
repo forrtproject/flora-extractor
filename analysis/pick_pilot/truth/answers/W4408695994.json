@@ -1,0 +1,16 @@
+{
+  "work_id": "W4408695994",
+  "originals": [
+    {
+      "key": "@campbell2021",
+      "citation": "Campbell, C., Tanzer, M., et al. (2021). Development and validation of a self-report measure of epistemic trust. PLoS ONE.",
+      "doi": "10.1371/journal.pone.0250264",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "medium",
+  "quote": "Satisfactory psychometric properties were found to replicate the original three-factor solution in a Francophone population ... Our results regarding childhood trauma replicated those of Campbell et al. [15]",
+  "evidence_basis": "packet+online",
+  "notes": "Psychometric replication of the ETMCQ structure and associations from Campbell et al. 2021. Attachment results also compared with Asgarizadeh et al. 2024 (@asgarizadeh2024), which reads as comparison rather than a framed original."
+}

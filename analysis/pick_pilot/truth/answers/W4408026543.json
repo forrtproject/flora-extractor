@@ -1,0 +1,16 @@
+{
+  "work_id": "W4408026543",
+  "originals": [
+    {
+      "key": "@yun2023",
+      "citation": "Yun, S., Yang, B., et al. (2023). Antipsychotic drug efficacy correlates with the modulation of D1 rather than D2 receptor-expressing striatal projection neurons. Nature Neuroscience.",
+      "doi": "",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "Recently, we used miniature microscopes to record Ca2+ activity in D1 and D2 dopamine receptor-expressing spiny projection neurons (SPNs) in response to antipsychotic drugs or candidates. ... In this study, we re-processed these data to approximate a fiber photometry signal and asked whether the conclusions were the same.",
+  "evidence_basis": "packet",
+  "notes": "Reanalysis (robustness reproduction) of the authors' own earlier dataset."
+}

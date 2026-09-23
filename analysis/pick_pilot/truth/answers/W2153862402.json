@@ -1,0 +1,16 @@
+{
+  "work_id": "W2153862402",
+  "originals": [
+    {
+      "key": "@gilbert2003",
+      "citation": "Gilbert, N., & Meyer, C. (2003). Social anxiety and social comparison: differential links with restrictive and bulimic attitudes among nonclinical women. Eating Behaviors, 4(3), 257-264.",
+      "doi": "10.1016/s1471-0153(03)00026-6",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "medium",
+  "quote": "Preliminary research has found a link between restrictive eating attitudes and a fear of negative evaluation (FNE). ... The current study sought to replicate and extend these findings",
+  "evidence_basis": "packet+online",
+  "notes": "Self-replication inferred: Gilbert & Meyer 2003 found FNE predicted drive for thinness (restrictive) but not bulimic attitudes, the finding re-tested. Full text not accessed; other 'preliminary research' may also be cited."
+}

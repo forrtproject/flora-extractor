@@ -1,0 +1,16 @@
+{
+  "work_id": "W2092106350",
+  "originals": [
+    {
+      "key": "@hagemann2002",
+      "citation": "Hagemann, D., Naumann, E., Thayer, J. F., & Bartussek, D. (2002). Does resting electroencephalograph asymmetry reflect a trait? An application of latent state-trait theory. Journal of Personality and Social Psychology, 82(4), 619-641.",
+      "doi": "10.1037/0022-3514.82.4.619",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "medium",
+  "quote": "Recent research on brain asymmetry suggested that resting electroencephalographic (EEG) asymmetry represents a superimposition of a trait-like asymmetry with state-dependent fluctuations. ... These data replicate previous findings",
+  "evidence_basis": "packet+online",
+  "notes": "Full text not accessible (Wiley 403); the latent state-trait finding being replicated is the authors' own Hagemann et al. 2002 LST study. Tomarken et al. 1992 is background on stability, not the LST claim."
+}

@@ -1,0 +1,16 @@
+{
+  "work_id": "W4415125743",
+  "originals": [
+    {
+      "key": "@mekala2021",
+      "citation": "Mekala, R. R., Irfan, A., et al. (2021). Classifying User Requirements from Online Feedback in Small Dataset Environments using Deep Learning.",
+      "doi": "",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "we replicate and extend a previous NLP4RE study (baseline), \"Classifying User Requirements from Online Feedback in Small Dataset Environments using Deep Learning\"",
+  "evidence_basis": "packet",
+  "notes": ""
+}

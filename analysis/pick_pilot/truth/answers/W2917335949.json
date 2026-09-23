@@ -1,0 +1,16 @@
+{
+  "work_id": "W2917335949",
+  "originals": [
+    {
+      "key": "@eitam2013",
+      "citation": "Eitam, B., Yeshurun, Y., & Hassan, K. (2013). Blinded by irrelevance: Pure irrelevance induced 'blindness'. Journal of Experimental Psychology: Human Perception and Performance, 39(3), 611-615.",
+      "doi": "10.1037/a0032269",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "At variance with this claim of load theory, Eitam et al. (2013) used a very simple, undemanding, low-load one-trial task and nonetheless observed the blocking of bottom-up selection of irrelevant information.",
+  "evidence_basis": "packet+online",
+  "notes": "Abstract: 'leaving the encoding displays as in the original study ... results only partly replicated prior findings'."
+}

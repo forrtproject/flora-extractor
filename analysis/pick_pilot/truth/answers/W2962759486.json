@@ -1,0 +1,16 @@
+{
+  "work_id": "W2962759486",
+  "originals": [
+    {
+      "key": "@aichert2016",
+      "citation": "Aichert, I., Späth, M., & Ziegler, W. (2016). The role of metrical information in apraxia of speech. Perceptual and acoustic analyses of word stress. Neuropsychologia, 82, 171-178.",
+      "doi": "10.1016/j.neuropsychologia.2016.01.009",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "The results suggest that in English, as in German, the trochaic structure is more resistant to segmental errors in persons with AOS and aphasia, providing replication of the findings of Aichert et al. in 2016.",
+  "evidence_basis": "packet",
+  "notes": ""
+}

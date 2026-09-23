@@ -1,0 +1,16 @@
+{
+  "work_id": "W7160216022",
+  "originals": [
+    {
+      "key": "@snchez2014",
+      "citation": "Sánchez, A. B., Segura, S., & Ruiz-Cortés, A. (2014). A Comparison of Test Case Prioritization Criteria for Software Product Lines.",
+      "doi": "",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "The aim of this work is twofold: (1) to replicate the experiments in the previous approach (Sánchez et al. 2014), and (2) to investigate the use of new metrics as prioritization criteria",
+  "evidence_basis": "fulltext",
+  "notes": ""
+}

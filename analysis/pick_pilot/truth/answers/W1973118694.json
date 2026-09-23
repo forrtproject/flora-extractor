@@ -1,0 +1,16 @@
+{
+  "work_id": "W1973118694",
+  "originals": [
+    {
+      "key": "@hadjikhani2004",
+      "citation": "Hadjikhani, N., Joseph, R. M., et al. (2004). Activation of the fusiform gyrus when individuals with autism spectrum disorder view faces. NeuroImage.",
+      "doi": "10.1016/j.neuroimage.2004.03.025",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "We replicated our original findings of significant activation of face identity-processing areas (FFA and inferior occipital gyrus, IOG) in ASD.",
+  "evidence_basis": "packet",
+  "notes": "Self-replication; the replication is one component of a paper that mostly reports new findings."
+}

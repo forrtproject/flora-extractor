@@ -1,0 +1,16 @@
+{
+  "work_id": "W2138009685",
+  "originals": [
+    {
+      "key": "@deicken2000",
+      "citation": "Deicken, R. F., Johnson, C., Eliaz, Y., & Schuff, N. (2000). Reduced concentrations of thalamic N-acetylaspartate in male patients with schizophrenia. American Journal of Psychiatry, 157(4), 644-647.",
+      "doi": "10.1176/appi.ajp.157.4.644",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "medium",
+  "quote": "Previous findings of lower NAA concentration in the left and right mediodorsal region of the thalamus and significant correlations between left and right thalamic NAA measures in patients with schizophrenia were corroborated.",
+  "evidence_basis": "packet+online",
+  "notes": "Full text inaccessible (403). Deicken et al. 2000 abstract reports exactly both replicated findings (bilateral lower thalamic NAA; left-right NAA correlation in patients). Omori 2000 (@omori2000) also reported lower thalamic NAA/Cr (left thalamus only) and may be cited as a further previous finding."
+}

@@ -1,0 +1,11 @@
+{
+  "work_id": "W4385330129",
+  "originals": [
+    {"key": "@stringer1997", "citation": "Stringer, W. W., Hansen, J. E., & Wasserman, K. (1997). Cardiac output estimated noninvasively from oxygen uptake during exercise. Journal of Applied Physiology, 82(3), 908-912.", "doi": "10.1152/jappl.1997.82.3.908", "on_list": true}
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "In 1997, Stringer, Hansen, and Wasserman developed a method for estimating cardiac output during incremental exercise testing. They observed that the arterio-mixed venous oxygen content difference increases linearly with the percentage of maximal O2 consumption.",
+  "evidence_basis": "packet",
+  "notes": "Title 'Revisiting cardiac output estimated noninvasively from oxygen uptake during exercise' mirrors the Stringer 1997 title; the replication re-analyses the Stringer data."
+}

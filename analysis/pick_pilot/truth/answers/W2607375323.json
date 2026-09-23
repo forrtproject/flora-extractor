@@ -1,0 +1,16 @@
+{
+  "work_id": "W2607375323",
+  "originals": [
+    {
+      "key": "@sun2015",
+      "citation": "Sun, Y., Huang, Y., et al. (2015). Genome-wide association study identifies a new susceptibility locus for cleft lip with or without a cleft palate. Nature Communications.",
+      "doi": "10.1038/ncomms7414",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "A recent genome-wide association study (GWAS) among Chinese populations has identified a new region at 16p13.3 as being associated with NSCL/P, which requires further replication. Here, we attempted to replicate and further clarify the genetic association between this region and NSCL/P",
+  "evidence_basis": "packet",
+  "notes": "The 16p13.3 locus was reported by Sun et al. 2015 (Chinese GWAS)."
+}

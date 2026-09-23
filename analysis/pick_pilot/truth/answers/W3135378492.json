@@ -1,0 +1,16 @@
+{
+  "work_id": "W3135378492",
+  "originals": [
+    {
+      "key": "@inagaki2018",
+      "citation": "Inagaki, T. K., Jennings, J. R., Eisenberger, N. I., & Gianaros, P. J. (2018). Taking rejection to heart: Associations between blood pressure and sensitivity to social pain. Biological Psychology, 139, 87-95.",
+      "doi": "10.1016/j.biopsycho.2018.10.007",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "medium",
+  "quote": "Research also shows a link between social pain and physical pain, and an inverse association between resting BP and social pain. ... Therefore, the present study aimed to replicate the link between social pain and physical pain, and the inverse relationship between resting BP and social pain",
+  "evidence_basis": "packet+online",
+  "notes": "Full text paywalled (403). The title's 'link between the cardiovascular system and sensitivity to social pain' and the inverse BP-social pain association are the finding of Inagaki et al. 2018 (senior author Inagaki; self-replication). The paper also re-tests the social-physical pain sensitivity link; I could not confirm which paper it cites for that (plausibly Eisenberger, Jarcho, Lieberman & Naliboff 2006, Pain, 'An experimental study of shared sensitivity to physical pain and social rejection', 10.1016/j.pain.2006.06.024, not on the list), so it is not listed."
+}

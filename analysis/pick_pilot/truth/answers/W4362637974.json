@@ -1,0 +1,16 @@
+{
+  "work_id": "W4362637974",
+  "originals": [
+    {
+      "key": "@smith2020b",
+      "citation": "Smith, R., Schwartenbeck, P., Stewart, J. L., Kuplicki, R., Ekhtiari, H., Paulus, M. P., & Tulsa 1000 Investigators (2020). Imprecise action selection in substance use disorder: Evidence for active learning impairments when solving the explore-exploit dilemma. Drug and Alcohol Dependence, 215, 108208.",
+      "doi": "10.1016/j.drugalcdep.2020.108208",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "We performed the same computational modeling and group comparisons as in our prior report (doi: 10.1016/j.drugalcdep.2020.108208) to confirm previously observed effects.",
+  "evidence_basis": "packet",
+  "notes": "Self-replication; the abstract gives the original's DOI. Beware @smith2020 (interoceptive precision) and @smith2022 (1-year follow-up) — different papers."
+}

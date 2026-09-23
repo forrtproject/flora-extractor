@@ -1,0 +1,16 @@
+{
+  "work_id": "W2049839209",
+  "originals": [
+    {
+      "key": "@lorentzen2007",
+      "citation": "Lorentzen, J. C., Flornes, L., Eklow, C., et al. (2007). Association of arthritis with a gene complex encoding C-type lectin-like receptors. Arthritis & Rheumatism, 56, 2620-2632.",
+      "doi": "10.1002/art.22781",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "four DCIR single nucleotide polymorphisms (SNPs) rs2024301, rs2377422, rs1133104, and rs10840759 ... were significantly associated with RA susceptibility, in ACPA-negative RA subset in the Swedish population [14]",
+  "evidence_basis": "packet+online",
+  "notes": "DOI not verified."
+}

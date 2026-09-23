@@ -1,0 +1,16 @@
+{
+  "work_id": "W4411163069",
+  "originals": [
+    {
+      "key": "@hickok2015",
+      "citation": "Hickok, G., Farahbod, H., & Saberi, K. (2015). The rhythm of perception: entrainment to acoustic rhythms induces subsequent perceptual oscillation. Psychological Science, 26, 1006-1013.",
+      "doi": "10.1177/0956797615576533",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "In 2015, Hickok et al. introduced a behavioural paradigm ... Here, we replicate the original finding",
+  "evidence_basis": "packet",
+  "notes": "@henry2022 is this project's own Stage 1 registered report, not the original."
+}

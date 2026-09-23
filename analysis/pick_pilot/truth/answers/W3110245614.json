@@ -1,0 +1,16 @@
+{
+  "work_id": "W3110245614",
+  "originals": [
+    {
+      "key": "@waris2020",
+      "citation": "Waris, O., Jylkkä, J., Fellman, D., & Laine, M. (2021). Spontaneous strategy use during a working memory updating task. Acta Psychologica, 212, 103211.",
+      "doi": "10.1016/j.actpsy.2020.103211",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "In summary, all four findings from Waris et al. (2021) found support in this study.",
+  "evidence_basis": "packet+online",
+  "notes": "Self-replication; cited in text as Waris et al. (2021), list entry dated 2020 (online-first)."
+}

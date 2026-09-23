@@ -1,0 +1,22 @@
+{
+  "work_id": "W2316348164",
+  "originals": [
+    {
+      "key": "@verhoeven2013",
+      "citation": "Verhoeven, V. J. M., Hysi, P. G., et al. (2013). Genome-wide meta-analyses of multiancestry cohorts identify multiple new susceptibility loci for refractive error and myopia. Nature Genetics, 45(3), 314-318.",
+      "doi": "10.1038/ng.2554",
+      "on_list": true
+    },
+    {
+      "key": "@kiefer2013",
+      "citation": "Kiefer, A. K., Tung, J. Y., et al. (2013). Genome-wide analysis points to roles for extracellular matrix remodeling, the visual cycle, and neuronal development in myopia. PLoS Genetics, 9(2), e1003299.",
+      "doi": "10.1371/journal.pgen.1003299",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "Single-nucleotide polymorphisms (SNPs) in 51 genes that were reported by the Consortium for Refractive Error and Myopia and/or the 23andMe database were genotyped",
+  "evidence_basis": "packet",
+  "notes": "CREAM = Verhoeven 2013; 23andMe = Kiefer 2013. Full text not accessed (403)."
+}

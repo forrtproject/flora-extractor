@@ -1,0 +1,11 @@
+{
+  "work_id": "W4385566310",
+  "originals": [
+    {"key": "@jalal2018", "citation": "Jalal, H., Buchanich, J. M., Roberts, M. S., Balmert, L. C., Zhang, K., & Burke, D. S. (2018). Changing dynamics of the drug overdose epidemic in the United States from 1979 through 2016. Science, 361(6408), eaau1184.", "doi": "10.1126/science.aau1184", "on_list": true}
+  ],
+  "not_a_replication": false,
+  "confidence": "medium",
+  "quote": "Jalal et al. discovered that between 1979 and 2020 total rates and counts of fatal drug overdoses in the United States exhibited exponential growth at a very steady rate even though deaths from individual drugs did not. ... We fit the same model used by Jalal et al. to data on drug-related death rates for the countries of the United Kingdom.",
+  "evidence_basis": "packet+online",
+  "notes": "Full text not accessible (403). Europe PMC reference list shows three Jalal papers (2018 Science; 2020 carfentanil; 2020 age/generational); the steady-exponential-growth finding and the title echo Jalal 2018. The '1979-2020' span suggests the updated series, but no later Jalal paper is in the reference list."
+}

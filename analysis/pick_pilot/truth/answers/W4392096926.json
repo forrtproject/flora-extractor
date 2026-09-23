@@ -1,0 +1,11 @@
+{
+  "work_id": "W4392096926",
+  "originals": [
+    {"key": "@niemsiri2023", "citation": "Niemsiri, V., Rosenthal, S. B., et al. (2023). Focal adhesion is associated with lithium response in bipolar disorder: evidence from a network-based multi-omics analysis. Molecular Psychiatry.", "doi": "10.1038/s41380-022-01909-9", "on_list": true}
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "In our previous multi-omics study of the Pharmacogenomics of Bipolar Disorder (PGBD) sample combining transcriptomic and genomic data, we found that focal adhesion, the extracellular matrix (ECM), and PI3K-Akt signaling networks were associated with response to lithium. In this study, we replicated the results of our previous study ...",
+  "evidence_basis": "fulltext",
+  "notes": "Self-replication. @edegaard2016 describes the PGBD sample/study design, not the multi-omics network finding. DOI from memory, unverified."
+}

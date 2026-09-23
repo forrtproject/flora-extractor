@@ -1,0 +1,16 @@
+{
+  "work_id": "W1982594477",
+  "originals": [
+    {
+      "key": "@taylor2012",
+      "citation": "Taylor, J. R., & Henson, R. N. (2012). Could masked conceptual primes increase recollection? The subtleties of measuring recollection and familiarity in recognition memory. Neuropsychologia.",
+      "doi": "10.1016/j.neuropsychologia.2012.07.029",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "We therefore conducted a replication of our prior behavioral experiment using conceptual and repetition primes in an R/K paradigm (Taylor and Henson, in press) in combination with fMRI.",
+  "evidence_basis": "packet+online",
+  "notes": "Read PMC3690477 full text via Europe PMC."
+}

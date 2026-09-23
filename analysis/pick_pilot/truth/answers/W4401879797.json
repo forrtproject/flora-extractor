@@ -1,0 +1,11 @@
+{
+  "work_id": "W4401879797",
+  "originals": [
+    {"key": "@arakawa2022", "citation": "Arakawa, K., Hao, Q., et al. (2022). Early Identification of Student Struggles at the Topic Level Using Context-Agnostic Features. SIGCSE 2022.", "doi": "10.1145/3478431.3499298", "on_list": true}
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "To address these issues and explore the extent to which we can replicate studies on this topic, this study replicated a recent study that explored identifying struggling students at the topic level using context-agnostic features.",
+  "evidence_basis": "packet",
+  "notes": "The abstract's description matches the title of @arakawa2022 verbatim; shared author (Hao). DOI from memory, unverified."
+}

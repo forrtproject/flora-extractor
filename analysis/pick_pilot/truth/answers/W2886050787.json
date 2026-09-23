@@ -1,0 +1,16 @@
+{
+  "work_id": "W2886050787",
+  "originals": [
+    {
+      "key": "@wamsley2010",
+      "citation": "Wamsley, E. J., Tucker, M. A., Payne, J. D., Benavides, J. A., & Stickgold, R. (2010). Dreaming of a learning task is associated with enhanced sleep-dependent memory consolidation. Current Biology.",
+      "doi": "10.1016/j.cub.2010.03.027",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "we previously reported that dreaming about a spatial learning task during a nap strongly predicts subsequent performance improvements. Here, we replicate this observation in an overnight sleep study",
+  "evidence_basis": "packet",
+  "notes": "Self-replication; title mirrors the 2010 paper."
+}

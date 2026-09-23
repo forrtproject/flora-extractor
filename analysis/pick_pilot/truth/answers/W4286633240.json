@@ -1,0 +1,16 @@
+{
+  "work_id": "W4286633240",
+  "originals": [
+    {
+      "key": null,
+      "citation": "Bondzio, L., Ortlepp, J., Scheit, M., Voß, H., & Weinert, R. (2011). Verkehrssicherheit innerörtlicher Kreisverkehre. Unfallforschung der Versicherer (GDV), Forschungsbericht.",
+      "doi": "",
+      "on_list": false
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "This replication study follows the classification of roundabouts in [7] ... Of course, one goal was to reproduce (or to falsify) the results of [7], and by utilizing the additional statistical power, to obtain additional insights.",
+  "evidence_basis": "packet+fulltext+online",
+  "notes": "Ref [7] (German UDV research report, no DOI) identified from the Crossref reference list; it is not on the offered list."
+}

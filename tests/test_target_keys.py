@@ -52,7 +52,7 @@ class TestKeyAssignment:
         entries, key_map = assign_target_keys(
             [_cand(doi="10.1/a", title="First"), _cand(doi="10.1/b", title="Second"),
              _cand(doi="10.1/c", title="Third")], [])
-        assert [e["key"] for e in entries] == ["@smith2009", "@smith2009b", "@smith2009c"]
+        assert [e["key"] for e in entries] == ["@smith2009", "@smith2009_2", "@smith2009_3"]
         assert {key_map[e["key"]]["doi"] for e in entries} == {"10.1/a", "10.1/b", "10.1/c"}
 
     def test_missing_surname_and_year_still_get_a_key(self):
@@ -111,8 +111,8 @@ class TestDistinctDoisNeverMerge:
 
         assert len(entries) == 2
         assert {e["doi"] for e in entries} == {"10.1/candidate", "10.1/reference"}
-        assert [e["key"] for e in entries] == ["@smith2009", "@smith2009b"]
-        assert key_map["@smith2009b"]["doi"] == "10.1/reference"
+        assert [e["key"] for e in entries] == ["@smith2009", "@smith2009_2"]
+        assert key_map["@smith2009_2"]["doi"] == "10.1/reference"
 
     def test_a_doi_less_duplicate_still_merges_into_the_first_record(self):
         entries, _ = assign_target_keys([_cand(doi="10.1/candidate")], [_ref(doi="")])

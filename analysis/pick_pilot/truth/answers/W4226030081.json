@@ -1,0 +1,16 @@
+{
+  "work_id": "W4226030081",
+  "originals": [
+    {
+      "key": "@london2021",
+      "citation": "London, R. E., & Slagter, H. A. (2021). No Effect of Transcranial Direct Current Stimulation over Left Dorsolateral Prefrontal Cortex on Temporal Attention. Journal of Cognitive Neuroscience, 33(4), 756-768.",
+      "doi": "10.1162/jocn_a_01679",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "In our previous work, we showed that the size of the AB can be changed by applying transcranial direct current stimulation (tDCS) over the left dorsolateral prefrontal cortex (lDLPFC) (London & Slagter, Journal of Cognitive Neuroscience, 33, 756-68, 2021). ... Here, we attempted to replicate this finding.",
+  "evidence_basis": "packet+fulltext",
+  "notes": "Self-replication; reference [20]. DOI from memory, not verified."
+}

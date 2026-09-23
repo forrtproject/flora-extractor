@@ -1,0 +1,16 @@
+{
+  "work_id": "W2805652837",
+  "originals": [
+    {
+      "key": "@haas2016",
+      "citation": "Haas, M., Verhave, J. C., Liu, Z.-H., et al. (2017). A multicenter study of the predictive value of crescents in IgA nephropathy. Journal of the American Society of Nephrology.",
+      "doi": "",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "medium",
+  "quote": "A working group on the Oxford classification of IgA nephropathy (IgAN) recently reported that crescents detected in kidney tissue predicted a worse renal outcome. However, this finding must be validated in independent cohorts",
+  "evidence_basis": "packet",
+  "notes": "The 'recent' Oxford working-group report on crescents is Haas et al. (the C-score paper). The 2009 Oxford classification papers (@society2009, @society2009b) did not include crescents as a predictor."
+}

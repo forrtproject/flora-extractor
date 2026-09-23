@@ -1,0 +1,22 @@
+{
+  "work_id": "W4210667094",
+  "originals": [
+    {
+      "key": "@geaney2015",
+      "citation": "Geaney, J. T., Treadway, M. T., & Smillie, L. D. (2015). Trait anticipatory pleasure predicts effort expenditure for reward. PLoS ONE, 10(6), e0131357.",
+      "doi": "10.1371/journal.pone.0131357",
+      "on_list": true
+    },
+    {
+      "key": "@ohmann2020",
+      "citation": "Ohmann, H. A., Kuper, N., & Wacker, J. (2020). A low dosage of the dopamine D2-receptor antagonist sulpiride affects effort allocation for reward regardless of trait extraversion. Personality Neuroscience, 3, e7.",
+      "doi": "10.1017/pen.2020.7",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "medium",
+  "quote": "Applying these standards, previous studies using the original EEfRT [23] as well as the modified version of the EEfRT [24] found medium to large correlations for the percentage of hard-task-choices (original EEfRT) and the mean number of clicks (modified EEfRT) in trials with low probability of reward attainment with trait BAS (r ranging from .212 to .361) and trait anticipatory pleasure (r = .251). We seek to replicate these correlations in both studies.",
+  "evidence_basis": "online",
+  "notes": "Largely a psychometric validation of two EEfRT versions. The specific findings it sets out to replicate are the trait correlations of Geaney et al. 2015 [23] (original EEfRT) and Ohmann et al. 2020 [24] (modified EEfRT; also the source of the split-half reliability it re-estimates). The task itself was developed by Treadway et al. 2009 (@treadway2009), which it 'validates' and whose basic task-variable effects it replicates; a reviewer could argue for adding it."
+}

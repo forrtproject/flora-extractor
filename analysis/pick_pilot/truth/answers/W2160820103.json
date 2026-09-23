@@ -1,0 +1,16 @@
+{
+  "work_id": "W2160820103",
+  "originals": [
+    {
+      "key": "@vanpatten1993",
+      "citation": "VanPatten, B., & Cadierno, T. (1993). Explicit instruction and input processing. Studies in Second Language Acquisition, 15(2), 225-243.",
+      "doi": "10.1017/S0272263100011979",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "This study replicates VanPatten and Cadierno (1993) in an attempt to determine whether or not explicit information given to learners receiving processing instruction is responsible for the beneficial effects of instruction.",
+  "evidence_basis": "packet",
+  "notes": "Not @vanpatten1993b (VanPatten 1993 Foreign Language Annals)."
+}

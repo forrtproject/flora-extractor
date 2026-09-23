@@ -1,0 +1,16 @@
+{
+  "work_id": "W2120814713",
+  "originals": [
+    {
+      "key": "@bowers2006",
+      "citation": "Bowers, L., Brennan, G., Flood, C., Lipang, M., & Oladapo, P. (2006). Preliminary outcomes of a trial to reduce conflict and containment on acute psychiatric wards: City Nurses. Journal of Psychiatric and Mental Health Nursing, 13, 165-172.",
+      "doi": "10.1111/j.1365-2850.2006.00931.x",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "A previous test of an intervention based on these principles, on two wards, showed a good outcome. In this study, we tested the same intervention on three further wards.",
+  "evidence_basis": "packet",
+  "notes": "Brennan 2006 and Flood 2006 are qualitative process papers from the same project, not the outcome test."
+}

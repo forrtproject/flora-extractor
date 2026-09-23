@@ -1,0 +1,16 @@
+{
+  "work_id": "W2758684098",
+  "originals": [
+    {
+      "key": "@murray2016",
+      "citation": "Murray, A. L., Allison, C., Smith, P. L., Baron-Cohen, S., Booth, T., & Auyeung, B. (2017). Investigating diagnostic bias in autism spectrum conditions: An item response theory analysis of sex bias in the AQ-10. Autism Research.",
+      "doi": "10.1002/aur.1724",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "Our study is a replication of a recent study by Murray et al. (2017). They found no substantial bias in test scores overall and at the recommended cut-point of 6.",
+  "evidence_basis": "packet+online",
+  "notes": "Self-replication; list entry dated 2016 (online-first)."
+}

@@ -1,0 +1,16 @@
+{
+  "work_id": "W2044943750",
+  "originals": [
+    {
+      "key": "@holly2010",
+      "citation": "Holly, S., Pesaran, M. H., & Yamagata, T. (2010). A spatio-temporal model of house prices in the USA. Journal of Econometrics, 158(1), 160-173.",
+      "doi": "10.1016/j.jeconom.2010.03.040",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "I narrowly replicate Holly et al.'s (Journal of Econometrics 2010; 158(1): 160-173) analysis of the housing market in the USA",
+  "evidence_basis": "packet",
+  "notes": "Reproduction (re-analysis of original data)."
+}

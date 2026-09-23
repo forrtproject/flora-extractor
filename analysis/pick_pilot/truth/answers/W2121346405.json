@@ -1,0 +1,16 @@
+{
+  "work_id": "W2121346405",
+  "originals": [
+    {
+      "key": "@nalls2011",
+      "citation": "International Parkinson Disease Genomics Consortium (Nalls, M. A., et al.) (2011). Imputation of sequence variants for identification of genetic risks for Parkinson's disease: a meta-analysis of genome-wide association studies. Lancet, 377, 641-649.",
+      "doi": "10.1016/S0140-6736(10)62345-8",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "medium",
+  "quote": "Eleven genetic loci have reached genome-wide significance in a recent meta-analysis of genome-wide association studies in Parkinson disease (PD) based on populations of Caucasian descent.",
+  "evidence_basis": "packet",
+  "notes": "The 11 loci come from the Nalls et al. 2011 meta-analysis; some loci were first reported in earlier GWAS (Simon-Sanchez 2009, Satake 2009, Pankratz 2008, Hamza 2010), but the paper frames its re-test around the 2011 meta-analysis."
+}

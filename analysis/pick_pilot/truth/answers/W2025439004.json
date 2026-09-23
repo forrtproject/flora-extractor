@@ -1,0 +1,16 @@
+{
+  "work_id": "W2025439004",
+  "originals": [
+    {
+      "key": "@zhou2014",
+      "citation": "Zhou, B., Wei, F.-Y., et al. (2014). Identification of a splicing variant that regulates type 2 diabetes risk factor CDKAL1 level by a coding-independent mechanism in human. Human Molecular Genetics.",
+      "doi": "10.1093/hmg/ddu118",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "A strong correlation between risk alleles and lower levels of the non-coding RNA, CDKAL1-v1, has recently been reported in whole blood extracted from Japanese individuals. We sought to replicate this association",
+  "evidence_basis": "packet",
+  "notes": "Zhou 2014 (co-authors Wei, Tomizawa) reported CDKAL1-v1 and its association with risk SNPs in Japanese whole blood. DOI not verified."
+}

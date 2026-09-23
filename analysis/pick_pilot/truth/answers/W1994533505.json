@@ -1,0 +1,16 @@
+{
+  "work_id": "W1994533505",
+  "originals": [
+    {
+      "key": "@papassotiropoulos2006",
+      "citation": "Papassotiropoulos, A., Stephan, D. A., et al. (2006). Common Kibra alleles are associated with human memory performance. Science.",
+      "doi": "10.1126/science.1129875",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "Recently, in the first genome-wide association study to identify memory-related genetic variation, [Papassotiropoulos et al., 2006] showed that an intronic polymorphism (rs17070145) in the brain-expressed gene Kibra associates with recall ... We therefore attempted to replicate this finding",
+  "evidence_basis": "fulltext",
+  "notes": ""
+}

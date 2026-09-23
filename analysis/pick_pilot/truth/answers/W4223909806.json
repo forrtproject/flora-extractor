@@ -1,0 +1,9 @@
+{
+  "work_id": "W4223909806",
+  "originals": [],
+  "not_a_replication": true,
+  "confidence": "high",
+  "quote": "These observations indicate that there is an important role for ROCK1 cleavage to limit immunogenic cell death which was not replicated by systemic administration of pharmacological ROCK inhibitors.",
+  "evidence_basis": "packet+fulltext",
+  "notes": "'Replicated' means pharmacological ROCK inhibition did not mimic the phenotype of the ROCK1nc mutation. The paper extends the authors' earlier work (Julian et al. 2021, @julian2021) with new endpoints; it does not set out to re-test that study's finding. Minor 'consistent with previous observations [1]' confirmations only."
+}

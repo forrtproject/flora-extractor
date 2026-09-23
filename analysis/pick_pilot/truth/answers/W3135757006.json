@@ -1,0 +1,16 @@
+{
+  "work_id": "W3135757006",
+  "originals": [
+    {
+      "key": "@waal2016",
+      "citation": "de Waal, A., Habil, D. S. F., et al. (2016). Suitability of the high performance organization framework to Egyptian ICT companies. International Journal of Emerging Markets.",
+      "doi": "10.1108/ijoem-12-2014-0219",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "The research approach was the same as applied by de Waal et al. (2016), but this time the research population consisted of affiliates of international ICT companies, instead of local ICT companies as in the de Waal et al. (2016) study.",
+  "evidence_basis": "packet",
+  "notes": "@waal2017 (supermarkets) is a different HPO study."
+}

@@ -329,7 +329,27 @@ _GENERATION_EQUIVALENCES: dict[str, tuple[str, ...]] = {
     # verdicts remain current because the questions and acceptance rules are the
     # same; each verdict retains its actual model provenance. Flatten the existing
     # equivalences because this lookup accepts only the generations listed here.
-    "7dbb1e92452d8333": ("010cf32bb63351e1", "ca0706ef44827229",
+    # 2026-09-23 (Observatory adjudication, handover step 3): the two target+outcome
+    # prompts now name the sibling records that get picked in place of the original
+    # (same-author works, protocol, materials source, review, meeting abstract) and
+    # require, when the evidence only describes the original, exactly one fitting
+    # record and no fitting same-author record before match_certain; and duplicate
+    # @keys take a `_2` suffix instead of a letter the model confused with the paper's
+    # own "(1999b)". The defect lives in the `llm_references` picks (≈5–8% wrong
+    # originals), and that population is reopened BY NAME
+    # (`--redo-status llm_references`, non-validated works), after a 150-work sandbox
+    # pilot (analysis/pick_pilot/REPORT.md). Everything else settled stays settled:
+    # the edit changes no outcome rule and only tightens WHEN a listed record may be
+    # accepted, so its effect on any other work is a decline (a descent) or a
+    # different pick among siblings — and re-buying the whole campaign for that is
+    # out of proportion. So the claim, deliberately incomplete: every work not
+    # reopened keeps its recorded answer. The `llm_cited_candidates` (265 rows) and
+    # `llm_fulltext` (71) keyed picks carry the same sibling risk and are NOT
+    # reopened here; they can be named the same way (`--redo-status
+    # llm_cited_candidates,llm_fulltext`). `7dbb1e92452d8333` (the gpt-6-luna
+    # switch) joins the flattened chain.
+    "474e80e4c32a6dfa": ("7dbb1e92452d8333",
+                         "010cf32bb63351e1", "ca0706ef44827229",
                          "061cb5ca8e1888b6",
                          "243ae515c654b6e5", "5b716d061bb336f5",
                          "dd7572887420ef65"),

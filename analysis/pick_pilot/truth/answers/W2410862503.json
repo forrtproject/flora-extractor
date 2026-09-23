@@ -1,0 +1,16 @@
+{
+  "work_id": "W2410862503",
+  "originals": [
+    {
+      "key": "@sartori2008",
+      "citation": "Sartori, G., Agosta, S., Zogmaister, C., Ferrara, S. D., & Castiello, U. (2008). How to accurately detect autobiographical events. Psychological Science, 19, 772-780. (Experiment 1)",
+      "doi": "10.1111/j.1467-9280.2008.02156.x",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "Experiment 1 (n = 522) is a web-based replication study of the first published aIAT study [Sartori, G., Agosta, S., Zogmaister, C., Ferrara, S. D., & Castiello, U. (2008). How to accurately detect autobiographical events. Psychological Science, 19, 772-780.; Experiment 1].",
+  "evidence_basis": "packet",
+  "notes": "Experiment 2 tests a moderator (negative sentences; cf. @agosta2011b) rather than replicating a specific study."
+}

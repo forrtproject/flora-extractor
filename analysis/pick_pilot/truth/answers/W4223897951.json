@@ -1,0 +1,28 @@
+{
+  "work_id": "W4223897951",
+  "originals": [
+    {
+      "key": "@griskevicius2013",
+      "citation": "Griskevicius, V., Ackerman, J. M., et al. (2013). When the economy falters, do people spend or save? Responses to resource scarcity depend on childhood environments. Psychological Science, 24(2). (Experiment 1)",
+      "doi": "10.1177/0956797612451471",
+      "on_list": true
+    },
+    {
+      "key": "@kelley2015",
+      "citation": "Kelley, N. J., & Schmeichel, B. J. (2015). Thinking about death reduces delay discounting. PLOS ONE, 10(12), e0144228.",
+      "doi": "10.1371/journal.pone.0144228",
+      "on_list": true
+    },
+    {
+      "key": "@bulley2018",
+      "citation": "Bulley, A., Miloyan, B., Pepper, G. V., Gullo, M. J., Henry, J. D., & Suddendorf, T. (2019). Cuing both positive and negative episodic foresight reduces delay discounting but does not affect risk-taking. Quarterly Journal of Experimental Psychology, 72(8), 1998-2017.",
+      "doi": "10.1177/1747021818819777",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "In their Experiment 1, Griskevicius et al. (2013) showed 168 participant images ... In the experiment that follows, we sought to replicate this effect ... We attempted to replicate the effect of mortality salience on delay discounting reported by Kelley and Schmeichel (2015). ... In this experiment we sought to replicate the results reported by Bulley et al. (2019).",
+  "evidence_basis": "fulltext",
+  "notes": "Bulley et al. is cited as 2019 (QJEP print year); the list entry @bulley2018 has the identical title (online-first year). Griskevicius 2011 (@griskevicius2011) is background only."
+}

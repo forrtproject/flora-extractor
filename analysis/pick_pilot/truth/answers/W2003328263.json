@@ -1,0 +1,16 @@
+{
+  "work_id": "W2003328263",
+  "originals": [
+    {
+      "key": "@yamada2007",
+      "citation": "Yamada, K., Gerber, D. J., et al. (2007). Genetic analysis of the calcineurin pathway identifies members of the EGR gene family, specifically EGR3, as potential susceptibility candidates in schizophrenia. PNAS.",
+      "doi": "10.1073/pnas.0611081104",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "medium",
+  "quote": "pedigree and case-control analyses in a study utilizing a Japanese sample found that EGR3 was significantly associated with schizophrenia; this result was also replicated in a Korean population study. However, subsequent studies utilizing a Japanese sample and a Chinese sample failed to replicate this finding.",
+  "evidence_basis": "packet+online",
+  "notes": "Framed as testing the EGR3 association first reported by Yamada 2007 in a Han Chinese sample; Kim2010, Liu2010, Kyogoku2010 are follow-up replications pooled in the meta-analysis, not the tested finding's source. Could arguably add @kim2010. Not framed as a strict replication."
+}

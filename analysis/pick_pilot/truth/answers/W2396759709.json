@@ -1,0 +1,16 @@
+{
+  "work_id": "W2396759709",
+  "originals": [
+    {
+      "key": "@gantman2011",
+      "citation": "Gantman, A., Kapp, S. K., Orenski, K., & Laugeson, E. A. (2012). Social skills training for young adults with high-functioning autism spectrum disorders: A randomized controlled pilot study. Journal of Autism and Developmental Disorders.",
+      "doi": "10.1007/s10803-011-1339-1",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "The first and primary aim of the present study was to replicate the Gantman et al. (2012) findings, as pertains to PEERS®' effects on social skills knowledge, ASD symptoms, empathy, loneliness, and social contacts.",
+  "evidence_basis": "packet+online",
+  "notes": "Read the published JADD version (McVey et al. 2016) of this thesis. Laugeson et al. 2015 (@laugeson2015) is described as a within-site replication of the original, cited for comparison, not the target. List entry dated 2011 (online-first)."
+}

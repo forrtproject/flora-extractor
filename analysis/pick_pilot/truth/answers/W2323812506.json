@@ -1,0 +1,22 @@
+{
+  "work_id": "W2323812506",
+  "originals": [
+    {
+      "key": "@raleigh2008",
+      "citation": "Raleigh, S. M., van der Merwe, L., Ribbans, W. J., Smith, R. K. W., Schwellnus, M. P., & Collins, M. (2009). Variants within the MMP3 gene are associated with Achilles tendinopathy: possible interaction with the COL5A1 gene. British Journal of Sports Medicine, 43, 514-520.",
+      "doi": "",
+      "on_list": true
+    },
+    {
+      "key": "@khoury2013",
+      "citation": "El Khoury, L., Posthumus, M., Collins, M., Handley, C. J., Cook, J., & Raleigh, S. M. (2013). Polymorphic variation within the ADAMTS2, ADAMTS14, ADAMTS5, ADAM12 and TIMP2 genes and the risk of Achilles tendon pathology: a genetic association study. Journal of Science and Medicine in Sport, 16(6), 493-498.",
+      "doi": "",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "Recent work has shown that the rs679620 single nucleotide polymorphism (SNP) within the MMP3 gene and the rs478992 SNP within the TIMP2 gene were risk factors for ATP in a South African (Raleigh et al. 2009) and a combined South African and Australian cohort respectively (El Khoury et al. 2013). However, as genetic predisposition to multifactorial phenotypes is often population specific, we wished to ascertain whether these polymorphisms were also risk factors in a recently recruited British population.",
+  "evidence_basis": "fulltext",
+  "notes": "Text cites Raleigh et al. 2009; list entry @raleigh2008 is the same paper (online 2008). Self-replication by the same group."
+}

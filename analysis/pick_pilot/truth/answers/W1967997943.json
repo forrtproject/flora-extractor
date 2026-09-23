@@ -1,0 +1,16 @@
+{
+  "work_id": "W1967997943",
+  "originals": [
+    {
+      "key": "@luthar1998",
+      "citation": "Luthar, S. S., Cushing, G., et al. (1998). Multiple jeopardy: Risk and protective factors among addicted mothers' offspring. Development and Psychopathology.",
+      "doi": "10.1017/s0954579498001527",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "medium",
+  "quote": "We have completed such a study, which we compare to a similar study independently conducted in 1998.",
+  "evidence_basis": "packet+online",
+  "notes": "Replication by comparison of two independently conducted studies; the title mirrors Luthar et al. 1998 ('Risk and protective factors among addicted mothers' offspring'), the independent 1998 study. @nunes1998 is the authors' own related study, not the target. Full text not accessible."
+}

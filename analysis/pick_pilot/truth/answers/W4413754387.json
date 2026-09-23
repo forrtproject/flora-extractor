@@ -1,0 +1,16 @@
+{
+  "work_id": "W4413754387",
+  "originals": [
+    {
+      "key": "@gable2008",
+      "citation": "Gable, P. A., & Harmon-Jones, E. (2008). Approach-motivated positive affect reduces breadth of attention. Psychological Science, 19(5), 476-482. Study 2.",
+      "doi": "10.1111/j.1467-9280.2008.02112.x",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "Seminal work by Gable and Harmon-Jones (... 2008 ... Study 2) found that pictures of desserts narrowed attentional breadth relative to pictures of rocks. ... we conducted a registered conceptual replication",
+  "evidence_basis": "packet",
+  "notes": "@domachowska2016 is an earlier RRR of the same finding, cited but the title and abstract frame Gable & Harmon-Jones 2008 as the replicated study."
+}

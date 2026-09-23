@@ -1,0 +1,16 @@
+{
+  "work_id": "W4413886734",
+  "originals": [
+    {
+      "key": "@dzgn2022b",
+      "citation": "Düzgün, R., Mayer, P., et al. (2022). Shoulder-Surfing Resistant Authentication for Augmented Reality (Things in AR scheme).",
+      "doi": "",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "This replication study evaluates the recognition-based graphical authentication scheme – Things in AR and VR, extending Düzgün et al. [1], which focused on AR in Germany.",
+  "evidence_basis": "packet",
+  "notes": "Not @dzgn2022 (the SoK literature review). @noah2023 is this study's own proposal."
+}

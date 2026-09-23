@@ -1,0 +1,16 @@
+{
+  "work_id": "W4407669232",
+  "originals": [
+    {
+      "key": "@satizbal2023",
+      "citation": "Satizábal, C. L., Beiser, A., et al. (2023). A novel neuroimaging signature for ADRD risk stratification in the community.",
+      "doi": "",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "A novel neuroimaging signature of regional cortical thickness on brain MRI recently showed high potential for Alzheimer's disease and related dementias (ADRD) risk stratification in the community. ... We aimed to replicate this novel ADRD neuroimaging marker in the population-based Rotterdam Study.",
+  "evidence_basis": "packet",
+  "notes": "Abstract names the signature by title-equivalent; Dickerson 2011 is a comparator marker, not the original."
+}

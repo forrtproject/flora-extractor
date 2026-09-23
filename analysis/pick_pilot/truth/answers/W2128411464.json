@@ -1,0 +1,16 @@
+{
+  "work_id": "W2128411464",
+  "originals": [
+    {
+      "key": "@steiner1996",
+      "citation": "Steiner, D. D., & Gilliland, S. W. (1996). Fairness reactions to personnel selection techniques in France and the United States. Journal of Applied Psychology, 81(2), 134-141.",
+      "doi": "10.1037/0021-9010.81.2.134",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "Its first objective was to shed further light on cultural differences in applicant reactions to selection techniques by partially replicating a study by ), who obtained ratings of process favorability for ten different procedures from two groups of French and American students.",
+  "evidence_basis": "packet",
+  "notes": "Citation elided in abstract, but the French/American ten-procedure favorability study is Steiner & Gilliland (1996)."
+}

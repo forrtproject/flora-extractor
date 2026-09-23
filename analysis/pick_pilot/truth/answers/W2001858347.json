@@ -1,0 +1,16 @@
+{
+  "work_id": "W2001858347",
+  "originals": [
+    {
+      "key": "@fornage2011",
+      "citation": "Fornage, M., Debette, S., et al. (2011). Genome-wide association studies of cerebral white matter lesion burden: the CHARGE consortium. Annals of Neurology.",
+      "doi": "10.1002/ana.22403",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "A recent genome-wide association study has successfully identified several genetic variations in the Chr17q25 locus as susceptible genotypes for white matter hyperintensities. We report the first replication study in subjects of non-European origin.",
+  "evidence_basis": "packet+online",
+  "notes": "Verhaaren 2011 is an earlier European replication in the chain; the paper frames itself as replicating the GWAS finding (rs3744028 was Fornage's lead SNP)."
+}

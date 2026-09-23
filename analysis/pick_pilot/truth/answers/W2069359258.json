@@ -1,0 +1,16 @@
+{
+  "work_id": "W2069359258",
+  "originals": [
+    {
+      "key": "@cui2010",
+      "citation": "Cui, J., Saevarsdottir, S., et al. (2010). Rheumatoid arthritis risk allele PTPRC is also associated with response to anti-tumor necrosis factor alpha therapy. Arthritis & Rheumatism.",
+      "doi": "10.1002/art.27500",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "Based on a previously reported association of RA with the PTPRC genetic locus, the present study was undertaken to test established RA susceptibility variants, including PTPRC, in the prediction of response to TNF blockade ... A meta-analysis combining these data with the results from a previous study strengthened the evidence for association with the PTPRC SNP",
+  "evidence_basis": "packet",
+  "notes": "The replicated finding is the PTPRC-response association (Cui et al. 2010, matching the title). The other 28 RA susceptibility SNPs are tested for response afresh, not as replications of specific response reports. DOI from memory, unverified."
+}

@@ -1,0 +1,11 @@
+{
+  "work_id": "W4389791525",
+  "originals": [
+    {"key": "@patil2016", "citation": "Patil, A., Murty, V. P., Dunsmoor, J. E., Phelps, E. A., & Davachi, L. (2017). Reward retroactively enhances memory consolidation for related items. Learning & Memory, 24(1), 65-69.", "doi": "10.1101/lm.042978.116", "on_list": true}
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "Three of these experiments also aimed to replicate the category-specific retrospective enhancement effect reported by Patil et al. ... despite employing the same reward paradigm and incidental encoding protocol as in the original study.",
+  "evidence_basis": "packet",
+  "notes": "Only one Patil entry on the list. DOI from memory, unverified."
+}

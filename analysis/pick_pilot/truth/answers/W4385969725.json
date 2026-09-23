@@ -1,0 +1,12 @@
+{
+  "work_id": "W4385969725",
+  "originals": [
+    {"key": "@guetta2019", "citation": "Guetta, R. E., Wilcox, E. S., Stoop, T. B., et al. (2019). Psychometric Properties of the Dissociative Subtype of PTSD Scale: Replication and Extension in a Clinical Sample of Trauma-Exposed Veterans. Behavior Therapy.", "doi": "10.1016/j.beth.2018.12.006", "on_list": true},
+    {"key": "@wolf2015", "citation": "Wolf, E. J., Mitchell, K. S., Sadeh, N., Hein, C., Fuhrman, I., Pietrzak, R. H., & Miller, M. W. (2017; online 2015). The Dissociative Subtype of PTSD Scale: Initial Evaluation in a National Sample of Trauma-Exposed Veterans. Assessment, 24(4), 503-516.", "doi": "10.1177/1073191115615212", "on_list": true}
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "Addressing these gaps, the current paper evaluates psychometric properties of both, lifetime and current DSPS scales, thereby constituting the first replication attempt for the original findings (Guetta et al., 2019; Wolf et al., 2017), within two samples with broader ranges of age, sex, and trauma types.",
+  "evidence_basis": "packet+online",
+  "notes": "Psychometric replication; read via Europe PMC full text (PMC10443992). The paper cites Wolf et al. as 2017 (print year); the list entry @wolf2015 is the same article (online-first 2015). DOIs from memory, unverified."
+}

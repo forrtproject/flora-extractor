@@ -1,0 +1,16 @@
+{
+  "work_id": "W3033731491",
+  "originals": [
+    {
+      "key": "@levitt2001",
+      "citation": "Levitt, S. D., & Porter, J. (2001). How dangerous are drinking drivers? Journal of Political Economy, 109(6), 1198-1237.",
+      "doi": "10.1086/323281",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "Levitt and Porter (Journal of Political Economy, 2001, 109(6), 1198–1237) demonstrate how these can be recovered using publicly available information in the Fatality Analysis Reporting System (FARS). ... We believe this arises partly from difficulty in replicating their results.",
+  "evidence_basis": "packet",
+  "notes": ""
+}

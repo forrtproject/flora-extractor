@@ -1,0 +1,16 @@
+{
+  "work_id": "W2568065332",
+  "originals": [
+    {
+      "key": "@hussain2012",
+      "citation": "Hussain, I., Kosseim, L., & Ormandjieva, O. (2013). Approximation of COSMIC functional size to support early effort estimation in Agile. Data & Knowledge Engineering.",
+      "doi": "10.1016/j.datak.2012.06.005",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "Hussain, Kosseim and Ormandjieva (HKO) proposed a method that can be used to automatically classify textual requirements with respect to their COSMIC functional size. ... Objective: To provide external validation of the HKO method",
+  "evidence_basis": "packet",
+  "notes": "@hussain2008 is an earlier HKO paper on non-functional requirements, not the COSMIC method."
+}

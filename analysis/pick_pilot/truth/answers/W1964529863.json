@@ -1,0 +1,22 @@
+{
+  "work_id": "W1964529863",
+  "originals": [
+    {
+      "key": "@walsh1971",
+      "citation": "Walsh, R. N., Budtz-Olsen, O. E., et al. (1971). Environmentally induced changes in the dimensions of the rat cerebrum. Developmental Psychobiology.",
+      "doi": "10.1002/dev.420040203",
+      "on_list": true
+    },
+    {
+      "key": "@altman1968",
+      "citation": "Altman, J., Wallace, R. B., et al. (1968). Behaviorally induced changes in length of cerebrum in rats. Developmental Psychobiology.",
+      "doi": "",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "medium",
+  "quote": "In previous reports exposure to 80 or 90 days of environmental complexity induced a significant increase in the length of the rat cerebrum, whereas 30 days' exposure induced changes which failed to reach significant levels.",
+  "evidence_basis": "packet",
+  "notes": "Full text not accessible. Same title as the authors' 1971 paper, so walsh1971 is the primary original (self-replication); Altman et al. 1968 is the other earlier report of cerebral-length increase and plausibly among the 'previous reports'. DOIs unverified."
+}

@@ -1,0 +1,16 @@
+{
+  "work_id": "W4213336622",
+  "originals": [
+    {
+      "key": "@grunwald2014",
+      "citation": "Grunwald, M., Weiss, T., Mueller, S., & Rall, L. (2014). EEG changes caused by spontaneous facial self-touch may represent emotion regulating processes and working memory maintenance. Brain Research, 1557, 111-126.",
+      "doi": "10.1016/j.brainres.2014.02.002",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "To date, there is only one electroencephalography study that analyzed spectral power changes before and after sFST in 14 participants. The present study replicates the previous study on a larger sample.",
+  "evidence_basis": "packet",
+  "notes": ""
+}

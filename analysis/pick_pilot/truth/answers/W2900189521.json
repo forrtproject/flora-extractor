@@ -1,0 +1,16 @@
+{
+  "work_id": "W2900189521",
+  "originals": [
+    {
+      "key": "@harvey2017",
+      "citation": "Harvey, P. D., Jacobson, W., Zhong, W., et al. (2017). Determination of a clinically important difference and definition of a responder threshold for the UCSD performance-based skills assessment (UPSA) in patients with major depressive disorder. Journal of Affective Disorders, 213, 105-111.",
+      "doi": "10.1016/j.jad.2017.02.013",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "medium",
+  "quote": "The study herein aims to both replicate and extend the initial validation incorporating data sets from two additional studies. ... A pooled analysis with data from NCT01564862 (initial validation study) was performed",
+  "evidence_basis": "packet+online",
+  "notes": "Initial UPSA validation in MDD (CID/psychometrics on NCT01564862, the CONNECT trial) is Harvey et al. 2017, confirmed online to use NCT01564862. @mahableshwarkar2015 is the trial's primary efficacy report, not the validation study. Full text not accessible (403)."
+}

@@ -1,0 +1,16 @@
+{
+  "work_id": "W4405220932",
+  "originals": [
+    {
+      "key": "@weisberg2007",
+      "citation": "Weisberg, D. S., Keil, F. C., Goodstein, J., Rawson, E., & Gray, J. R. (2008). The seductive allure of neuroscience explanations. Journal of Cognitive Neuroscience, 20(3), 470-477.",
+      "doi": "10.1162/jocn.2008.20040",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "In a seminal study on the SANE effect, Weisberg and colleagues explored the impact of adding irrelevant neuroscience information to explanations in three experiments. ... The study design conceptually followed the design of the original study, using a within-subject design throughout.",
+  "evidence_basis": "packet+online",
+  "notes": "Paper cites it as Weisberg et al. 2008; list entry year 2007 is the same work. Weisberg 2015 and Fernandez-Duque 2014 are follow-ups cited for context."
+}

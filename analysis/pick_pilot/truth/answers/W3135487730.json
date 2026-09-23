@@ -1,0 +1,16 @@
+{
+  "work_id": "W3135487730",
+  "originals": [
+    {
+      "key": "@benschop2019",
+      "citation": "Benschop, L., Baeken, C., Vanderhasselt, M.-A., Van de Steen, F., Van Heeringen, K., & Arns, M. (2019). Electroencephalogram resting state frequency power characteristics of suicidal behavior in female patients with major depressive disorder. Journal of Clinical Psychiatry.",
+      "doi": "10.4088/jcp.18m12661",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "A recent study showed hypoactivity in the beta/gamma band in female suicide ideators and suicide attempters diagnosed with depression, relative to a low-risk group. The current study aimed to conceptually replicate these results.",
+  "evidence_basis": "packet",
+  "notes": "Abstract does not cite by name, but the described finding matches exactly the title of @benschop2019, co-authored by the same group (Benschop, Baeken, Arns)."
+}

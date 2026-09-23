@@ -1,0 +1,15 @@
+{
+  "work_id": "W4389037127",
+  "originals": [
+    {"key": "@smith2018", "citation": "Smith, A. R., Forrest, L. N., & Velkoff, E. A. (2018). Out of touch: Interoceptive deficits are elevated in suicide attempters with eating disorders. Eating Disorders.", "doi": "10.1080/10640266.2018.1453634", "on_list": true},
+    {"key": "@forrest2015", "citation": "Forrest, L. N., Smith, A. R., White, R. D., & Joiner, T. E. (2015). (Dis)connected: An examination of interoception in individuals with suicidality. Journal of Abnormal Psychology.", "doi": "10.1037/abn0000078", "on_list": true},
+    {"key": "@rogers2018", "citation": "Rogers, M. L., Hagan, C. R., & Joiner, T. E. (2018). Examination of interoception along the suicidality continuum. Journal of Clinical Psychology, 74(6), 1004-1016.", "doi": "10.1002/jclp.22564", "on_list": true},
+    {"key": "@smith2019", "citation": "Smith, A. R., Dodd, D. R., Ortiz, S., Forrest, L. N., & Witte, T. K. (2020). Interoceptive deficits differentiate suicide groups and associate with self-injurious thoughts and behaviors in a military sample. Suicide and Life-Threatening Behavior, 50(2).", "doi": "10.1111/sltb.12592", "on_list": true},
+    {"key": "@perry2020", "citation": "Perry, T. R., Wierenga, C. E., Kaye, W. H., & Brown, T. A. (2021). Interoceptive awareness and suicidal ideation in a clinical eating disorder sample: The role of body trust. Behavior Therapy, 52(5), 1105-1113.", "doi": "10.1016/j.beth.2020.12.006", "on_list": true}
+  ],
+  "not_a_replication": false,
+  "confidence": "medium",
+  "quote": "The first finding we aimed to replicate comes from Smith, Forrest, and Velkoff (2018) ... A second result that we aimed to replicate is that interoceptive deficits appear to function linearly along the continuum of suicidality severity ... (Forrest et al., 2015; Rogers et al., 2018; Smith et al., 2020). ... We aimed to replicate and extend this finding (Perry et al., 2021). ... In a direct replication of Smith, Forrest, and Velkoff (2018), we predicted ...",
+  "evidence_basis": "fulltext",
+  "notes": "Smith, Forrest & Velkoff 2018 is the primary (direct) original, high confidence. Aim 2 names Forrest 2015, Rogers 2018, 'Smith et al., 2020' (matched to @smith2019, the military-sample SLTB paper, print year 2020 - inferred, reference list not checked) and Perry 2021 (@perry2020) as findings to replicate/extend. DOIs from memory, unverified."
+}

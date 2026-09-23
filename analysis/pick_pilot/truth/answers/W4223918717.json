@@ -1,0 +1,16 @@
+{
+  "work_id": "W4223918717",
+  "originals": [
+    {
+      "key": "@baldassarri2021",
+      "citation": "Baldassarri, M., Picchiotti, N., Fava, F., et al. (2021). Shorter androgen receptor polyQ alleles protect against life-threatening COVID-19 disease in European males. EBioMedicine, 65, 103246.",
+      "doi": "10.1016/j.ebiom.2021.103246",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "A number of ≥23 CAG repeats was significantly associated with a more severe COVID‐19 outcome in an initial cohort of 638 Italian male and female patients; these results were replicated in an independent cohort of 158 Spanish male patients under 60 years of age.",
+  "evidence_basis": "packet+online",
+  "notes": "Read the published Andrology version (PMC10098487); the association tested is that of reference 8, Baldassarri et al. 2021."
+}

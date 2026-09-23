@@ -1,0 +1,16 @@
+{
+  "work_id": "W2117844119",
+  "originals": [
+    {
+      "key": "@mattay2003",
+      "citation": "Mattay, V. S., Goldberg, T. E., et al. (2003). Catechol O-methyltransferase val158-met genotype and individual variation in the brain response to amphetamine. PNAS, 100(10), 6186-6191.",
+      "doi": "10.1073/pnas.0931309100",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "Thus, we were not able to replicate the behavioral interaction between COMT and amphetamine seen in Mattay et al.",
+  "evidence_basis": "packet",
+  "notes": ""
+}

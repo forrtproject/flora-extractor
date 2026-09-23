@@ -1,0 +1,16 @@
+{
+  "work_id": "W1771823445",
+  "originals": [
+    {
+      "key": "@grasby1993",
+      "citation": "Grasby, P. M., Frith, C. D., et al. (1993). Functional mapping of brain areas implicated in auditory-verbal memory function. Brain.",
+      "doi": "10.1093/brain/116.1.1",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "medium",
+  "quote": "These data, obtained using a within-subject design, extend previously reported findings that used mixed within-and between-subject designs and demonstrate important functional components of normal auditoryverbal short-term memory.",
+  "evidence_basis": "packet+online",
+  "notes": "Full text not accessible (Wiley 403). Web sources (Brede Wiki summary) state the study sought to replicate Grasby et al. 1993 (list-length verbal memory PET with frontal activation beyond span); one summary also mentions Paulesu 1993 (@paulesu1993), which is less directly the same paradigm."
+}

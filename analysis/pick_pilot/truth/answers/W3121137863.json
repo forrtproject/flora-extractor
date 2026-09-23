@@ -1,0 +1,16 @@
+{
+  "work_id": "W3121137863",
+  "originals": [
+    {
+      "key": "@mu2011",
+      "citation": "Mu, R., & van de Walle, D. (2011). Rural roads and local market development in Vietnam. Journal of Development Studies, 47(5), 709-734.",
+      "doi": "10.1080/00220381003599436",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "Thus, the purpose of this paper is to replicate the estimation results from Mu and van de Walle (2011).",
+  "evidence_basis": "packet",
+  "notes": "@mu2007 is the earlier World Bank working paper version (different title 'Rural Roads and Poor Area Development'); the paper names the 2011 publication."
+}

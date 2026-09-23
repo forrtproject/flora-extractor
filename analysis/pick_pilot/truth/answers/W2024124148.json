@@ -1,0 +1,16 @@
+{
+  "work_id": "W2024124148",
+  "originals": [
+    {
+      "key": "@keltikangasjrvinen1993",
+      "citation": "Keltikangas-Järvinen, L., Räikkönen, K., et al. (1993). Dependence between apolipoprotein E phenotypes and temperament in children, adolescents, and young adults. Psychosomatic Medicine.",
+      "doi": "10.1097/00006842-199303000-00002",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "Is There an Association between Temperament and Apolipoprotein E? A Replication of a 1993 Young Finns Study",
+  "evidence_basis": "packet",
+  "notes": "Jorm2003 and Tsai2003 are the other groups' (failed) replications, background. DOI not verified."
+}

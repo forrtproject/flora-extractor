@@ -1,0 +1,16 @@
+{
+  "work_id": "W3086650132",
+  "originals": [
+    {
+      "key": "@vanaken2020",
+      "citation": "Vanaken, L., Bijttebier, P., & Hermans, D. (2020). I like you better when you are coherent. Narrating autobiographical memories in a coherent manner has a positive impact on listeners' social evaluations. PLOS ONE, 15(4), e0232214.",
+      "doi": "10.1371/journal.pone.0232214",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "Since the former study (Vanaken et al., 2020) was the first to empirically support the impact of narrative coherence on listeners' social responses, replication is needed.",
+  "evidence_basis": "packet+online",
+  "notes": "Self-replication of the authors' earlier PLOS ONE study."
+}

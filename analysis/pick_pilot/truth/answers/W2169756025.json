@@ -1,0 +1,16 @@
+{
+  "work_id": "W2169756025",
+  "originals": [
+    {
+      "key": "@byun2008",
+      "citation": "Byun, E., Caillier, S. J., et al. (2008). Genome-wide pharmacogenomic analysis of the response to interferon beta therapy in multiple sclerosis. Archives of Neurology, 65(3), 337-344.",
+      "doi": "10.1001/archneurol.2007.66",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "Very recently, a genome-wide association study on interferon-beta pharmacogenetics has described polymorphisms at several genes that are associated with response to this treatment. Our aim is to replicate the results obtained at the two loci most strongly implicated in the response to interferon-beta treatment, HAPLN1 and GPC5.",
+  "evidence_basis": "packet",
+  "notes": "The only IFN-beta response GWAS on the list."
+}

@@ -1,0 +1,16 @@
+{
+  "work_id": "W2053537456",
+  "originals": [
+    {
+      "key": "@schnake1986",
+      "citation": "Schnake, M. E. (1986). Vicarious punishment in a work setting. Journal of Applied Psychology, 71(2), 343-345.",
+      "doi": "10.1037/0021-9010.71.2.343",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "medium",
+  "quote": "Results conflict with previous research on the use of punishment in work settings.",
+  "evidence_basis": "packet+online",
+  "notes": "Title 'Vicarious Punishment in a Work Setting: A Failure to Replicate' mirrors the author's own 1986 paper of the same title; self-replication inferred from title, full text not accessed. DOI of 1986 paper from memory, unverified."
+}

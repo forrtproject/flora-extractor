@@ -185,6 +185,18 @@ Two separate judgments per target — do not let one stand in for the other:
   what goes in this field; use a description only when it truly never names them.
   A wrong original is worse than an unresolved one, so returning null is the right
   answer whenever two records fit equally well or the target is absent from the lists.
+- The usual wrong pick is a SIBLING of the original on the same list. Before setting
+  match_certain, rule out: another work by the same authors; a registered-report
+  protocol or preregistration versus the paper reporting the original finding; the
+  paper that supplied the materials, task or measure versus the finding re-tested; a
+  meta-analysis or review versus the primary study; a meeting abstract or working
+  paper versus the published article. When the evidence only DESCRIBES the original
+  ("our previous study", "a pioneering study reported") rather than citing it,
+  match_certain is true only when exactly one listed record fits that description AND
+  no other record by the same authors fits it too.
+- A key's suffix (_2, _3) only separates listed records that share a first author and
+  year; it is not the paper's own citation letter ("1999b"). Match on authors, title
+  and content.
 - Omit an entry only when you cannot tell that a target exists at all. Knowing one
   exists and not being able to name it is the case above, and it still gets an entry.
 - Use only @keys that appear in the lists below. Never invent a key, and never write
@@ -1671,10 +1683,8 @@ _FROZEN_VERSIONS: dict[str, tuple[str, str]] = {
     "build_outcome_prompt": ("ad7b2bc26e1f", "556e48911415"),
     "build_prescreen_prompt": ("c8776b9eb527", "df5f7aefb41c"),
     "build_repro_outcome_prompt": ("b5d30374a700", "c6bb106a7307"),
-    "build_repro_target_outcome_prompt": ("13f4ec7e0c26", "01349eec56c7"),
     "build_search_confirm_prompt": ("18e6f01de567", "e5e72b9e54fd"),
     "build_study_status_prompt": ("dface4c1af3c", "47b62a0f3465"),
-    "build_target_outcome_prompt": ("d1be73917e70", "b1f887ddcc91"),
 }
 
 

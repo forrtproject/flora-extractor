@@ -1,0 +1,70 @@
+{
+  "work_id": "W2104755979",
+  "originals": [
+    {
+      "key": "@kanemoto2000",
+      "citation": "Kanemoto, K., et al. (2000). Interleukin (IL)-1beta, IL-1alpha, and IL-1 receptor antagonist gene polymorphisms in patients with temporal lobe epilepsy. Annals of Neurology.",
+      "doi": "",
+      "on_list": true
+    },
+    {
+      "key": "@virta2002",
+      "citation": "Virta, M., Hurme, M., & Helminen, M. (2002). Increased frequency of interleukin-1beta (-511) allele 2 in febrile seizures. Pediatric Neurology.",
+      "doi": "",
+      "on_list": true
+    },
+    {
+      "key": "@kanemoto2003",
+      "citation": "Kanemoto, K., et al. (2003). Increased frequency of interleukin-1beta-511T allele in patients with temporal lobe epilepsy, hippocampal sclerosis, and prolonged febrile convulsion. Epilepsia.",
+      "doi": "",
+      "on_list": true
+    },
+    {
+      "key": "@peltola2001",
+      "citation": "Peltola, J., et al. (2001). Polymorphism of the interleukin-1 gene complex in localization-related epilepsy. Annals of Neurology.",
+      "doi": "",
+      "on_list": true
+    },
+    {
+      "key": "@stgmann2002",
+      "citation": "Stögmann, E., Zimprich, A., et al. (2002). A functional polymorphism in the prodynorphin gene promotor is associated with temporal lobe epilepsy. Annals of Neurology.",
+      "doi": "",
+      "on_list": true
+    },
+    {
+      "key": "@gambardella2003",
+      "citation": "Gambardella, A., Manna, I., et al. (2003a). GABA(B) receptor 1 polymorphism (G1465A) is associated with temporal lobe epilepsy. Neurology.",
+      "doi": "",
+      "on_list": true
+    },
+    {
+      "key": "@walz2003",
+      "citation": "Walz, R., Castro, R., et al. (2003). Surgical outcome in mesial temporal sclerosis correlates with prion protein gene variant. Neurology.",
+      "doi": "",
+      "on_list": true
+    },
+    {
+      "key": "@briellmann2000",
+      "citation": "Briellmann, R. S., et al. (2000). APOE epsilon4 genotype is associated with an earlier onset of chronic temporal lobe epilepsy. Neurology.",
+      "doi": "",
+      "on_list": true
+    },
+    {
+      "key": "@chou2003b",
+      "citation": "Chou, I.-C., Lee, C.-C., et al. (2003a). Association of the neuronal nicotinic acetylcholine receptor subunit alpha4 polymorphisms with febrile convulsions. Epilepsia.",
+      "doi": "",
+      "on_list": true
+    },
+    {
+      "key": "@chou2003",
+      "citation": "Chou, I.-C., Peng, C.-T., et al. (2003b). Association analysis of gamma2 subunit of GABA-A receptor polymorphisms with febrile seizures. Pediatric Research.",
+      "doi": "",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "Significant association with TLE has been reported in four genes: IL-1b (Kanemoto et al., 2000), PDYN (Stogmann et al., 2002), GABBR1 (Gambardella et al., 2003a) and PRNP (Walz et al., 2003). One study has reported an association of APOE with age of onset of TLE (Briellmann et al., 2000). In addition, variants in CHRNA4 (Chou et al., 2003a) and GABRG2 (Chou et al., 2003b) have been reported as risk factors for childhood FS. ... Here we have examined all seven claims of positive association (for TLE and FS) in the literature by attempting to replicate them",
+  "evidence_basis": "fulltext",
+  "notes": "Seven primary claims (Kanemoto 2000, Stogmann 2002, Gambardella 2003a, Walz 2003, Briellmann 2000, Chou 2003a CHRNA4, Chou 2003b GABRG2). Also explicitly re-tested secondary IL-1b associations: Virta 2002, Kanemoto 2003 (FS) and Peltola 2001 (refractory partial epilepsy). Key mapping trap: paper's Chou 2003a (CHRNA4) = @chou2003b; Chou 2003b (GABRG2) = @chou2003; paper's Gambardella 2003a (GABBR1) = @gambardella2003 (not @gambardella2003b, PDYN follow-up)."
+}

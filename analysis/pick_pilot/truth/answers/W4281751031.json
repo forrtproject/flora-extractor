@@ -1,0 +1,16 @@
+{
+  "work_id": "W4281751031",
+  "originals": [
+    {
+      "key": "@hoeschele2012",
+      "citation": "Hoeschele, M., Weisman, R. G., & Sturdy, C. B. (2012). Pitch chroma discrimination, generalization, and transfer tests of octave equivalence in humans. Attention, Perception, & Psychophysics, 74, 1742-1760.",
+      "doi": "10.3758/s13414-012-0364-2",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "Hoeschele et al. (2012a, b) developed a standardized non-verbal operant procedure independent of music that successfully demonstrated octave equivalence in human adults. ... we aimed to replicate and extend the results from the original study by testing further variations of the paradigm.",
+  "evidence_basis": "packet+online",
+  "notes": "Full text via Europe PMC PMC9232454. Paper cites 'Hoeschele et al. 2012a, b'; the only human three-range study is 2012 APP (@hoeschele2012); the other 2012 Hoeschele paper (@hoeschele2012b, chickadee same/different) is not the re-tested study."
+}

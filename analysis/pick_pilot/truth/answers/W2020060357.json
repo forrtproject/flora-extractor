@@ -1,0 +1,16 @@
+{
+  "work_id": "W2020060357",
+  "originals": [
+    {
+      "key": "@rowley1977",
+      "citation": "Rowley, V. N., & Gauron, E. F. (1977). Effects of chronic administration of diphenylhydantoin on learning and offspring behavior. Psychological Reports.",
+      "doi": "",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "An attempt was made to replicate the previous finding that undrugged offspring of rats chronically drugged with Diphenylhydantoin demonstrated a learning deficit ... The present findings call into question our previously published conclusions.",
+  "evidence_basis": "packet",
+  "notes": "Self-replication; only reference."
+}

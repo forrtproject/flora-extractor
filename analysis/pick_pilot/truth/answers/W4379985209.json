@@ -1,0 +1,11 @@
+{
+  "work_id": "W4379985209",
+  "originals": [
+    {"key": "@mozota2010", "citation": "Borja de Mozota, B. (2006). The Four Powers of Design: A Value Model in Design Management. Design Management Review, 17(2), 44-53.", "doi": "10.1111/j.1948-7169.2006.tb00038.x", "on_list": true}
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "This study hopes to support further application and use of the 'Designence' Model by presenting a replication of Borja de Mozota's (2006) methodology that led to the development of the framework.",
+  "evidence_basis": "fulltext",
+  "notes": "The list entry @mozota2010 carries the exact title of the 2006 paper (year mis-dated in metadata; DOI in the reference list is the 2006 Design Management Review article)."
+}

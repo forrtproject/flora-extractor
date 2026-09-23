@@ -1,0 +1,22 @@
+{
+  "work_id": "W1988799899",
+  "originals": [
+    {
+      "key": "@kakiuchi2004",
+      "citation": "Kakiuchi, C., Ishiwata, M., et al. (2004). Association of the XBP1-116C/G polymorphism with schizophrenia in the Japanese population. Psychiatry and Clinical Neurosciences.",
+      "doi": "10.1111/j.1440-1819.2004.01280.x",
+      "on_list": true
+    },
+    {
+      "key": "@chen2004",
+      "citation": "Chen, W., Duan, S., et al. (2004). A case-control study provides evidence of association for a functional polymorphism -197C/G in XBP1 to schizophrenia and suggests a sex-dependent effect. Biochem Biophys Res Commun.",
+      "doi": "10.1016/j.bbrc.2004.05.054",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "medium",
+  "quote": "A functional promoter polymorphism (-116C/G) of the X-box binding protein 1 gene (XBP1) gene was reported to be associated with schizophrenia in Asian subjects. In a replication attempt, three European case-control samples ... were genotyped",
+  "evidence_basis": "packet+online",
+  "notes": "Full text paywalled. 'Asian subjects' = the Japanese (Kakiuchi 2004) and Chinese (Chen 2004; same SNP under -197 numbering, I believe) schizophrenia reports; meta-analysis total 3,612 minus 2,182 new = 1,430 prior subjects, consistent with both. Chen2004 inclusion less certain. Kakiuchi2003/Hou2004/Cichon2004 are bipolar studies (background). DOI for Chen2004 not verified."
+}

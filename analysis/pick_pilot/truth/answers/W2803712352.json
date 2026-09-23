@@ -1,0 +1,16 @@
+{
+  "work_id": "W2803712352",
+  "originals": [
+    {
+      "key": "@baird2012",
+      "citation": "Baird, S. J., Garfein, R. S., McIntosh, C. T., & Özler, B. (2012). Effect of a cash transfer programme for schooling on prevalence of HIV and herpes simplex type 2 in Malawi: a cluster randomised trial. The Lancet.",
+      "doi": "10.1016/S0140-6736(11)61709-1",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "In this paper we perform a replication analysis of \"Effect of a cash transfer programme for schooling on prevalence of HIV and herpes simplex type 2 in Malawi: a cluster randomised trial\" by Sarah Baird and others published in \"The Lancet\" in 2012.",
+  "evidence_basis": "packet",
+  "notes": "Reproduction/re-analysis using the original authors' data."
+}

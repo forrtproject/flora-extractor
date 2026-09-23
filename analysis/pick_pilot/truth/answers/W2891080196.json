@@ -1,0 +1,16 @@
+{
+  "work_id": "W2891080196",
+  "originals": [
+    {
+      "key": "@cook2011",
+      "citation": "Cook, R., Bird, G., Lünser, G., Huck, S., & Heyes, C. (2012). Automatic imitation in a strategic context: players of rock-paper-scissors imitate opponents' gestures. Proceedings of the Royal Society B.",
+      "doi": "10.1098/rspb.2011.1024",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "STIMULUS-RESPONSE COMPATIBILITY EFFECT: AN ATTEMPT TO REPLICATE COOK'S 'AUTOMATIC IMITATION IN A STRATEGIC CONTEXT'",
+  "evidence_basis": "packet",
+  "notes": "@aczl2012 is an earlier replication attempt of Cook et al., cited for context."
+}

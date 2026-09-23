@@ -1,0 +1,16 @@
+{
+  "work_id": "W1995762476",
+  "originals": [
+    {
+      "key": "@titov2008",
+      "citation": "Titov, N., Andrews, G., et al. (2008). Shyness 1: Distance treatment of social phobia over the Internet. Australian & New Zealand Journal of Psychiatry.",
+      "doi": "10.1080/00048670802119762",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "In a randomized controlled trial Titov et al. (2008) demonstrated significant benefit from an Internet- and email-based treatment programme for social phobia. The present study (Shyness 2) seeks to replicate that finding",
+  "evidence_basis": "packet",
+  "notes": "Self-replication. DOI of Shyness 1 not verified."
+}

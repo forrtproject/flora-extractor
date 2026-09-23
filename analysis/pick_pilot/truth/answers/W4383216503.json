@@ -1,0 +1,11 @@
+{
+  "work_id": "W4383216503",
+  "originals": [
+    {"key": "@gharpure2020", "citation": "Gharpure, R., Hunter, C. M., et al. (2020). Knowledge and Practices Regarding Safe Household Cleaning and Disinfection for COVID-19 Prevention — United States, May 2020. MMWR Morbidity and Mortality Weekly Report, 69(23), 705-709.", "doi": "10.15585/mmwr.mm6923e2", "on_list": true}
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "The current study was a replication of a study conducted by the CDC in May 2020 [24]. Aside from the addition of data quality measures, we used the identical survey design, question wording, online sample provider, and sampling methodology as reported by the CDC.",
+  "evidence_basis": "fulltext",
+  "notes": "Table 2 compares with 'Gharpure et al. (CDC)'."
+}

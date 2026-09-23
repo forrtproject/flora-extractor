@@ -1,0 +1,16 @@
+{
+  "work_id": "W2920563568",
+  "originals": [
+    {
+      "key": "@boissoneault2014",
+      "citation": "Boissoneault, J., Sklar, A., Prather, R., & Nixon, S. J. (2014). Acute effects of moderate alcohol on psychomotor, set shifting, and working memory function in older and younger social drinkers. Journal of Studies on Alcohol and Drugs, 75, 870-879.",
+      "doi": "10.15288/jsad.2014.75.870",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "All procedures (e.g., measures, inclusion/exclusion criteria, recruitment practices) were identical between the current work and Boissoneault et al. (2014).",
+  "evidence_basis": "packet+online",
+  "notes": "Not @boissoneault2016 (EEG working memory maintenance)."
+}

@@ -1,0 +1,16 @@
+{
+  "work_id": "W3093303837",
+  "originals": [
+    {
+      "key": "@pickering2019",
+      "citation": "Pickering, C., Suraci, B., Semenova, E. A., et al. (2019). A genome-wide association study of sprint performance in elite youth football players. Journal of Strength and Conditioning Research, 33(9), 2344-2351.",
+      "doi": "10.1519/JSC.0000000000003259",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "All of them are single nucleotide polymorphisms (SNPs) and were selected based on a previous study 10 and according to the following criteria: biallelic polymorphisms located on autosomal chromosomes, two replications in the initial study",
+  "evidence_basis": "fulltext",
+  "notes": "Ref 10 = Pickering et al. (GWAS of sprint performance)."
+}

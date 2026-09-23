@@ -87,7 +87,11 @@ def _merge(into: dict, new: dict) -> None:
 
 
 def _suffix(n: int) -> str:
-    return chr(ord("a") + n) if n < 26 else str(n)
+    # Not a letter: the model matched `@abrahams1999b` against the paper's own
+    # "(1999b)" citation, which labels a different work (2 of the 56 wrong
+    # reference-list picks in the 2026-09 Observatory adjudication). The second
+    # record of a base is `_2`, the third `_3`.
+    return f"_{n + 1}"
 
 
 def assign_target_keys(candidates: list[dict],

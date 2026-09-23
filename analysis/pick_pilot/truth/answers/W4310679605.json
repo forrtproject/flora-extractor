@@ -1,0 +1,16 @@
+{
+  "work_id": "W4310679605",
+  "originals": [
+    {
+      "key": "@foung2019",
+      "citation": "Foung, D. (2019). Making Good Suggestions in Analytics-Based Early Alert Systems: Shaping Minds and Changing Behaviours. Journal of Applied Research in Higher Education, 12(1), 109-.",
+      "doi": "10.1108/JARHE-12-2018-0264",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "Rediscovering the Uptake of Dashboard Feedback: A Conceptual Replication of Foung (2019) ... this study aims to replicate an earlier study using a new data mining strategy, association rule mining ... After performing association rule mining with the original data set",
+  "evidence_basis": "packet+online",
+  "notes": "The paper cites two Foung 2019 works (Crossref reference list); the dashboard-recommendation-uptake study with a classification tree is the JARHE paper (ref 1), which matches @foung2019. The other, 'Mining students' data to identify at-risk students...' (CALL-EJ), is not on the list and is not the replicated study. Re-analysis of the original data set with a new method."
+}

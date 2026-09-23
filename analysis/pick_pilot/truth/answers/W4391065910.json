@@ -1,0 +1,11 @@
+{
+  "work_id": "W4391065910",
+  "originals": [
+    {"key": "@leng2022", "citation": "Leng, L., Beckers, T., & Vervliet, B. (2022). No joy - why bother? Higher anhedonia relates to reduced pleasure from and motivation for threat avoidance.", "doi": "", "on_list": true}
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "The current study attempted to conceptually replicate the effect of anhedonia on active avoidance learning observed in the previous study [14] while trying to overcome several limitations of that investigation. ... A large-scale online study gathered initial evidence for anhedonia as a potential factor contributing to insufficient threat avoidance [14]",
+  "evidence_basis": "fulltext",
+  "notes": "Self (conceptual) replication. The packet full text lacks the reference list, so [14] is matched by description (large online study with aversive-picture USs and anhedonia) to @leng2022; @leng2023 ('What a relief!') is the other same-author entry but is not the anhedonia study."
+}

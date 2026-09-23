@@ -1,0 +1,16 @@
+{
+  "work_id": "W2409619434",
+  "originals": [
+    {
+      "key": "@rusbult1985",
+      "citation": "Rusbult, C. E., & Lowery, D. (1985). When bureaucrats get the blues: Responses to dissatisfaction among federal employees. Journal of Applied Social Psychology.",
+      "doi": "10.1111/j.1559-1816.1985.tb02336.x",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "When Bureaucrats Get the Blues: A Replication and Extension of the Rusbult and Lowery Analysis of Federal Employee Responses to Job Dissatisfaction",
+  "evidence_basis": "packet",
+  "notes": "Re-analyses the 1979 Federal Employee Attitude Survey used by Rusbult and Lowery."
+}

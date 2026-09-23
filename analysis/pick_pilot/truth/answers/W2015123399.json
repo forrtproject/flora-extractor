@@ -1,0 +1,22 @@
+{
+  "work_id": "W2015123399",
+  "originals": [
+    {
+      "key": "@nijenhuis1996",
+      "citation": "Nijenhuis, E. R. S., Spinhoven, P., et al. (1996). The development and psychometric characteristics of the Somatoform Dissociation Questionnaire (SDQ-20). Journal of Nervous and Mental Disease.",
+      "doi": "10.1097/00005053-199611000-00004",
+      "on_list": true
+    },
+    {
+      "key": "@nijenhuis1997",
+      "citation": "Nijenhuis, E. R. S., Spinhoven, P., et al. (1997). The development of the Somatoform Dissociation Questionnaire (SDQ-5) as a screening instrument for dissociative disorders. Acta Psychiatrica Scandinavica.",
+      "doi": "10.1111/j.1600-0447.1997.tb09946.x",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "The present study aimed to replicate the results of previous studies concerning the development of two versions of the Somatoform Dissociation Questionnaire. The SDQ-20 ... and the SDQ-5",
+  "evidence_basis": "packet",
+  "notes": "Self-replication of the SDQ-20 (1996) and SDQ-5 (1997) development papers. DOIs not verified."
+}

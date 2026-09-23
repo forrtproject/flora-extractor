@@ -1,0 +1,22 @@
+{
+  "work_id": "W3132038847",
+  "originals": [
+    {
+      "key": "@sweis2018",
+      "citation": "Sweis, B. M., Abram, S. V., Schmidt, B. J., Seeland, K. D., MacDonald, A. W., Thomas, M. J., & Redish, A. D. (2018). Sensitivity to \"sunk costs\" in mice, rats, and humans. Science, 361, 178-181.",
+      "doi": "10.1126/science.aar8644",
+      "on_list": true
+    },
+    {
+      "key": "@abram2015",
+      "citation": "Abram, S. V., Breton, Y. A., Schmidt, B., Redish, A. D., & MacDonald, A. W. (2016). The Web-Surf Task: A translational model of human decision-making. Cognitive, Affective, & Behavioral Neuroscience, 16, 37-50.",
+      "doi": "10.3758/s13415-015-0379-y",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "medium",
+  "quote": "The original version of the task matched the one described above (allowing a replication of a population beyond undergraduates and online rather than in-person). ... Data collected from Amazon mTurk users on the original version of WebSurf replicated findings of data collected in the lab (Abram et al., 2016, 2019a; Sweis et al., 2018a) ... Our original version, matching the original study, replicated these findings.",
+  "evidence_basis": "online",
+  "notes": "Core re-tested finding (sunk costs in the wait phase, undergraduates in lab) is Sweis et al. 2018a. The economic behaviours (thresholds, revealed preferences) are replicated from Abram et al. 2016 (list entry @abram2015, same title, online-first year) and also Abram et al. 2019a (@abram2019), which I did not list as a separate original. The paper is a partial replication plus a new task variant."
+}

@@ -1,0 +1,22 @@
+{
+  "work_id": "W3170874557",
+  "originals": [
+    {
+      "key": "@mello2012",
+      "citation": "de Mello, R., Teixeira, E., Schots, M., Werner, C., & Travassos, G. (2012). Checklist-based inspection technique for feature models review. Sixth Brazilian Symposium on Software Components, Architectures and Reuse (SBCARS), 140-149.",
+      "doi": "10.1109/sbcars.2012.25",
+      "on_list": true
+    },
+    {
+      "key": null,
+      "citation": "de Mello, R. M., Teixeira, E. N., Schots, M., Werner, C. M. L., & Travassos, G. H. (2014). Verification of software product line artifacts: A checklist to support feature model inspections. Journal of Universal Computer Science, 20(5), 720-745.",
+      "doi": "",
+      "on_list": false
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "medium",
+  "quote": "We conducted an operational replication of the quasi-experiment designed to evaluate the feasibility of FMCheck [de Mello et al. 2012]. ... As a result, it was observed that FMCheck was significantly more effective, identifying 51.3% more defects than ad-hoc inspections [de Mello et al. 2014].",
+  "evidence_basis": "online",
+  "notes": "One original study (the first FMCheck quasi-experiment, 14 COPPE/UFRJ students) reported in two papers, both cited for it: the SBCARS 2012 paper (on list) and the 2014 J.UCS article (not on list), which the replication cites most often for the first study's results. Listed both per the two-reports rule."
+}

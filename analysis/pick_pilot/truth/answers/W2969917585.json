@@ -1,0 +1,16 @@
+{
+  "work_id": "W2969917585",
+  "originals": [
+    {
+      "key": "@ericsson1993",
+      "citation": "Ericsson, K. A., Krampe, R. T., & Tesch-Römer, C. (1993). The role of deliberate practice in the acquisition of expert performance. Psychological Review, 100(3), 363-406.",
+      "doi": "10.1037/0033-295X.100.3.363",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "We sought to replicate Ericsson, Krampe & Tesch-Römer's (Ericsson, Krampe & Tesch-Römer 1993 Psychol. Rev. 100, 363–406) seminal study on deliberate practice.",
+  "evidence_basis": "packet",
+  "notes": ""
+}

@@ -1,0 +1,16 @@
+{
+  "work_id": "W2012166465",
+  "originals": [
+    {
+      "key": "@pfeiffer1981",
+      "citation": "Pfeiffer, E. A., Johnson, T. M., & Chiofolo, R. C. (1981). Functional assessment of elderly subjects in four service settings. Journal of the American Geriatrics Society.",
+      "doi": "10.1111/j.1532-5415.1981.tb01744.x",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "medium",
+  "quote": "This replication study further supports the hypothesis that the Functional Assessment Inventory (FAI) can reliably distinguish between the elderly in different service settings.",
+  "evidence_basis": "packet+online",
+  "notes": "Full text not read; the 1981 four-settings study is the direct precursor (four -> five settings, FAI distinguishing settings). Cairl1983/Robinson1986 are reliability/validation studies."
+}

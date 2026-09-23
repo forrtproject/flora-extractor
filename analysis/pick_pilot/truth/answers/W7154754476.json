@@ -1,0 +1,16 @@
+{
+  "work_id": "W7154754476",
+  "originals": [
+    {
+      "key": "@guthrie2019",
+      "citation": "Guthrie, W., Wallis, K., et al. (2019). Accuracy of Autism Screening in a Large Pediatric Network. Pediatrics, 144(4), e20183963.",
+      "doi": "10.1542/peds.2018-3963",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "This study sought to replicate the only other prior study examining universal ASD screening (Guthrie et al. in Pediatrics 144(4):e20183963, 2019, 10.1542/peds.2018-3963)",
+  "evidence_basis": "packet",
+  "notes": ""
+}

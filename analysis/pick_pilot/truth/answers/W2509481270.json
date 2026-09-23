@@ -1,0 +1,9 @@
+{
+  "work_id": "W2509481270",
+  "originals": [],
+  "not_a_replication": true,
+  "confidence": "medium",
+  "quote": "By completing the statistical analysis of their results, one finds that the phenomenon claimed by Ganz can very well be replicated.",
+  "evidence_basis": "packet",
+  "notes": "A reply/commentary by the original author defending Ganz (2014) against Bailey et al. (2016)'s reproduction; it completes the statistical analysis of Bailey et al.'s reported results rather than conducting a new replication. If treated as a replication-type record, the finding at stake is @ganz2014 and the analysed study is @bailey2016."
+}

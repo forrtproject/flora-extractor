@@ -1,0 +1,11 @@
+{
+  "work_id": "W4391755671",
+  "originals": [
+    {"key": "@maddock2023", "citation": "Maddock, A., McGuigan, K., & McCusker, P. (2023). A randomised trial of Mindfulness-based Social Work and Self-Care with social workers. Current Psychology.", "doi": "", "on_list": true}
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "This randomised controlled trial (RCT) aimed to replicate and expand the findings of an earlier RCT of MBSWSC, with a wider group of social work professionals (including managers), by evaluating the effects of MBSWSC (n = 29) versus an active control (n = 31).",
+  "evidence_basis": "packet",
+  "notes": "Self-replication; the only earlier RCT of MBSWSC on the list. @maddock2021b is a mixed-methods evaluation and @maddock2023b a focus group study, not the RCT."
+}

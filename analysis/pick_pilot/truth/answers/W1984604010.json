@@ -1,0 +1,16 @@
+{
+  "work_id": "W1984604010",
+  "originals": [
+    {
+      "key": "@crow1989",
+      "citation": "Crow, T. J., DeLisi, L. E., & Johnstone, E. C. (1989). Concordance by sex in sibling pairs with schizophrenia is paternally inherited: evidence for a pseudoautosomal locus. British Journal of Psychiatry.",
+      "doi": "10.1192/bjp.155.1.92",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "medium",
+  "quote": "A locus for schizophrenia within the pseudoautosomal region of chromosomes X and Y has been suggested by Crow on the basis of epidemiological data. The present report replicates this finding",
+  "evidence_basis": "packet+online",
+  "notes": "The replicated finding is the excess of same-sex sib pairs in paternally derived sibships (Crow et al. 1989). @crow1988 is Crow's theoretical 'Sex chromosomes and psychosis'; @delisi1989 and @collinge1991 are related Crow/DeLisi reports (collinge1991 is the molecular affected-sib-pair linkage study, a different method). Full text not accessed; DOI unverified."
+}

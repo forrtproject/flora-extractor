@@ -1,0 +1,16 @@
+{
+  "work_id": "W1521097961",
+  "originals": [
+    {
+      "key": "@naj2010",
+      "citation": "Naj, A. C., Beecham, G. W., et al. (2010). Dementia revealed: novel chromosome 6 locus for late-onset Alzheimer disease provides genetic evidence for folate-pathway abnormalities. PLoS Genetics.",
+      "doi": "10.1371/journal.pgen.1001130",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "We conducted a replication study of the 2 genetic variants, rs11754661 and rs2073067, in MTHFD1L that have been recently reported to be associated with late-onset Alzheimer's disease (LOAD) in a genome-wide study in Caucasians.",
+  "evidence_basis": "packet",
+  "notes": "The GWAS in Caucasians reporting MTHFD1L is Naj et al. 2010. @ren2011 and @ramrezlorca2011 are earlier replication attempts cited on the list, not the GWAS itself."
+}

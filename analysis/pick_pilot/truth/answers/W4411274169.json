@@ -1,0 +1,16 @@
+{
+  "work_id": "W4411274169",
+  "originals": [
+    {
+      "key": "@li2024",
+      "citation": "Li, A., Hulleman, J., & Wolfe, J. M. (2024). Errors in visual search: Are they stochastic or deterministic? (online Experiment 3c)",
+      "doi": "",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "medium",
+  "quote": "Therefore, in Experiment 2, we attempted to mirror the previous online Experiment 3c more closely by splitting the stimuli into a noCue – noCue condition and a noCue – Cue condition. ... This was an attempt to more closely mirror the setup of our previous online experiment (Li et al., 2024).",
+  "evidence_basis": "packet+online",
+  "notes": "Self-replication in the lab (eye-tracking) of the authors' own online Experiment 3c from Li et al. 2024; primarily a mechanism study, Experiment 2 is the replication."
+}

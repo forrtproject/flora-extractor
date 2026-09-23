@@ -1,0 +1,11 @@
+{
+  "work_id": "W4400983779",
+  "originals": [
+    {"key": "@root2021", "citation": "Root, J. R., Cox, S. K., Davis, K., & Gonzales, S. (2022). Using augmented reality and modified schema-based instruction to teach problem solving to students with autism. Remedial and Special Education, 43(5), 301-313.", "doi": "10.1177/07419325211054209", "on_list": true}
+  ],
+  "not_a_replication": false,
+  "confidence": "medium",
+  "quote": "In this distal conceptual replication of Root et al., contextual and instructional variables of theoretical and practical importance were intentionally manipulated or maintained and reported to model transparency and support replicability.",
+  "evidence_basis": "packet+online",
+  "notes": "Abstract names 'Root et al.' without a year; full text paywalled. Matched to the Root et al. study that used the same combination of modified schema-based instruction and augmented reality with students with autism (@root2021, online 2021 / print 2022). Other Root entries (@root2016 SBI with manipulatives; @root2020 VRA; @root2018 contextualizing) are plausible but less specific."
+}

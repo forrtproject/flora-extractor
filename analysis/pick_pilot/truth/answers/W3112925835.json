@@ -1,0 +1,16 @@
+{
+  "work_id": "W3112925835",
+  "originals": [
+    {
+      "key": "@jainta2012",
+      "citation": "Jainta, S., & Jaschinski, W. (2012). Individual differences in binocular coordination are uncovered by directly comparing monocular and binocular reading conditions. Investigative Ophthalmology & Visual Science, 53(9), 5762-5769.",
+      "doi": "10.1167/iovs.12-9707",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "high",
+  "quote": "Nevertheless, the impact of horizontal heterophoria on binocular advantages in reading was reported for 13 participants and small heterophorias (range: 0 to 3 degrees exophoria) only (Jainta & Jaschinski, 2012). ... Thus, the first and obvious aim of this present study was to initiate a large-scale replication",
+  "evidence_basis": "online",
+  "notes": "Self-replication. Jainta et al. 2014 (@jainta2014) is cited as further evidence of binocular advantages but the N=13 heterophoria study is Jainta & Jaschinski 2012."
+}

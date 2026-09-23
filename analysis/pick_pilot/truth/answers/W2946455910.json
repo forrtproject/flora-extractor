@@ -1,0 +1,22 @@
+{
+  "work_id": "W2946455910",
+  "originals": [
+    {
+      "key": "@cecere2014",
+      "citation": "Cecere, R., Rees, G., & Romei, V. (2015). Individual differences in alpha frequency drive crossmodal illusory perception. Current Biology, 25(2), 231-235.",
+      "doi": "10.1016/j.cub.2014.11.034",
+      "on_list": true
+    },
+    {
+      "key": "@keil2017",
+      "citation": "Keil, J., & Senkowski, D. (2017). Individual alpha frequency relates to the sound-induced flash illusion. Multisensory Research, 30(6), 565-578.",
+      "doi": "10.1163/22134808-00002572",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "medium",
+  "quote": "We found that occipital IAF (in milliseconds) positively correlates with the size of the TWI in the auditory DFI ..., essentially replicating the results of the study by Cecere et al. (2015). ... While replicating previous findings demonstrating a relationship between IAF and auditory DFI (Cecere et al., 2015; Keil and Senkowski, 2017), we could not replicate this relationship between IAF and tactile-TWI.",
+  "evidence_basis": "packet+online",
+  "notes": "Primary original is Cecere et al. (cited as 2015; list entry dated 2014, online Dec 2014). Keil & Senkowski named as a secondary replicated finding; @keil2018 is a duplicate record of @keil2017. The replication is a component of a mainly novel (tactile DFI) study."
+}

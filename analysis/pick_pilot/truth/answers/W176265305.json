@@ -1,0 +1,16 @@
+{
+  "work_id": "W176265305",
+  "originals": [
+    {
+      "key": "@prigerson1995b",
+      "citation": "Prigerson, H. G., Frank, E., et al. (1995). Complicated grief and bereavement-related depression as distinct disorders: preliminary empirical validation in elderly bereaved spouses. American Journal of Psychiatry.",
+      "doi": "10.1176/ajp.152.1.22",
+      "on_list": true
+    }
+  ],
+  "not_a_replication": false,
+  "confidence": "medium",
+  "quote": "This study sought to confirm in an independent, nonclinical study group previous work which demonstrated that the symptoms of complicated grief were distinct from the symptoms of bereavement related depression and anxiety.",
+  "evidence_basis": "packet+online",
+  "notes": "Self-replication. Full text not accessible; the 1995 AJP paper is the authors' prior factor-analytic demonstration. @prigerson1996 (anxiety among widowed elders) may also be part of the 'previous work' on the anxiety side; @prigerson1995 is the ICG scale paper (measure, not the original)."
+}
