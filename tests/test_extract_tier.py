@@ -789,6 +789,17 @@ def test_a_declared_generation_equivalence_is_keyed_by_the_current_generation():
             f"since it was declared — re-review the equivalence or delete it")
 
 
+def test_gpt_6_luna_preserves_all_prior_settled_extract_generations():
+    """The new model must not reopen works settled under any prior declaration."""
+    from filter.engine.tiers import _generation_current
+
+    assert extract_generation() == "7dbb1e92452d8333"
+    for previous in ("010cf32bb63351e1", "ca0706ef44827229",
+                     "061cb5ca8e1888b6", "243ae515c654b6e5",
+                     "5b716d061bb336f5", "dd7572887420ef65"):
+        assert _generation_current(tier_mod.TIER_EXTRACT, previous, [])
+
+
 @pytest.mark.parametrize("rows,expected", [
     # The Stage 3.5 exit: unresolved by construction, and a plan rather than a row
     # the ladder failed on. Settling it is what keeps `--redo-status target_pending`

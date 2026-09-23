@@ -526,7 +526,8 @@ def _openai_flex_env(monkeypatch, use_flex=True):
     monkeypatch.setattr(llm.time, "sleep", lambda s: None)
 
 
-def test_target_prompt_caches_only_shared_rules_on_gpt_56(monkeypatch):
+@pytest.mark.parametrize("model", ["gpt-5.6-luna", "gpt-6-luna"])
+def test_target_prompt_caches_only_shared_rules_on_luna(monkeypatch, model):
     from shared.prompts import build_target_outcome_prompt
 
     _openai_flex_env(monkeypatch, use_flex=False)
@@ -535,7 +536,7 @@ def test_target_prompt_caches_only_shared_rules_on_gpt_56(monkeypatch):
     client.chat.completions.create.return_value = _resp('{"ok": true}')
 
     with patch("openai.OpenAI", return_value=client):
-        assert llm.call_openai(prompt, model="gpt-5.6-luna")[0] == {"ok": True}
+        assert llm.call_openai(prompt, model=model)[0] == {"ok": True}
 
     request = client.chat.completions.create.call_args.kwargs
     parts = request["messages"][0]["content"]
@@ -554,8 +555,9 @@ def test_target_prompt_caches_only_shared_rules_on_gpt_56(monkeypatch):
 @pytest.mark.parametrize("builder_name", ["build_outcome_prompt",
                                          "build_repro_outcome_prompt"])
 @pytest.mark.parametrize("fulltext", [False, True])
+@pytest.mark.parametrize("model", ["gpt-5.6-luna", "gpt-6-luna"])
 def test_standalone_outcome_caches_rules_before_paper_evidence(
-        monkeypatch, builder_name, fulltext):
+        monkeypatch, builder_name, fulltext, model):
     from shared import prompts
 
     _openai_flex_env(monkeypatch, use_flex=False)
@@ -570,7 +572,7 @@ def test_standalone_outcome_caches_rules_before_paper_evidence(
             original_title=f"Original {number}",
             text_snip=f"Discussion {number}" if fulltext else "")
         with patch("openai.OpenAI", return_value=client):
-            assert llm.call_openai(prompt, model="gpt-5.6-luna")[0] == {"ok": True}
+            assert llm.call_openai(prompt, model=model)[0] == {"ok": True}
         request = client.chat.completions.create.call_args.kwargs
         parts = request["messages"][0]["content"]
         assert request["prompt_cache_options"] == {"mode": "explicit"}

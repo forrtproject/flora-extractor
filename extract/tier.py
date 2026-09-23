@@ -325,7 +325,12 @@ _GENERATION_EQUIVALENCES: dict[str, tuple[str, ...]] = {
     # population that would answer differently is nameable and small — the textless
     # works, `--redo-status abstract_r=`, 555 extracted so far of 881 admitted —
     # against 3,025 a strict reopen would re-buy.
-    "010cf32bb63351e1": ("ca0706ef44827229", "061cb5ca8e1888b6",
+    # 2026-09-23: linking and outcome coding now use gpt-6-luna. Already settled
+    # verdicts remain current because the questions and acceptance rules are the
+    # same; each verdict retains its actual model provenance. Flatten the existing
+    # equivalences because this lookup accepts only the generations listed here.
+    "7dbb1e92452d8333": ("010cf32bb63351e1", "ca0706ef44827229",
+                         "061cb5ca8e1888b6",
                          "243ae515c654b6e5", "5b716d061bb336f5",
                          "dd7572887420ef65"),
 }
@@ -1020,10 +1025,10 @@ EXTRACT_RUNG_TOKENS = {
 # Rough list prices per 1,000 tokens for LINKING_MODEL / OUTCOME_MODEL, which are the
 # same id today. Same status as the screens' table in `filter/engine/tiers.py`: they
 # answer "is this run $30 or $3,000" before it starts and are not a billing record.
-# Update them in the same commit as a price or a model change. gpt-5.6-luna at flex
-# tier, 2026-08-15: $0.10 / $0.60 per 1M.
-EXTRACT_PRICE_PER_1K_IN = 0.00010
-EXTRACT_PRICE_PER_1K_OUT = 0.00060
+# Update them in the same commit as a price or a model change. gpt-6-luna at flex
+# tier, 2026-09-23: $0.05 / $0.25 per 1M.
+EXTRACT_PRICE_PER_1K_IN = 0.00005
+EXTRACT_PRICE_PER_1K_OUT = 0.00025
 # The PDF parse call, charged once per row that acquires a document. A whole PDF goes
 # to PDF_PARSE_MODEL, so it is priced separately and it dominates a fulltext row.
 EXTRACT_PDF_PARSE_USD = 0.0120

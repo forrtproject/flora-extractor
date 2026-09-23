@@ -65,7 +65,8 @@ pipeline ASKS. The maintainer's lever for a deliberate mixed-model artifact is
 `_GENERATION_EQUIVALENCES` in `extract/tier.py`: declaring the previous generation
 still current keeps its settled works settled, so only open works are bought under the
 new model (used 2026-08-15 to move Stage 3 from `gpt-5.4-mini` to `gpt-5.6-luna`
-mid-campaign; each verdict stamps the models that produced it).
+mid-campaign and 2026-09-23 to move to `gpt-6-luna`; each verdict stamps the models
+that produced it).
 
 `EXTRACT_LADDER_VERSION` was in that fingerprint until 2026-08-10 and is not any
 more. A ladder change alters how an original is FOUND, and it reaches a population its
@@ -456,7 +457,7 @@ This on-disk response cache skips an identical API call entirely. Provider promp
 caching is separate: it discounts a shared input prefix on different papers while
 still generating each paper's own answer. The combined target/outcome prompts place
 their shared coding rules before `PAPER`; the standalone outcome prompts place
-theirs before the original-link evidence and paper text. For direct GPT-5.6 calls,
+theirs before the original-link evidence and paper text. For direct GPT-5.6 and GPT-6 calls,
 `shared/llm_client.py` marks the end of those rules blocks as explicit prompt-cache
 breakpoints and leaves per-paper text outside the cache write. This changes the request's
 cache policy, not the concatenated prompt or its on-disk response-cache key. Earlier

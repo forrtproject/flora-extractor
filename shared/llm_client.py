@@ -264,7 +264,7 @@ def _gemini_post(url: str, payload: dict, key_idx: int, base_timeout: int):
 # silently over a cache full of answers produced without it.
 #
 # Effort belongs to the CALL SITE, never to the model id. Three call sites name the
-# same string today (LINKING_MODEL == OUTCOME_MODEL == SCREENING_MODEL_2), so
+# same string once (LINKING_MODEL == OUTCOME_MODEL == SCREENING_MODEL_2), so
 # deriving an effort from the id sent linking's "medium" to outcome coding, which
 # asked for none, and labelled the screen's key "medium" while it sent "low". Each
 # caller now passes its effort to call_model AND the same value to cache_model_id(),
@@ -522,14 +522,14 @@ def call_openai(prompt: str, model: str,
     extra = {"reasoning_effort": reasoning_effort} if reasoning_effort else {}
 
     # These prompts put long, invariant coding rules before per-paper evidence.
-    # GPT-5.6's implicit breakpoint at the end of one user message would also
+    # The implicit breakpoint at the end of one user message would also
     # write the unique evidence (at 1.25x input price). Cache only the rules.
     # The standalone outcome prompts have two stable variants each (abstract-only
     # and full-text); their different evidence and field instructions are still
     # entirely before the boundary. The concatenated prompt and on-disk response
     # cache key remain the same.
     cache_boundary = -1
-    if model.startswith("gpt-5.6"):
+    if model.startswith(("gpt-5.6", "gpt-6-")):
         if prompt.startswith(EVIDENCE_POLICY + _TARGET_TASK):
             marker = "\n\nPAPER\n\n"
         elif prompt.startswith((

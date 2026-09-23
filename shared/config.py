@@ -217,25 +217,19 @@ SCREENING_MODEL_2 = "gpt-5.4-mini"
 # model for all three rungs: the abstract, the reference list and the full text ask
 # the same question of different evidence.
 #
-# gpt-5.6-luna is OpenAI's small flagship-generation model: stronger than gpt-5.4-mini
-# on every published benchmark and, at flex tier, about a quarter of its price per
-# token ($0.10/M in, $0.60/M out against $0.375/$2.25 on 2026-08-15). It is not in
-# the free daily token allocation, so every call is billed — set
-# OPENAI_DAILY_TOKEN_BUDGET=0 for a run, or the 9.5M free-tier cap stops it. The task
-# is long-context retrieval — pick the right entries out of ~80 keyed reference lines
-# without confusing them — which is why the OpenAI small models were preferred over
-# Gemini 3 Flash here (MRCR v2). Rows settled under gpt-5.4-mini in the 2026-08
-# campaign are kept, not re-bought: `_GENERATION_EQUIVALENCES` in extract/tier.py
-# declares that generation still current, and each verdict stamps the models that
-# produced it. Linking has never been scored against data/flora.csv — it is the next
-# thing to measure, and this choice is a benchmark inference until then.
-LINKING_MODEL = "gpt-5.6-luna"
+# The task is long-context retrieval: pick the right entries out of ~80 keyed
+# reference lines without confusing them. GPT-6 Luna is $0.05/M input and $0.25/M
+# output at flex tier (2026-09-23). It is not in the free daily token allocation, so
+# set OPENAI_DAILY_TOKEN_BUDGET=0 for a billed run. Previously settled verdicts stay
+# current through `_GENERATION_EQUIVALENCES` in extract/tier.py; each verdict retains
+# the model that produced it. Linking has not been scored against data/flora.csv.
+LINKING_MODEL = "gpt-6-luna"
 
 # Outcome coding (extract/code_outcome.py) — WHAT was the outcome? Both the abstract
 # pass and the full-text escalation. Same model as linking, for the same reasons; the
 # per-target outcome is coded in the same call as the link, so the two are one
 # reading of the evidence.
-OUTCOME_MODEL = "gpt-5.6-luna"
+OUTCOME_MODEL = "gpt-6-luna"
 
 # Reference extraction from a document (shared/grobid.py) — the only call that is sent
 # a PDF or page images rather than text. Its answers are cached under filenames that

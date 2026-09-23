@@ -36,7 +36,7 @@ floor on what this measures, not a wrong answer.
 `--no-llm` runs the deterministic rungs only — title-pattern and citation/candidate
 matching over OpenAlex, which cost credits but no model call. It is the whole of what
 this box can do while `OPENAI_API_KEY` is unset, because `LINKING_MODEL` and
-`OUTCOME_MODEL` are both `gpt-5.6-luna`, which `provider_for()` routes to OpenAI
+`OUTCOME_MODEL` are both `gpt-6-luna`, which `provider_for()` routes to OpenAI
 direct. There is no fallback by design.
 """
 

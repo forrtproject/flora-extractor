@@ -50,9 +50,9 @@ whose first voter said anything but `none` is settled as proceed — that is the
 Votes cache per-vote, so finishing costs only the missing voter.
 
 **`extracted_offline.csv` currently holds no real outcomes.** Both `LINKING_MODEL` and
-`OUTCOME_MODEL` are `gpt-5.6-luna`, which routes to OpenAI direct with no fallback, so
-the run was `--no-llm`: the deterministic rungs only. Two consequences, both visible in
-the file:
+`OUTCOME_MODEL` used `gpt-5.6-luna` at the time, which routes to OpenAI direct with no
+fallback, so the run was `--no-llm`: the deterministic rungs only. Two consequences
+are visible in the file:
 
 * 21 of the 22 links it found are `single_candidate_after_requery` or
   `same_author_year_title_overlap` — the two `_HELD_ONLY_METHODS`, which a real run
