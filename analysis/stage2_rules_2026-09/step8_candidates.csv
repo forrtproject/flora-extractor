@@ -1,0 +1,15 @@
+cand,matches,lost_recovered,new_beyond_today,new_obs,new_flora,new_obs_or_flora,yield_per_1k
+cand-abstract-stem-nonbio,1151429,1283,1020824,831,902,1079,1.1
+cand-genetic-replication,33830,237,29035,59,51,61,2.1
+cand-text-stem-orig,65644,595,56478,371,372,453,8.0
+cand-title-multilab,1298,2,117,9,8,10,85.5
+cand-title-stem,261369,323,117585,441,445,525,4.5
+cand-title-stem-nonbio,190170,320,67922,437,441,521,7.7
+cand-text-arm8,2466,20,1494,14,17,19,12.7
+cand-text-arm7,1383,20,760,23,20,25,32.9
+cand-text-arm6,1330,12,853,40,47,52,61.0
+cand-text-arm5,8228,65,4565,173,187,216,47.3
+cand-text-arm4,4429,35,3948,38,38,50,12.7
+cand-text-arm3,12449,56,8138,64,86,94,11.6
+cand-text-arm2,14902,240,7973,156,142,167,20.9
+cand-text-arm1,25376,515,21919,241,261,330,15.1

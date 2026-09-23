@@ -1,0 +1,76 @@
+{
+  "id": "replication-claim-general",
+  "description": "GENERAL ADMISSION, drafted 2026-09-23 as the rule-book route for what `curated-observatory` admits (handover step 8; evidence analysis/stage2_rules_2026-09/REPORT.md). The curated rule's works that no live rule reaches are overwhelmingly works that state the design in the ABSTRACT, not the title \u2014 the live claim tiers are title-only \u2014 so this rule carries the abstract arms that measured highest-yield per new work, plus two title shapes the title tiers miss. Six arms: (1) the qualifier family (`direct|conceptual|registered|\u2026 replication`) anywhere in title+abstract; (2) `our replication(s)`; (3) `replication attempt(s)`; (4) a SUBTITLE replication (`X: a replication \u2026`, `X. Replicating \u2026`) and (5) `replication of the/a(n) \u2026` in the title, both minus the molecular-biology senses (DNA/viral/genome replication, replication fork/origin/stress, replicon, replicase); (6) `we \u2026 replicated` or `replication stud(y|ies)` in title+abstract TOGETHER WITH a reference to an original/previous/prior/published study, finding or result in the same text, minus the same biology senses. Arms 1\u20133 are carried verbatim from `replication-claim-text` (its arms 5, 7 and 6); the prior-study conjunction on arm 6 is what makes `we replicated` affordable \u2014 alone it adds 21,919 works. Measured offline over release c048ab6483d3's inputs with `curated-observatory` shadow: recovers 534 of the 1,345 curated works no other rule reaches (508 of the 1,229 the screen proceeded) and adds ~21.6k works beyond today's 9,105-work pile, 647 of them known replications (Observatory or FLoRA DOIs, 29.9/1k). Precedence 735: inside the claim band, below `replication-claim-title-broad` (740) so a title claim keeps its attribution, above `replication-claim-text` (730), whose arms it partly carries. No vocabulary: admission asks for the screen's attention. Admission rules need no `measured` entry.",
+  "match": {
+    "any_of": [
+      {
+        "text_regex": "\\b(?:direct|conceptual|registered|exact|close|high[-\\s]powered|pre[-\\s]?registered|large[-\\s]scale|many-?labs?|multi-?site)\\s+replications?\\b"
+      },
+      {
+        "text_regex": "\\bour\\s+replications?\\b"
+      },
+      {
+        "text_regex": "\\breplication\\s+attempts?\\b"
+      },
+      {
+        "title_regex": "[:.?]\\s*(?:an?\\s+|the\\s+)?(?:[\\w-]+\\s+){0,3}replicat\\w*",
+        "none_of": [
+          {
+            "text_regex": "\\b(?:dna|rna|viral|virus|virion|genom\\w*|chromosom\\w*|plasmid|phage|mitochondrial|hbv|hcv|hiv(?:-1)?|influenza|bacterial|intracellular|telomer\\w*|centrosom\\w*|origin|rolling[-\\s]circle)\\s+replicat"
+          },
+          {
+            "text_regex": "\\breplicat\\w*\\s+(?:fork|origin|stress|timing|licens\\w*|initiat\\w*|protein|complex|machinery|cycle|competen\\w*|defective|kinetics|fidelity|factor|intermediate|compartment|organelle)s?\\b"
+          },
+          {
+            "text_regex": "\\breplicon|\\breplicase|\\bself-replicat|\\breplication-(?:competent|defective|deficient)"
+          }
+        ]
+      },
+      {
+        "title_regex": "\\breplicat\\w*\\s+of\\s+(?:the|an?)\\s",
+        "none_of": [
+          {
+            "text_regex": "\\b(?:dna|rna|viral|virus|virion|genom\\w*|chromosom\\w*|plasmid|phage|mitochondrial|hbv|hcv|hiv(?:-1)?|influenza|bacterial|intracellular|telomer\\w*|centrosom\\w*|origin|rolling[-\\s]circle)\\s+replicat"
+          },
+          {
+            "text_regex": "\\breplicat\\w*\\s+(?:fork|origin|stress|timing|licens\\w*|initiat\\w*|protein|complex|machinery|cycle|competen\\w*|defective|kinetics|fidelity|factor|intermediate|compartment|organelle)s?\\b"
+          },
+          {
+            "text_regex": "\\breplicon|\\breplicase|\\bself-replicat|\\breplication-(?:competent|defective|deficient)"
+          }
+        ]
+      },
+      {
+        "any_of": [
+          {
+            "text_regex": "\\bwe\\s+(?:\\w+\\s+){0,2}replicat(?:e|es|ed)\\b"
+          },
+          {
+            "text_regex": "\\breplication\\s+stud(?:y|ies)\\b"
+          }
+        ],
+        "all_of": [
+          {
+            "text_regex": "\\b(?:original|previous|prior|earlier|initial|published|seminal|classic)\\s+(?:\\w+\\s+)?(?:study|studies|finding|findings|result|results|report|experiment|experiments|work|paper|effect)\\b"
+          }
+        ],
+        "none_of": [
+          {
+            "text_regex": "\\b(?:dna|rna|viral|virus|virion|genom\\w*|chromosom\\w*|plasmid|phage|mitochondrial|hbv|hcv|hiv(?:-1)?|influenza|bacterial|intracellular|telomer\\w*|centrosom\\w*|origin|rolling[-\\s]circle)\\s+replicat"
+          },
+          {
+            "text_regex": "\\breplicat\\w*\\s+(?:fork|origin|stress|timing|licens\\w*|initiat\\w*|protein|complex|machinery|cycle|competen\\w*|defective|kinetics|fidelity|factor|intermediate|compartment|organelle)s?\\b"
+          },
+          {
+            "text_regex": "\\breplicon|\\breplicase|\\bself-replicat|\\breplication-(?:competent|defective|deficient)"
+          }
+        ]
+      }
+    ]
+  },
+  "pile": "screen_expensive",
+  "vocabulary": null,
+  "precedence": 735,
+  "shadow": true,
+  "measured": []
+}

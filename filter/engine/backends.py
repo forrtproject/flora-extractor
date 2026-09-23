@@ -52,6 +52,8 @@ _ROW_SCHEMA = pa.schema([
     # derives it; a row dict carries it directly, under the same name the
     # overlay worklist uses.
     ("url", pa.string()),
+    # The OpenAlex record id, read only by `work_id_in`.
+    ("id", pa.string()),
 ])
 
 # Where a pool row's URL lives: the JSON column and the key inside it, in the
@@ -133,6 +135,20 @@ class BatchContext:
         self.concepts = pc.fill_null(col("concepts"), "")
         self.abstract_empty = pc.equal(pc.utf8_trim_whitespace(self.abstract), "")
         self._url: Optional[pa.Array] = None
+        self._work_ids: Optional[pa.Array] = None
+
+    @property
+    def work_ids(self) -> pa.Array:
+        """The row's own OpenAlex id as int64 (null where absent), on first use only."""
+        if self._work_ids is None:
+            ids = self.column("id")
+            if ids is None:
+                self._work_ids = pa.nulls(self.n, pa.int64())
+            else:
+                digits = pc.extract_regex(pc.cast(ids, pa.string()),
+                                          r"(?:^|/)[Ww]?(?P<n>\d+)$")
+                self._work_ids = pc.cast(pc.struct_field(digits, [0]), pa.int64())
+        return self._work_ids
 
     @property
     def url(self) -> pa.Array:
@@ -253,6 +269,9 @@ def _match_batch(block: MatchBlock, ctx: BatchContext) -> pa.Array:
     if block.doi_in:
         listed = pa.array(block.doi_in, type=pa.string())
         mask = pc.and_(mask, pc.fill_null(pc.is_in(ctx.doi, value_set=listed), False))
+    if block.work_id_in:
+        listed = pa.array(block.work_id_in, type=pa.int64())
+        mask = pc.and_(mask, pc.fill_null(pc.is_in(ctx.work_ids, value_set=listed), False))
     if block.doi_regex is not None:
         mask = pc.and_(mask, _re_match(ctx.doi, block.doi_regex))
     if block.title_regex is not None:
@@ -319,6 +338,7 @@ def rows_to_batch(rows: list[dict]) -> pa.RecordBatch:
     """
     columns = {name: [row.get(name) for row in rows] for name in _ROW_SCHEMA.names}
     columns["publication_year"] = [_year(v) for v in columns["publication_year"]]
+    columns["id"] = [None if v is None else str(v) for v in columns["id"]]
     return pa.RecordBatch.from_pydict(columns, schema=_ROW_SCHEMA)
 
 
@@ -381,6 +401,11 @@ def _block_evidence(block: MatchBlock, ctx: BatchContext) -> list[str]:
         for index, doi in enumerate(ctx.doi.to_pylist()):
             if not out[index] and doi in listed:
                 out[index] = doi
+    if block.work_id_in:
+        listed_ids = set(block.work_id_in)
+        for index, wid in enumerate(ctx.work_ids.to_pylist()):
+            if not out[index] and wid in listed_ids:
+                out[index] = f"work_id=W{wid}"
     for label, pattern, column in (("doi_regex", block.doi_regex, ctx.doi),
                                    ("title_regex", block.title_regex, ctx.title),
                                    ("abstract_regex", block.abstract_regex, ctx.abstract),

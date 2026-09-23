@@ -1,0 +1,12 @@
+{
+ "id": "cand-title-stem",
+ "description": "Step 8 candidate arm, measured offline only.",
+ "match": {
+  "title_regex": "\\breplicat\\w*"
+ },
+ "pile": "screen_expensive",
+ "vocabulary": null,
+ "precedence": 609,
+ "shadow": true,
+ "measured": []
+}

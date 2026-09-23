@@ -260,6 +260,25 @@ def test_doi_in_is_an_allow_list_normalised_on_both_sides():
     assert match_evidence(spec, batch)[:2] == ["10.1037/abc123", "10.1037/abc123"]
 
 
+def test_work_id_in_names_the_record_not_its_doi():
+    """Issue #210: an unrelated OpenAlex record can carry a real paper's DOI, and the
+    real paper often sits in the pool under the same DOI, so a claim about the twin
+    must name the RECORD. The pool's URL-form `id` and every spec form (int, `W123`,
+    URL) meet as int64; the sibling sharing the DOI is not matched."""
+    spec = FilterSpec.from_dict({
+        "id": "twins", "description": "records, not DOIs",
+        "match": {"work_id_in": [21279159, "W7", "https://openalex.org/W8"]},
+        "pile": "discard", "precedence": 950, "shadow": True})
+    assert spec.match.work_id_in == (21279159, 7, 8)
+    rows = [_row(work="https://openalex.org/W21279159", doi="10.1901/jeab.2010.94-13"),
+            _row(work="https://openalex.org/W2008", doi="10.1901/jeab.2010.94-13"),
+            _row(work="https://openalex.org/W7"), _row(work="https://openalex.org/W8")]
+    batch = _batch(rows)
+    assert eval_spec_batch(spec, batch).to_pylist() == [True, False, True, True]
+    assert eval_spec_rows(spec, rows) == [True, False, True, True]
+    assert match_evidence(spec, batch)[0] == "work_id=W21279159"
+
+
 def test_the_row_url_is_pulled_out_of_the_pool_json_exactly_as_row_url_reads_it():
     """`url_regex` reads a column the pool does not have.
 

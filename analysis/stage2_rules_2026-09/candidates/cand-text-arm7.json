@@ -1,0 +1,12 @@
+{
+ "id": "cand-text-arm7",
+ "description": "Step 8 candidate arm, measured offline only.",
+ "match": {
+  "text_regex": "\\breplication\\s+attempts?\\b"
+ },
+ "pile": "screen_expensive",
+ "vocabulary": null,
+ "precedence": 606,
+ "shadow": true,
+ "measured": []
+}

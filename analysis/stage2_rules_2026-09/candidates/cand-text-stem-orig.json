@@ -1,0 +1,30 @@
+{
+ "id": "cand-text-stem-orig",
+ "description": "Step 8 candidate arm, measured offline only.",
+ "match": {
+  "all_of": [
+   {
+    "text_regex": "\\breplicat\\w*"
+   },
+   {
+    "text_regex": "\\b(?:original|previous|prior|earlier|initial|published|seminal|classic)\\s+(?:\\w+\\s+)?(?:study|studies|finding|findings|result|results|report|experiment|experiments|work|paper|effect)\\b"
+   }
+  ],
+  "none_of": [
+   {
+    "text_regex": "\\b(?:dna|rna|viral|virus|virion|genom\\w*|chromosom\\w*|plasmid|phage|mitochondrial|hbv|hcv|hiv(?:-1)?|influenza|bacterial|intracellular|telomer\\w*|centrosom\\w*|origin|rolling[-\\s]circle)\\s+replicat"
+   },
+   {
+    "text_regex": "\\breplicat\\w*\\s+(?:fork|origin|stress|timing|licens\\w*|initiat\\w*|protein|complex|machinery|cycle|competen\\w*|defective|kinetics|fidelity|factor|intermediate|compartment|organelle)s?\\b"
+   },
+   {
+    "text_regex": "\\breplicon|\\breplicase|\\bself-replicat|\\breplication-(?:competent|defective|deficient)"
+   }
+  ]
+ },
+ "pile": "screen_expensive",
+ "vocabulary": null,
+ "precedence": 611,
+ "shadow": true,
+ "measured": []
+}

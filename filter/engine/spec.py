@@ -51,10 +51,13 @@ AUTONOMOUS_LEVELS = ("human", "downstream", "trusted")
 
 _SPEC_KEYS = frozenset({"id", "description", "match", "domain", "pile",
                         "vocabulary", "precedence", "shadow", "measured"})
-_MATCH_KEYS = frozenset({"doi_prefix", "doi_in", "doi_regex", "title_regex",
+_MATCH_KEYS = frozenset({"doi_prefix", "doi_in", "work_id_in", "doi_regex", "title_regex",
                          "abstract_regex", "text_regex", "url_regex", "fields",
                          "abstract_missing", "any_of", "all_of", "none_of"})
 _NESTED_KEYS = ("any_of", "all_of", "none_of")
+# `workids.work_id()`'s forms (URL, `W123`, bare digits); not imported, because
+# workids imports this module.
+_WORK_ID_RE = re.compile(r"^(?:https?://openalex\.org/)?[Ww]?(\d+)$")
 _REGEX_KEYS = ("doi_regex", "title_regex", "abstract_regex", "text_regex",
                "url_regex")
 _FIELD_KEYS = frozenset({"type", "publication_year", "concept_ids"})
@@ -72,6 +75,13 @@ class MatchBlock:
     # is the wrong shape for a list: 3,000 escaped DOIs are not reviewable, and
     # one unescaped dot matches a neighbouring DOI without anyone noticing.
     doi_in: tuple[str, ...] = ()
+    # A list of OpenAlex RECORDS, as int64 work ids, for a claim about one record
+    # rather than about its DOI. `doi_in` cannot make it: issue #210's DOI twins are
+    # unrelated OpenAlex records filed under a real paper's DOI, and the real paper
+    # often sits in the pool under the same DOI. Matched against the row's own `id`
+    # BEFORE alias resolution — the claim is about that record's metadata, and the
+    # alias map never merges two records that disagree on the title anyway.
+    work_id_in: tuple[int, ...] = ()
     doi_regex: Optional[str] = None
     title_regex: Optional[str] = None
     abstract_regex: Optional[str] = None
@@ -92,6 +102,8 @@ class MatchBlock:
             doi_prefix=tuple(raw.get("doi_prefix") or ()),
             doi_in=tuple(d for d in (clean_doi(str(v))
                                      for v in (raw.get("doi_in") or ())) if d),
+            work_id_in=tuple(int(_WORK_ID_RE.match(str(v).strip()).group(1))
+                             for v in (raw.get("work_id_in") or ())),
             doi_regex=raw.get("doi_regex"),
             title_regex=raw.get("title_regex"),
             abstract_regex=raw.get("abstract_regex"),
@@ -202,6 +214,12 @@ def _validate_match(raw: Any, path: str, errors: list[str]) -> None:
                                or not all(isinstance(d, str) and d.strip()
                                           for d in listed)):
         errors.append(f"{path}.doi_in: must be a list of non-empty DOI strings")
+    works = raw.get("work_id_in")
+    if works is not None and (not isinstance(works, list) or not all(
+            isinstance(w, (int, str)) and not isinstance(w, bool)
+            and _WORK_ID_RE.match(str(w).strip()) for w in works)):
+        errors.append(f"{path}.work_id_in: must be a list of OpenAlex work ids "
+                      "(123, \"W123\" or the openalex.org URL)")
     fields = raw.get("fields")
     if fields is not None:
         if not isinstance(fields, dict):

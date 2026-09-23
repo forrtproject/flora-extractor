@@ -1,0 +1,12 @@
+{
+ "id": "cand-title-multilab",
+ "description": "Step 8 candidate arm, measured offline only.",
+ "match": {
+  "title_regex": "\\b(?:multi-?lab(?:oratory)?|multi-?site|many-?labs?|multi-?centre|multi-?center|pre-?registered|registered|preregistered)\\b[^.:?!]{0,40}\\breplicat\\w*"
+ },
+ "pile": "screen_expensive",
+ "vocabulary": null,
+ "precedence": 610,
+ "shadow": true,
+ "measured": []
+}

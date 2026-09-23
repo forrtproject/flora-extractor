@@ -1,0 +1,43 @@
+{
+  "id": "doi-registry-twin",
+  "description": "SHADOW DISCARD, issue #210: OpenAlex records whose DOI's registry record (Crossref, else doi.org content negotiation) names a DIFFERENT paper — title overlap coefficient <= 0.5 against every registry title (main, main+subtitle, original-language, short), a different script counted as a translation unless the year is > 1 apart or another pool record under the same DOI carries the registry's title — AND whose own title makes no replication claim (a mismatched record that does is a real study with a wrong DOI, class `wrong_doi_on_real_study`, and is NOT listed). A list of records, not a pattern, because a spec cannot read the registry at route time: the list is DERIVED, like aliases.json, by `PYTHONPATH=. .venv/bin/python analysis/stage2_rules_2026-09/doi_twins_audit.py --fetch --spec <path>` over one release's admitted piles and the extracted works, and is regenerated whenever the admitted population changes (a new release that admits works the last audit did not see). Precedence 950 outranks every admission; it matters only once promoted. Measured 2026-09-23 over release c048ab6483d3: all 30 known twins (analysis/mo_observatory/doi_title_mismatch.csv) score 0.0 and every matching record scores >= 0.8 — see analysis/stage2_rules_2026-09/REPORT.md.",
+  "match": {
+    "work_id_in": [
+      323418,
+      7247632,
+      9305343,
+      10332041,
+      10395218,
+      12468009,
+      15030108,
+      20157068,
+      21279159,
+      24897569,
+      26612384,
+      26814567,
+      27061668,
+      27239894,
+      27793020,
+      29743634,
+      30654172,
+      32074130,
+      32351359,
+      32510346,
+      33443150,
+      33626289,
+      34806014,
+      36459646,
+      36929248,
+      37020899,
+      37141022,
+      37396571,
+      38169673,
+      180321553
+    ]
+  },
+  "pile": "discard",
+  "vocabulary": null,
+  "precedence": 950,
+  "shadow": true,
+  "measured": []
+}

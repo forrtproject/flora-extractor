@@ -1,0 +1,204 @@
+diff -ruN a/docs/filter-engine.md b/docs/filter-engine.md
+--- a/docs/filter-engine.md	2026-09-23 16:32:04.166385228 +0100
++++ b/docs/filter-engine.md	2026-09-23 16:32:04.180316087 +0100
+@@ -224,6 +224,12 @@
+   a neighbouring DOI. A rule that names works rather than a pattern is a curated
+   source and should say so in its `description`, including when it should be
+   deleted (`filter/spec/curated-observatory.json`, if it is live).
++  `work_id_in` is the same shape for OpenAlex RECORDS: a list of work ids (`123`,
++  `"W123"` or the openalex.org URL) matched against the row's own `id` before alias
++  resolution. It exists for a claim about one record's metadata that its DOI cannot
++  carry — issue #210's DOI twins, where an unrelated record is filed under a real
++  paper's DOI and the real paper sits in the pool under the same DOI
++  (`doi-registry-twin`, derived by `analysis/stage2_rules_2026-09/doi_twins_audit.py`).
+   `fields` is exact membership on pool
+   columns (`type`, `publication_year`), except `fields.concept_ids`, which tests
+   membership of bare concept ids in the row's `concepts` (both URL-form JSON and
+@@ -263,7 +269,7 @@
+ 
+ The full accepted key sets, from `spec.py`: top level `id, description, match,
+ domain, pile, vocabulary, precedence, shadow, measured`; inside a match or a
+-domain `doi_prefix,
++domain `doi_prefix, doi_in, work_id_in,
+ doi_regex, title_regex, abstract_regex, text_regex, url_regex, fields,
+ abstract_missing, any_of, all_of, none_of`; inside
+ `fields` `type, publication_year, concept_ids`; inside a `measured` entry
+diff -ruN a/filter/spec/doi-registry-twin.json b/filter/spec/doi-registry-twin.json
+--- a/filter/spec/doi-registry-twin.json	1970-01-01 01:00:00.000000000 +0100
++++ b/filter/spec/doi-registry-twin.json	2026-09-23 16:32:04.169972465 +0100
+@@ -0,0 +1,43 @@
++{
++  "id": "doi-registry-twin",
++  "description": "SHADOW DISCARD, issue #210: OpenAlex records whose DOI's registry record (Crossref, else doi.org content negotiation) names a DIFFERENT paper — title overlap coefficient <= 0.5 against every registry title (main, main+subtitle, original-language, short), a different script counted as a translation unless the year is > 1 apart or another pool record under the same DOI carries the registry's title — AND whose own title makes no replication claim (a mismatched record that does is a real study with a wrong DOI, class `wrong_doi_on_real_study`, and is NOT listed). A list of records, not a pattern, because a spec cannot read the registry at route time: the list is DERIVED, like aliases.json, by `PYTHONPATH=. .venv/bin/python analysis/stage2_rules_2026-09/doi_twins_audit.py --fetch --spec <path>` over one release's admitted piles and the extracted works, and is regenerated whenever the admitted population changes (a new release that admits works the last audit did not see). Precedence 950 outranks every admission; it matters only once promoted. Measured 2026-09-23 over release c048ab6483d3: all 30 known twins (analysis/mo_observatory/doi_title_mismatch.csv) score 0.0 and every matching record scores >= 0.8 — see analysis/stage2_rules_2026-09/REPORT.md.",
++  "match": {
++    "work_id_in": [
++      323418,
++      7247632,
++      9305343,
++      10332041,
++      10395218,
++      12468009,
++      15030108,
++      20157068,
++      21279159,
++      24897569,
++      26612384,
++      26814567,
++      27061668,
++      27239894,
++      27793020,
++      29743634,
++      30654172,
++      32074130,
++      32351359,
++      32510346,
++      33443150,
++      33626289,
++      34806014,
++      36459646,
++      36929248,
++      37020899,
++      37141022,
++      37396571,
++      38169673,
++      180321553
++    ]
++  },
++  "pile": "discard",
++  "vocabulary": null,
++  "precedence": 950,
++  "shadow": true,
++  "measured": []
++}
+diff -ruN a/filter/spec/replication-claim-general.json b/filter/spec/replication-claim-general.json
+--- a/filter/spec/replication-claim-general.json	1970-01-01 01:00:00.000000000 +0100
++++ b/filter/spec/replication-claim-general.json	2026-09-23 16:32:04.170006880 +0100
+@@ -0,0 +1,76 @@
++{
++  "id": "replication-claim-general",
++  "description": "GENERAL ADMISSION, drafted 2026-09-23 as the rule-book route for what `curated-observatory` admits (handover step 8; evidence analysis/stage2_rules_2026-09/REPORT.md). The curated rule's works that no live rule reaches are overwhelmingly works that state the design in the ABSTRACT, not the title \u2014 the live claim tiers are title-only \u2014 so this rule carries the abstract arms that measured highest-yield per new work, plus two title shapes the title tiers miss. Six arms: (1) the qualifier family (`direct|conceptual|registered|\u2026 replication`) anywhere in title+abstract; (2) `our replication(s)`; (3) `replication attempt(s)`; (4) a SUBTITLE replication (`X: a replication \u2026`, `X. Replicating \u2026`) and (5) `replication of the/a(n) \u2026` in the title, both minus the molecular-biology senses (DNA/viral/genome replication, replication fork/origin/stress, replicon, replicase); (6) `we \u2026 replicated` or `replication stud(y|ies)` in title+abstract TOGETHER WITH a reference to an original/previous/prior/published study, finding or result in the same text, minus the same biology senses. Arms 1\u20133 are carried verbatim from `replication-claim-text` (its arms 5, 7 and 6); the prior-study conjunction on arm 6 is what makes `we replicated` affordable \u2014 alone it adds 21,919 works. Measured offline over release c048ab6483d3's inputs with `curated-observatory` shadow: recovers 534 of the 1,345 curated works no other rule reaches (508 of the 1,229 the screen proceeded) and adds ~21.6k works beyond today's 9,105-work pile, 647 of them known replications (Observatory or FLoRA DOIs, 29.9/1k). Precedence 735: inside the claim band, below `replication-claim-title-broad` (740) so a title claim keeps its attribution, above `replication-claim-text` (730), whose arms it partly carries. No vocabulary: admission asks for the screen's attention. Admission rules need no `measured` entry.",
++  "match": {
++    "any_of": [
++      {
++        "text_regex": "\\b(?:direct|conceptual|registered|exact|close|high[-\\s]powered|pre[-\\s]?registered|large[-\\s]scale|many-?labs?|multi-?site)\\s+replications?\\b"
++      },
++      {
++        "text_regex": "\\bour\\s+replications?\\b"
++      },
++      {
++        "text_regex": "\\breplication\\s+attempts?\\b"
++      },
++      {
++        "title_regex": "[:.?]\\s*(?:an?\\s+|the\\s+)?(?:[\\w-]+\\s+){0,3}replicat\\w*",
++        "none_of": [
++          {
++            "text_regex": "\\b(?:dna|rna|viral|virus|virion|genom\\w*|chromosom\\w*|plasmid|phage|mitochondrial|hbv|hcv|hiv(?:-1)?|influenza|bacterial|intracellular|telomer\\w*|centrosom\\w*|origin|rolling[-\\s]circle)\\s+replicat"
++          },
++          {
++            "text_regex": "\\breplicat\\w*\\s+(?:fork|origin|stress|timing|licens\\w*|initiat\\w*|protein|complex|machinery|cycle|competen\\w*|defective|kinetics|fidelity|factor|intermediate|compartment|organelle)s?\\b"
++          },
++          {
++            "text_regex": "\\breplicon|\\breplicase|\\bself-replicat|\\breplication-(?:competent|defective|deficient)"
++          }
++        ]
++      },
++      {
++        "title_regex": "\\breplicat\\w*\\s+of\\s+(?:the|an?)\\s",
++        "none_of": [
++          {
++            "text_regex": "\\b(?:dna|rna|viral|virus|virion|genom\\w*|chromosom\\w*|plasmid|phage|mitochondrial|hbv|hcv|hiv(?:-1)?|influenza|bacterial|intracellular|telomer\\w*|centrosom\\w*|origin|rolling[-\\s]circle)\\s+replicat"
++          },
++          {
++            "text_regex": "\\breplicat\\w*\\s+(?:fork|origin|stress|timing|licens\\w*|initiat\\w*|protein|complex|machinery|cycle|competen\\w*|defective|kinetics|fidelity|factor|intermediate|compartment|organelle)s?\\b"
++          },
++          {
++            "text_regex": "\\breplicon|\\breplicase|\\bself-replicat|\\breplication-(?:competent|defective|deficient)"
++          }
++        ]
++      },
++      {
++        "any_of": [
++          {
++            "text_regex": "\\bwe\\s+(?:\\w+\\s+){0,2}replicat(?:e|es|ed)\\b"
++          },
++          {
++            "text_regex": "\\breplication\\s+stud(?:y|ies)\\b"
++          }
++        ],
++        "all_of": [
++          {
++            "text_regex": "\\b(?:original|previous|prior|earlier|initial|published|seminal|classic)\\s+(?:\\w+\\s+)?(?:study|studies|finding|findings|result|results|report|experiment|experiments|work|paper|effect)\\b"
++          }
++        ],
++        "none_of": [
++          {
++            "text_regex": "\\b(?:dna|rna|viral|virus|virion|genom\\w*|chromosom\\w*|plasmid|phage|mitochondrial|hbv|hcv|hiv(?:-1)?|influenza|bacterial|intracellular|telomer\\w*|centrosom\\w*|origin|rolling[-\\s]circle)\\s+replicat"
++          },
++          {
++            "text_regex": "\\breplicat\\w*\\s+(?:fork|origin|stress|timing|licens\\w*|initiat\\w*|protein|complex|machinery|cycle|competen\\w*|defective|kinetics|fidelity|factor|intermediate|compartment|organelle)s?\\b"
++          },
++          {
++            "text_regex": "\\breplicon|\\breplicase|\\bself-replicat|\\breplication-(?:competent|defective|deficient)"
++          }
++        ]
++      }
++    ]
++  },
++  "pile": "screen_expensive",
++  "vocabulary": null,
++  "precedence": 735,
++  "shadow": true,
++  "measured": []
++}
+diff -ruN a/tests/test_engine_route.py b/tests/test_engine_route.py
+--- a/tests/test_engine_route.py	2026-09-23 16:32:35.762065407 +0100
++++ b/tests/test_engine_route.py	2026-09-23 16:32:35.773036183 +0100
+@@ -163,6 +163,12 @@
+     _row(work="https://openalex.org/W28", doi="10.1001/archgenpsychiatry.2009.155",
+          title="Serotonin transporter genotype and depression",
+          abstract="A cohort study of stressful life events."),
++    # doi-registry-twin (950, shadow): issue #210's example — a 1948 cosmic-ray
++    # record filed under a JEAB 2010 replication's DOI, named by its record id
++    _row(work="https://openalex.org/W21279159", doi="10.1901/jeab.2010.94-13",
++         title="Distribution of penetrating particles and high energy electrons in "
++               "extensive atmospheric showers", year=1948,
++         abstract="Measurements of cosmic-ray showers."),
+ ]
+ 
+ 
+diff -ruN a/tests/test_engine_spec.py b/tests/test_engine_spec.py
+--- a/tests/test_engine_spec.py	2026-09-23 16:32:04.165376983 +0100
++++ b/tests/test_engine_spec.py	2026-09-23 16:32:04.179671798 +0100
+@@ -25,6 +25,7 @@
+ EXPECTED = {
+     # id: (pile, precedence, vocabulary, shadow)
+     "not-a-paper-doi": ("discard", 960, None, False),
++    "doi-registry-twin": ("discard", 950, None, True),
+     "deposit-registrant": ("discard", 958, None, False),
+     "figshare-attachment": ("discard", 956, None, False),
+     "not-a-paper-title": ("discard", 955, None, False),
+@@ -36,6 +37,7 @@
+     "replication-claim-title-strong": ("screen_expensive", 750, None, False),
+     "curated-observatory": ("screen_expensive", 745, None, False),
+     "replication-claim-title-broad": ("screen_expensive", 740, None, False),
++    "replication-claim-general": ("screen_expensive", 735, None, True),
+     "replication-claim-text": ("screen_expensive", 730, None, True),
+     "replication-claim-residual": ("screen_expensive", 710, None, True),
+     "not-a-study-type": ("discard", 500, None, False),
+@@ -48,7 +50,7 @@
+ # with decreasing strength. Every tier routes to the same pile, so precedence
+ # inside the family decides attribution rather than destination.
+ _CLAIM_TIERS = ("replication-claim-cited-title", "replication-claim-title-strong",
+-                "replication-claim-title-broad",
++                "replication-claim-title-broad", "replication-claim-general",
+                 "replication-claim-text", "replication-claim-residual")
+ _ADMISSION = _CLAIM_TIERS
+ _ABOVE_ADMISSION = ("not-a-paper-doi", "deposit-registrant", "not-a-paper-title",
+@@ -109,6 +111,7 @@
+                          "replication-claim-title-strong",
+                          "curated-observatory",
+                          "replication-claim-title-broad",
++                         "replication-claim-general",
+                          "replication-claim-text", "replication-claim-residual"]
+ 
+ 

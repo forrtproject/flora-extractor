@@ -197,6 +197,16 @@ def test_doi_in_must_be_a_list_of_non_empty_dois():
         measured=[{"level": "trusted", "rationale": "fixture"}])) == []
 
 
+def test_work_id_in_must_be_a_list_of_openalex_ids():
+    """A malformed entry would otherwise crash `from_dict` mid-load, or — for a
+    bare string — read as a list of characters that matches nothing."""
+    assert validate_spec(_valid_spec(match={"work_id_in": [123, "W45",
+                                                           "https://openalex.org/W6"]})) == []
+    for bad in ("W123", ["abc"], [True], [None], [1.5]):
+        errors = validate_spec(_valid_spec(match={"work_id_in": bad}))
+        assert any("work_id_in" in e for e in errors), bad
+
+
 def test_pending_is_not_a_legal_spec_pile():
     errors = validate_spec(_valid_spec(pile="pending"))
     assert any("'pending' is never a spec target" in e for e in errors)
