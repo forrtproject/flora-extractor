@@ -23,7 +23,11 @@ the command, pasteable from the project root, and what proves it worked.
 
 ## Open
 
-- [ ] **Decide what to do about the 14 `candidates-*.parquet` files in the shared
+_(none)_
+
+## Done
+
+- [x] **DONE 2026-09-23 — deleted.** HF commit `e284f62` removed the 14 `builds/*/candidates-*.parquet`; the remote now lists 2,232 pool files under gate `d536bc51b9b2`. A fresh `pool_sync --pull --no-overlay` into a scratch dir stamped `expected_files: 2232` and `pool_fingerprint()` returned `d34c277e…`, identical to the local pool. Original entry: **Decide what to do about the 14 `candidates-*.parquet` files in the shared
       pool repo.** `lukaswallrich/flora-survivor-pool` carries them in the pool root
       alongside the 2,232 `part-*.parquet` files — 1,363,959 rows of the retired
       `CANDIDATES_COLS` corpus (`doi_r`, `title_r`, …). Every pool reader here globs
@@ -34,8 +38,6 @@ the command, pasteable from the project root, and what proves it worked.
       re-stamped to 2,232 with the recorded gate `d536bc51b9b2`. Fixing the REMOTE is
       a push decision for whoever owns it. Done when a fresh `pool_sync --pull`
       produces a directory that `filter.engine route` accepts untouched.
-
-## Done
 
 - [x] **Extract the Observatory works — DONE 2026-09-22.** 1,198 of 1,198 have a row; the
       last 275 ran with `OPENAI_DAILY_TOKEN_BUDGET=0` on the command line (~$0.65). The dry run
