@@ -16,6 +16,7 @@ new guide is added in one place and cannot go missing from a second.
 | [aws-snapshot-scan.md](aws-snapshot-scan.md) | Runbook: the full OpenAlex snapshot scan on EC2, published to Hugging Face |
 | [parquet-cache.md](parquet-cache.md) | The dashboard's parquet cache |
 | [csv-schema.md](csv-schema.md) | Column definitions for the pipeline CSVs |
+| [retiring-superseded-records.md](retiring-superseded-records.md) | How a record the export stops shipping is retired from the validation tables (`data/retired_pairs.csv` → `csv_to_db.py --retire`) |
 | [dashboard-guide.md](dashboard-guide.md) | How to use the Pipeline + Validation dashboard tabs |
 | [check-page.md](check-page.md) | The dashboard's record-check page |
 | [supabase-schema.md](supabase-schema.md) | Supabase table schemas used by the validation monitoring tab |

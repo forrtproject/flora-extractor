@@ -80,13 +80,30 @@ replace it whole, in one large diff: every row re-ordered, and only the works th
 extract tier has verdicts for. That diff is expected and is not a data loss; the
 previous contents stay in git history, and `--check` shows the difference before
 anything is written.
+
+**What a render stops shipping is written down: `data/retired_pairs.csv`.** The
+validation import keys a record on `pair_id`, an md5 of `doi_r|doi_o`, so a work whose
+original changes, that is set aside, or that routing drops leaves its old record in the
+validation queue — this repo stops writing at the CSV and cannot delete it. So a live
+render to the production path appends one row per `pair_id` that the PREVIOUS file
+shipped and this one does not, with the reason (`superseded` by which pair ids,
+`set_aside` into which file, `not_admitted`, `screen_discarded`, `in_flora`, or
+`unexplained`), and `csv_to_db.py --retire` in flora-validation retires exactly those.
+"Previous" is the file COMMITTED at `HEAD`, not the one on disk: the validation sync
+downloads `data/extracted.csv` from GitHub, so a commit is what can have been imported,
+and a render nobody committed was never offered to anyone. Works on the "already in
+the validation tables" skip list are never written — their records are the reason they
+are suppressed. Design and order of operations: `docs/retiring-superseded-records.md`.
 """
 
 import argparse
 import csv
 import os
+import re
+import subprocess
 import sys
-from collections import Counter
+from collections import Counter, defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -100,11 +117,13 @@ from extract.tier import (RESULT_VERDICTS, TIER_EXTRACT, equivalent_generations,
 from shared.config import DATA_DIR, log
 from shared.flora_skip import (VALIDATED_SKIP_NAME, default_flora_skip_dois,
                                load_validated_skip)
-from shared.schema import (EXTRACTED_COLS, SET_ASIDE_DESTINATIONS, YEAR_COLS,
-                           canonical_outcome, set_aside_dir, year_str)
+from shared.schema import (EXTRACTED_COLS, RESOLVED_LINK_METHODS,
+                           SET_ASIDE_DESTINATIONS, YEAR_COLS, canonical_outcome,
+                           set_aside_dir, year_str)
 from shared.utils import clean_doi, osf_type
 
 DEFAULT_OUT = DATA_DIR / "extracted.csv"
+RETIRED_MANIFEST = DATA_DIR / "retired_pairs.csv"
 
 PENDING_RUNS = Path(__file__).resolve().parent.parent / "PENDING_RUNS.md"
 
@@ -374,8 +393,18 @@ def render(client: ClaimsClient, *, mode: str = "live",
     """
     results, stale = latest_results(
         client, mode=mode, current_generation_only=current_generation_only)
+    # Why each work that has a verdict is not rendered — read by `retirements()`, which
+    # has to say why a previously shipped row is gone.
+    dropped: dict[int, dict] = {}
+
+    def _drop(works: set[int], reason: str) -> None:
+        for work in works:
+            dropped[work] = {"reason": reason, "doi_r": clean_doi(str(
+                (results[work].get("payload") or {}).get("doi_r") or ""))}
+
     not_admitted = 0
     if admitted is not None:
+        _drop(set(results) - admitted, "not_admitted")
         kept = {work: row for work, row in results.items() if work in admitted}
         not_admitted = len(results) - len(kept)
         results = kept
@@ -383,6 +412,7 @@ def render(client: ClaimsClient, *, mode: str = "live",
     # such a work, so nothing else would ever replace the verdict an earlier screen's
     # admission bought.
     discarded = decisions(client)[0]
+    _drop(set(results) & set(discarded), "screen_discarded")
     kept = {work: row for work, row in results.items() if work not in discarded}
     screen_discarded = len(results) - len(kept)
     results = kept
@@ -391,14 +421,20 @@ def render(client: ClaimsClient, *, mode: str = "live",
     # evidence, but its rows must not keep reaching the validation import. Measured
     # need 2026-08-10: repairing the alt_identifier_r split put 10 already-extracted
     # works onto the list retroactively.
-    skip_dois = default_flora_skip_dois(data_dir)
+    flora_dois = default_flora_skip_dois(data_dir)
     validated_ids, validated_dois = load_validated_skip(
         Path(data_dir) / VALIDATED_SKIP_NAME)
-    skip_dois |= validated_dois
+    in_validation, in_flora = set(), set()
+    for work, row in results.items():
+        doi = clean_doi(str((row.get("payload") or {}).get("doi_r") or ""))
+        if work in validated_ids or doi in validated_dois:
+            in_validation.add(work)
+        elif doi in flora_dois:
+            in_flora.add(work)
+    _drop(in_validation, "already_in_validation")
+    _drop(in_flora, "in_flora")
     kept = {work: row for work, row in results.items()
-            if work not in validated_ids
-            and clean_doi(str((row.get("payload") or {}).get("doi_r") or ""))
-            not in skip_dois}
+            if work not in in_validation and work not in in_flora}
     suppressed = len(results) - len(kept)
     results = kept
     if suppressed:
@@ -415,8 +451,203 @@ def render(client: ClaimsClient, *, mode: str = "live",
     return {"works": len(results), "rows": len(rows), "main": main, "aside": aside,
             "already_in_flora": suppressed,
             "superseded_generation": stale, "not_admitted": not_admitted,
-            "screen_discarded": screen_discarded,
+            "screen_discarded": screen_discarded, "dropped": dropped,
+            "validated_skip": (validated_ids, validated_dois),
             "endings": Counter(str(r.get("verdict") or "") for r in results.values())}
+
+
+# ---------------------------------------------------------------------------
+# The retirement manifest — what the previous file shipped and this one does not
+# ---------------------------------------------------------------------------
+
+RETIRED_COLS = ["retired_at", "baseline", "release", "generation", "reason", "detail",
+                "pair_id", "work_id", "doi_r", "original_rank", "doi_o", "title_o",
+                "link_method", "superseded_by", "doi_o_now"]
+
+# The closed vocabulary of `reason`. `already_in_validation` is computed but never
+# written: those works are suppressed BECAUSE the validation tables hold their records.
+RETIRE_REASONS = ("superseded", "set_aside", "unresolved", "not_admitted",
+                  "screen_discarded", "in_flora", "unexplained")
+
+# The validation sync refuses a snapshot that removes more than this share of the
+# previous one's resolved pair ids (`EXTRACTOR_MAX_REMOVAL_PERCENT` in flora-validation
+# `sync_csv.py`, default 10). Mirrored here only to warn before the commit.
+VALIDATION_SYNC_MAX_REMOVAL_PERCENT = 10.0
+
+
+def shipped(row: dict) -> bool:
+    """Would `csv_to_db.py` import this row — the same test as its `resolved_mask`.
+
+    `filter_status` is the column's name before issue #93, and the baseline may be an
+    old commit.
+    """
+    paper_type = str(row.get("paper_type") or row.get("filter_status") or "").strip()
+    return (paper_type in ("replication", "reproduction")
+            and str(row.get("link_method") or "").strip() in RESOLVED_LINK_METHODS)
+
+
+def _work_number(value: object) -> Optional[int]:
+    match = re.search(r"W(\d+)", str(value or ""))
+    return int(match.group(1)) if match else None
+
+
+def _keys(work: Optional[int], doi_r: str) -> list[tuple[str, object]]:
+    """A work's lookup keys: its OpenAlex number, then its DOI — the same order as
+    `shared/row_key.py`. A work that changed alias keeps its DOI."""
+    keys: list[tuple[str, object]] = []
+    if work is not None:
+        keys.append(("w", work))
+    if doi_r:
+        keys.append(("d", doi_r))
+    return keys
+
+
+def previous_shipped(out_csv: Path, revisions: list[str]) -> tuple[dict[str, dict], str]:
+    """`(pair_id → row, label)` for every shipped row of the baseline file(s).
+
+    Each revision's committed copy of *out_csv* is read with `git show`; several are
+    unioned, which is how a gap is backfilled (every historical version the sync could
+    have imported). Where git cannot answer — no repository, the path untracked at that
+    revision — the file on disk is the baseline, and the label says so.
+    """
+    import io
+
+    import pandas as pd
+
+    out_csv = Path(out_csv).resolve()
+    rows: dict[str, dict] = {}
+    used: list[str] = []
+    for revision in revisions:
+        try:
+            top = subprocess.run(["git", "-C", str(out_csv.parent), "rev-parse",
+                                  "--show-toplevel"], capture_output=True, text=True,
+                                 check=True).stdout.strip()
+            relative = out_csv.relative_to(Path(top).resolve()).as_posix()
+            raw = subprocess.run(["git", "-C", top, "show", f"{revision}:{relative}"],
+                                 capture_output=True, check=True).stdout
+        except (subprocess.CalledProcessError, OSError, ValueError):
+            continue
+        frame = pd.read_csv(io.BytesIO(raw), dtype=str, keep_default_na=False,
+                            encoding="utf-8-sig")
+        for row in frame.to_dict("records"):
+            if shipped(row) and row.get("pair_id") and row["pair_id"] not in rows:
+                rows[row["pair_id"]] = row
+        used.append(revision)
+    if used:
+        return rows, ",".join(used)
+    if not out_csv.exists():
+        return {}, "none"
+    frame = pd.read_csv(out_csv, dtype=str, keep_default_na=False, encoding="utf-8-sig")
+    return ({row["pair_id"]: row for row in frame.to_dict("records")
+             if shipped(row) and row.get("pair_id")}, "disk")
+
+
+def retirements(previous: dict[str, dict], report: dict, *, baseline: str,
+                release: str = "", generation: str = "",
+                now: Optional[datetime] = None) -> tuple[list[dict], int]:
+    """`(manifest rows, held back)` — one row per previously shipped pair id this
+    render no longer ships, with the reason its work went.
+
+    The reason is decided per WORK, in the order a reader would ask: does the work
+    still ship (then its row was `superseded`, and by which pair ids)? Is it in a
+    set-aside file, or in the main file unshipped? Did the render drop it, and why?
+    A work none of those explain is `unexplained` — no current verdict speaks for it —
+    and the validation side holds such rows rather than retiring them.
+
+    *held back* counts the pairs of works on the "already in the validation tables"
+    skip list, which are not retirements at all.
+    """
+    stamp = (now or datetime.now(timezone.utc)).isoformat(timespec="seconds")
+    shipped_now: dict[tuple, list[dict]] = defaultdict(list)
+    aside_now: dict[tuple, set[str]] = defaultdict(set)
+    unshipped_main: set[tuple] = set()
+    current_pairs: set[str] = set()
+    for row in report["main"]:
+        keys = _keys(_work_number(row.get("oa_work_id_r")), clean_doi(row.get("doi_r", "")))
+        if shipped(row):
+            current_pairs.add(row.get("pair_id", ""))
+            for key in keys:
+                shipped_now[key].append(row)
+        else:
+            unshipped_main.update(keys)
+    for name, rows in report["aside"].items():
+        for row in rows:
+            for key in _keys(_work_number(row.get("oa_work_id_r")),
+                             clean_doi(row.get("doi_r", ""))):
+                aside_now[key].add(name)
+    dropped: dict[tuple, str] = {}
+    # Checked directly, not only through `dropped`: a legacy work on the skip list
+    # usually has no verdict at all, so the render never saw it to drop it.
+    skip_ids, skip_dois = report.get("validated_skip", (set(), set()))
+    for work in skip_ids:
+        dropped[("w", int(work))] = "already_in_validation"
+    for doi in skip_dois:
+        dropped[("d", doi)] = "already_in_validation"
+    for work, fate in report.get("dropped", {}).items():
+        for key in _keys(int(work), fate.get("doi_r", "")):
+            dropped.setdefault(key, fate["reason"])
+
+    entries: list[dict] = []
+    held = 0
+    for pair_id, row in sorted(previous.items()):
+        if pair_id in current_pairs:
+            continue
+        work = _work_number(row.get("oa_work_id_r"))
+        keys = _keys(work, clean_doi(row.get("doi_r", "")))
+        detail, successors = "", []
+        if hit := next((k for k in keys if k in shipped_now), None):
+            reason, successors = "superseded", shipped_now[hit]
+        elif hit := next((k for k in keys if k in aside_now), None):
+            reason, detail = "set_aside", "|".join(sorted(aside_now[hit]))
+        elif any(k in unshipped_main for k in keys):
+            reason = "unresolved"
+        elif hit := next((k for k in keys if k in dropped), None):
+            reason = dropped[hit]
+            detail = release if reason == "not_admitted" else ""
+        else:
+            reason = "unexplained"
+        if reason == "already_in_validation":
+            held += 1
+            continue
+        entries.append({
+            "retired_at": stamp, "baseline": baseline, "release": release,
+            "generation": generation, "reason": reason, "detail": detail,
+            "pair_id": pair_id, "work_id": "" if work is None else str(work),
+            "doi_r": row.get("doi_r", ""), "original_rank": row.get("original_rank", ""),
+            "doi_o": row.get("doi_o", ""), "title_o": row.get("title_o", ""),
+            "link_method": row.get("link_method", ""),
+            "superseded_by": "|".join(r.get("pair_id", "") for r in successors),
+            "doi_o_now": "|".join(r.get("doi_o", "") for r in successors),
+        })
+    return entries, held
+
+
+def append_manifest(path: Path, entries: list[dict]) -> int:
+    """Append the entries whose pair id the manifest does not already hold.
+
+    Append-only and tracked in git, so it is the audit trail of what the extractor
+    withdrew. Deduplicated on pair id because the baseline is the COMMITTED file: every
+    render until the next commit sees the same retirements, and a pair id that ships
+    again later is protected on the validation side (`--retire` never touches a pair
+    id the imported CSV still carries), not by rewriting history here.
+    """
+    path = Path(path)
+    known: set[str] = set()
+    if path.exists():
+        with path.open(newline="", encoding="utf-8-sig") as handle:
+            known = {row.get("pair_id", "") for row in csv.DictReader(handle)}
+    fresh = [entry for entry in entries if entry["pair_id"] not in known]
+    if not fresh:
+        return 0
+    new_file = not path.exists()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # CLAUDE.md: CSV writes utf-8-sig, appends plain utf-8.
+    with path.open("a", newline="", encoding="utf-8-sig" if new_file else "utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=RETIRED_COLS, extrasaction="ignore")
+        if new_file:
+            writer.writeheader()
+        writer.writerows(fresh)
+    return len(fresh)
 
 
 def write(report: dict, out_csv: Path) -> dict:
@@ -534,6 +765,15 @@ def main(argv: Optional[list[str]] = None) -> int:
                              "about its work. The pre-2026-08-08 behaviour, kept for "
                              "reading the record whole; not what the validation "
                              "import wants.")
+    parser.add_argument("--retired-manifest", type=Path, default=RETIRED_MANIFEST,
+                        help="Where the pair ids this render stops shipping are "
+                             "appended (live renders to the production path only).")
+    parser.add_argument("--retired-baseline", action="append", default=None,
+                        metavar="REV",
+                        help="Git revision(s) whose committed extracted.csv is 'what "
+                             "was shipped before' (default HEAD). Repeat to union "
+                             "several, e.g. to backfill every version the validation "
+                             "sync may have imported.")
     args = parser.parse_args(argv)
 
     if args.release and args.all_releases:
@@ -599,6 +839,33 @@ def main(argv: Optional[list[str]] = None) -> int:
             print(f"      {entry}")
         print()
 
+    # Only a live render to the production file has a validation queue behind it; a
+    # sandbox render must never name production records for retirement.
+    manifest_applies = (args.mode == "live"
+                        and Path(args.out).resolve() == DEFAULT_OUT.resolve())
+    retired: list[dict] = []
+    if manifest_applies:
+        previous, baseline = previous_shipped(args.out,
+                                              args.retired_baseline or ["HEAD"])
+        retired, held = retirements(previous, report, baseline=baseline,
+                                    release=release_id,
+                                    generation=extract_generation())
+        by_reason = Counter(entry["reason"] for entry in retired)
+        share = 100.0 * len(retired) / len(previous) if previous else 0.0
+        print(f"  pair ids {baseline} shipped that this render does not: "
+              f"{len(retired):,} of {len(previous):,} ({share:.1f}%)")
+        for reason in RETIRE_REASONS:
+            if by_reason[reason]:
+                print(f"    {reason:<20} {by_reason[reason]:,}")
+        if held:
+            print(f"    (+{held:,} on the already-in-validation skip list — not "
+                  "retirements, not written)")
+        # A union baseline (a backfill) is not what the sync compares against.
+        if "," not in baseline and share > VALIDATION_SYNC_MAX_REMOVAL_PERCENT:
+            print(f"  ⚠ over the validation sync's {VALIDATION_SYNC_MAX_REMOVAL_PERCENT:g}% "
+                  "removal guard — its nightly import will refuse this file until the "
+                  "retirements are reviewed (docs/retiring-superseded-records.md)")
+
     if args.check:
         diff = check(report, args.out)
         if not diff["exists"]:
@@ -614,6 +881,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     written = write(report, args.out)
     for name, count in written.items():
         print(f"  {count:>6,} row(s) → {name}")
+    # After the CSV, so a failed write records nothing. A crash between the two is
+    # healed by the next render: its baseline is still the committed file.
+    if manifest_applies:
+        appended = append_manifest(args.retired_manifest, retired)
+        print(f"  {appended:>6,} retirement(s) appended → {args.retired_manifest.name} "
+              f"({len(retired) - appended:,} already recorded)")
 
     # The writer refreshes Stage 4's mirror, as every runner does (CLAUDE.md,
     # `shared/dashboard_cache.py`). This used to be the CSV runner's last act; it

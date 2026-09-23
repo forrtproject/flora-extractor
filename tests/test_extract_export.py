@@ -735,3 +735,94 @@ def test_all_releases_asks_no_routing_question_and_is_not_bound(tmp_path,
                         lambda *a, **k: _client([_verdict(81, row_id="v-81")]))
     assert export_mod.main(["--all-releases", "--out",
                             str(tmp_path / "extracted.csv")]) == 0
+
+
+# ---------------------------------------------------------------------------
+# The retirement manifest (docs/retiring-superseded-records.md)
+# ---------------------------------------------------------------------------
+
+
+def _shipped_before(partial: dict) -> dict:
+    """A row a previous extracted.csv shipped: resolved, typed, with a pair id."""
+    return _row({**_MULTI_A, **partial})
+
+
+def test_a_changed_original_retires_the_old_pair_as_superseded_by_the_new():
+    """The llm_references redo: same work, a different doi_o, so a new pair_id. The
+    old pair must be named, with its successor, or its record stays in the queue."""
+    corrected = {**_MULTI_A, "pair_id": "9999999999999999eeeeeeeeeeeeeeee",
+                 "doi_o": "10.1000/the-right-one", "n_originals": "1"}
+    report = export_mod.render(_client([_verdict(51, rows=[_row(corrected)])]))
+    previous = {r["pair_id"]: r for r in (_row(_MULTI_A), _row(_MULTI_B))}
+    entries, held = export_mod.retirements(previous, report, baseline="HEAD")
+    assert held == 0
+    assert {e["pair_id"] for e in entries} == {_MULTI_A["pair_id"], _MULTI_B["pair_id"]}
+    assert {e["reason"] for e in entries} == {"superseded"}
+    assert {e["superseded_by"] for e in entries} == {corrected["pair_id"]}
+    assert {e["doi_o_now"] for e in entries} == {"10.1000/the-right-one"}
+    first = next(e for e in entries if e["pair_id"] == _MULTI_A["pair_id"])
+    assert (first["doi_o"], first["work_id"]) == ("10.1000/first", "2000000001")
+
+
+def test_a_work_that_left_the_file_is_retired_with_the_reason_it_left(monkeypatch):
+    """Set aside, dropped by routing, or gone without an explanation: each says so.
+    A work on the already-in-validation skip list is not a retirement at all — its
+    record is WHY it is suppressed — so it is counted and never written."""
+    monkeypatch.setattr(export_mod, "load_validated_skip",
+                        lambda *a, **k: (set(), {_API_ERROR["doi_r"]}))
+    report = export_mod.render(
+        _client([_verdict(41, row_id="v41", rows=[_row(_PENDING)]),
+                 _verdict(42, row_id="v42", rows=[_row(_MULTI_A)]),
+                 _verdict(43, row_id="v43", rows=[_row(_API_ERROR)])]),
+        admitted={41, 43})
+    previous = {
+        "p-pending": _shipped_before({"pair_id": "p-pending", "doi_r": _PENDING["doi_r"],
+                                      "oa_work_id_r": _PENDING["oa_work_id_r"]}),
+        _MULTI_A["pair_id"]: _row(_MULTI_A),
+        "p-validated": _shipped_before({"pair_id": "p-validated",
+                                        "doi_r": _API_ERROR["doi_r"],
+                                        "oa_work_id_r": _API_ERROR["oa_work_id_r"]}),
+        "p-ghost": _shipped_before({"pair_id": "p-ghost", "doi_r": "10.1000/ghost",
+                                    "oa_work_id_r": "W1"}),
+    }
+    entries, held = export_mod.retirements(previous, report, baseline="HEAD",
+                                           release="rel123")
+    reasons = {e["pair_id"]: (e["reason"], e["detail"]) for e in entries}
+    assert reasons == {"p-pending": ("set_aside", "target_pending.csv"),
+                       _MULTI_A["pair_id"]: ("not_admitted", "rel123"),
+                       "p-ghost": ("unexplained", "")}
+    assert held == 1
+
+
+def test_the_manifest_is_appended_once_per_pair_and_read_back(tmp_path):
+    """Every render until the next commit sees the same retirements (the baseline is
+    the committed file), so a pair id is written once; the header is written once."""
+    path = tmp_path / "retired_pairs.csv"
+    entry = {col: "" for col in export_mod.RETIRED_COLS}
+    first = [{**entry, "pair_id": "a", "reason": "superseded"}]
+    assert export_mod.append_manifest(path, first) == 1
+    assert export_mod.append_manifest(
+        path, first + [{**entry, "pair_id": "b", "reason": "set_aside"}]) == 1
+    with path.open(newline="", encoding="utf-8-sig") as handle:
+        rows = list(csv.DictReader(handle))
+    assert [r["pair_id"] for r in rows] == ["a", "b"]
+    assert list(rows[0]) == export_mod.RETIRED_COLS
+
+
+def test_the_baseline_is_the_committed_file_not_the_one_on_disk(tmp_path):
+    """The validation sync downloads the COMMITTED file; an uncommitted render was
+    never offered to anyone, so it must not hide a retirement from the next one."""
+    import subprocess
+
+    out = tmp_path / "data" / "extracted.csv"
+    out.parent.mkdir()
+    _write(out, [_row(_MULTI_A)])
+    git = ["git", "-C", str(tmp_path), "-c", "user.email=t@t", "-c", "user.name=t"]
+    subprocess.run(git[:3] + ["init", "-q"], check=True)
+    subprocess.run(git + ["add", "data/extracted.csv"], check=True)
+    subprocess.run(git + ["commit", "-qm", "baseline"], check=True)
+    _write(out, [_row(_MULTI_B)])                       # an uncommitted render
+    rows, label = export_mod.previous_shipped(out, ["HEAD"])
+    assert (set(rows), label) == ({_MULTI_A["pair_id"]}, "HEAD")
+    rows, label = export_mod.previous_shipped(tmp_path / "elsewhere.csv", ["HEAD"])
+    assert (rows, label) == ({}, "none")
