@@ -1,0 +1,17 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "evidence_basis", "original_verdict", "correct_original", "own_outcome",
+               "more_defensible", "confidence", "reasoning", "quote"],
+  "properties": {
+    "id": {"type": "string"},
+    "evidence_basis": {"type": "string", "enum": ["packet_fulltext", "web_fulltext", "web_abstract_or_partial", "packet_abstract_only"]},
+    "original_verdict": {"type": "string", "enum": ["A", "B", "both", "neither", "cannot_tell", "n/a"]},
+    "correct_original": {"type": "string"},
+    "own_outcome": {"type": "string", "enum": ["success", "failure", "inconclusive", "cannot_tell", "n/a"]},
+    "more_defensible": {"type": "string", "enum": ["A", "B", "both", "neither", "cannot_tell", "n/a"]},
+    "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+    "reasoning": {"type": "string"},
+    "quote": {"type": "string"}
+  }
+}

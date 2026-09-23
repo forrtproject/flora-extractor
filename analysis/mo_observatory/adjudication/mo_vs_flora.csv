@@ -1,0 +1,924 @@
+﻿doi_r,n_mo,n_flora,same_original,comparable,same_outcome,mo_validated,mo_source
+10.1002/1099-0879(200007)7:3<220::aid-cpp243>3.0.co;2-f,1,1,True,True,True,no,
+10.1002/ab.22027,1,1,True,True,True,yes,
+10.1002/acn3.50914,1,1,True,True,True,yes,
+10.1002/acp.4202,1,1,True,True,True,yes,
+10.1002/aepp.13306,1,1,False,False,False,partially,
+10.1002/aepp.13330,1,1,True,True,True,partially,
+10.1002/aepp.13377,1,1,True,True,True,partially,
+10.1002/ajmg.b.32068,1,1,True,True,True,yes,
+10.1002/aur.2496,1,1,False,False,False,no,
+10.1002/bem.10105,1,1,True,True,True,yes,
+10.1002/brb3.1393,1,1,True,True,True,no,
+10.1002/cpp.2677,1,1,True,True,True,no,
+10.1002/cpp.70057,1,1,True,True,True,yes,
+10.1002/dev.21515,2,1,True,True,True,no,
+10.1002/eahr.500039,1,1,True,True,False,no,
+10.1002/ece3.3759,1,1,True,True,False,no,
+10.1002/ejsp.2172,1,1,True,True,True,yes,FReD v2.4.2 (June 2026 import)
+10.1002/ejsp.2390,1,1,True,True,False,no,
+10.1002/ejsp.2748,1,1,True,True,True,yes,
+10.1002/erv.3103,1,1,True,True,True,no|yes,
+10.1002/gps.4893,1,1,True,True,False,no,
+10.1002/hbm.25386,1,1,False,False,False,no,
+10.1002/hbm.26065,1,1,True,True,True,no,
+10.1002/hbm.26522,1,1,True,True,True,no,
+10.1002/hup.2659,1,1,True,True,True,no,
+10.1002/jaba.1055,1,1,True,True,True,no,
+10.1002/jaba.398,1,1,True,True,True,no,
+10.1002/jaba.665,1,1,True,True,True,no,
+10.1002/jaba.706,1,1,False,False,False,no,
+10.1002/jaba.740,1,1,True,True,True,no,
+10.1002/jaba.908,1,1,True,True,True,no,
+10.1002/jae.2309,1,1,True,True,True,partially,
+10.1002/jae.2445,1,1,True,True,True,partially,
+10.1002/jae.2449,1,1,False,False,False,partially,
+10.1002/jae.2458,1,1,True,True,True,partially,
+10.1002/jae.2462,1,1,True,True,True,partially,
+10.1002/jae.2513,1,1,True,True,True,partially,
+10.1002/jae.2584,1,1,True,True,True,partially,
+10.1002/jae.2607,1,1,True,True,False,partially,
+10.1002/jae.2697,1,1,True,True,True,partially,
+10.1002/jae.2861,1,1,True,False,False,partially,
+10.1002/jae.2880,1,1,True,True,True,partially,
+10.1002/jae.2886,1,1,True,True,True,partially,
+10.1002/jae.2919,1,1,True,True,True,partially,
+10.1002/jae.2933,1,1,True,True,True,partially,
+10.1002/jae.2979,1,1,True,True,True,partially,
+10.1002/jclp.21839,1,1,True,True,True,no,
+10.1002/jclp.70017,2,1,True,True,True,no,
+10.1002/jcop.21574,1,1,True,True,True,no,
+10.1002/jeab.915,1,1,True,True,True,yes,
+10.1002/jts.22339,1,1,True,True,True,no,
+10.1002/npr2.70078,1,1,False,False,False,no,
+10.1002/pits.22027,1,1,True,True,True,yes,FReD v2.4.2 (June 2026 import)
+10.1002/pon.4841,1,1,True,True,True,no,
+10.1002/pros.21320,1,1,True,True,True,yes,
+10.1002/rrq.62,1,1,True,True,True,yes,FReD v2.4.2 (June 2026 import)
+10.1002/smj.2567,1,1,True,True,True,no,
+10.1002/smj.2569,1,1,True,True,False,no,
+10.1002/smj.2570,1,1,True,True,True,no,
+10.1002/smj.2578,1,1,True,True,True,no,
+10.1007/978-3-031-55844-3_4,1,1,True,True,True,yes,FReD v2.4.2 (June 2026 import)
+10.1007/bf02298289,1,1,True,True,True,yes,
+10.1007/s00127-007-0170-7,1,1,True,True,True,no,
+10.1007/s00181-012-0549-5,1,1,True,True,True,partially,
+10.1007/s00213-025-06983-9,1,1,True,True,False,no,
+10.1007/s00248-024-02368-1,1,1,True,True,True,no,
+10.1007/s00296-010-1566-3,1,1,True,True,True,no,
+10.1007/s00296-010-1789-3,1,1,True,True,True,no,
+10.1007/s00426-019-01163-9,1,1,True,True,True,no,
+10.1007/s00426-019-01203-4,1,2,True,True,False,yes,
+10.1007/s00426-019-01258-3,1,1,True,True,False,no,
+10.1007/s00426-025-02167-4,1,1,True,True,True,no,
+10.1007/s00439-014-1502-9,1,1,True,True,False,no,
+10.1007/s00455-013-9488-3,1,1,True,True,True,no,
+10.1007/s10067-020-04995-8,1,1,True,True,False,no,
+10.1007/s10339-023-01130-8,1,1,True,True,True,no,
+10.1007/s10648-023-09729-1,1,1,True,True,False,no,
+10.1007/s10683-008-9197-1,1,1,True,True,True,partially,
+10.1007/s10803-013-1900-1,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.1007/s10803-014-2139-1,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.1007/s10803-020-04626-w,1,1,True,True,True,no,
+10.1007/s10803-024-06486-0,1,1,True,True,True,no,
+10.1007/s10834-024-09975-7,1,1,True,True,True,yes,
+10.1007/s10882-019-09718-9,1,1,True,True,True,no,
+10.1007/s10899-020-09932-7,1,1,True,True,True,yes,
+10.1007/s11002-024-09739-1,1,1,True,True,False,no,
+10.1007/s11002-025-09771-9,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.1007/s11127-012-0023-0,1,1,False,False,False,partially,
+10.1007/s11187-023-00736-8,1,2,True,True,True,partially,
+10.1007/s11205-005-5074-x,1,1,True,True,False,partially,
+10.1007/s11238-021-09836-x,1,1,False,False,False,partially,
+10.1007/s11251-024-09670-y,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1007/s11469-021-00695-9,1,1,True,True,True,no,subdiscipline AI-tagged (claude sonnet)
+10.1007/s11573-024-01214-7,1,1,True,True,False,partially,
+10.1007/s11682-020-00339-x,1,1,True,True,True,yes,subdiscipline AI-tagged (claude sonnet)
+10.1007/s12186-012-9090-0,1,1,False,False,False,no,
+10.1007/s12369-024-01207-0,1,1,True,True,True,no,
+10.1007/s13164-018-0400-9,47,37,True,True,True,|yes,|Curate Science scrape|FReD explorer (Feb 2026 import)|FReD v2.4.2 (June 2026 im
+10.1007/s13577-014-0103-1,1,1,True,True,True,no,
+10.1007/s40037-020-00611-2,1,1,True,True,True,no,
+10.1007/s40279-025-02201-w,25,25,True,True,False,yes,
+10.1007/s40732-015-0144-1,1,1,True,True,True,no,
+10.1007/s40732-024-00597-x,1,1,True,True,True,yes,
+10.1007/s40732-024-00601-4,1,1,True,True,True,yes,
+10.1007/s40881-017-0041-2,1,1,True,True,False,no,
+10.1007/s40881-022-00118-y,1,1,True,True,True,partially,
+10.1007/s40881-023-00131-9,1,1,True,True,True,partially,
+10.1007/s40881-023-00136-4,1,1,True,True,False,partially,
+10.1016/j.actpsy.2022.103497,2,2,True,True,True,yes,
+10.1016/j.actpsy.2022.103717,1,1,True,True,True,no|yes,
+10.1016/j.actpsy.2026.106214,1,1,True,True,True,yes,
+10.1016/j.addbeh.2023.107778,1,1,True,True,True,no,
+10.1016/j.appet.2013.12.020,2,1,True,True,False,yes,Curate Science scrape|FReD explorer (Feb 2026 import)
+10.1016/j.appet.2021.105619,1,1,True,True,True,yes,
+10.1016/j.appet.2023.106554,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.1016/j.bbr.2024.115096,1,1,True,True,True,yes,
+10.1016/j.beproc.2017.03.017,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.1016/j.brs.2022.09.014,1,1,True,True,True,no,
+10.1016/j.cogdev.2017.10.004,1,1,True,True,True,yes,FReD v2.4.2 (June 2026 import)
+10.1016/j.cognition.2014.09.003,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.1016/j.cognition.2017.09.005,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1016/j.cortex.2014.11.019,7,1,True,True,False,no|yes,|FReD explorer (Feb 2026 import)
+10.1016/j.cortex.2018.03.026,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1016/j.cortex.2019.03.026,1,1,True,True,False,no|yes,|FReD explorer (Feb 2026 import)
+10.1016/j.dcn.2017.12.003,1,1,True,True,True,yes,FReD v2.4.2 (June 2026 import)
+10.1016/j.dcn.2022.101120,1,1,True,True,False,no,
+10.1016/j.drugalcdep.2024.111323,2,1,True,True,False,no|yes,|FReD explorer (Feb 2026 import)
+10.1016/j.eatbeh.2024.101899,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1016/j.euroecorev.2015.05.006,1,1,True,True,True,partially,
+10.1016/j.heliyon.2019.e02434,1,1,False,False,False,no,
+10.1016/j.heliyon.2023.e22064,1,1,True,True,False,no,
+10.1016/j.heliyon.2024.e32467,1,1,True,True,True,no,
+10.1016/j.ijpsycho.2015.12.004,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.1016/j.infbeh.2019.101340,1,1,False,False,False,no,
+10.1016/j.intell.2020.101471,1,1,True,True,True,yes,
+10.1016/j.isci.2024.110532,1,1,True,True,False,no,
+10.1016/j.jalz.2011.05.2412,1,1,True,True,True,no,
+10.1016/j.jalz.2015.12.008,1,1,True,True,True,no,
+10.1016/j.jbtep.2020.101573,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.1016/j.jebo.2023.03.019,1,1,True,True,True,partially,
+10.1016/j.jecp.2015.12.009,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1016/j.jenvp.2024.102289,1,1,True,True,True,yes,
+10.1016/j.jesp.2013.05.011,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1016/j.jesp.2015.08.005,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1016/j.jesp.2015.10.012,11,8,True,True,False,yes,Curate Science scrape|FReD explorer (Feb 2026 import)
+10.1016/j.jesp.2020.103972,3,3,True,True,True,yes,
+10.1016/j.jesp.2020.103977,1,1,True,True,True,yes,
+10.1016/j.jesp.2020.104052,1,1,True,True,False,yes,
+10.1016/j.jesp.2020.104066,2,2,True,True,True,no|yes,|FReD explorer (Feb 2026 import)
+10.1016/j.jesp.2021.104154,1,2,True,True,True,yes,
+10.1016/j.jesp.2021.104222,1,1,True,True,True,yes,
+10.1016/j.jesp.2022.104372,1,1,True,True,True,yes,
+10.1016/j.jesp.2023.104549,1,1,True,True,True,no|yes,
+10.1016/j.jesp.2024.104619,1,1,True,True,True,yes,
+10.1016/j.jesp.2024.104712,1,1,True,True,True,yes,
+10.1016/j.jfbs.2021.100451,1,1,True,True,True,partially,
+10.1016/j.jfbs.2022.100497,1,1,True,True,True,partially,
+10.1016/j.jfbs.2022.100498,1,1,True,True,False,partially,
+10.1016/j.joep.2018.10.010,1,1,True,True,True,partially,
+10.1016/j.joep.2018.11.004,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.1016/j.joep.2018.12.001,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.1016/j.joep.2020.102312,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1016/j.joep.2020.102349,1,1,True,True,True,yes,
+10.1016/j.joep.2020.102350,1,1,True,True,False,yes,
+10.1016/j.joep.2021.102363,2,1,True,True,False,partially,
+10.1016/j.joep.2022.102509,2,2,True,True,True,yes,
+10.1016/j.jom.2005.11.004,1,1,True,True,True,yes,
+10.1016/j.jpsychires.2021.06.021,1,1,True,True,False,no,
+10.1016/j.jrp.2010.11.010,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.1016/j.jrp.2019.06.009,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1016/j.jrp.2019.103902,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.1016/j.jsams.2024.07.018,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.1016/j.jsp.2024.101307,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.1016/j.jsxm.2018.02.012,1,1,True,True,True,no,
+10.1016/j.leaqua.2020.101437,1,1,True,True,True,partially,
+10.1016/j.nicl.2019.101796,1,1,True,True,True,no,
+10.1016/j.paid.2015.04.020,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.1016/j.paid.2015.08.031,1,1,True,True,True,yes,FReD v2.4.2 (June 2026 import)
+10.1016/j.paid.2024.112692,1,1,True,True,True,yes,
+10.1016/j.physbeh.2010.12.015,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1016/j.psychres.2024.115855,1,1,True,True,True,no,
+10.1016/j.psychsport.2024.102761,1,1,True,True,True,yes,
+10.1016/j.system.2020.102377,1,1,True,True,True,no,
+10.1016/j.techfore.2023.122843,1,1,True,True,False,partially,
+10.1016/j.xjmad.2024.100075,1,1,True,True,True,yes,
+10.1016/j.ynirp.2022.100109,1,1,True,True,True,no,
+10.1016/j.ynirp.2022.100149,1,1,False,False,False,no,
+10.1016/s0005-7967(98)00158-2,1,1,True,True,True,yes,
+10.1016/s1060-3743(99)80113-1,1,1,True,True,True,no,"Marsden, Morgan-Short, Thompson & Abugaber (2018), Language Learning 68:2, Appen"
+10.1017/epi.2019.20,1,1,True,True,True,no,
+10.1017/jdm.2023.40,1,1,True,True,True,partially,
+10.1017/jdm.2024.31,1,1,True,True,True,yes,
+10.1017/pan.2024.7,1,1,True,True,True,no,
+10.1017/s003329170500543x,1,1,True,True,True,no,
+10.1017/s0033291706008257,1,1,True,True,True,no,
+10.1017/s0033291719002770,1,1,True,True,False,no,
+10.1017/s0033291720001919,2,1,True,True,True,no,
+10.1017/s0033291722003233,1,1,True,True,True,no,
+10.1017/s0142716414000137,1,1,True,True,False,no,"Marsden, Morgan-Short, Thompson & Abugaber (2018), Language Learning 68:2, Appen"
+10.1017/s026144482000021x,1,1,True,True,True,yes,FReD v2.4.2 (June 2026 import); topics AI-tagged (claude sonnet)
+10.1017/s0272263111000325,1,1,True,True,False,no,"Marsden, Morgan-Short, Thompson & Abugaber (2018), Language Learning 68:2, Appen"
+10.1017/s0272263124000238,1,1,True,True,True,yes,
+10.1017/s027226312400024x,1,1,False,False,False,no,
+10.1017/s0272263124000342,1,1,True,True,True,yes,
+10.1017/s0272263124000378,1,1,True,True,False,yes,
+10.1017/s0305000925100366,1,1,True,True,True,no,
+10.1017/s0954579418001530,1,1,True,True,True,no,
+10.1017/s1352465817000091,1,1,True,True,True,no,
+10.1017/s174413742200025x,1,1,True,True,True,partially,
+10.1017/s1930297500007774,1,1,True,True,True,yes,
+10.1017/s1930297500008299,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1017/s1930297500008470,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.1017/s1930297500008615,1,1,True,True,True,no,
+10.1017/sjp.2016.1,1,1,True,True,True,no,
+10.1017/thg.2012.151,1,1,True,True,True,no,
+10.1017/thg.2016.80,1,1,True,True,True,no,
+10.1017/xps.2017.8,1,1,True,True,True,yes,
+10.1017/xps.2022.35,1,1,True,True,False,no|yes,|FReD explorer (Feb 2026 import)
+10.1021/acscentsci.0c01028,1,1,True,True,True,no,
+10.1021/pr400337b,1,1,True,True,True,no,
+10.1027/1618-3169.51.2.109,1,1,True,True,True,no,
+10.1027/1618-3169/a000490,1,1,True,True,True,no,
+10.1027/1618-3169/a000554,1,1,True,True,False,no,
+10.1027/1618-3169/a000567,1,1,True,True,True,yes,
+10.1027/1618-3169/a000569,1,1,True,True,True,no,
+10.1027/1864-1105/a000334,1,1,True,True,True,yes,
+10.1027/1864-1105/a000396,1,1,True,True,True,no,
+10.1027/1864-9335/a000178,9,8,True,True,False,yes,|FReD explorer (Feb 2026 import)
+10.1027/1864-9335/a000179,1,1,False,False,False,no,
+10.1027/1864-9335/a000180,1,1,True,True,False,yes,Curate Science scrape
+10.1027/1864-9335/a000181,1,1,True,True,True,yes,Curate Science scrape
+10.1027/1864-9335/a000182,1,1,True,True,False,yes,Curate Science scrape
+10.1027/1864-9335/a000184,1,1,True,True,False,yes,Curate Science scrape
+10.1027/1864-9335/a000185,2,1,False,False,False,yes,Curate Science scrape
+10.1027/1864-9335/a000186,2,1,True,True,True,yes,
+10.1027/1864-9335/a000188,3,1,True,True,False,yes,Curate Science scrape|FReD explorer (Feb 2026 import)
+10.1027/1864-9335/a000189,1,1,True,True,True,yes,Curate Science scrape
+10.1027/1864-9335/a000190,1,1,True,True,True,yes,Curate Science scrape
+10.1027/1864-9335/a000191,1,1,True,True,True,yes,Curate Science scrape
+10.1027/1864-9335/a000193,1,1,True,True,True,yes,Curate Science scrape
+10.1037/0021-843x.113.1.145,1,1,True,True,True,no,
+10.1037/a0014697,1,1,True,True,False,no,
+10.1037/a0017172,1,1,True,True,True,no,
+10.1037/a0024587,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1037/a0028072,1,1,True,True,True,no,
+10.1037/a0031138,1,1,True,True,True,no,
+10.1037/a0033303,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1037/a0036079,1,1,True,True,False,yes,FReD v2.4.2 (June 2026 import)
+10.1037/abn0000318,1,1,True,True,True,no,
+10.1037/arc0000007,1,1,True,True,True,yes,
+10.1037/bne0000439,1,1,True,True,True,no,
+10.1037/cep0000225,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1037/dev0000499,1,1,True,True,True,yes,FReD v2.4.2 (June 2026 import)
+10.1037/ebs0000279,1,1,True,True,True,yes,
+10.1037/ebs0000298,1,1,True,True,True,no,
+10.1037/edu0000141,2,1,True,True,True,no,
+10.1037/emo0000569,1,1,True,True,True,no,
+10.1037/emo0001389,1,1,True,True,True,yes,
+10.1037/fam0000521,1,1,True,True,False,no,
+10.1037/gdn0000121,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.1037/h0101833,1,1,True,True,True,yes,
+10.1037/lhb0000596,1,1,True,True,True,yes,
+10.1037/pspa0000064,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.1037/pspa0000191,1,1,True,True,True,yes,
+10.1037/pspa0000214,1,1,True,True,True,yes,
+10.1037/pspa0000238,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1037/pspa0000261,1,1,True,True,True,yes,
+10.1037/pspa0000444,1,1,True,True,True,yes,
+10.1037/pspp0000017,1,1,True,True,False,no,
+10.1037/pspp0000037,1,1,True,True,True,no,
+10.1037/pspp0000104,1,1,False,False,False,no,
+10.1037/pspp0000371,1,1,True,True,True,no,
+10.1037/pspp0000380,1,1,True,True,False,no,
+10.1037/pspp0000408,1,1,True,True,True,no,
+10.1037/tra0000586,1,1,True,True,True,no,
+10.1037/xap0000321,1,1,True,True,True,yes,
+10.1037/xap0000366,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.1037/xge0000027,1,1,True,True,True,no,
+10.1037/xge0000058,1,1,True,True,True,yes,Curate Science scrape
+10.1037/xge0000067,1,1,True,True,False,yes,FReD v2.4.2 (June 2026 import)
+10.1037/xge0000090,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1037/xge0000124,1,1,True,True,True,no,
+10.1037/xge0000131,1,1,True,True,True,no,
+10.1037/xge0000295,1,1,True,True,True,no,
+10.1037/xge0000622,1,1,True,True,True,no,
+10.1037/xge0000788,1,1,False,False,False,no,
+10.1037/xge0001333,1,1,True,True,True,no,
+10.1037/xge0001467,1,1,True,True,True,no,
+10.1037/xge0001503,1,1,True,True,True,no|yes,
+10.1037/xge0001756,1,1,True,True,True,no,
+10.1037/xge0001886,1,1,True,True,False,no,
+10.1037/xhp0000180,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1037/xhp0000331,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.1037/xhp0000489,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1037/xlm0001529,1,1,True,True,False,no,
+10.1038/gene.2008.59,1,1,True,True,False,no,
+10.1038/gene.2008.95,1,1,True,True,True,no,
+10.1038/jhg.2009.96,1,1,True,True,False,no,
+10.1038/jhg.2012.11,1,1,True,True,True,no,
+10.1038/jhg.2013.28,1,1,True,True,True,no,
+10.1038/jhg.2016.155,1,1,True,True,True,no,
+10.1038/jhg.2016.82,1,1,True,True,True,no,
+10.1038/mp.2011.155,1,1,True,True,False,no,
+10.1038/s41393-020-00536-x,1,1,True,True,True,no,
+10.1038/s41398-021-01366-y,1,1,True,True,True,no,
+10.1038/s41467-024-46936-y,2,1,True,True,False,no|yes,
+10.1038/s41467-025-62462-x,1,1,True,True,True,no,
+10.1038/s41562-018-0399-z,21,21,True,True,False,yes,
+10.1038/s41562-020-0822-0,1,1,True,True,True,no,
+10.1038/s41562-020-0823-z,1,1,True,True,True,no,
+10.1038/s41562-024-02062-9,26,26,True,True,True,yes,"FReD explorer (Feb 2026 import); effect sizes, CIs, p-values and Ns from EROE OS"
+10.1038/s41586-019-1741-y,1,1,True,True,True,no,
+10.1038/s41598-020-63924-6,1,1,True,True,True,no,
+10.1038/s41598-021-88139-1,1,1,True,True,True,yes,
+10.1038/s41598-022-06119-5,1,1,True,True,False,no,
+10.1038/s41598-022-10567-4,1,1,True,True,True,no,
+10.1038/s41598-022-23411-6,1,1,True,True,False,no,
+10.1038/s41598-023-43885-2,1,1,True,True,True,no,
+10.1038/s41598-024-53427-z,1,1,True,True,False,no,
+10.1038/s41598-024-63724-2,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1038/s41598-025-10331-4,1,1,False,False,False,no,
+10.1038/s41598-025-12592-5,1,1,True,True,True,no,
+10.1038/s41598-025-25608-x,2,1,True,True,True,no,
+10.1038/s44271-024-00067-8,1,1,True,True,True,no,
+10.1038/sdata.2016.120,1,1,True,True,False,partially,
+10.1038/sdata.2016.129,1,1,True,True,True,no,
+10.1038/sdata.2016.98,1,1,True,True,True,no,
+10.1038/sj.ejhg.5200687,2,1,True,True,True,no,
+10.1038/sj.ejhg.5201317,1,1,True,True,True,no,
+10.1038/sj.gene.6364398,2,1,True,True,False,no,
+10.1038/sj.mp.4001719,1,1,True,True,True,no,
+10.1038/sj.npp.1300311,1,1,True,True,True,no,
+10.1038/srep33166,1,1,True,True,True,no,
+10.1038/tpj.2008.6,1,1,True,True,False,no,
+10.1038/tpj.2011.32,1,1,True,True,True,no,
+10.1055/s-0030-1268438,1,1,True,True,True,no,
+10.1055/s-0038-1649509,1,1,True,True,True,no,
+10.1073/pnas.1601440113,1,1,True,True,True,no,
+10.1073/pnas.1911695117,1,1,True,True,True,no,
+10.1073/pnas.2103313118,17,17,True,True,False,no|yes,|FReD explorer (Feb 2026 import)|FReD v2.4.2 (June 2026 import)|OpenMCT marketin
+10.1073/pnas.2202700119,1,1,True,True,True,no,
+10.1073/pnas.2213824120,1,1,True,True,False,no,
+10.1073/pnas.2305629120,1,1,False,False,False,no,
+10.1073/pnas.2402315121,1,1,True,True,True,no,
+10.1075/target.18159.ola,2,1,True,True,False,no,
+10.1080/0003684042000229532,2,2,False,False,False,partially,
+10.1080/00140139.2021.1909752,1,1,True,True,True,no,
+10.1080/00221309.2024.2317247,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.1080/00222895.2012.746635,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.1080/00222895.2014.898608,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1080/00224545.2025.2482014,1,1,True,True,True,no,
+10.1080/0163853x.2024.2339738,1,1,True,True,True,yes,
+10.1080/01973533.2013.856792,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1080/02687038.2010.536841,1,1,False,False,False,no,
+10.1080/02699931.2017.1279591,1,1,True,True,True,no,
+10.1080/02699931.2017.1292217,1,1,True,True,True,no,
+10.1080/02699931.2018.1504747,1,1,True,True,True,yes,
+10.1080/02699931.2018.1541312,1,1,True,True,False,no,
+10.1080/02699931.2019.1710110,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1080/02699931.2020.1863187,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1080/02699931.2021.1891863,1,1,True,True,False,no,
+10.1080/03124070008414314,1,1,True,True,True,no,
+10.1080/08870446.2013.841911,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.1080/08993408.2022.2071543,1,1,True,True,True,no,
+10.1080/08993408.2022.2079864,1,1,False,False,False,no,
+10.1080/09084282.2011.595455,1,1,True,True,True,no,
+10.1080/09585190802324304,1,1,True,True,True,no,
+10.1080/09658211.2011.590505,1,1,True,True,False,yes,FReD explorer (Feb 2026 import); merged duplicate from FReD v2.4.2 (June 2026 im
+10.1080/10503307.2020.1757175,1,1,True,True,False,no,
+10.1080/10584609809342367,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.1080/10615806.2020.1763140,1,1,True,True,True,yes,FReD v2.4.2 (June 2026 import)
+10.1080/10683160903273188,1,1,True,True,True,no,
+10.1080/10803548.2013.11076973,1,1,True,True,True,no,
+10.1080/10803548.2022.2156095,1,1,True,True,True,no,
+10.1080/10926771.2022.2038753,1,1,True,True,True,yes,
+10.1080/13506285.2024.2343157,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1080/1357650x.2015.1016530,1,1,True,True,True,no,
+10.1080/13669877.2023.2249909,1,1,True,True,True,no,
+10.1080/1368282031000062882,1,1,True,True,True,no,
+10.1080/15248372.2018.1544140,1,1,True,True,True,yes,
+10.1080/15248372.2019.1604525,1,1,True,True,True,no,
+10.1080/15475441.2014.979387,1,1,True,True,True,no,
+10.1080/15614263.2022.2102494,2,2,True,False,False,yes,|FReD v2.4.2 (June 2026 import)
+10.1080/15614263.2023.2185241,1,1,True,True,True,yes,
+10.1080/1612197x.2016.1199580,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1080/17461391.2020.1781265,1,1,True,True,True,no,
+10.1080/17470210903377380,1,1,True,True,False,no,
+10.1080/17470218.2016.1233439,1,1,True,True,False,no,
+10.1080/17524032.2020.1777181,1,1,True,True,True,no,
+10.1080/19345747.2023.2287615,1,1,True,True,True,no,subdiscipline AI-tagged (claude sonnet)
+10.1080/19345747.2024.2333734,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1080/20008198.2017.1315291,1,1,False,False,False,no,
+10.1080/20008198.2021.1930703,1,1,True,True,True,no,
+10.1080/20445911.2020.1805453,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1080/20445911.2023.2245112,1,1,True,True,True,no,
+10.1080/22243534.2015.11828344,1,1,False,False,False,no,
+10.1080/23251042.2021.1975350,1,1,True,True,True,no,
+10.1080/23273798.2016.1197954,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.1080/23273798.2018.1524500,1,1,True,True,True,no,
+10.1080/23273798.2024.2337948,1,1,True,True,True,yes,
+10.1080/23279095.2021.1917411,1,1,True,True,False,no,
+10.1080/23743603.2016.1248081,1,1,True,True,True,yes,Curate Science scrape
+10.1080/23743603.2019.1684821,1,1,True,True,True,no,
+10.1080/23743603.2021.1878340,2,1,True,False,False,yes,|FReD explorer (Feb 2026 import)
+10.1080/25742442.2021.1896908,1,1,True,True,True,no,
+10.1080/713755986,1,1,True,True,True,no,
+10.1089/cap.2024.0078,1,1,True,True,True,no,
+10.1093/alcalc/agaa009,1,1,True,True,True,no,
+10.1093/applin/amae042,1,1,True,True,True,yes,
+10.1093/carcin/bgw047,4,1,True,True,False,no,
+10.1093/hcr/hqab013,1,1,True,True,False,no,
+10.1093/jae/ejad013,1,1,False,False,False,partially,
+10.1093/jbmrpl/ziae082,1,1,True,True,True,no,
+10.1093/milmed/usad274,1,1,True,True,False,no,
+10.1093/nc/niw002,1,1,True,True,True,no,
+10.1093/ntr/ntaa229,1,1,True,True,True,no,
+10.1093/pnasnexus/pgad091,1,1,True,True,True,no,
+10.1093/pnasnexus/pgaf327,1,1,True,True,True,no,
+10.1093/scan/nsaa107,1,1,True,True,True,no,
+10.1093/scan/nsx012,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1093/scan/nsz017,1,1,True,True,True,no,
+10.1093/schbul/sbae058,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1097/00005053-198408000-00006,1,1,True,True,True,no,
+10.1097/00005053-199311000-00007,1,1,True,True,True,no,
+10.1097/00005650-199204000-00001,1,1,True,True,False,no,
+10.1097/00041444-199322000-00006,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1097/psy.0b013e3181fdd074,1,1,True,True,True,yes,FReD v2.4.2 (June 2026 import); topics AI-tagged (claude sonnet)
+10.1098/rsos.160431,1,1,True,True,True,no,
+10.1098/rsos.181575,1,1,True,True,True,no,
+10.1098/rsos.181868,1,1,True,True,False,no,
+10.1098/rsos.190699,1,2,True,True,True,no,
+10.1098/rsos.191353,1,1,True,True,True,no,
+10.1098/rsos.191507,1,1,True,True,True,no,
+10.1098/rsos.191795,1,1,True,True,True,no,
+10.1098/rsos.191998,1,1,True,True,True,no,
+10.1098/rsos.200090,1,1,True,True,True,no,
+10.1098/rsos.200664,1,1,True,True,True,no,
+10.1098/rsos.200724,1,1,True,True,True,no,
+10.1098/rsos.210190,1,1,True,True,True,no,
+10.1098/rsos.210641,1,1,True,True,True,no|yes,
+10.1098/rsos.211152,1,1,True,True,True,no,
+10.1098/rsos.211278,1,1,True,True,True,no,
+10.1098/rsos.221091,2,1,True,True,True,no,
+10.1098/rsos.221306,1,1,True,True,False,no,
+10.1098/rsos.230651,1,1,True,True,False,no,
+10.1098/rsos.231240,137,138,True,True,False,yes,FReD explorer (Feb 2026 import)|FReD explorer (Feb 2026 import); merged duplicat
+10.1098/rsos.250290,1,1,True,True,True,no,
+10.1098/rsos.250441,1,1,True,True,False,no,
+10.1098/rsos.250669,2,1,True,True,False,no,
+10.1098/rsos.250908,1,1,True,True,True,no,
+10.1101/2023.06.27.546731,1,1,True,True,False,no,
+10.1101/lm.053631.122,1,1,True,True,True,no,
+10.1103/physrevphyseducres.15.020116,1,1,True,True,True,no,
+10.1108/jgm-11-2022-0063,1,1,True,True,False,no,
+10.1108/s0193-230620150000018002,1,1,True,True,False,no,
+10.1109/iccq60895.2024.10576941,1,1,True,True,False,yes,
+10.1109/tvcg.2017.2744298,1,1,True,True,True,no,
+10.1109/tvcg.2021.3101854,1,1,True,True,False,no,
+10.1111/1467-8624.00077,1,1,True,True,True,no,
+10.1111/acer.15532,1,1,True,True,False,no,
+10.1111/acfi.12631,1,1,True,True,True,partially,
+10.1111/adb.12361,1,1,True,True,True,no,
+10.1111/andr.13339,1,1,True,True,True,no,
+10.1111/bjso.12217,1,1,True,True,True,yes,FReD v2.4.2 (June 2026 import)
+10.1111/cdev.12774,1,1,False,False,False,no,
+10.1111/cogs.12962,1,1,True,True,True,no,
+10.1111/cogs.13339,1,1,True,True,False,no,
+10.1111/cogs.13445,1,1,True,True,True,no,
+10.1111/desc.13244,1,1,True,True,True,yes,
+10.1111/desc.13377,1,1,True,True,True,no,
+10.1111/desc.13581,1,1,True,True,False,no,
+10.1111/ecin.13279,1,1,True,True,True,partially,
+10.1111/ejn.14347,1,1,True,True,True,no,
+10.1111/ejn.15367,1,1,True,True,True,no,
+10.1111/fare.13030,1,1,True,True,True,yes,
+10.1111/flan.12077,1,1,True,True,False,no,"Marsden, Morgan-Short, Thompson & Abugaber (2018), Language Learning 68:2, Appen"
+10.1111/hex.12242,1,1,True,True,True,no,
+10.1111/j.1365-2648.1990.tb01949.x,1,1,True,True,True,no,
+10.1111/j.1469-1809.2009.00555.x,1,1,True,True,True,no,
+10.1111/j.1530-0277.2011.01630.x,1,1,True,True,False,no,
+10.1111/j.1540-4781.2011.01174.x,1,2,False,False,False,no,"Marsden, Morgan-Short, Thompson & Abugaber (2018), Language Learning 68:2, Appen"
+10.1111/j.1540-4781.2011.01236.x,1,1,False,False,False,no,"Marsden, Morgan-Short, Thompson & Abugaber (2018), Language Learning 68:2, Appen"
+10.1111/j.1747-0285.2009.00901.x,1,1,True,True,True,yes,
+10.1111/j.1752-0606.1989.tb00812.x,1,1,True,True,True,no,
+10.1111/j.1944-9720.2010.01057.x,1,1,True,True,True,no,"Marsden, Morgan-Short, Thompson & Abugaber (2018), Language Learning 68:2, Appen"
+10.1111/jav.03365,1,1,True,True,False,no,
+10.1111/jopy.12996,1,1,True,True,True,no,
+10.1111/jpr.12158,1,1,True,True,True,yes,FReD v2.4.2 (June 2026 import)
+10.1111/jpr.12507,1,1,True,True,False,no,
+10.1111/lang.12621,1,1,False,False,False,no,
+10.1111/lang.12623,1,1,True,True,False,no,
+10.1111/padm.12860,1,1,True,True,True,yes,
+10.1111/padm.12914,2,1,True,True,True,partially,
+10.1111/pops.12446,1,1,True,True,True,yes,
+10.1111/psyp.12425,1,1,True,True,True,no,
+10.1111/psyp.12452,1,1,True,True,True,yes,FReD v2.4.2 (June 2026 import)
+10.1111/psyp.12825,1,1,True,True,True,yes,FReD v2.4.2 (June 2026 import)
+10.1111/psyp.13312,1,1,True,True,True,no,
+10.1111/psyp.13419,1,1,True,True,True,no,
+10.1111/psyp.13546,1,1,False,False,False,no,
+10.1111/sjoe.12341,1,1,True,True,False,partially,
+10.1111/sms.13021,1,1,True,True,True,no,
+10.1111/ssqu.13292,1,1,True,True,True,partially,
+10.1113/expphysiol.2010.055442,1,1,True,True,True,no,
+10.1117/12.2546895,1,1,True,True,False,no,
+10.1121/10.0010258,1,1,True,True,True,no,
+10.1121/10.0042222,1,1,True,True,False,no,
+10.1126/sciadv.adl0999,1,1,True,True,True,no,subdiscipline AI-tagged (claude sonnet)
+10.1126/science.aac4716,93,91,True,True,False,yes,|FReD explorer (Feb 2026 import)
+10.1126/science.aaf0918,18,18,True,True,True,no,"Camerer et al. (2016) Science doi:10.1126/science.aaf0918, Table S1 (AI-extracte"
+10.1128/jvi.00693-11,2,1,True,True,True,no,|subdiscipline AI-tagged (claude sonnet)
+10.1136/bmjopen-2024-093080,1,1,True,True,True,no,
+10.1136/jmg.2010.081380,1,1,True,True,True,no,
+10.1136/oemed-2021-107617,1,1,True,True,False,no,
+10.1136/tobaccocontrol-2021-056528,1,1,True,True,True,no,
+10.1145/2593868.2593874,1,1,True,True,True,no,
+10.1145/2652524.2652556,1,1,True,True,False,no,
+10.1145/3649217.3653545,1,1,True,True,True,yes,
+10.1152/jn.00493.2013,1,1,True,True,True,no,
+10.1155/2013/641596,1,1,True,True,True,no,
+10.1155/2014/979520,1,1,True,True,True,no,
+10.1155/2017/1254615,1,1,True,True,True,no,
+10.1155/2019/6514608,1,1,True,True,True,no,
+10.1159/000054847,1,1,True,True,True,no,
+10.1159/000506138,1,1,True,True,True,no,
+10.1161/strokeaha.111.623090,1,1,True,True,True,no,
+10.1163/26670127-bja10017,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1167/17.10.898,1,1,True,True,False,yes,
+10.1167/jov.20.6.18,2,1,True,True,False,no,
+10.1167/jov.25.8.13,1,1,True,True,True,no,
+10.1176/appi.ajp.2015.14070896,1,1,False,False,False,no,
+10.1176/ps.62.4.pss6204_0367,1,1,False,False,False,no,
+10.1177/0014402920924845,1,1,True,True,True,no,
+10.1177/0018720820909287,1,1,True,True,True,no,
+10.1177/00222194231215031,1,1,True,True,True,no,
+10.1177/0033294120957242,1,1,True,True,True,yes,FReD v2.4.2 (June 2026 import)
+10.1177/00332941211012621,1,1,True,True,False,no,
+10.1177/0038040718801760,1,1,True,True,False,no,
+10.1177/0145445518786463,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.1177/01461672211052120,1,1,True,True,True,yes,
+10.1177/01461672221137209,1,1,True,True,False,no,
+10.1177/01461672241238420,1,1,True,True,True,no,
+10.1177/014616727600300119,1,1,True,True,True,yes,Curate Science scrape
+10.1177/019874290503100104,1,1,False,False,False,no,
+10.1177/0272431620950478,1,1,True,True,True,no,
+10.1177/0308575913518003,1,1,True,True,True,no,
+10.1177/07419325241240067,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.1177/0886260512447579,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.1177/08902070221094216,1,1,True,True,True,yes,
+10.1177/0956797614553946,1,1,True,True,False,yes,Curate Science scrape|FReD explorer (Feb 2026 import)
+10.1177/0956797617719730,1,1,True,True,True,yes,
+10.1177/0956797617734315,1,1,True,True,True,yes,
+10.1177/0956797617747090,1,1,True,True,False,yes,
+10.1177/0956797618761661,1,1,True,True,False,no,
+10.1177/0956797618774252,1,1,True,True,False,no,
+10.1177/0956797619841265,1,1,True,True,True,no,
+10.1177/0956797619875482,1,1,True,True,True,no,
+10.1177/0956797619893062,1,1,True,True,False,no,
+10.1177/0956797620902101,1,1,True,True,False,no,
+10.1177/0956797620903716,1,1,True,True,True,no,
+10.1177/0956797620922477,1,1,True,True,True,no|yes,|FReD explorer (Feb 2026 import)
+10.1177/0956797620953842,1,1,True,True,True,yes,
+10.1177/0956797620955209,1,1,True,True,True,no,
+10.1177/0956797620968526,1,1,False,False,False,no,
+10.1177/0956797620968792,1,1,True,True,True,no,
+10.1177/09567976211024535,1,1,True,True,True,no|yes,|FReD explorer (Feb 2026 import)
+10.1177/09567976211026983,1,1,True,True,True,no,
+10.1177/09567976211040745,1,1,True,True,True,no,
+10.1177/0956797621997366,1,1,True,True,True,no,
+10.1177/09567976241246552,1,1,True,True,False,no,
+10.1177/09567976251335567,1,1,True,True,True,no,
+10.1177/09636625211024550,1,1,True,True,True,no,
+10.1177/0969733010386162,1,1,True,True,False,no,
+10.1177/1029864913493802,1,1,True,True,False,no,
+10.1177/1042258720985478,1,2,True,True,True,no,
+10.1177/10422587211059991,1,2,False,False,False,partially,
+10.1177/10422587221084249,1,1,True,True,True,partially,
+10.1177/1091142114537892,1,1,False,False,False,partially,
+10.1177/1091142117721739,1,1,True,True,True,partially,
+10.1177/1091142117736606,1,1,True,True,True,partially,
+10.1177/1091142120914278,1,1,True,True,True,partially,
+10.1177/1359104519838593,1,1,True,True,True,no,
+10.1177/1362168810375365,1,1,False,False,False,no,"Marsden, Morgan-Short, Thompson & Abugaber (2018), Language Learning 68:2, Appen"
+10.1177/1368430219861848,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1177/147470491401200510,1,1,True,True,True,no,
+10.1177/1474704919852921,1,1,True,True,True,no,
+10.1177/1745691612463078,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.1177/1745691614545653,1,1,True,True,True,no|yes,|Curate Science scrape
+10.1177/1745691615605826,3,1,True,True,True,no|yes,|Curate Science scrape
+10.1177/1745691616664694,1,1,True,True,True,no|yes,
+10.1177/1745691616674458,2,1,True,True,True,yes,Curate Science scrape|FReD explorer (Feb 2026 import)
+10.1177/1745691617693624,1,1,True,True,True,no,
+10.1177/1745691618755704,2,1,True,True,True,no|yes,
+10.1177/1948550616639649,1,1,True,True,True,no,
+10.1177/1948550616652209,1,1,True,True,True,yes,Curate Science scrape
+10.1177/1948550616662026,1,1,True,True,True,no,
+10.1177/1948550616683017,1,1,True,True,True,yes,
+10.1177/1948550618808863,1,1,True,True,True,yes,FReD v2.4.2 (June 2026 import)
+10.1177/1948550619900570,1,1,True,True,True,yes,
+10.1177/1948550620948973,1,1,True,True,True,yes,
+10.1177/19485506211056761,1,1,True,True,False,yes,
+10.1177/19485506241257971,1,1,True,True,True,yes,
+10.1177/19485506241298340,1,1,True,True,True,yes,
+10.1177/2167702613485565,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1177/2167702619859335,1,1,True,True,True,no,
+10.1177/2515245918777487,2,1,True,True,True,no|yes,|FReD explorer (Feb 2026 import)
+10.1177/2515245918781032,1,2,True,True,True,no|yes,
+10.1177/2515245918810225,25,24,True,True,False,yes,|FReD explorer (Feb 2026 import)|FReD v2.4.2 (June 2026 import)|FReD v2.4.2 (Jun
+10.1177/2515245919881152,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.1177/2515245920917931,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1177/2515245920927643,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.1177/2515245920958687,9,9,True,True,False,yes,FReD explorer (Feb 2026 import)|FReD v2.4.2 (June 2026 import)
+10.1177/25152459211018187,1,1,False,False,False,no,
+10.1177/25152459231213375,1,1,True,True,True,yes,
+10.1177/27550311251323281,1,1,True,True,True,yes,
+10.1186/1471-2350-11-119,1,1,True,True,True,no,
+10.1186/1471-2350-11-60,1,1,True,True,True,no,
+10.1186/1471-2350-12-133,1,1,True,True,True,no,
+10.1186/1471-2350-6-35,1,1,True,True,True,no,
+10.1186/1471-2350-7-71,1,1,True,True,True,no,
+10.1186/1471-2415-14-140,1,1,True,True,False,no,
+10.1186/1471-244x-11-129,1,1,True,True,True,no,
+10.1186/1471-2474-15-38,1,1,True,True,True,no,
+10.1186/1750-1326-8-18,1,1,True,True,True,no,
+10.1186/ar3789,1,1,True,True,True,no,
+10.1186/s12877-017-0689-8,1,1,True,True,True,no,
+10.1186/s12877-019-1311-z,1,1,True,True,True,no,
+10.1186/s12886-022-02359-1,2,1,True,True,True,no,
+10.1186/s12891-019-2402-x,1,1,True,True,True,no,
+10.1186/s12891-022-05208-w,1,1,True,True,True,no,
+10.1186/s12909-022-03665-4,1,1,True,True,True,no,
+10.1186/s12911-023-02389-9,1,1,True,True,False,no,
+10.1186/s12913-023-09505-5,1,1,True,True,True,no,
+10.1186/s12974-014-0181-8,1,1,True,True,False,no,
+10.1186/s12979-019-0146-y,1,1,True,True,True,no,
+10.1186/s13012-025-01471-2,1,1,True,True,True,no,
+10.1186/s13018-018-0769-2,1,1,True,True,True,no,
+10.1186/s13195-015-0154-x,1,1,True,True,False,no,
+10.1186/s13229-024-00583-8,1,1,True,True,True,no,
+10.1186/s40798-020-00243-0,1,1,True,True,True,no,
+10.1187/cbe.24-07-0193,1,1,True,True,False,no,
+10.1192/bjp.130.2.186,1,1,True,True,False,no,
+10.1192/bjp.141.3.249,1,1,True,True,False,no,
+10.1192/bjp.151.5.684,1,1,True,True,True,no,
+10.1192/bjp.161.2.223,1,1,True,True,True,no,
+10.1192/bjp.bp.108.061341,1,1,True,True,True,no,
+10.1248/bpb.b22-00136,1,1,True,True,True,no,
+10.1257/aer.20120767,1,1,True,True,False,partially,
+10.1257/aer.20160789,1,1,True,True,False,partially,
+10.1257/mac.6.3.1,1,1,True,True,False,partially,
+10.12688/f1000research.25573.2,1,1,True,True,True,no,
+10.12688/openreseurope.17749.1,1,1,True,True,True,yes,
+10.12688/wellcomeopenres.15486.2,1,1,True,True,False,no,
+10.1353/aad.2004.0016,1,1,True,True,True,no,subdiscipline AI-tagged (claude sonnet)
+10.1353/csd.2014.0018,1,1,True,False,False,no,
+10.1353/hub.2006.0033,1,1,True,True,True,no,
+10.1371/journal.pgen.1006343,1,1,True,True,True,no,
+10.1371/journal.pone.0029081,1,1,True,True,True,yes,|FReD explorer (Feb 2026 import); merged duplicate from FReD v2.4.2 (June 2026 i
+10.1371/journal.pone.0033423,1,1,True,True,True,no,
+10.1371/journal.pone.0042510,2,1,True,True,True,yes,|Curate Science scrape
+10.1371/journal.pone.0046595,1,1,True,True,True,no,
+10.1371/journal.pone.0072467,1,1,True,True,True,no,
+10.1371/journal.pone.0080688,1,1,True,True,False,no,
+10.1371/journal.pone.0102100,1,1,True,True,False,no,
+10.1371/journal.pone.0107411,1,1,True,True,True,no,
+10.1371/journal.pone.0112772,1,1,True,True,True,no,
+10.1371/journal.pone.0121564,1,1,True,True,True,no,
+10.1371/journal.pone.0129263,1,1,False,False,False,no,
+10.1371/journal.pone.0138922,1,1,True,True,False,no,
+10.1371/journal.pone.0140570,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1371/journal.pone.0140806,1,1,True,True,True,no,
+10.1371/journal.pone.0147770,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1371/journal.pone.0161387,1,1,True,True,False,no,
+10.1371/journal.pone.0172636,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1371/journal.pone.0193787,1,1,True,True,True,no,
+10.1371/journal.pone.0198620,1,1,True,True,True,no,
+10.1371/journal.pone.0209263,1,1,True,True,True,no,
+10.1371/journal.pone.0211416,1,1,True,True,True,no,
+10.1371/journal.pone.0220419,1,1,True,True,True,no,
+10.1371/journal.pone.0229161,1,1,True,True,False,no,
+10.1371/journal.pone.0235525,1,1,True,True,True,no,
+10.1371/journal.pone.0236825,1,1,True,True,False,no,
+10.1371/journal.pone.0249309,1,1,True,True,True,no,
+10.1371/journal.pone.0251451,1,1,True,True,True,no,
+10.1371/journal.pone.0253023,1,1,True,True,True,no,
+10.1371/journal.pone.0255157,1,1,True,True,True,no,
+10.1371/journal.pone.0281140,1,1,True,True,True,no,
+10.1371/journal.pone.0284243,1,1,True,True,True,no,
+10.1371/journal.pone.0286451,1,1,True,True,True,no,
+10.1371/journal.pone.0286714,1,1,True,True,True,no,
+10.1371/journal.pone.0292576,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.1371/journal.pone.0294325,2,1,False,False,False,no,
+10.1371/journal.pone.0313619,1,1,True,True,True,yes,
+10.1371/journal.pone.0321397,1,1,True,True,True,no,
+10.1371/journal.pone.0326446,1,1,True,True,False,no,
+10.1371/journal.pone.0335330,1,1,True,True,False,no,
+10.1375/twin.11.1.44,1,1,True,True,False,no,
+10.14288/1.0372317,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.14324/111.444/ucloe.000051,1,1,True,True,True,no,
+10.1515/econ-2022-0030,1,1,True,True,True,partially,
+10.1515/iral-2012-0001,1,1,True,True,True,no,"Marsden, Morgan-Short, Thompson & Abugaber (2018), Language Learning 68:2, Appen"
+10.1515/zfsoz-2023-2029,1,1,False,False,False,no,
+10.1523/eneuro.0150-20.2020,1,1,True,True,True,no,
+10.1523/eneuro.0332-25.2025,1,1,True,True,False,no,
+10.1523/eneuro.0333-18.2018,1,1,True,True,False,no,
+10.1523/jneurosci.0660-17.2017,1,1,True,True,True,no,
+10.1523/jneurosci.0888-19.2019,1,1,True,True,True,no,
+10.1523/jneurosci.1060-18.2018,1,1,True,True,True,no,
+10.1525/collabra.177,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1525/collabra.18738,1,1,False,False,False,yes,FReD explorer (Feb 2026 import)
+10.1525/collabra.192,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.1525/collabra.23443,1,1,True,True,True,yes,
+10.1525/collabra.277,1,1,True,True,True,yes,
+10.1525/collabra.310,2,2,True,True,True,yes,FReD v2.4.2 (June 2026 import)
+10.1525/collabra.32572,1,1,True,True,True,yes,
+10.1525/collabra.32964,1,1,True,True,True,yes,FReD v2.4.2 (June 2026 import)
+10.1525/collabra.35271,1,1,True,True,True,no,
+10.1525/collabra.37122,1,1,True,True,False,yes,
+10.1525/collabra.57785,1,1,True,True,True,yes,
+10.1525/collabra.68054,1,1,True,True,True,yes,
+10.1525/collabra.77610,1,1,True,True,True,no,
+10.1525/collabra.77859,1,1,False,False,False,yes,
+10.1525/collabra.87489,1,1,True,True,True,yes,
+10.1525/collabra.90195,1,1,True,True,True,yes,
+10.1525/collabra.90203,1,1,True,True,True,yes,
+10.1561/104.00000052,1,1,True,True,True,partially,
+10.1561/104.00000072,1,1,True,True,True,partially,
+10.1561/107.00000066,1,1,True,True,True,no,OpenMCT marketing replications dataset export 2026-07-18 (2026-07-18-13-50-34-ma
+10.15626/mp.2018.1481,1,1,True,True,True,no,
+10.15626/mp.2019.2134,1,1,True,True,True,yes,
+10.15626/mp.2020.2474,1,1,True,True,False,yes,
+10.15626/mp.2020.2538,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.15626/mp.2020.2639,1,1,True,True,True,yes,
+10.15626/mp.2021.2932,1,1,True,True,True,yes,
+10.15626/mp.2022.3108,2,2,True,True,False,yes,|FReD explorer (Feb 2026 import)
+10.15763/issn.1936-9298.2024.1.1.36-60,1,1,True,True,False,no,
+10.16910/jemr.11.4.6,1,1,True,True,True,no,
+10.17016/feds.2017.062,1,1,True,True,False,partially,
+10.17605/osf.io/39xuw,1,1,True,True,True,yes,
+10.17605/osf.io/4hjck,1,1,True,True,False,yes,FReD v2.4.2 (June 2026 import); topics AI-tagged (claude sonnet)
+10.17605/osf.io/7weum,1,1,True,True,True,yes,FReD v2.4.2 (June 2026 import)
+10.17605/osf.io/ahcpw,1,1,True,True,False,yes,FReD v2.4.2 (June 2026 import); topics AI-tagged (claude sonnet)
+10.17605/osf.io/e9d3k,1,1,True,True,True,yes,
+10.17605/osf.io/etg7c,1,1,True,True,False,yes,
+10.17605/osf.io/evdp5,1,1,True,True,True,yes,FReD v2.4.2 (June 2026 import)
+10.17605/osf.io/ezw6p,1,1,True,True,True,yes,FReD v2.4.2 (June 2026 import)
+10.17605/osf.io/fmd75,1,1,True,True,False,yes,
+10.17605/osf.io/g2zv6,1,1,True,True,True,yes,FReD v2.4.2 (June 2026 import); topics AI-tagged (claude sonnet)
+10.17605/osf.io/gea2s,1,1,True,False,False,yes,
+10.17605/osf.io/j8a4p,1,1,True,True,False,yes,
+10.17605/osf.io/j9mfn,1,1,True,True,False,yes,FReD v2.4.2 (June 2026 import); topics AI-tagged (claude sonnet)
+10.17605/osf.io/qswe3,1,1,True,True,True,yes,FReD v2.4.2 (June 2026 import); topics AI-tagged (claude sonnet)
+10.17605/osf.io/rge23,1,1,True,True,True,yes,FReD v2.4.2 (June 2026 import)
+10.17605/osf.io/uxajg,1,1,True,True,False,yes,
+10.17605/osf.io/w34fb,1,1,True,True,True,yes,FReD v2.4.2 (June 2026 import); topics AI-tagged (claude sonnet)
+10.17605/osf.io/wmqtb,1,1,True,True,True,yes,FReD v2.4.2 (June 2026 import)
+10.17605/osf.io/xszk6,1,1,True,True,False,yes,
+10.17645/mac.7666,1,1,True,False,False,yes,FReD explorer (Feb 2026 import)
+10.17645/mac.7807,1,1,True,True,True,yes,
+10.18632/oncotarget.12648,1,1,True,True,True,no,
+10.18632/oncotarget.7945,1,1,True,True,True,no,
+10.18632/oncotarget.9819,1,1,True,True,True,no,
+10.18653/v1/d17-1076,1,1,True,True,True,no,
+10.18699/vjgb-25-91,1,1,True,True,True,no,
+10.18718/81781.23,1,1,True,True,True,yes,FReD v2.4.2 (June 2026 import); topics AI-tagged (claude sonnet)
+10.18718/81781.27,1,1,True,True,True,yes,FReD v2.4.2 (June 2026 import); topics AI-tagged (claude sonnet)
+10.18718/81781.29,1,1,True,True,True,yes,FReD v2.4.2 (June 2026 import); topics AI-tagged (claude sonnet)
+10.18718/81781.38,1,1,True,True,True,yes,FReD v2.4.2 (June 2026 import)
+10.1901/jeab.2012.98-283,1,1,False,False,False,no,
+10.20982/tqmp.16.2.r001,1,1,True,True,True,no,
+10.20982/tqmp.20.1.r001,1,1,True,True,True,yes,
+10.2139/ssrn.2586261,1,1,True,True,True,yes,
+10.2174/1874402800902010006,1,1,True,True,True,no,
+10.2196/39258,1,1,True,True,False,no,
+10.2196/45481,1,1,True,True,True,no,
+10.2196/51056,1,1,True,True,True,no,
+10.2307/146341,1,1,True,True,True,partially,
+10.2307/2061038,1,1,True,True,True,no,
+10.2466/20.22.pms.114.1.185-188,1,1,True,True,True,yes,
+10.2466/pms.2000.90.2.640,1,1,True,True,True,no,
+10.2466/pr0.1999.85.2.457,1,1,True,True,True,no,
+10.24839/2325-7342.jn26.4.422,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.2501/jar-40-1-2-35-42,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.2522/ptj.20120444,1,1,True,True,True,no,
+10.26021/11892,1,1,True,True,True,no,
+10.26443/msurj.v19i1.231,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.29115/sp-2023-0025,1,1,True,True,True,no,
+10.29338/wp2019-15,1,1,True,True,True,partially,
+10.31234/osf.io/akfzh,1,1,True,True,False,yes,
+10.31234/osf.io/dca65,1,1,True,True,True,yes,
+10.31234/osf.io/fmdqe,1,1,True,True,True,yes,
+10.31234/osf.io/ntukz,1,1,True,True,True,yes,
+10.31235/osf.io/nt8c4,2,1,True,True,False,no,
+10.31275/20211903,2,1,True,True,True,no,
+10.3205/zma000997,1,1,True,True,True,no,
+10.3233/jad-170276,1,1,True,True,True,no,
+10.3233/jad-2010-1357,1,1,True,True,True,no,
+10.32714/ricl.10.01.08,1,1,True,True,True,yes,
+10.32872/cpe.v2i4.2593,1,1,True,True,True,no,
+10.3386/w20657,1,1,True,True,True,partially,
+10.3389/fcomm.2018.00046,1,1,True,True,False,no,
+10.3389/fcomm.2022.1048896,10,10,True,True,True,yes,
+10.3389/fcvm.2023.1226971,1,1,True,True,True,no,
+10.3389/fgene.2021.690335,1,1,True,True,False,no,
+10.3389/fmicb.2018.01598,2,1,True,True,False,no,
+10.3389/fneur.2025.1709389,1,1,True,True,True,no,
+10.3389/fnhum.2014.00019,1,1,True,True,True,yes,
+10.3389/fnhum.2014.00154,1,1,True,True,True,no,
+10.3389/fnhum.2014.00460,1,1,True,True,True,no,
+10.3389/fnhum.2016.00475,1,1,True,True,True,no,
+10.3389/fnhum.2019.00119,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.3389/fnhum.2022.937515,2,1,True,True,False,no,
+10.3389/fnins.2017.00664,1,1,True,True,True,no,
+10.3389/fnins.2020.00803,1,1,True,True,True,no,
+10.3389/fped.2021.590040,1,1,True,True,True,yes,
+10.3389/fphys.2019.01578,1,1,True,True,True,no,
+10.3389/fpsyg.2012.00504,1,1,True,True,True,no,
+10.3389/fpsyg.2013.00858,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.3389/fpsyg.2014.00539,1,1,True,True,True,no,
+10.3389/fpsyg.2014.00786,1,1,True,True,True,no|yes,
+10.3389/fpsyg.2014.00875,2,1,True,True,True,no,
+10.3389/fpsyg.2014.00955,1,1,True,True,True,no,
+10.3389/fpsyg.2014.01035,1,1,True,True,False,no,
+10.3389/fpsyg.2014.01276,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.3389/fpsyg.2014.01325,1,1,True,True,True,no,
+10.3389/fpsyg.2014.01511,1,1,True,True,True,no,
+10.3389/fpsyg.2015.00335,1,1,True,True,True,no,
+10.3389/fpsyg.2015.00494,1,1,True,True,True,no,
+10.3389/fpsyg.2015.01221,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.3389/fpsyg.2015.01552,1,1,True,True,True,no,
+10.3389/fpsyg.2015.01709,1,1,True,True,True,no,
+10.3389/fpsyg.2015.01755,1,1,True,True,True,no,
+10.3389/fpsyg.2016.01042,1,1,True,True,True,no,
+10.3389/fpsyg.2016.01930,1,1,True,True,True,no,
+10.3389/fpsyg.2016.01977,1,1,True,True,True,no,
+10.3389/fpsyg.2017.00190,1,1,True,True,True,no,
+10.3389/fpsyg.2018.00996,1,1,True,True,True,no,
+10.3389/fpsyg.2018.02374,1,1,True,True,True,no,
+10.3389/fpsyg.2020.02107,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.3389/fpsyg.2020.02182,1,1,True,True,True,no,
+10.3389/fpsyg.2021.626087,1,1,True,True,True,no,
+10.3389/fpsyg.2024.1433725,1,1,True,True,True,no,
+10.3389/fpsyg.2024.1495812,1,1,True,True,True,yes,
+10.3389/fpsyt.2020.00777,1,1,True,True,True,no,
+10.3389/fpsyt.2022.836077,1,1,True,True,True,no,
+10.3389/fvets.2023.1305353,1,1,True,True,True,no,
+10.3390/ani12070807,1,1,True,True,True,no,
+10.3390/brainsci8080152,1,1,True,True,True,no,
+10.3390/genes12091349,1,1,True,True,True,no,
+10.3390/healthcare13212808,1,1,True,True,True,no,
+10.3390/jcm13030857,1,1,True,True,True,no,
+10.3390/jintelligence7010006,2,1,False,False,False,no,
+10.3390/su12083069,1,1,False,False,False,no,
+10.37237/150205,1,1,True,False,False,yes,
+10.3758/s13414-015-0849-x,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.3758/s13414-019-01890-6,1,1,True,True,False,no,
+10.3758/s13414-024-02994-4,1,1,True,True,True,no,
+10.3758/s13421-018-0888-3,1,1,True,True,True,no,
+10.3758/s13423-013-0549-2,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.3758/s13423-014-0582-9,1,1,True,True,True,no,
+10.3758/s13423-014-0757-4,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.3758/s13423-019-01708-4,1,1,True,True,False,no,
+10.3758/s13423-023-02259-5,1,1,True,True,True,no,
+10.3758/s13423-024-02602-4,1,1,True,True,True,yes,
+10.3758/s13428-020-01457-6,1,1,False,False,False,no,
+10.3758/s13428-021-01693-4,1,1,True,False,False,no,
+10.3758/s13428-022-01879-4,1,1,True,True,True,yes,
+10.3758/s13428-023-02329-5,1,1,True,True,True,no,
+10.3899/jrheum.131548,1,1,True,True,True,no,
+10.4102/ac.v19i1.690,1,1,True,True,False,no,
+10.4103/0366-6999.171421,1,1,True,True,True,no,
+10.4103/ijabmr.ijabmr_156_24,1,1,True,True,True,no,
+10.48550/arxiv.1605.00178,1,1,True,True,True,yes,FReD v2.4.2 (June 2026 import); topics AI-tagged (claude sonnet)
+10.5018/economics-ejournal.ja.2017-13,1,1,True,True,True,partially,
+10.5018/economics-ejournal.ja.2019-51,1,1,True,True,True,partially,
+10.5018/economics-ejournal.ja.2020-14,1,1,True,True,True,partially,
+10.5018/economics-ejournal.ja.2020-21,1,1,True,True,True,partially,
+10.5114/cipp.2021.110948,1,1,True,True,True,no,
+10.5114/cipp/189860,3,1,True,True,True,no,
+10.51224/cik.v1i2.39,1,1,True,True,True,no,
+10.5178/lebs.2024.118,1,1,True,True,True,no,
+10.51910/ijhdr.v11i40.598,2,1,True,True,True,no,|subdiscipline AI-tagged (claude sonnet)
+10.5209/rev_sjop.2011.v14.n1.13,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.5281/zenodo.6426882,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.5334/irsp.522,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.5334/irsp.571,1,1,True,True,True,yes,
+10.5334/irsp.751,1,1,True,True,True,no,
+10.5334/irsp.932,1,1,True,True,True,no,
+10.5334/irsp.945,1,1,True,True,True,no,
+10.5334/joc.324,1,1,True,True,False,no,
+10.5334/joc.35,1,1,True,True,True,no,
+10.5334/joc.456,1,1,True,True,True,no,
+10.5334/joc.91,1,1,True,True,True,yes,FReD explorer (Feb 2026 import)
+10.5808/gi.2016.14.3.85,1,1,True,True,False,no,
+10.5964/ejop.8375,1,1,True,True,True,no,
+10.70252/nkky8370,1,1,True,True,True,yes,
+10.7334/psicothema2019.405,1,1,True,True,False,yes,FReD explorer (Feb 2026 import)
+10.7554/elife.17044,1,1,True,True,False,no,
+10.7554/elife.17584,1,1,True,True,True,no,
+10.7554/elife.18173,1,1,True,True,True,no,
+10.7554/elife.21253,1,1,True,True,False,no,
+10.7554/elife.21634,1,1,True,True,True,no,
+10.7554/elife.25306,1,1,True,True,True,no,
+10.7554/elife.25801,1,2,True,True,False,no,
+10.7554/elife.26030,1,1,False,False,False,no,
+10.7554/elife.29747,1,1,True,True,True,no,
+10.7554/elife.30274,1,1,True,True,False,no,
+10.7554/elife.33468,1,1,True,True,False,no,
+10.7554/elife.34364,1,1,True,True,False,no,
+10.7554/elife.39944,1,1,True,True,True,no,
+10.7554/elife.43511,1,1,True,True,True,no,
+10.7554/elife.45120,1,1,True,True,False,no,
+10.7554/elife.45426,1,1,True,True,False,no,
+10.7554/elife.51019,1,1,True,True,False,no,
+10.7554/elife.56651,1,1,True,True,False,no,
+10.7554/elife.57614,1,1,True,True,True,no,
+10.7554/elife.73430,6,5,True,True,True,no,
+10.7717/peerj-cs.245,1,1,True,True,True,no,
+10.7717/peerj.10131,1,1,True,True,True,no,
+10.7717/peerj.3580,1,1,True,True,True,no,
+10.7717/peerj.4661,1,1,False,False,False,no,
+10.7717/peerj.5347,1,1,True,True,False,no,
+10.7717/peerj.5790,1,1,True,True,True,no,

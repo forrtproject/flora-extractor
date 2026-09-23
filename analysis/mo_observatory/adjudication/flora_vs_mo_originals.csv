@@ -1,0 +1,50 @@
+doi_r,n_mo,n_flora,same_original,comparable,same_outcome,mo_validated,mo_source,kind
+10.1002/aepp.13306,1,1,False,False,False,partially,,MO: no original DOI
+10.1002/aur.2496,1,1,False,False,False,no,,FLoRA: no original DOI
+10.1002/hbm.25386,1,1,False,False,False,no,,different paper
+10.1002/jaba.706,1,1,False,False,False,no,,FLoRA: no original DOI
+10.1002/jae.2449,1,1,False,False,False,partially,,"same title, other DOI"
+10.1002/npr2.70078,1,1,False,False,False,no,,different paper
+10.1007/s11127-012-0023-0,1,1,False,False,False,partially,,"same title, other DOI"
+10.1007/s11238-021-09836-x,1,1,False,False,False,partially,,"same title, other DOI"
+10.1007/s12186-012-9090-0,1,1,False,False,False,no,,different paper
+10.1016/j.heliyon.2019.e02434,1,1,False,False,False,no,,different paper
+10.1016/j.infbeh.2019.101340,1,1,False,False,False,no,,"same title, other DOI"
+10.1016/j.ynirp.2022.100149,1,1,False,False,False,no,,different paper
+10.1017/s027226312400024x,1,1,False,False,False,no,,MO: no original DOI
+10.1027/1864-9335/a000179,1,1,False,False,False,no,,different paper
+10.1027/1864-9335/a000185,2,1,False,False,False,yes,Curate Science scrape,different paper
+10.1037/pspp0000104,1,1,False,False,False,no,,different paper
+10.1037/xge0000788,1,1,False,False,False,no,,"same title, other DOI"
+10.1038/s41598-025-10331-4,1,1,False,False,False,no,,different paper
+10.1073/pnas.2305629120,1,1,False,False,False,no,,different paper
+10.1080/0003684042000229532,2,2,False,False,False,partially,,"same title, other DOI"
+10.1080/02687038.2010.536841,1,1,False,False,False,no,,different paper
+10.1080/08993408.2022.2079864,1,1,False,False,False,no,,different paper
+10.1080/20008198.2017.1315291,1,1,False,False,False,no,,different paper
+10.1080/22243534.2015.11828344,1,1,False,False,False,no,,FLoRA: no original DOI
+10.1093/jae/ejad013,1,1,False,False,False,partially,,different paper
+10.1111/cdev.12774,1,1,False,False,False,no,,different paper
+10.1111/j.1540-4781.2011.01174.x,1,2,False,False,False,no,"Marsden, Morgan-Short, Thompson & Abugaber (2018), Language Learning 68:2, Appen","same title, other DOI"
+10.1111/j.1540-4781.2011.01236.x,1,1,False,False,False,no,"Marsden, Morgan-Short, Thompson & Abugaber (2018), Language Learning 68:2, Appen",MO: no original DOI
+10.1111/lang.12621,1,1,False,False,False,no,,"same title, other DOI"
+10.1111/psyp.13546,1,1,False,False,False,no,,different paper
+10.1176/appi.ajp.2015.14070896,1,1,False,False,False,no,,different paper
+10.1176/ps.62.4.pss6204_0367,1,1,False,False,False,no,,different paper
+10.1177/019874290503100104,1,1,False,False,False,no,,different paper
+10.1177/0956797620968526,1,1,False,False,False,no,,"same title, other DOI"
+10.1177/10422587211059991,1,2,False,False,False,partially,,"same title, other DOI"
+10.1177/1091142114537892,1,1,False,False,False,partially,,different paper
+10.1177/1362168810375365,1,1,False,False,False,no,"Marsden, Morgan-Short, Thompson & Abugaber (2018), Language Learning 68:2, Appen",different paper
+10.1177/25152459211018187,1,1,False,False,False,no,,"same title, other DOI"
+10.1371/journal.pone.0129263,1,1,False,False,False,no,,different paper
+10.1371/journal.pone.0294325,2,1,False,False,False,no,,different paper
+10.1515/zfsoz-2023-2029,1,1,False,False,False,no,,"same title, other DOI"
+10.1525/collabra.18738,1,1,False,False,False,yes,FReD explorer (Feb 2026 import),"same title, other DOI"
+10.1525/collabra.77859,1,1,False,False,False,yes,,"same title, other DOI"
+10.1901/jeab.2012.98-283,1,1,False,False,False,no,,"same title, other DOI"
+10.3390/jintelligence7010006,2,1,False,False,False,no,,FLoRA: no original DOI
+10.3390/su12083069,1,1,False,False,False,no,,different paper
+10.3758/s13428-020-01457-6,1,1,False,False,False,no,,"same DOI, // variant"
+10.7554/elife.26030,1,1,False,False,False,no,,different paper
+10.7717/peerj.4661,1,1,False,False,False,no,,different paper

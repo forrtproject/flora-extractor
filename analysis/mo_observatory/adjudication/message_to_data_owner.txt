@@ -1,0 +1,14 @@
+Hi,
+
+While comparing FLoRA with the Metascience Observatory database, we found 24 FLoRA entries whose original-study DOI (doi_o) needs fixing:
+https://docs.google.com/spreadsheets/d/1INwfwx4WjInpqxgGm32H4C92CSWqt4opoMlcCkOvLYY/edit
+
+Each row gives the replication's DOI (doi_r), the current doi_o, the correct doi_o, and, where FLoRA cited a preprint or working paper worth keeping, that DOI as alt_identifier_o. The note column says why:
+- 14 name the wrong original, usually a related paper by the same authors. One original is a book with no DOI, so its correct_main_doi_o is blank.
+- 7 cite a working paper, preprint, conference abstract, JSTOR copy or secondary record instead of the journal article.
+- 2 have misformatted DOIs, and 1 had no DOI.
+
+Two independent AI reviewers checked each wrong-original call against the replication paper, but please take a quick look before applying the changes.
+
+Thanks,
+Lukas
