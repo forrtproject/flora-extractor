@@ -1035,6 +1035,30 @@ def _union_targets(*lists: list, record_type: str = "replication") -> list[dict]
     return merged
 
 
+def _same_original_as_carried(targets: list[dict], carried: dict) -> "dict | None":
+    """The one target of a later answer that names the carried resolution's original.
+
+    By the mapped record's DOI when it has one; otherwise — the usual case, because the
+    later call's key did not match a record — by the carried original's first-author
+    surname AND year both appearing in how the paper named the target. None when no
+    target, or more than one, fits: a wrong transfer is worse than a cbd.
+    """
+    doi = clean_doi(str(carried.get("resolved_doi_o") or ""))
+    surname = _norm(carried.get("resolved_author_o")).split(" ")[-1]
+    year = str(carried.get("resolved_year_o") or "")[:4]
+    fits = []
+    for t in targets:
+        t_doi = clean_doi(str((t.get("record") or {}).get("doi") or ""))
+        if t_doi:
+            if doi and t_doi == doi:
+                fits.append(t)
+            continue
+        named = _norm(t.get("target_as_named"))
+        if surname and year and surname in named and year in named:
+            fits.append(t)
+    return fits[0] if len(fits) == 1 else None
+
+
 def _as_target(resolution: dict) -> dict:
     """An accepted single link expressed as a target entry, so it can join a list."""
     return {
@@ -1634,7 +1658,13 @@ def run_for_doi(doi_r:              str,
     # where that original's re-test is reported, and the slices are cut for the places
     # a single-target paper states its one verdict. The body reaches the cache key
     # through the rendered prompt, so only these calls miss.
-    full_body = (str(best.get("raw_text") or "").strip() if seen_certain >= 2 else "")
+    # Every document is sent whole since 2026-09-23 (analysis/cbd_investigation): the
+    # intro/closing slices dropped the RESULTS, where 6 of the 10 adjudicated
+    # cannot_be_determined rows with a document stated the outcome, and 2,820 of 5,215
+    # cached full-text prompts had no discussion heading at all ("tail"). Replayed on
+    # gpt-6-luna it took sampled cbd rows with a document from 14/23 to 6/23 and moved
+    # 3 of 30 settled controls — as many as a plain re-run of the old prompt moved.
+    full_body = str(best.get("raw_text") or "").strip()
     llm = _stamp_stage(resolve_targets_and_outcomes(
         doi_r, study_r, abstract_r, candidates, sections.get("references") or [],
         record_type    = record_type,
@@ -1676,7 +1706,18 @@ def run_for_doi(doi_r:              str,
     if carried:
         # Nothing below the carried resolution accepted a link of its own — the call
         # failed, or it read the closing sections and named no target it was sure of.
-        # Neither contradicts the accepted link, so it stands, with the outcome it has.
+        # Neither contradicts the accepted link, so it stands. But the descent was made
+        # to settle its OUTCOME, and the call usually coded one for the same original
+        # while failing to match it to a record (the PDF's reference list is not the
+        # list the carried rung read). Dropping that reading shipped cbd over a settled
+        # full-text verdict on 22 llm_references rows of extracted.csv, 41 in all
+        # (analysis/cbd_investigation).
+        same = _same_original_as_carried(llm.get("targets") or [], carried)
+        if (same and not _settled(carried)
+                and outcome_is_settled(same.get("outcome_block") or {}, record_type)):
+            log.info("[%s] descent: the full-text call coded the carried original — "
+                     "taking its outcome", doi_r)
+            carried = {**carried, "outcome_block": same["outcome_block"]}
         log.info("[%s] descent: the full-text call accepted no link — keeping the "
                  "carried %s resolution", doi_r, carried.get("resolution_method"))
         return _exit_resolved({**carried,

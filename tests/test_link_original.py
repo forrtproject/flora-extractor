@@ -822,7 +822,9 @@ class TestAMultiTargetPaperReadsOn:
         self._run(identify=_identify, parse=parse)
         assert sent == ["", "THE WHOLE BODY"]
 
-    def test_a_single_target_paper_is_sent_the_slices(self):
+    def test_a_single_target_paper_is_sent_the_whole_body_too(self):
+        # Since 2026-09-23 every document goes whole: the slices dropped RESULTS
+        # (analysis/cbd_investigation).
         sent: list = []
 
         def _identify(*a, **kw):
@@ -835,7 +837,7 @@ class TestAMultiTargetPaperReadsOn:
                           return_value=None):
             _run_gate("A study", _TWO_PAIRS, [], screen=self._SCREEN,
                       identify=_identify, parse=parse)
-        assert sent == ["", ""]
+        assert sent == ["", "THE WHOLE BODY"]
 
 
 _LONE_CAND  = [{"title": "Time flies from left to right", "year": 2010,
