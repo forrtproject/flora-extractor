@@ -32,8 +32,8 @@ from shared.config import GROBID_CACHE_DIR, LLM_CACHE_DIR, OA_CACHE_DIR, PARSE_C
 from shared.disambiguation import is_umbrella_paper, jaccard_similarity
 from shared import token_counter
 from shared.llm_client import (
-    SCREEN_QUALIFYING, classify_study_status, resolve_targets_and_outcomes,
-    screen_references_with_llm,
+    SCREEN_QUALIFYING, check_reference_pick, classify_study_status,
+    resolve_targets_and_outcomes, screen_references_with_llm,
 )
 from shared.pdf_parsing import (
     parse_all as _parse_all,
@@ -544,7 +544,20 @@ OUTCOME_DESCENT = True
 #      as a new work. `prospective` files it in prospective_registration.csv instead
 #      (2026-09-07)
 #      reopen: --redo-status abstract_r=
-EXTRACT_LADDER_VERSION: int = 27
+#  28  every link the reference-list rung accepts is checked BLIND by a second vendor's
+#      model over the whole keyed list (`check_reference_pick`, PICK_CHECK_MODEL): which
+#      record is the original? Unless it names the pick, the pick loses match_certain
+#      and the ladder descends to the full-text rung, skipping the pre-PDF title
+#      search; the checker's alternative is recorded, never swapped in. The flag also
+#      voids an earlier acceptance of the same record (a carried abstract link, a
+#      withheld rule pick). No usable answer ends the row `pick_check_failed`
+#      (api_error), so an unchecked link never settles. Measured on 56
+#      adjudicated wrong picks and 150 controls: 31 flagged, 2 controls
+#      (analysis/contrastive_confirm/REPORT.md). Also (af85ea6) the full-text rung is
+#      sent every document whole, and its settled outcome for a carried original it
+#      could not key is kept (analysis/cbd_investigation) (2026-09-23)
+#      reopen: --redo-status llm_references
+EXTRACT_LADDER_VERSION: int = 28
 
 
 # Columns to pass through from the input row (no renaming). Only columns
@@ -1077,6 +1090,66 @@ def _as_target(resolution: dict) -> dict:
     }
 
 
+def _record_label(record: dict) -> str:
+    """A keyed record as a reader can look it up once its call's @key is gone."""
+    return (f"{record.get('key', '')} {record.get('first_author') or '?'} "
+            f"({record.get('year') or '?'}) {str(record.get('title') or '')[:80]}"
+            ).strip()
+
+
+def _as_link(target: dict) -> dict:
+    """A target's record in the resolved_* shape `_agrees_with_held` compares against."""
+    record = target.get("record") or {}
+    return {"resolved_doi_o":    record.get("doi") or "",
+            "resolved_title_o":  record.get("title") or "",
+            "resolved_year_o":   record.get("year"),
+            "resolved_author_o": record.get("first_author") or ""}
+
+
+def _check_reference_pick(doi_r: str, study_r: str, abstract_r: str,
+                          candidates: list[dict], refs: list[dict],
+                          screen: dict) -> tuple[dict, str, str, "dict | None"]:
+    """Run the blind pick check on an accepted reference-list link.
+
+    Returns (screen, note, verdict, pick): verdict is "confirmed", "flagged",
+    "failed", or "" when there was no keyed pick to check. On a flag the pick is
+    WITHHELD rather than replaced: its target keeps its record but loses
+    match_certain, and the screen no longer resolves, so the ladder reads on to the
+    full-text rung. The checker's own pick is the judges' original in only 6-7 of
+    8-10 catches, so it goes in the note, never onto the row. "failed" is no usable
+    answer — the caller ends the row api_error, so it is re-checked on a re-run
+    rather than settling an unchecked link (the keyed-record check's rule).
+    """
+    targets = screen.get("targets") or []
+    pick = next((t for t in targets if t.get("match_certain") and t.get("key")), None)
+    if pick is None:
+        return screen, "", "", None
+    check = check_reference_pick(doi_r, study_r, abstract_r, candidates, refs,
+                                 pick["key"], str(pick.get("evidence_quote") or ""))
+    if check["flag"] is None:
+        log.warning("[%s] pick check: no answer (%s) — api_error, a re-run decides",
+                    doi_r, check["llm_error"])
+        return (screen, f"pick_check: api_error ({str(check['llm_error'])[:80]}); "
+                        "re-run decides", "failed", pick)
+    if not check["flag"]:
+        return screen, "pick_check: confirmed", "confirmed", pick
+    alternatives = "; ".join(_record_label(r) for r in check["alternatives"])
+    note = (f"pick_check: flagged {_record_label({**(pick.get('record') or {}), 'key': pick['key']})}"
+            f" — checker {check['status']}"
+            + (f": {alternatives}" if alternatives else "")
+            + (f" — {check['reasoning']}" if check["reasoning"] else ""))
+    log.info("[%s] pick check flagged %s (%s) — withholding the link and reading on",
+             doi_r, pick["key"], check["status"])
+    withheld = {**screen,
+                "resolved": False, "resolution_method": "llm_no_target",
+                "resolved_doi_o": "", "resolved_title_o": "", "resolved_year_o": None,
+                "resolved_author_o": "", "resolved_study_o": "", "resolved_study_r": "",
+                "resolution_score": 0.0, "llm_confidence": "low", "outcome_block": {},
+                "targets": [{**t, "match_certain": False} if t is pick else t
+                            for t in targets]}
+    return withheld, note, "flagged", pick
+
+
 def run_for_doi(doi_r:              str,
                 cands_df:           Optional[pd.DataFrame] = None,
                 force:              bool = False,
@@ -1164,7 +1237,23 @@ def run_for_doi(doi_r:              str,
     # Every exit from here on assembles the same output from the same base data;
     # only the resolution (and, past the PDF stage, the pdf/grobid/sections blocks)
     # differ, so bind the four constant arguments once.
-    emit = partial(_build_output, doi_r, cands_row, candidates)
+    build = partial(_build_output, doi_r, cands_row, candidates)
+    # The reference-list pick check's verdict, onto every exit from Stage 4.5 on: a
+    # flagged pick sends the row down the ladder, and whatever it ends at has to say
+    # why the reference-list link is not the one it shipped.
+    pick_note = ""
+
+    def emit(resolution: dict, pdf: dict, grobid: dict, sections: dict) -> dict:
+        out = build(resolution, pdf, grobid, sections)
+        if pick_note:
+            # Joined even onto an empty quote: `evidence_quote()` in run_extract takes
+            # the part before the first " | " as the quote the keyed-record check is
+            # sent, and the note must never be read as one.
+            out["llm_evidence"] = f"{out['llm_evidence'] or ''} | {pick_note}"
+            # On its own too: a paper written one row per target takes each row's
+            # evidence from its target, not from llm_evidence (`_per_target_rows`).
+            out["pick_check"] = pick_note
+        return out
 
     # A deterministic stage may only END the row when the paper's own text rules out a
     # second target; otherwise its pick is WITHHELD — until a call that can enumerate
@@ -1442,6 +1531,41 @@ def run_for_doi(doi_r:              str,
             screen["llm_evidence"] = "; ".join(filter(None, [
                 note, screen.get("llm_evidence", ""),
             ]))
+        # Before _keep: a flagged pick must not be remembered as a certain target, or
+        # the per-target adapter would write it anyway at an exit below.
+        pick_flagged = False
+        if screen["resolved"]:
+            screen, pick_note, verdict, pick = _check_reference_pick(
+                doi_r, study_r, abstract_r, candidates, refs, screen)
+            if verdict == "failed":
+                # An unchecked link must not settle: the work ends api_error and a
+                # re-run asks again (every other call on the row is a cache hit).
+                # No targets, so the per-target adapter does not write the pick.
+                return emit({**screen, **_unresolved(
+                    "pick_check_failed", llm_error=pick_note[len("pick_check: "):]),
+                    "targets": [], "multi_target": False},
+                    {}, {}, ref_sections)
+            pick_flagged = verdict == "flagged"
+        if pick_flagged:
+            # The same answer disputes every earlier acceptance of the SAME record:
+            # the abstract rung's carried link, its certain target in `seen`, and a
+            # withheld rule pick. Any of them would otherwise ship the flagged record
+            # at an exit below where nothing new has spoken.
+            flagged_link = _as_link(pick)
+            if carried and _agrees_with_held(pick, carried):
+                log.info("[%s] descent: the carried %s link is the flagged record — "
+                         "dropped", doi_r, carried.get("resolution_method"))
+                carried = {}
+            if held and _agrees_with_held(pick, held):
+                log.info("[%s] gate: the withheld %s pick is the flagged record — "
+                         "dropped", doi_r, held["resolution_method"])
+                held = {}
+            if seen:
+                seen = {**seen, "targets": [
+                    {**t, "match_certain": False}
+                    if t.get("match_certain") and _agrees_with_held(t, flagged_link)
+                    else t for t in seen.get("targets") or []]}
+                seen_certain = len(_certain_targets(seen))
         _keep(screen)
 
         # A screen that did not get both votes is an API failure, not a verdict, and
@@ -1504,7 +1628,12 @@ def run_for_doi(doi_r:              str,
         # landmark it merely cites. The result is still written as provisional
         # (link_method llm_title_search, link_confidence low, no outcome coded); the
         # gate decides whether to spend the two searches at all.
-        target_desc = "" if carried else screen.get("target_description", "")
+        # Nor after a flagged pick: the flag says the evidence only DESCRIBES an
+        # original that several listed records fit, and a title search over that
+        # description is the weaker reader of the same words. The full text is where
+        # the paper names it.
+        target_desc = ("" if carried or pick_flagged
+                       else screen.get("target_description", ""))
         votes = screen.get("votes", [])
         both_sure = (len(votes) == 2
                      and all(v["classification"] in SCREEN_QUALIFYING and v["confident"]

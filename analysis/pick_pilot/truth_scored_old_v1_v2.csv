@@ -1,0 +1,151 @@
+work_id,old,v1,v1_method,v2,v2_method,truth_keys,not_a_replication
+W1521097961,right,right,llm_references,right,llm_references,@naj2010,False
+W176265305,right,right,llm_references,right,llm_references,@prigerson1995b,False
+W1771823445,right,right,llm_references,right,llm_references,@grasby1993,False
+W195104432,right,none,target_pending,none,target_pending,not_on_list,False
+W1964529863,right,right,llm_references,right,llm_references,@walsh1971 @altman1968,False
+W1966139138,right,right,llm_references,right,llm_references,@simons2011,False
+W1967997943,right,right,llm_references,right,llm_references,@luthar1998,False
+W1969237464,right,right,llm_references,right,llm_references,@jiang2010,False
+W1973118694,right,right,llm_references,right,llm_references,@hadjikhani2004,False
+W1973122849,right,right,llm_references,right,llm_references,@berg1988,False
+W1980936285,right,right,llm_references,right,llm_references,@martinsen1993,False
+W1982594477,right,right,llm_references,right,llm_references,@taylor2012,False
+W1983161251,right,right,llm_references,right,llm_references,@kirk1983,False
+W1984196654,right,right,llm_references,right,llm_references,@flavin2006,False
+W1984604010,right,right,llm_references,right,llm_references,@crow1989,False
+W1987244237,right,right,llm_references,right,llm_references,@fjellstedt1973,False
+W1988799899,right,right,llm_references,right,llm_references,@kakiuchi2004 @chen2004,False
+W1994533505,right,right,llm_references,right,llm_references,@papassotiropoulos2006,False
+W1995762476,right,right,llm_references,right,llm_references,@titov2008,False
+W2001858347,right,right,llm_references,right,llm_references,@fornage2011,False
+W2003328263,right,right,llm_references,right,llm_references,@yamada2007,False
+W2012166465,right,right,llm_references,right,llm_references,@pfeiffer1981,False
+W2015123399,right,right,llm_references,right,llm_references,@nijenhuis1996 @nijenhuis1997,False
+W2020060357,right,right,llm_references,right,llm_references,@rowley1977,False
+W2024124148,right,right,llm_references,right,llm_references,@keltikangasjrvinen1993,False
+W2025439004,right,right,llm_references,right,llm_references,@zhou2014,False
+W2041962819,right,right,llm_references,right,llm_references,@murray1990,False
+W2044943750,right,right,llm_references,right,llm_references,@holly2010,False
+W2047469948,right,right,llm_references,right,llm_references,@smyth1972,False
+W2049839209,right,right,llm_references,right,llm_title_search,@lorentzen2007,False
+W2053537456,right,right,llm_references,right,llm_references,@schnake1986,False
+W2064271395,right,right,llm_references,right,llm_references,@anderson1984,False
+W2069359258,right,right,llm_references,right,llm_references,@cui2010,False
+W2075456319,right,none,target_pending,none,target_pending,@yang2003,False
+W2077804534,right,right,llm_references,right,llm_references,@matzler2006,False
+W2086756898,right,right,llm_references,right,llm_references,@newton2003,False
+W2092106350,right,right,llm_references,right,llm_references,@hagemann2002,False
+W2093345556,right,none,target_pending,none,target_pending,@blalock1968,False
+W2095864928,right,right,llm_references,right,llm_references,@knutson2004,False
+W2104755979,partial,partial,llm_title_search,partial,llm_title_search,@kanemoto2000 @virta2002 @kanemoto2003 @peltola2001 @stgmann2002 @gambardella2003 @walz2003 @briellmann2000 @chou2003b @chou2003,False
+W2116883460,right,right,llm_references,right,llm_references,@lowe1993,False
+W2117844119,right,right,llm_references,right,llm_references,@mattay2003,False
+W2119271910,right,right,llm_references,right,llm_references,@dupoux1999,False
+W2120814713,right,right,llm_references,right,llm_references,@bowers2006,False
+W2121346405,right,right,llm_references,right,llm_references,@nalls2011,False
+W2123103695,right,right,llm_references,right,llm_references,@mahon2001,False
+W2123294834,right,right,llm_references,right,llm_references,@jacobs2002,False
+W2124578438,right,none,target_pending,none,target_pending,@graen1982,False
+W2125426425,right,right,llm_references,right,llm_references,@cooper1988,False
+W2127819969,wrong,right,llm_references,right,llm_references,@abrahams1999,False
+W2128411464,right,right,llm_references,right,llm_references,@steiner1996,False
+W2137148722,right,right,llm_references,right,llm_references,@chan2013b,False
+W2138009685,right,right,llm_references,right,llm_references,@deicken2000,False
+W2149746305,right,right,llm_references,right,llm_references,@burke1969,False
+W2153862402,right,right,llm_references,right,llm_references,@gilbert2003,False
+W2158965732,right,none,target_pending,none,target_pending,@initiative2007 @yang2009,False
+W2160820103,right,right,llm_references,right,llm_title_search,@vanpatten1993,False
+W2169756025,right,right,llm_references,right,llm_references,@byun2008,False
+W2316348164,right,right,llm_references,right,llm_references,@verhoeven2013 @kiefer2013,False
+W2323812506,partial,right,llm_references,right,llm_references,@raleigh2008 @khoury2013,False
+W2330980526,right,right,llm_references,right,llm_references,@radin1984,False
+W2396759709,wrong,wrong,llm_references,wrong,llm_references,@gantman2011,False
+W2409619434,right,right,llm_references,right,llm_references,@rusbult1985,False
+W2410862503,right,right,llm_references,right,llm_references,@sartori2008,False
+W2415466450,right,right,llm_references,right,llm_references,@khnen2002 @oyserman2009,False
+W2509481270,nar,nar,keyed_link_disputed,none,target_pending,,True
+W2568065332,right,right,llm_references,right,llm_references,@hussain2012,False
+W2569068099,wrong,none,target_pending,none,target_pending,not_on_list,False
+W2607375323,right,right,llm_references,right,llm_references,@sun2015,False
+W2611033029,right,wrong,llm_references,none,target_pending,@giddens2007b,False
+W2758684098,right,right,llm_references,right,llm_references,@murray2016,False
+W2803712352,right,right,llm_references,right,llm_references,@baird2012,False
+W2805652837,right,right,llm_references,right,llm_references,@haas2016,False
+W2886050787,right,right,llm_references,right,llm_references,@wamsley2010,False
+W2891080196,right,right,llm_references,right,llm_references,@cook2011,False
+W2900189521,right,right,llm_references,right,llm_references,@harvey2017,False
+W2902994787,right,right,llm_title_search,partial,llm_title_search,@jones2009,False
+W2917335949,right,right,llm_references,right,llm_references,@eitam2013,False
+W2920563568,right,right,llm_references,right,llm_references,@boissoneault2014,False
+W2946455910,right,right,llm_title_search,right,llm_title_search,@cecere2014 @keil2017,False
+W2962759486,right,right,llm_references,right,llm_references,@aichert2016,False
+W2969917585,right,right,llm_references,right,llm_references,@ericsson1993,False
+W2987221369,right,right,llm_references,right,llm_references,@aker2016,False
+W2996503271,right,right,llm_references,right,llm_references,@berg2018,False
+W3014898655,wrong,wrong,llm_references,wrong,llm_references,@dang2017b,False
+W3018465724,wrong,right,llm_title_search,partial,llm_title_search,@jaramillo2016,False
+W3033731491,right,right,llm_references,right,llm_references,@levitt2001,False
+W3086650132,right,right,llm_references,right,llm_references,@vanaken2020,False
+W3093303837,right,right,llm_references,right,llm_references,@pickering2019,False
+W3110245614,right,right,llm_references,right,llm_references,@waris2020,False
+W3112925835,wrong,wrong,llm_references,wrong,llm_references,@jainta2012,False
+W3121137863,right,right,llm_references,right,llm_references,@mu2011,False
+W3132038847,right,right,llm_title_search,right,llm_title_search,@sweis2018 @abram2015,False
+W3135378492,right,partial,llm_references | llm_title_search,partial,llm_references | llm_title_search,@inagaki2018,False
+W3135487730,right,right,llm_references,right,llm_references,@benschop2019,False
+W3135757006,right,right,llm_references,right,llm_references,@waal2016,False
+W3161170459,right,right,llm_references,right,llm_references,@li2020,False
+W3170874557,right,right,llm_references,right,llm_references,@mello2012 not_on_list,False
+W3186526476,right,right,llm_references,right,llm_references,@becker2009,False
+W3200469149,wrong,right,llm_title_search,right,llm_title_search,@nachtigall2018,False
+W3209377451,right,right,llm_references,right,llm_references,@schretlen2013 @schretlen2014,False
+W4210667094,wrong,partial,llm_title_search,right,llm_title_search,@geaney2015 @ohmann2020,False
+W4212798822,right,right,llm_references,right,llm_references,@mireles2016,False
+W4213336622,right,right,llm_references,right,llm_references,@grunwald2014,False
+W4223897951,right,partial,llm_references | llm_title_search,partial,llm_references | llm_title_search,@griskevicius2013 @kelley2015 @bulley2018,False
+W4223909806,nar,nar,llm_references,nar,llm_references,,True
+W4223918717,right,right,llm_references,right,llm_references,@baldassarri2021,False
+W4224294983,wrong,right,llm_references,right,llm_references,@shek2020c,False
+W4226030081,right,right,llm_references,right,llm_references,@london2021,False
+W425089630,right,right,llm_fulltext,right,llm_fulltext,@lynn1993,False
+W4280557407,right,right,llm_references,right,llm_references,@dowsett2014,False
+W4281751031,right,right,llm_references,right,llm_references,@hoeschele2012,False
+W4286633240,wrong,wrong,llm_references,wrong,llm_references,not_on_list,False
+W4293070373,right,right,llm_references,right,llm_references,@quinn2019,False
+W4310679605,right,right,llm_references,right,llm_references,@foung2019,False
+W4313327776,right,right,llm_references,right,llm_references,@kacin2021,False
+W4323666946,right,right,llm_references,right,llm_references,@birch1986,False
+W4327544368,right,right,llm_references,right,llm_references,@collisson2019,False
+W4362637974,right,right,llm_references,right,llm_references,@smith2020b,False
+W4366412447,wrong,right,llm_title_search,right,llm_title_search,@iannone2020,False
+W4378232441,right,right,llm_references,right,llm_references,@serie2017,False
+W4378676700,right,right,llm_references,right,llm_references,@gopal2022,False
+W4379985209,wrong,right,llm_title_search,right,llm_title_search,@mozota2010,False
+W4383216503,right,right,llm_references,right,llm_references,@gharpure2020,False
+W4385330129,right,right,llm_references,right,llm_references,@stringer1997,False
+W4385566310,right,right,llm_references,right,llm_references,@jalal2018,False
+W4385969725,right,right,llm_title_search,right,llm_title_search,@guetta2019 @wolf2015,False
+W4389037127,right,right,llm_references,right,llm_title_search,@smith2018 @forrest2015 @rogers2018 @smith2019 @perry2020,False
+W4389791525,right,right,llm_references,right,llm_references,@patil2016,False
+W4391065910,right,right,llm_title_search,right,llm_title_search,@leng2022,False
+W4391755671,right,right,llm_references,right,llm_references,@maddock2023,False
+W4392096926,right,right,llm_references,right,llm_references,@niemsiri2023,False
+W4392504874,right,right,llm_references,right,llm_references,@scott2023,False
+W4400983779,right,right,llm_references,right,llm_references,@root2021,False
+W4401879797,right,right,llm_references,right,llm_references,@arakawa2022,False
+W4402894108,right,right,llm_references,right,llm_references,@reynoldstylus2018,False
+W4405220932,right,right,llm_references,right,llm_references,@weisberg2007,False
+W4406684369,right,right,llm_references,right,llm_references,@konishi1993,False
+W4407669232,right,right,llm_title_search,right,llm_title_search,@satizbal2023,False
+W4408026543,right,right,llm_references,right,llm_references,@yun2023,False
+W4408695994,right,right,llm_references,right,llm_references,@campbell2021,False
+W4409335964,right,right,llm_references,right,llm_references,@yu2014,False
+W4411163069,right,right,llm_references,right,llm_references,@hickok2015,False
+W4411274169,right,right,llm_title_search,right,llm_title_search,@li2024,False
+W4413754387,right,right,llm_references,right,llm_references,@gable2008,False
+W4413886734,right,right,llm_references,right,llm_references,@dzgn2022b,False
+W4415125743,right,right,llm_references,right,llm_references,@mekala2021,False
+W6940747618,right,right,llm_references,right,llm_references,@xu2011,False
+W7154754476,right,right,llm_references,right,llm_references,@guthrie2019,False
+W7160216022,right,right,llm_references,right,llm_references,@snchez2014,False

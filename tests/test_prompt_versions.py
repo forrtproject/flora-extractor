@@ -105,9 +105,12 @@ class TestChangeDetection:
         prompt_version.cache_clear()
         after = self._versions()
         changed = {n for n in PROMPT_NAMES if after[n] != before[n]}
+        # The pick check renders the same paper block (`_paper_blocks`), which
+        # carries the label even though the check never sends a document.
         assert changed == {"build_outcome_prompt", "build_repro_outcome_prompt",
                            "build_target_outcome_prompt",
-                           "build_repro_target_outcome_prompt"}
+                           "build_repro_target_outcome_prompt",
+                           "build_pick_check_prompt"}
 
     def test_truncation_cap_edit_reaches_the_prompt_that_slices_with_it(self, monkeypatch):
         """A cap is not wording, but it decides how much of the paper the model reads,
@@ -120,7 +123,8 @@ class TestChangeDetection:
         assert changed == {"build_target_outcome_prompt",
                            "build_repro_target_outcome_prompt",
                            "build_keyed_confirm_prompt",
-                           "build_search_confirm_prompt"}
+                           "build_search_confirm_prompt",
+                           "build_pick_check_prompt"}
 
     def test_the_retired_system_message_is_frozen_into_every_version(self, monkeypatch):
         """The system message is sent to nobody now, but its text still salts every

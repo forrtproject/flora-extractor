@@ -1373,6 +1373,72 @@ def build_keyed_confirm_prompt(title_r: str, abstract_snip: str,
     })
 
 
+# The wording measured in analysis/contrastive_confirm/run.py (the "blind" framing,
+# `_COMMON` with `_BLIND_TASK` and `_BLIND_ANSWER` spliced in), kept verbatim so the
+# measurement carries over. Change it and the numbers in that report no longer
+# describe what ships.
+_PICK_CHECK_TEMPLATE = """You are checking which published work a study re-tests. The study replicates or
+reproduces an earlier published study, and it cites that original in the list below.
+Every record on the list carries an @key.
+
+Your task: say which record on the list is the original study whose finding this
+study re-tests — or say that the evidence cannot tell, or that the original is not on
+the list.
+
+What makes this hard: the study often DESCRIBES its original ("a pioneer study",
+"our previous work", "the earlier findings of reduced volume") instead of citing it by
+name, and the list usually holds records that resemble the original without being it:
+- other papers by the same authors on the same topic (the earlier/later paper, the
+  companion paper, the follow-up);
+- a registered-report protocol or preregistration of the original, vs the original;
+- the paper that supplied the materials, task, scale or dataset, vs the paper whose
+  FINDING is re-tested;
+- a review or meta-analysis, vs the primary study it summarises;
+- a meeting abstract, preprint or working paper vs the article;
+- earlier replications of the same finding (the target is the one THIS study
+  re-tests, usually named as such).
+A record fits only when the study's own words — its title, abstract and the quoted
+passage — point at it: the finding re-tested, the design, the population, the year,
+the authors. Topic and authorship alone do not single a record out when another
+record shares them.
+
+THE STUDY AND THE LIST IT CITES:
+
+{paper}
+
+A PASSAGE THE STUDY USES TO DESCRIBE ITS TARGET: {quote}
+
+Answer with JSON and nothing else:
+{
+  "status": "identified" | "cannot_tell" | "not_on_list",
+  "originals": ["@key", ...],
+  "candidates": ["@key", ...],
+  "confident": true | false,
+  "reasoning": "<one or two sentences: what in the study's words decides it>"
+}
+"originals": the key(s) the evidence singles out — only when status is "identified".
+Usually one; several only when the study re-tests several different original papers.
+"candidates": when status is "cannot_tell", the records that fit equally well (else []).
+Say "identified" only when no other record on the list fits the study's description as
+well."""
+
+
+def build_pick_check_prompt(study_r: str, abstract_r: str, entries: list[dict],
+                            evidence_quote: str) -> str:
+    """Which record on the list is the original — asked without showing the pick.
+
+    The paper block is exactly the one the reference-list rung rendered for the pick
+    (`_paper_blocks` over the same keyed entries, no document), so the checker reads
+    the evidence the linker read and answers in the same key namespace. Blind because
+    showing the pick anchors the checker: the contrast framing caught half as many
+    wrong picks (analysis/contrastive_confirm/REPORT.md).
+    """
+    paper = "\n\n".join(_paper_blocks(study_r, abstract_r, entries,
+                                      "", "", "", "", "")).strip()
+    return _fill(_PICK_CHECK_TEMPLATE, {"paper": paper,
+                                        "quote": evidence_quote or "(none recorded)"})
+
+
 SEARCH_CONFIRM_GRADES = ("clearly_target", "likely_target",
                          "unlikely_target", "clearly_not_target")
 

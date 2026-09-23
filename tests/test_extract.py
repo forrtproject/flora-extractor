@@ -1425,6 +1425,29 @@ class TestReferenceStringTargets:
         assert rows[0]["link_confidence"] == "low"
         assert rows[0]["original_match_confidence"] == "low"
 
+    def test_a_flagged_reference_pick_is_named_on_every_per_target_row(self):
+        """A flagged pick sends the paper down the ladder, and a full-text answer
+        naming several originals is written per target — each row taking its
+        evidence from its target. The flag note must still reach them."""
+        link = {"targets": [{"match_certain": True, "target_as_named": "T",
+                             "study_numbers": "", "replication_study_numbers": "",
+                             "evidence_quote": "q",
+                             "record": {"doi": "10.2/orig", "title": "A usable title",
+                                        "first_author": "Moieni", "year": 2015}}],
+                "target_stage": "llm_fulltext", "unidentified_count": 0,
+                "llm_model": "m", "pdf_source": "", "parse_method": "", "pdf_ok": False,
+                "pick_check": "pick_check: flagged @x2010 X (2010) Sibling"}
+        row = pd.Series({"doi_r": "10.1/repl", "title_r": "R",
+                         "paper_type": "replication"})
+        with patch("extract.run_extract._build_ref_o", return_value=("", "", "")), \
+             patch.object(run_extract, "_has_document", return_value=False), \
+             patch.object(run_extract, "_get_outcome", return_value={}), \
+             patch.object(run_extract, "_verify_row", side_effect=lambda r: r):
+            rows = run_extract._per_target_rows(row, "10.1/repl", link, None,
+                                                no_llm=True, no_pdf=True,
+                                                resolved_only=False)
+        assert rows[0]["link_evidence"] == "q | pick_check: flagged @x2010 X (2010) Sibling"
+
     def test_a_fragment_title_with_no_doi_is_pending(self):
         """The guard's usable-title rule has to catch citation fragments: "[3] M.
         Moieni, M.R" is long enough to clear the length threshold on its own."""
@@ -2021,6 +2044,26 @@ class TestOutcomeGate:
         assert len(rows) == 1
         assert rows[0]["link_method"] == "target_pending"
         assert rows[0]["outcome"] == "pending"
+
+    def test_a_failed_pick_check_is_written_api_error(self):
+        """No usable answer from the blind reference-pick check must not settle the
+        work: the ladder's `pick_check_failed` reaches the row as api_error, past the
+        original-link guard, with the reason in link_evidence."""
+        row = pd.Series({"doi_r": "10.1/rep", "title_r": "T", "abstract_r": "a",
+                         "paper_type": "replication"})
+        failed = {"resolution_method": "pick_check_failed", "resolved": False,
+                  "resolved_doi_o": "", "resolved_title_o": "", "resolved_year_o": None,
+                  "resolved_author_o": "", "resolution_score": 0.0, "targets": [],
+                  "llm_error": "api_error (503); re-run decides",
+                  "llm_evidence": "q | pick_check: api_error (503); re-run decides"}
+        with patch.object(run_extract, "run_for_doi", return_value=failed), \
+             patch.object(run_extract, "extract_outcome",
+                          side_effect=AssertionError("must not code an outcome")):
+            rows = run_extract._resolve_and_code(
+                "10.1/rep", row, screen=None,
+                no_llm=False, no_pdf=True, resolved_only=False)
+        assert [r["link_method"] for r in rows] == ["api_error"]
+        assert "pick_check: api_error" in rows[0]["link_evidence"]
 
     def test_resolved_only_drops_the_row_before_the_outcome_call(self):
         row = pd.Series({"doi_r": "10.1/rep", "title_r": "T", "abstract_r": "a",

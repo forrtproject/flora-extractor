@@ -45,6 +45,8 @@ from .config import (
     OUTCOME_MODEL,
     PDF_PARSE_EFFORT,
     PDF_PARSE_MODEL,
+    PICK_CHECK_EFFORT,
+    PICK_CHECK_MODEL,
     SCREENING_EFFORT_1,
     SCREENING_EFFORT_2,
     SCREENING_MODEL_1,
@@ -59,6 +61,7 @@ from .prompts import (
     build_author_year_pick_prompt,
     build_classify_prompt,
     build_keyed_confirm_prompt,
+    build_pick_check_prompt,
     build_repro_target_outcome_prompt,
     build_search_confirm_prompt,
     build_study_status_prompt,
@@ -1768,6 +1771,74 @@ def confirm_keyed_original(doi_r: str, title_r: str, abstract_r: str,
                                      "reasoning": reasoning})
     return {"plausible": plausible, "confident": confident, "reasoning": reasoning,
             "llm_model": LINKING_MODEL, "llm_error": ""}
+
+
+PICK_CHECK_STATUSES = ("identified", "cannot_tell", "not_on_list")
+
+
+def _answer_keys(value) -> list[str]:
+    """The @keys in an answer field, which models return as a list or a bare string."""
+    if isinstance(value, str):
+        value = [value]
+    return [str(k).strip() for k in (value if isinstance(value, list) else [])
+            if k and str(k).strip().startswith("@")]
+
+
+def check_reference_pick(doi_r: str, study_r: str, abstract_r: str,
+                         candidates: list[dict], references: list[dict],
+                         pick_key: str, evidence_quote: str) -> dict:
+    """Does the evidence single out the reference-list pick over every other record?
+
+    The reference-list rung's wrong originals are mostly SIBLINGS — the same authors'
+    other paper, a protocol, the materials source — so a check shown one record
+    (`confirm_keyed_original`) passes them by design. This one is shown the whole
+    keyed list the rung picked from, NOT the pick, and asked which record is the
+    original; the pick is flagged unless the answer is "identified" and names it.
+    PICK_CHECK_MODEL is a different vendor from LINKING_MODEL on purpose.
+
+    *candidates* and *references* are the rung's own inputs: `assign_target_keys`
+    over them rebuilds the namespace *pick_key* belongs to.
+
+    Returns {"flag": bool | None, "status": str, "originals": [@key],
+             "alternatives": [record + its "key"], "reasoning": str, "llm_model": str,
+             "llm_error": str}. `flag` is None when there is no usable answer (a
+    provider failure, or a reply without a recognised status); the ladder then ends
+    the row api_error, so an unchecked link never settles. The ANSWER is cached, whatever it says; the flag is derived from it on
+    every read, since the prompt does not contain the pick.
+    """
+    entries, key_map = assign_target_keys(candidates, references)
+    prompt = build_pick_check_prompt(study_r, abstract_r, entries, evidence_quote)
+    identities = "|".join(f"{e['key']}:{e.get('doi') or e.get('openalex_id') or ''}"
+                          for e in entries)
+    key = content_key("pickcheck", doi_r or study_r,
+                      prompt_version("build_pick_check_prompt"),
+                      cache_model_id(PICK_CHECK_MODEL, PICK_CHECK_EFFORT),
+                      identities, prompt)
+    answer = read_cache(LLM_CACHE_DIR, key)
+    if answer is None:
+        result, _provider, llm_error = call_model(prompt, PICK_CHECK_MODEL,
+                                                  reasoning_effort=PICK_CHECK_EFFORT)
+        status = str((result or {}).get("status", "") or "").strip().lower()
+        if status not in PICK_CHECK_STATUSES:
+            return {"flag": None, "status": "", "originals": [], "alternatives": [],
+                    "reasoning": "", "llm_model": PICK_CHECK_MODEL if result else "",
+                    "llm_error": llm_error or f"reply carried no status from "
+                                              f"{'/'.join(PICK_CHECK_STATUSES)}: "
+                                              f"{status[:60]!r}"}
+        answer = {"status": status,
+                  "originals": _answer_keys(result.get("originals")),
+                  "candidates": _answer_keys(result.get("candidates")),
+                  "reasoning": str(result.get("reasoning", "") or "")[:500]}
+        write_cache(LLM_CACHE_DIR, key, answer)
+
+    originals = answer.get("originals") or []
+    named = originals or answer.get("candidates") or []
+    return {"flag": not (answer["status"] == "identified" and pick_key in originals),
+            "status": answer["status"], "originals": originals,
+            "alternatives": [{**key_map[k], "key": k} for k in named
+                             if k != pick_key and k in key_map],
+            "reasoning": answer.get("reasoning", ""),
+            "llm_model": PICK_CHECK_MODEL, "llm_error": ""}
 
 
 def confirm_search_original(doi_r: str, title_r: str, abstract_r: str,

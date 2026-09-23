@@ -268,6 +268,9 @@ _METHOD_MAP = {
     # filed as a disagreement. Both classifiers failing is a plain API failure.
     "llm_refscreen_partial":          "target_pending",
     "llm_refscreen_failed":           "api_error",
+    # The blind reference-pick check (ladder 28) got no usable answer. The link it
+    # was checking must not settle unchecked, so the work retries.
+    "pick_check_failed":              "api_error",
     "no_candidates_found":            "target_pending",
     "needs_fulltext":                 "target_pending",
     "no_fulltext_available":          "target_pending",
@@ -2079,6 +2082,10 @@ def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | Non
                 note += f" | searches: {attempts}"
             prior = str(result_row.get("link_evidence", "") or "")
             result_row["link_evidence"] = f"{prior} | {note}" if prior else note
+        if link.get("pick_check"):
+            # Why the reference-list link is not the one this group shipped.
+            prior = str(result_row.get("link_evidence", "") or "")
+            result_row["link_evidence"] = f"{prior} | {link['pick_check']}"
 
         method = str(result_row["link_method"])
         if resolved_only and method in _NO_LINK_METHODS:

@@ -102,7 +102,7 @@ never been independently validated. Discuss shared changes with all stage teams.
 | ---- | ------- |
 | `shared/openalex_client.py` | OpenAlex API wrapper + `find_all_candidates()` (Stage 3 logic) |
 | `shared/openalex_keys.py`   | OpenAlex key rotation, shared by all stages |
-| `shared/llm_client.py`      | Gemini/OpenAI/OpenRouter calls — one model per call site, named explicitly, with no fallback to another provider — JSON parsing; `classify_replication()` (front-door screen, called by Stage 2's expensive tier), `cached_classification()` (read-only cache door, for the export-csv record export), `screen_gate()`, `screen_voters()`, `resolve_targets_and_outcomes()` (the one call behind the abstract, reference-list and full-text rungs — target AND outcome), `screen_references_with_llm()` (reference-list target pick) |
+| `shared/llm_client.py`      | Gemini/OpenAI/OpenRouter calls — one model per call site, named explicitly, with no fallback to another provider — JSON parsing; `classify_replication()` (front-door screen, called by Stage 2's expensive tier), `cached_classification()` (read-only cache door, for the export-csv record export), `screen_gate()`, `screen_voters()`, `resolve_targets_and_outcomes()` (the one call behind the abstract, reference-list and full-text rungs — target AND outcome), `screen_references_with_llm()` (reference-list target pick), `check_reference_pick()` (the blind pick check on an accepted reference-list link) |
 | `shared/target_keys.py`     | `assign_target_keys()` — one deduplicated `@smith2009` namespace over a paper's candidates and references, plus the key → record map |
 | `shared/token_usage.py`     | Per-day/provider/model token recording (`cache/token_usage.json`) + the OpenAI daily budget check |
 | `shared/rate_limit.py`      | `throttle(service, interval)` — one reservation queue per remote service, so N worker threads share one rate rather than each sleeping its own |
@@ -898,6 +898,22 @@ outcome and both readings for a human; an unconfident "no" only flags; no answer
 writes `api_error` so the row is not settled on a transient failure. Measured before
 wiring over all 63 settled keyed links in the evaluation samples: the one known-wrong
 link flagged, zero false positives (`analysis/stage3_eval/keyed_confirm_eval.py`).
+
+**The keyed-record check cannot see a SIBLING** — the same authors' other paper, a
+protocol, the materials source — because it is shown one record. So every link the
+reference-list rung accepts is also checked BLIND, inside the ladder
+(`_check_reference_pick()` in `extract/link_original.py`, ladder 28):
+`check_reference_pick()` shows `PICK_CHECK_MODEL` (DeepSeek, a second vendor, at
+`PICK_CHECK_EFFORT` low) the same paper block and keyed list the pick was made from,
+without the pick, and asks which record is the original. Unless it answers
+`identified` naming the pick, the pick loses `match_certain` and the ladder descends
+to the full-text rung (skipping the pre-PDF title search); the checker's alternative
+and reasoning go into `link_evidence` as `pick_check: flagged …` and are never swapped
+in. The flag voids any earlier acceptance of the same record too (a carried abstract
+link, a withheld rule pick). No usable answer ends the row at `pick_check_failed` →
+`api_error`, which does not settle and retries — the keyed-record check's rule; the
+non-answer is not cached. Measured on 56 adjudicated wrong
+picks and 150 controls: 31 flagged, 2 controls (`analysis/contrastive_confirm/REPORT.md`).
 
 **The search-based links are GRADED, and the grade sets `link_confidence`** (issues
 #183 and #186 shape 2). `_confirm_search_row()` in `extract/run_extract.py`, also

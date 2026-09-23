@@ -251,13 +251,15 @@ def test_the_generation_is_pinned_by_its_inputs():
         "build_keyed_confirm_prompt",
         # The search-link grade sets link_confidence on every search-linked row.
         "build_search_confirm_prompt",
+        # The blind pick check withholds a flagged reference-list link.
+        "build_pick_check_prompt",
         # The reference list these two produce IS the key namespace the
         # reference-list rung picks a target out of.
         "PDF_REFERENCES_PROMPT", "PDF_IMAGE_REFERENCES_PROMPT",
         # The only question asked of a work with no abstract and no acquirable
         # document; its answer decides that work's outcome and its destination file.
         "build_study_status_prompt"}
-    assert set(inputs["models"]) == {"linking", "outcome", "pdf_parse"}
+    assert set(inputs["models"]) == {"linking", "outcome", "pdf_parse", "pick_check"}
     # The efforts are IN the model ids, or two runs at different reasoning levels
     # would share a generation (`cache_model_id`).
     from shared.config import LINKING_EFFORT
@@ -790,13 +792,14 @@ def test_a_declared_generation_equivalence_is_keyed_by_the_current_generation():
 
 
 def test_the_sibling_pick_prompt_preserves_all_prior_settled_extract_generations():
-    """The 2026-09-23 target-prompt edit (sibling rule + `_2` key suffix) and the
-    gpt-6-luna switch before it must not reopen works settled under any prior
-    declaration: the llm_references population is reopened by name instead."""
+    """The 2026-09-23 target-prompt edit (sibling rule + `_2` key suffix), the blind
+    pick check after it and the gpt-6-luna switch before it must not reopen works
+    settled under any prior declaration: the llm_references population is reopened
+    by name instead."""
     from filter.engine.tiers import _generation_current
 
-    assert extract_generation() == "474e80e4c32a6dfa"
-    for previous in ("7dbb1e92452d8333", "010cf32bb63351e1", "ca0706ef44827229",
+    assert extract_generation() == "765e053cd24611e5"
+    for previous in ("474e80e4c32a6dfa", "7dbb1e92452d8333", "010cf32bb63351e1", "ca0706ef44827229",
                      "061cb5ca8e1888b6", "243ae515c654b6e5",
                      "5b716d061bb336f5", "dd7572887420ef65"):
         assert _generation_current(tier_mod.TIER_EXTRACT, previous, [])

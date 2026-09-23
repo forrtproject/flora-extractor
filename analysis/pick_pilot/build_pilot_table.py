@@ -3,9 +3,12 @@ pick under the 2026-09-23 prompt (analysis/pick_pilot/extracted_sandbox.csv + it
 set-asides). Writes pilot_150.csv and prints the tallies REPORT.md quotes.
 
     .venv/bin/python -m analysis.pick_pilot.build_pilot_table
+    .venv/bin/python -m analysis.pick_pilot.build_pilot_table \
+        --sandbox extracted_sandbox_v2.csv --out pilot_150_v2.csv   # the v2 pilot
 """
 from __future__ import annotations
 
+import argparse
 import csv
 import glob
 from collections import Counter
@@ -42,6 +45,13 @@ def _side(rows: list[dict]) -> dict:
 
 
 def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--sandbox", default="extracted_sandbox.csv",
+                    help="the sandbox render, relative to this folder; its set-asides "
+                         "are read from <stem>-set-aside/")
+    ap.add_argument("--out", default="pilot_150.csv")
+    args = ap.parse_args()
+    sandbox = HERE / args.sandbox
     ids = [w.strip() for w in (HERE / "sample_150.txt").read_text().split(",") if w.strip()]
     live = _rows([str(ROOT / "data/extracted.csv")]
                  + [p for p in glob.glob(str(ROOT / "data/*.csv"))
@@ -50,8 +60,8 @@ def main() -> None:
                                         "not_a_replication.csv", "prospective_registration.csv",
                                         "search_link_unconfirmed.csv", "target_pending.csv",
                                         "unidentified_original.csv"}])
-    sand = _rows([str(HERE / "extracted_sandbox.csv")]
-                 + glob.glob(str(HERE / "extracted_sandbox-set-aside/*.csv")))
+    sand = _rows([str(sandbox)]
+                 + glob.glob(str(sandbox.with_name(sandbox.stem + "-set-aside") / "*.csv")))
     out, tally = [], Counter()
     for w in ids:
         o, n = _side(live.get(w, [])), _side(sand.get(w, []))
@@ -77,7 +87,7 @@ def main() -> None:
             "left_llm_references": descended,
             "outcome_changed": o["outcome"] != n["outcome"],
         })
-    with open(HERE / "pilot_150.csv", "w", encoding="utf-8-sig", newline="") as f:
+    with open(HERE / args.out, "w", encoding="utf-8-sig", newline="") as f:
         wr = csv.DictWriter(f, fieldnames=list(out[0]))
         wr.writeheader()
         wr.writerows(out)

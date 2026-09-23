@@ -1,7 +1,11 @@
 """Score the live (old) and sandbox (new) picks of the 150-work pilot against the blinded
 truth coding in truth/answers/. A pick is matched to the coder's @key through the offered
-list's citation line (normalised title prefix), or by DOI for not_on_list originals."""
-import json, re, unicodedata
+list's citation line (normalised title prefix), or by DOI for not_on_list originals.
+
+    .venv/bin/python -m analysis.pick_pilot.score_truth                        # v1
+    .venv/bin/python -m analysis.pick_pilot.score_truth pilot_150_v2.csv truth_scored_v2.csv
+"""
+import json, re, sys, unicodedata
 from pathlib import Path
 import pandas as pd
 
@@ -19,7 +23,9 @@ def split(v):
 
 
 rows = []
-pilot = pd.read_csv(HERE / "pilot_150.csv", dtype=str, keep_default_na=False)
+PILOT = sys.argv[1] if len(sys.argv) > 1 else "pilot_150.csv"
+OUT = sys.argv[2] if len(sys.argv) > 2 else "truth_scored.csv"
+pilot = pd.read_csv(HERE / PILOT, dtype=str, keep_default_na=False)
 for _, p in pilot.iterrows():
     a = json.load(open(HERE / "truth/answers" / f"{p.work_id}.json"))
     lines = (HERE / "truth/packets" / f"{p.work_id}.md").read_text().splitlines()
@@ -59,6 +65,6 @@ for _, p in pilot.iterrows():
                      new_method=p.new_link_method, match_change=p.match_change,
                      old_title=p.old_title_o[:80], new_title=p.new_title_o[:80]))
 out = pd.DataFrame(rows)
-out.to_csv(HERE / "truth_scored.csv", index=False)
+out.to_csv(HERE / OUT, index=False)
 print(pd.crosstab(out.old, out.new, margins=True))
 print(out[out.old != out.new][["work_id", "old", "new", "new_method", "truth_keys", "old_title", "new_title"]].to_string())

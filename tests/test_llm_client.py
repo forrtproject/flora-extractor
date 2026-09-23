@@ -2111,3 +2111,46 @@ class TestSearchConfirmGrading:
         model_part = cache_model_id(llm.LINKING_MODEL, llm.LINKING_EFFORT)
         assert model_part in parts
         assert llm.LINKING_EFFORT in model_part
+
+
+class TestCheckReferencePick:
+    """The blind pick check: the flag is derived from a cached answer that never saw
+    the pick, and a non-answer is neither cached nor a flag."""
+
+    _REFS = [{"title": "Original study", "year": 1999, "authors": ["Jones"],
+              "doi": "10.9/orig"},
+             {"title": "Companion study", "year": 1999, "authors": ["Jones"],
+              "doi": "10.9/sibling"}]
+
+    def _ask(self, tmp_path, reply, pick="@jones1999"):
+        with patch("shared.llm_client.LLM_CACHE_DIR", tmp_path), \
+             patch("shared.llm_client.call_model",
+                   return_value=(reply, "openrouter", "" if reply else "503")) as call:
+            out = llm.check_reference_pick("10.1/rep", "T", "A", [], self._REFS,
+                                           pick, "we re-test Jones's finding")
+        return out, call
+
+    @pytest.mark.parametrize("reply,flag,alt", [
+        ({"status": "identified", "originals": ["@jones1999"]}, False, []),
+        ({"status": "identified", "originals": ["@jones1999_2"]}, True, ["10.9/sibling"]),
+        ({"status": "cannot_tell", "originals": [],
+          "candidates": ["@jones1999", "@jones1999_2"]}, True, ["10.9/sibling"]),
+        ({"status": "not_on_list", "originals": []}, True, []),
+    ])
+    def test_the_flag_is_derived_from_a_cached_answer(self, tmp_path, reply, flag, alt):
+        out, call = self._ask(tmp_path, reply)
+        assert call.call_args.args[1] == llm.PICK_CHECK_MODEL
+        assert call.call_args.kwargs["reasoning_effort"] == llm.PICK_CHECK_EFFORT
+        assert out["flag"] is flag
+        assert [r["doi"] for r in out["alternatives"]] == alt
+        # The cached answer does not depend on the pick: asking about the other key
+        # reads it back, no second call, and derives the opposite flag where it names one.
+        again, call = self._ask(tmp_path, None, pick="@jones1999_2")
+        assert call.call_count == 0
+        assert again["status"] == reply["status"]
+
+    @pytest.mark.parametrize("reply", [None, {"status": "maybe"}])
+    def test_a_non_answer_flags_nothing_and_is_not_cached(self, tmp_path, reply):
+        out, _ = self._ask(tmp_path, reply)
+        assert out["flag"] is None and out["llm_error"]
+        assert list(tmp_path.glob("*.json")) == []

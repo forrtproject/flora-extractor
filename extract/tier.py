@@ -103,6 +103,7 @@ from filter.engine.overlay import chunk_paths
 from shared.config import (DATA_DIR, EXTRACT_WORKERS, LINKING_EFFORT,
                            LINKING_MODEL, OUTCOME_EFFORT, OUTCOME_MODEL,
                            OVERLAY_DIR, PDF_PARSE_EFFORT, PDF_PARSE_MODEL,
+                           PICK_CHECK_EFFORT, PICK_CHECK_MODEL,
                            SNAPSHOT_POOL_DIR, log)
 from shared.flora_skip import (VALIDATED_SKIP_NAME,
                                default_flora_skip_dois as _flora_skip_dois,
@@ -211,6 +212,11 @@ _GENERATION_PROMPTS = ("build_target_outcome_prompt",
                        # llm_author_year_search row, so an edit to it changes a
                        # shipped field and must reopen the works it graded.
                        "build_search_confirm_prompt",
+                       # The blind reference-list pick check (ladder 28) withholds a
+                       # flagged llm_references link and sends the row down to the
+                       # full-text rung, so an edit to it changes which original a
+                       # row ships and must reopen the works it checked.
+                       "build_pick_check_prompt",
                        # The two reference-extraction prompts (`shared/grobid.py`).
                        # The reference list they produce IS the key namespace the
                        # reference-list rung picks a target out of, so an edit to
@@ -259,6 +265,7 @@ def generation_inputs() -> dict:
             "linking": cache_model_id(LINKING_MODEL, LINKING_EFFORT),
             "outcome": cache_model_id(OUTCOME_MODEL, OUTCOME_EFFORT),
             "pdf_parse": cache_model_id(PDF_PARSE_MODEL, PDF_PARSE_EFFORT),
+            "pick_check": cache_model_id(PICK_CHECK_MODEL, PICK_CHECK_EFFORT),
         },
     }
 
@@ -348,7 +355,16 @@ _GENERATION_EQUIVALENCES: dict[str, tuple[str, ...]] = {
     # reopened here; they can be named the same way (`--redo-status
     # llm_cited_candidates,llm_fulltext`). `7dbb1e92452d8333` (the gpt-6-luna
     # switch) joins the flattened chain.
-    "474e80e4c32a6dfa": ("7dbb1e92452d8333",
+    # 2026-09-23 (handover step 5, ladder 28): `build_pick_check_prompt` and the
+    # checker's model (PICK_CHECK_MODEL at PICK_CHECK_EFFORT) joined the fingerprint.
+    # The check runs on one population only — links the reference-list rung ACCEPTED
+    # — and a flag can only withhold such a link and send the row down to the
+    # full-text rung; it changes no answer on any work that does not carry an
+    # `llm_references` link. That population is the one step 3 already reopens by
+    # name (`--redo-status llm_references`), so one redo buys both changes. So the
+    # claim, deliberately incomplete as the step-3 entry's is: every work not reopened
+    # keeps its recorded answer. `474e80e4c32a6dfa` joins the flattened chain.
+    "765e053cd24611e5": ("474e80e4c32a6dfa", "7dbb1e92452d8333",
                          "010cf32bb63351e1", "ca0706ef44827229",
                          "061cb5ca8e1888b6",
                          "243ae515c654b6e5", "5b716d061bb336f5",

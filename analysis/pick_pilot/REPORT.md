@@ -79,3 +79,74 @@ gpt-6-luna for the whole day, all agents: 11.1M in / 2.7M out; flex mostly refus
 4. `llm_cited_candidates` (265 rows) and `llm_fulltext` (71 rows) picks carry the same risk
    and were not measured.
 5. clean_doi: see `clean_doi_impact.md` — prefer a comparison-only `doi_match_key()`.
+
+## v2 pilot — blind pick check wired in (2026-09-23, sandbox)
+
+Same 150 works, same truth coding. v2 = v1 (gpt-6-luna, sibling-rule prompt, `_2` keys)
++ af85ea6 (full-text rung sends the whole document; a carried original keeps the
+full-text call's settled outcome) + the blind reference-pick check (ladder 28,
+`check_reference_pick`, `deepseek/deepseek-v4.1-flash` @ low, the measured
+`analysis/contrastive_confirm` blind prompt verbatim). Generation 474e80e4c32a6dfa →
+**765e053cd24611e5** (declared equivalent, chain flattened).
+
+Run: `--mode validation --redo <150 ids> --only <150 ids>`. The `--redo-status
+llm_references` form named only 129 of these, because it reads the stored v1
+validation-mode verdicts and 20 of them had not ended at `llm_references` (title search,
+resting `target_pending`). 150 extracted, 142 resolved, 8 target_pending; rendered to
+`extracted_sandbox_v2.csv` (`data/` untouched, no `retired_pairs.csv` — the manifest is
+live + production path only). Tables: `pilot_150_v2.csv`, `truth_scored_v2.csv`,
+`truth_scored_old_v1_v2.csv` (`build_pilot_table.py --sandbox … --out …`,
+`score_truth.py <pilot> <out>`).
+
+| Score against truth (works) | live | v1 | v2 |
+|---|--:|--:|--:|
+| right | 134 | 133 | 132 |
+| partial | 2 | 4 | 5 |
+| wrong original shipped | 12 | 5 | **4** |
+| shipped a row for a non-replication | 2 | 2 | **1** |
+| nothing shipped (`target_pending`) | 0 | 6 | 8 |
+| works with a `cannot_be_determined` row | 20 | 22 | **19** |
+
+old → v1 → v2 paths (only non-constant ones): right→none→none 5; right→wrong→none 1
+(Giddens, below); wrong→none→none 1; nar→nar→none 1 (Bailey); right→right→partial 1;
+wrong→right→partial 1; wrong→partial→right 1. v1→v2 moved 5 works: 2 to `none` (both
+flag catches), 1 partial→right, 2 right→partial. The partials are multi-original works
+where the full-text/title-search route added or dropped a secondary original, not a
+wrong single pick. The partial/right edge is approximate (title-prefix matching).
+
+**Flags: 5 of the 120 accepted `llm_references` picks (4%), 115 confirmed, 0 api_error.**
+- Real, 2: W2611033029 (v1 shipped the sibling `@giddens2009`; checker named
+  `@giddens2007_2`, the judges' original; no document → declined, `target_pending`) and
+  W2509481270 (judges: not a replication; declined instead of shipping a row).
+- False, 3, none of them costly: W2049839209 (`@lorentzen2007` correct; the full text
+  re-found it → still right), W4389037127 and W4385969725 (multi-original works where
+  the pick was ONE right original; the full text named both → right, 2 rows each).
+- Not caught: all 4 still-wrong single picks were `pick_check: confirmed`, as the
+  offline replay predicted (≈15 of 25 repeats get past every checker).
+- Found by this run: on a flagged work whose full text names several originals, the
+  per-target rows lost the flag note (their evidence comes from each target). Fixed
+  after the run (`pick_check` output key, appended in `_per_target_rows`); the two
+  stored v2 verdicts affected lack the note.
+
+Review fixes after the run (same generation): a flag now also voids an earlier
+acceptance of the SAME record (a carried abstract link and its certain target, a
+withheld rule pick — the latter compared against the flagged pick only), and a check
+with no usable answer ends the row `pick_check_failed` → `api_error` instead of letting
+the pick settle unchecked. None of these reaches a pilot work: no check failed, and none
+of the 5 flagged works had an abstract-rung acceptance or a withheld rule pick (run log),
+so the v2 numbers stand without a re-run.
+
+cbd: 19 works vs 22 (v1) and 20 (live). This is mostly af85ea6; the check itself
+touches outcome only through the 5 flagged works.
+
+**Spend:** gpt-6-luna 361k in / 59k out (flex mostly refused, so standard tier),
+DeepSeek 255k in / 83k out — ≈ $0.14 in all. OpenAlex ≈ 1,050 credits (dry-run
+estimate).
+
+**Recommendation.** v2 is at least as good as v1 on every row of the table, and the check
+cost no correct link on this sample. Go ahead with the live redo of the `llm_references`
+population under 765e053cd24611e5. Scaled, that is ≈ $1.5 plus OpenAlex. The
+check is a small lever: 1 wrong single pick caught out of 5 remaining, at 4% flags.
+Most of the gain over live is still the model and the prompt. Open question 1 above (a
+redo that only declines drops a correct live row; 6 of 150 here) is unchanged and
+matters more than the check does.

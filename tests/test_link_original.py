@@ -1076,6 +1076,26 @@ class TestOutcomeDescent:
         assert row["resolution_method"] == "llm_fulltext"
         assert row["outcome_block"]["outcome_robustness"] == "robust"
 
+    @pytest.mark.parametrize("named,expected", [
+        ("Smith et al. (2010), the original", "failed"),
+        ("Jones (2011), a different study", "cannot_be_determined"),
+    ])
+    def test_the_full_text_outcome_reaches_the_carried_original_only(self, named,
+                                                                      expected):
+        """The full-text call often codes the carried original without matching it to
+        a record (the PDF's reference list is not the list the carried rung read). Its
+        settled outcome is taken when the target names the carried original's author
+        AND year; a target naming another work transfers nothing (commit af85ea6)."""
+        unmatched = _gate_target("", "", key=None, match_certain=False,
+                                 target_as_named=named, record=None)
+        row = _run_gate("A study", _ONE_PAIR, self._CANDS,
+                        abstract_answer=self._resolved(dict(_UNSETTLED)),
+                        llm_answer=_answer(targets=[unmatched],
+                                           target_stage="llm_fulltext"))
+        assert row["resolved"] is True
+        assert row["resolved_doi_o"] == "10.9/orig"
+        assert row["outcome_block"]["outcome"] == expected
+
     def test_the_full_text_rung_is_sent_the_closing_sections(self):
         """The block that makes the outcome answerable, with the provenance that says
         what it is — a real discussion heading or simply the end of the paper."""
@@ -1498,3 +1518,158 @@ def test_a_textless_documentless_row_survives_the_original_link_guard():
     assert verdict == "no_evidence"
     assert verdict not in tier_mod.UNSETTLING_VERDICTS
     assert sanity_check.classify_row(final[0]) == "no_evidence"
+
+
+# ── The blind reference-list pick check ─────────────────────────────────────
+
+class TestReferencePickCheck:
+    """An accepted llm_references link is checked blind over the whole list. A flag
+    withholds the pick and sends the row down to the full-text rung; no flag leaves
+    the link as it was; no answer ends the row unsettled — each with a note."""
+
+    _PICK = _gate_target("10.9/sibling", "Companion study", author="Jones", year=1999,
+                         key="@jones1999_2")
+
+    def _run(self, check: dict, full_text: "dict | None" = None):
+        screen = _screen_result(
+            resolved=True, resolution_method="llm_references",
+            resolved_doi_o="10.9/sibling", resolved_title_o="Companion study",
+            resolved_year_o=1999, resolved_author_o="Jones", resolution_score=1.0,
+            screen_verdict="proceed", screen_classification="replication",
+            record_type="replication", llm_confidence="high",
+            target_description="Jones (1999)", votes=[
+                {"provider": p, "classification": "replication", "confident": True}
+                for p in ("a", "b")],
+            targets=[dict(self._PICK)], target_stage="llm_references",
+            llm_evidence="we re-test Jones's finding",
+            outcome_block=dict(_SETTLED))
+        check = {"status": "", "originals": [], "alternatives": [], "reasoning": "",
+                 "llm_model": "m", "llm_error": "", **check}
+        rungs: list = []
+
+        def _identify(*a, **k):
+            rungs.append(k.get("rung"))
+            return full_text or _answer()
+
+        with patch.object(link_original, "check_reference_pick",
+                          return_value=check) as asked, \
+             patch.object(link_original, "_search_title_for_original",
+                          side_effect=AssertionError("must not title-search")):
+            # No author-year in the abstract, so the full-text call is the only one.
+            row = _run_gate("A study", "No citations here.", [], screen=screen,
+                            identify=_identify)
+        assert asked.call_args.args[5] == "@jones1999_2"
+        return row, rungs
+
+    def test_a_flag_withholds_the_pick_and_descends_to_the_full_text(self):
+        row, rungs = self._run(
+            {"flag": True, "status": "identified", "originals": ["@jones1999"],
+             "alternatives": [{"key": "@jones1999", "first_author": "Jones",
+                               "year": 1999, "title": "Original study"}],
+             "reasoning": "the abstract names the 1999 effect"})
+        assert rungs == ["fulltext"], "a flagged pick must read on to the document"
+        assert row["resolved"] is False
+        assert not any(t["match_certain"] for t in row["targets"])
+        assert "pick_check: flagged @jones1999_2" in row["llm_evidence"]
+        assert "@jones1999 Jones (1999) Original study" in row["llm_evidence"]
+        assert row["pick_check"].startswith("pick_check: flagged @jones1999_2")
+
+    def test_the_full_text_rung_may_still_accept_a_link_after_a_flag(self):
+        accepted = _answer(resolved=True, resolution_method="llm_openai",
+                           resolved_doi_o="10.9/orig", resolved_title_o="Original",
+                           resolved_year_o=1999, resolved_author_o="Jones")
+        row, _ = self._run({"flag": True, "status": "cannot_tell"}, full_text=accepted)
+        assert row["resolved"] is True and row["resolved_doi_o"] == "10.9/orig"
+        assert "pick_check: flagged" in row["llm_evidence"]
+
+    def test_a_confirmed_pick_keeps_the_link(self):
+        row, rungs = self._run({"flag": False, "status": "identified",
+                                "originals": ["@jones1999_2"]})
+        assert rungs == []
+        assert row["resolved"] is True
+        assert row["resolution_method"] == "llm_references"
+        assert row["resolved_doi_o"] == "10.9/sibling"
+        assert row["llm_evidence"] == "we re-test Jones's finding | pick_check: confirmed"
+
+    def test_no_answer_ends_the_row_unsettled_and_writes_no_target(self):
+        """An unchecked link must not settle: the ladder stops at pick_check_failed
+        (api_error downstream), with no target the per-target adapter could write."""
+        row, rungs = self._run({"flag": None, "llm_error": "503 upstream"})
+        assert rungs == []
+        assert row["resolution_method"] == "pick_check_failed"
+        assert row["resolved"] is False and row["targets"] == []
+        assert "503 upstream" in row["llm_error"]
+        assert "pick_check: api_error (503 upstream)" in row["llm_evidence"]
+
+    @pytest.mark.parametrize("pdf_ok", [False, True])
+    def test_a_flag_voids_a_carried_abstract_link_to_the_same_record(self, pdf_ok):
+        """The abstract rung accepted the same record without settling its outcome.
+        With no later answer (no document, or a full text that names nothing), the
+        carried link — or its certain target — would ship the flagged record."""
+        sibling = dict(self._PICK, key="@jones1999")
+        carried = _answer(resolved=True, resolution_method="llm_openai",
+                          resolved_doi_o="10.9/sibling",
+                          resolved_title_o="Companion study", resolved_year_o=1999,
+                          resolved_author_o="Jones", targets=[sibling],
+                          outcome_block=dict(_UNSETTLED))
+        screen = _screen_result(
+            resolved=True, resolution_method="llm_references",
+            resolved_doi_o="10.9/sibling", screen_verdict="proceed",
+            screen_classification="replication", record_type="replication",
+            targets=[dict(self._PICK)], target_stage="llm_references",
+            outcome_block=dict(_UNSETTLED))
+        with patch.object(link_original, "check_reference_pick",
+                          return_value={"flag": True, "status": "cannot_tell",
+                                        "originals": [], "alternatives": [],
+                                        "reasoning": "", "llm_model": "m",
+                                        "llm_error": ""}):
+            row = _run_gate("A study", "We re-tested Jones (1999).", [], screen=screen,
+                            abstract_answer=carried, llm_answer=_answer(),
+                            pdf_ok=pdf_ok)
+        assert row["resolved"] is False
+        assert not any(t.get("match_certain") for t in row["targets"])
+
+    def test_a_flag_also_disputes_a_withheld_rule_pick_on_the_same_work(self):
+        """The rule's pick and the flagged reference pick are one record: restoring
+        the rule pick at the no-document exit would ship what the check flagged."""
+        pick = _gate_target("10.9/orig", "Time flies from left to right")
+        screen = _screen_result(
+            resolved=True, resolution_method="llm_references",
+            resolved_doi_o="10.9/orig", screen_verdict="proceed",
+            screen_classification="replication", record_type="replication",
+            targets=[pick], target_stage="llm_references",
+            outcome_block=dict(_SETTLED))
+        with patch.object(link_original, "check_reference_pick",
+                          return_value={"flag": True, "status": "cannot_tell",
+                                        "originals": [], "alternatives": [],
+                                        "reasoning": "", "llm_model": "m",
+                                        "llm_error": ""}):
+            row = _run_gate(_GATE_TITLE, _TWO_PAIRS, _GATE_CANDS, screen=screen,
+                            abstract_answer=_answer(), pdf_ok=False)
+        assert row["resolved"] is False
+        assert "pick_check: flagged" in row["llm_evidence"]
+
+
+    def test_only_the_flagged_pick_disputes_a_withheld_rule_pick(self, caplog):
+        """A non-certain target on the held work sits beside the flagged pick of a
+        different record; the flag is about the pick, so the rule pick is not dropped
+        on its account."""
+        pick = _gate_target("10.9/sibling", "Companion study", author="Jones",
+                            year=1999, key="@jones1999_2")
+        beside = _gate_target("10.9/orig", "Time flies from left to right",
+                              match_certain=False)
+        screen = _screen_result(
+            resolved=True, resolution_method="llm_references",
+            resolved_doi_o="10.9/sibling", screen_verdict="proceed",
+            screen_classification="replication", record_type="replication",
+            targets=[pick, beside], target_stage="llm_references",
+            outcome_block=dict(_SETTLED))
+        with patch.object(link_original, "check_reference_pick",
+                          return_value={"flag": True, "status": "cannot_tell",
+                                        "originals": [], "alternatives": [],
+                                        "reasoning": "", "llm_model": "m",
+                                        "llm_error": ""}), \
+             caplog.at_level("INFO", logger="flora.disambiguation"):
+            _run_gate(_GATE_TITLE, _TWO_PAIRS, _GATE_CANDS, screen=screen,
+                      abstract_answer=_answer(), pdf_ok=False)
+        assert "is the flagged record" not in caplog.text

@@ -231,6 +231,16 @@ LINKING_MODEL = "gpt-6-luna"
 # reading of the evidence.
 OUTCOME_MODEL = "gpt-6-luna"
 
+# The reference-list pick check (check_reference_pick) — does the evidence single out
+# the record the linking model accepted, or does another record on the same list fit
+# as well? Asked BLIND (the checker is not shown the pick) of a different vendor's
+# model, over the whole keyed list. Measured 2026-09-23 on 56 adjudicated wrong
+# llm_references picks and 150 controls: 31 flagged / 2 controls at "low", no better
+# at "medium"; the contrast framing (showing the pick) caught half as many
+# (analysis/contrastive_confirm/REPORT.md). The effort is part of that configuration.
+PICK_CHECK_MODEL = "deepseek/deepseek-v4.1-flash"
+PICK_CHECK_EFFORT = "low"
+
 # Reference extraction from a document (shared/grobid.py) — the only call that is sent
 # a PDF or page images rather than text. Its answers are cached under filenames that
 # name this id and the effort, so changing either re-parses rather than mis-reads.
