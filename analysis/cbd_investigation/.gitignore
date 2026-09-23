@@ -1,0 +1,5 @@
+# Regenerable: index_cache.py / classify_cbd.py rebuild these; replay/ is the answer cache.
+out/replay/
+out/cache_index.parquet
+out/all_rows_cache.csv
+out/*.log

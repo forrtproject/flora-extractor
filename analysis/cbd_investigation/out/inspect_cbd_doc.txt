@@ -1,0 +1,252 @@
+
+##### 2fced4c8 llm_fulltext playwright/grobid body=0 sent_ev=5045 prov=
+TITLE_R: Inhibition-of-return-like effects in working memory? A preregistered replication study of Johnson <i>et al</i> . (2013) | ORIG: Johnson, M. R.; Higgins, J. A.; Norman,  2013 Foraging for Thought
+PRE: cannot_be_determined :: The supplied text identifies the replication target but does not report whether the replicated finding was supported or failed.
+FT : cannot_be_determined :: The supplied text establishes that a study by Johnson et al. was replicated but does not state how this paper's replication turned out.
+   (sent-abstract head) The present study concerns a preregistered replication of the study conducted by Johnson et al . (Johnson et al. 2013 Psychol. Sci. 24 , 1104–1112 ( doi:10.1177/0956797612466414 )), in which they showed an inhibition-of-return-like effect in working memory. Inhibition of return is a well-known pheno
+
+##### da55bbc1 llm_fulltext row_url/pdfminer body=26223 sent_ev=11041 prov=the discus
+TITLE_R: The 2008 election: A preregistered replication analysis | ORIG: Ghitza, Y.; Gelman, A. 2013 Deep Interactions with MRP: Election Turnout and Voting Patterns Among Small Electoral Sub
+PRE: mixed :: The authors say the main pattern was reproduced, but also that notable state-level differences remain, so their verdict is partially supportive rather than a clean success or failure.
+FT : cannot_be_determined :: The supplied text shows that the paper is a replication of Ghitza & Gelman (2013), but it does not include the paper's own final replication results.
+   [unsent @0.09] After a series of failed replications (Doyen et al.
+   [unsent @0.10] (2012) recounted the story of their “50 shades of gray” experiment in which they obtained a striking result relating political extremism to color perception, a correlation that seemed to be strongly backed up by statistically signiﬁcant p-values but which yiel
+   [unsent @0.12] We thank Catalist, the National Science Foundation, and the Oﬃce of Naval Research for partial support of this work, Macartan Humphreys for helpful comments, and Richard McEl- reath, Rob Trangucci, Jonah Gabry, Bob Carpenter, Ben Goodrich, and Daniel Lee for p
+   [unsent @0.13] Further details on our replication procedures appear in our online appendix, https://github.
+   [unsent @0.17] As with the use of a hold-out sample in machine learning, external replication oﬀers the promise of reducing such biases.
+   [unsent @0.17] In political science, the term “replication” has traditionally been applied to the simple act of reproducing a published result using the identical data and code as used in the original analysis.
+   (sent-abstract head) We present an increasingly stringent set of replications of Ghitza &amp; Gelman (2013), a multilevel regression and poststratification analysis of polls from the 2008 U.S. presidential election campaign, focusing on a set of plots showing the estimated Republican vote share for whites and for all vo
+
+##### 02d3f4bc llm_references openalex_xml/openalex_xml body=33122 sent_ev=35126 prov=
+TITLE_R: Independent Replication of Published Germline Polymorphisms Associated with Urinary Bladder Cancer Prognosis and Treatment Response | ORIG: Chen, M.; Hildebrandt, M. A.T.; Clague,  2010 Genetic Variations in the Sonic Hedgehog Pathway Affect Clinical Outcomes in Non–Muscle-In
+PRE: cannot_be_determined :: The paper states that only six of 114 SNP associations replicated overall but does not identify the result attributable to this particular study.
+FT : mixed :: The SUFU association was directionally inconsistent whereas the SHH association was reported as confirmed.
+   (sent-abstract head) Background: Many studies investigated the prognostic or predictive relevance of single nucleotide polymorphisms (SNPs) in biologically plausible genes in urinary bladder cancer (UBC) patients. Most published SNP associations have never been replicated in independent patient series. Objective: To ind
+
+##### 99097330 llm_author_year_search openalex_oa/pdfminer body=1459 sent_ev=3963 prov=the closin
+TITLE_R: Clarifying the role of inhibitory control in L2 phonological processing: A preregistered, close replication of Darcy et al. (2016) – ERRATUM | ORIG: Darcy, I.; Mora, J. C.; Daidone, D. 2016 The Role of Inhibitory Control in Second Language Phonological Processing
+PRE: cannot_be_determined :: The supplied evidence identifies the replication target but provides no results or author verdict about whether Darcy et al. (2016) was replicated.
+FT : cannot_be_determined :: The supplied erratum identifies Darcy et al. (2016) as the replication target but provides no results or verdict about whether its finding was reproduced.
+   (sent-abstract head) An abstract is not available for this content. As you have access to this content, full HTML content is provided on this page. A PDF of this content is also available in through the ‘Save PDF’ action button.
+
+##### 67dbe09d llm_title_search openalex_xml/openalex_xml body=39645 sent_ev=8827 prov=the discus
+TITLE_R: The Unreasonable Effectiveness of Open Science in AI: A Replication Study | ORIG: Jia, F.; Lei, Y.; Lin, J.; Zhou, X.; Lü, 2016 Deep neural networks: A promising tool for fault characteristic mining and intelligent dia
+PRE:  :: 
+FT : successful :: The table assigns this attempt the result S, defined as Success.
+   [unsent @0.05] algorithms, while (Gundersen and Kjensmo 2018) estimated the reproducibility of research published in AAAI and IJCAI to be 26% indirectly by analyzing 400 research articles.
+   [unsent @0.06] Many studies in machine learning have investigated reproducibility in various ways.
+   [unsent @0.07] 2021) found that replication under the same conditions yields results that are more often worse than results that are better than those reported.
+   [unsent @0.07] 2018) did not find any evidence that the algorithms they tested consistently outperformed (Goodfellow et al.
+   [unsent @0.08] They note the lack of clarity on whether exploratory or confirmatory research is reported and argue the need to increase the rigor of empirical research in deep learning.
+   [unsent @0.10] 2018) investigate reinforcement learning and illustrates several practices that lead to poor reproducibility.
+   (sent-abstract head) A reproducibility crisis has been reported in science, but the extent to which it affects AI research is not yet fully understood. Therefore, we performed a systematic replication study including 30 highly cited AI studies relying on original materials when available. In the end, eight articles were
+
+##### 01558ad1 llm_title_search crossref_search/pdfminer body=86817 sent_ev=9821 prov=the closin
+TITLE_R: Revisiting the link between error significance and the error-related negativity: A multi-lab direct replication | ORIG: Hajcak, G.; Moser, J. S.; Yeung, N.; Sim 2005 On the ERN and the significance of errors
+PRE: cannot_be_determined :: The abstract describes the planned replication and predictions but supplies no results or verdict about whether either original finding was reproduced.
+FT : cannot_be_determined :: The supplied text describes a planned replication and its success criteria but provides no results or verdict about whether either original finding was replicated.
+   [unsent @0.00] ERN and error significance Registered Report, Stage 1 (2025), in-principle accepted at Cortex Revisiting the link between error significance and the error-related negativity: A multi-lab direct replication Magdalena Senderecka 1*, Jarosław M.
+   [unsent @0.02] This replication is supported by a grant funded by the Strategic Program Excellence Initiative at the Jagiellonian University, Kraków, Poland.
+   [unsent @0.04] Keywords: error-related negativity; error significance; event-related potentials, replication; #EEGManyLabs 2 ERN and error significance 1.
+   [unsent @0.17] On the other hand, some similarly designed studies have failed to find a clear association between ERN amplitude and short-term motivational states (e.
+   [unsent @0.18] , 2025), or when participants’ actions were observed by an unsupportive but not 6 ERN and error significance a supportive partner (Palmwood & Simons, 2021).
+   [unsent @0.18] (2009) reported a significant effect of motivation on ERN amplitude in a sample consisting solely of female participants, but this finding was not replicated by Clayson et al.
+   (sent-abstract head) Error monitoring is a key cognitive control process that enables individuals to evaluate their actions and detect failures in goal-directed behavior. A well-established neural correlate of error monitoring is the error-related negativity (ERN), an event-related potential that emerges within 100 ms o
+
+##### 460502f5 llm_title_search openalex_xml/openalex_xml body=50968 sent_ev=9910 prov=the discus
+TITLE_R: Responses to Familiar and Unfamiliar Humans by Belugas (Delphinapterus leucas), Bottlenose Dolphins (Tursiops truncatus), &amp; Pacific White-Sided Do | ORIG: Thieltges, H.; Lemasson, A.; Kuczaj, S.  2011 Visual laterality in dolphins when looking at (un)familiar humans
+PRE: failed :: The authors explicitly state that the group-level lateralized-processing finding countered the previous research, indicating that the targeted result did not replicate.
+FT : cannot_be_determined :: The paper identifies Thieltges et al. as a replication target and uses a new bottlenose-dolphin sample, but the supplied text does not state Thieltges's specific finding or the current study's verdict about it.
+   [unsent @0.09] In an effort to replicate and extend the earlier research with bottlenose dolphins, an initial investigation into the discrimination of familiar and unfamiliar humans was conducted with two additional cetaceans: belugas and Pacific white-sided dolphins, Lageno
+   [unsent @0.16] Method Subjects As a direct replication and extension study of Yeater et al.
+   [unsent @0.16] (2014) and a modified replication of Thieltges et al.
+   [unsent @0.45] 21, partially supporting the hypothesis that gaze durations would be longer for humans than the curtain apparatus.
+   [unsent @0.48] In partial support of the effect of unfamiliar humans, longer gaze times were associated with active unfamiliar humans (M = 16.
+   [unsent @0.48] The results of the lags also partially supported the effect of familiarity with a significant main effect, F(2, 10) = 12.
+   (sent-abstract head) Previous research has documented that cetaceans can discriminate between humans, but the process used to categorize humans still remains unclear. The goal of the present study was to replicate and extend previous work on the discrimination between familiar and unfamiliar humans by three species of c
+
+##### a10adad1 llm_references html_landing/openalex_xml body=15678 sent_ev=9989 prov=the closin
+TITLE_R: Social emotional processes during the third wave of <scp>COVID</scp>‐19: Results from a close replication study in a Turkish sample | ORIG: Calbi, M.; Langiulli, N.; Ferroni, F.; M 2021 The consequences of COVID-19 on social interactions: an online study on face covering
+PRE: cannot_be_determined :: The paper clearly re-tests Calbi et al. (2021), but the supplied text does not state Calbi et al.'s original findings or provide an explicit verdict comparing the Turkish results with them.
+FT : cannot_be_determined :: The paper clearly re-tests Calbi et al.'s study in a new Turkish sample, but the supplied text does not state what findings the Italian study reported, so agreement with that original cannot be determined.
+   [unsent @0.83] More metric informationAltmetrics:Scite metricsScite uses AI to classify citations by whether they support, contradict, or merely mention the referenced claims.
+   [unsent @0.85] If the issue persists, refresh the page or contact support.
+   [unsent @0.87] (2023), Social emotional processes during the third wave of COVID-19: Results from a close replication study in a Turkish sample.
+   (sent-abstract head) Until recently, for almost 3 years, we used face masks to protect against COVID-19. Face masks disrupted our perception of socially relevant information, and impacted our social judgements as a result of the new social norms around wearing masks imposed by the pandemic. To shed light on such pandemi
+
+##### 2ab2dbd4 llm_title_search html_landing/openalex_xml body=21474 sent_ev=10403 prov=the closin
+TITLE_R: Lived Experience and Messenger Credibility: A Replication Study on P/CVE Messenger Credibility in Germany | ORIG: Köehler, D.; Clubb, G.; Bélanger, J. J.; 2025 Don’t Kill the Messenger: Perceived Credibility of Far-Right Former Extremists and Police 
+PRE:  :: 
+FT : cannot_be_determined :: The supplied text identifies the replicated UK study and reports the new study’s general findings, but does not state the original study’s finding or explicitly compare the new results with it.
+   [unsent @0.35] , âChanging Research Culture toward More Use of Replication Research: A Narrative Review of Barriers and Strategies,â Journal of Clinical Epidemiology 129 (2021).
+   [unsent @0.36] â16 Kurt Braddock and John Horgan, âTowards a Guide for Constructing and Disseminating Counter-Narratives to Reduce Support for Terrorism,â Studies in Conflict & Terrorism 39, no.
+   [unsent @0.43] Morrison, âCultivating Trust and Perceptions of Source Credibility in Online Counternarratives Intended to Reduce Support for Terrorism,â Studies in Conflict & Terrorism 43, no.
+   [unsent @0.44] 24 Alex P Schmid, âStrengthening the Role of Victims and Incorporating Victims in Efforts to Counter Violent Extremism and Terrorism,â ICCT Research Paper August 2012 (2012); Braddock and Horgan, âTowards a Guide for Constructing and Disseminating Counte
+   (sent-abstract head) This study examines messenger credibility in preventing and countering violent extremism (P/CVE), comparing lived experience (i.e. former extremist and victims of terrorism) messengers to professional experts using experimental data from a representative German sample (N = 2004). Findings suggest in
+
+##### 6fd40310 llm_references openalex_xml/openalex_xml body=33122 sent_ev=35126 prov=
+TITLE_R: Independent Replication of Published Germline Polymorphisms Associated with Urinary Bladder Cancer Prognosis and Treatment Response | ORIG: Grotenhuis, A. J.; Dudek, A. M.; Verhaeg 2014 Prognostic Relevance of Urinary Bladder Cancer Susceptibility Loci
+PRE: cannot_be_determined :: The paper states that only six of 114 SNP associations replicated overall but does not identify the result attributable to this particular study.
+FT :  :: 
+   (sent-abstract head) Background: Many studies investigated the prognostic or predictive relevance of single nucleotide polymorphisms (SNPs) in biologically plausible genes in urinary bladder cancer (UBC) patients. Most published SNP associations have never been replicated in independent patient series. Objective: To ind
+
+##### f82ca09c llm_title_search openalex_xml/openalex_xml body=22777 sent_ev=9319 prov=the closin
+TITLE_R: Does generation benefit learning for narrative and expository texts? A direct replication attempt | ORIG: McDaniel, M. A.; Einstein, G. O.; Dunay, 1986 Encoding difficulty and memory: Toward a unifying theory
+PRE: cannot_be_determined :: The abstract identifies the planned replication but supplies no results or verdict about whether McDaniel et al.'s finding was reproduced.
+FT : cannot_be_determined :: The supplied text describes a planned replication but reports no replication results or overall verdict.
+   [unsent @0.13] Others have failed to replicate the effect for learners with good comprehension skills (Abel & Hänze, 2019;Exp.
+   [unsent @0.32] | Replication difficulties Despite this appealing explanation, a considerable number of studies report inconsistent findings regarding this genre by generation-type interaction.
+   [unsent @0.38] These findings suggest that the generation effect, though difficult to replicate under ecologically-valid and methodologically-stringent conditions, might be replicable under conditions closer to the setting of the original studies.
+   [unsent @0.40] However, a replication of the original interaction effect is an important and necessary precondition before investigating potential moderating contextual factors.
+   [unsent @0.41] A complete replication of the effect under these limited conditions will open the door to methods that control for contextual factors under which the text generation effect might emerge.
+   [unsent @0.42] Thus, this replication is necessary before text generation should be utilized as a learning intervention in pedagogical contexts.
+   (sent-abstract head) Abstract Generated information is better recognized and recalled than information that is read. This so‐called generation effect has been replicated several times for different types of material, including texts. Perhaps the most influential demonstration was by McDaniel et al. (1986, Journal of Mem
+
+##### aef1af3c llm_author_year_search openalex_xml/openalex_xml body=11345 sent_ev=10656 prov=the closin
+TITLE_R: Assessing visuospatial biases (pseudoneglect) using pupillometry: A replication and extension of Strauch et al. (2022) | ORIG: Strauch, C.; Christophe, R.; Naber, M.;  2022 The orienting response drives pseudoneglect: Evidence from a new pupillometry-based test.
+PRE: cannot_be_determined :: The paper clearly identifies Strauch et al. (2022) as the study being re-tested, but the supplied abstract does not report the replication result.
+FT : cannot_be_determined :: The paper explicitly centers Strauch et al. (2022) as the study to be replicated and does not identify any other prior paper as a re-tested target, but the supplied paper text does not state the final replication outcome.
+   [unsent @0.20] Related to this, for H3, it would be interesting (and extending the experiment beyond a replication) to add a rotated version of the greyscales task that allows to assess attentional up/downward biases.
+   (sent-abstract head) Strauch et al. (2022) introduced a novel approach to assess biases of visual attention, by measuring pupillary constriction in response to split-field stimuli, in which a bright patch is presented to one visual field and a dark patch to the other. Their study suggested that pupillary constriction is
+
+##### bb990d82 llm_references epmc_xml/epmc_xml body=36788 sent_ev=11638 prov=the discus
+TITLE_R: Associations Between Psoriatic Arthritis and Mental Health Among Patients with Psoriasis: A Replication and Extension Study Using the British Associat | ORIG: Lada, G.; Chinoy, H.; Heal, C.; Warren,  2022 Depression and Suicidality in Patients With Psoriasis and the Role of Psoriatic Arthritis:
+PRE: cannot_be_determined :: The supplied text identifies this as a replication and matches the cited Lada et al. (2022) study, but it does not state the original study's specific finding or explicitly compare the present results with it.
+FT : mixed :: The paper reports agreement with the prior anxiety finding and with depression at a milder threshold, but not consistently at the higher threshold, so the replication is partly supportive and partly unsupportive.
+   [unsent @0.02] Its association with depression is replicated when milder depressive syndromes are included.
+   [unsent @0.57] Our results replicate in part our previous and others' findings, 2 , 16 but also show some differences.
+   [unsent @0.62] In our first work, patients' medical records were scrutinized by researchers, including an experienced rheumatologist, and patients without rheumatologist‐confirmed presence or absence of PsA were excluded from the analysis; we estimated that, by relying on se
+   [unsent @0.91] BADBIR acknowledges the support of the National Institute for Health Research (NIHR) through the clinical research networks and its contribution in facilitating recruitment into the registry.
+   (sent-abstract head) Background: Despite some evidence that psoriatic arthritis (PsA) may increase psychological burden in psoriasis, the mental health of this subpopulation is under-investigated. Objectives: To investigate whether PsA is associated with higher depression and anxiety in moderate-to-severe psoriasis; exp
+
+##### fef29f44 llm_title_search crossref_search/pdfminer body=155422 sent_ev=5276 prov=the discus
+TITLE_R: Class Composition Effects in Achievement and Interest and the Role of the Learning Environment Revisited: A Conceptual Replication and Extension of La | ORIG: Lavrijsen, J.; Dockx, J.; Struyf, E.; Ve 2022 Class composition, student achievement, and the role of the learning environment
+PRE: cannot_be_determined :: The abstract compares the effects with Lavrijsen et al. and reports weaker significance, but does not state a clear overall success, failure, or mixed verdict for that original finding.
+FT : cannot_be_determined :: The paper directly compares its effects with Lavrijsen et al. but does not state an overall verdict that the original finding was confirmed, failed, or mixed.
+   [unsent @0.03] CLASS COMPOSITION AND THE ROLE OF THE LEARNING ENVIRONMENT 3 Class Composition Effects in Achievement and Interest and the Role of the Learning Environment Revisited: A Conceptual Replication and Extension of Lavrijsen et al.
+   [unsent @0.05] , Plucker & Makel, 2021), replication studies are key to building a robust evidence base to inform both future research and educational practice.
+   [unsent @0.05] Accordingly, the present research provides a conceptual replication and extension of Lavrijsen et al.
+   [unsent @0.06] In addition, we extended the original study in two important ways.
+   [unsent @0.06] Overall, this conceptual replication and extension study serves as a critical step toward identifying the generalizability of the original findings and developing a more conclusive empirical research agenda on class composition, students’ academic development,
+   [unsent @0.14] , 2018) and contribute novel ideas and questions that stimulate interest, thereby supporting interest development among less interested peers (Hidi & Renninger, 2006; Renninger et al.
+   (sent-abstract head) Class composition is a key contextual factor in students’ academic development. Prior research has mainly focused on class mean achievement, yet less is known about other composition characteristics, possible differences for students with varying initial achievement, and mechanisms transmitting comp
+
+##### 85937a2c llm_title_search openalex_xml/openalex_xml body=51789 sent_ev=9737 prov=the discus
+TITLE_R: Tuning Code Smell Prediction Models: A Replication Study | ORIG: Fontana, F. A.; Mäntylä, M.; Zanoni, M.; 2016 Comparing and experimenting machine learning techniques for code smell detection
+PRE: cannot_be_determined :: The abstract says the first experiment is a replication, but it does not state whether the prior algorithm-performance finding was confirmed or not.
+FT : cannot_be_determined :: The supplied text shows that the paper re-tests this prior study, but it never states whether the original finding was confirmed or failed in the replication.
+   [unsent @0.05] The main contributions of this study were: • Provide a public dataset with 50k classes and 295k method instances, with ground truth for four types of code smell; • Replicate a study using a dataset with more modern systems; • Insights about feature selection, 
+   [unsent @0.06] Section 3 discusses the base study that we replicated.
+   [unsent @0.09] The Refused Bequest code smell means a child class does not fully support all the methods or data it inherits [17].
+   [unsent @0.10] Our study aims to replicate previous study and evaluate the performance of seven machine learning algorithms, considering the impact of using different resampling techniques, non-polynomial features, and hyperparameters tuning.
+   [unsent @0.14] STUDY REPLICATION In this study, we replicated a previous study [10] on machine learning to detect code smells using different and currently maintained systems from GitHub.
+   [unsent @0.15] We expanded the replication to include a study on the impact of varying the features and resampling techniques used on the performance of models for detecting code smells.
+   (sent-abstract head) Identifying code smells in projects is a non-trivial task, and it is often a subjective activity since developers have different understandings about them. The use of machine learning techniques to predict code smells is gaining attention. In this replication study, our goals are: (i) verify if prev
+
+##### d3867b73 llm_title_search openalex_xml/openalex_xml body=16555 sent_ev=11259 prov=the discus
+TITLE_R: The impact of idiopathic epilepsy on sleep quality in dogs: A replication study and validation of the SNoRE questionnaire in Ukraine | ORIG: Mondino, A.; Ludwig, C.; Menchaca, C.; R 2023 Development and validation of a sleep questionnaire, SNoRE 3.0, to evaluate sleep in compa
+PRE:  :: 
+FT : cannot_be_determined :: The paper identifies the SNoRE study as the basis for the replication, but the supplied text does not state what finding the original study reported or explicitly compare the present results with it.
+   [unsent @0.12] Given the urgency of the problem, there was a need to conduct a replication study to confirm global data on a local patient cohort.
+   [unsent @0.17] Study group formation The main group (n = 32) included dogs with a confirmed diagnosis of idiopathic epilepsy.
+   [unsent @0.38] 8 % of owners confirmed the presence of visible changes in the sleep/wake cycle.
+   [unsent @0.40] However, our study confirms that IE is a complex systemic disease accompanied by significant non-motor comorbidities, particularly the deterioration of sleep quality.
+   [unsent @0.48] This indicates that epileptic activity affects the animal's ability to maintain continuous sleep, while Factor 2 (Sleep Interruption due to Dreaming) showed no significant differences.
+   [unsent @0.49] This suggests that IE primarily affects the non-rapid eye movement (NREM) sleep phase, rather than the rapid eye movement (REM) sleep phase, which is also discussed in the original study by Mondino.
+   (sent-abstract head) This replication study evaluated the specific characteristics of sleep quality in dogs diagnosed with idiopathic epilepsy compared to clinically healthy animals within the context of Ukrainian veterinary practice. The study is grounded in the hypothesis of a complex bidirectional relationship betwee
+
+##### c564e380 llm_title_search crossref_search/pdfminer body=74648 sent_ev=11348 prov=the closin
+TITLE_R: Contralateral delay activity as a marker of visual working memory capacity: a multi-site registered replication | ORIG: Vogel, E. K.; Machizawa, M. G. 2004 Neural activity predicts individual differences in visual working memory capacity
+PRE: cannot_be_determined :: The supplied abstract describes the planned replication but reports no results or verdict about whether Vogel and Machizawa's findings were reproduced.
+FT : cannot_be_determined :: The supplied text describes the planned replication and reports only outcome-neutral pilot data, explicitly stating that no interpretation should be based on them, so it does not establish whether the original findings were replicated.
+   [unsent @0.00] Registered Report, Stage 1 IPA awarded by Cortex, 28 August 2023 Contralateral delay activity as a marker of visual working memory capacity: a multi-site registered replication Dawid Strzelczyk1,2, Peter E.
+   [unsent @0.02] , Tokyo, Japan 15 Hiroshima University, Hiroshima, Japan 16 Department of Psychology, University of Chicago, Illinois, USA 17 Institute of Mind and Biology, University of Chicago, Illinois, USA 18 Center of Reproducible Science, University of Zurich, Zurich, S
+   [unsent @0.08] 3 In a seminal paper from Vogel and Machizawa (2004), the authors demonstrated that CDA amplitude increases with the number of items stored in VWM and plateaus at around three to four items, consistent with the typical adult working memory capacity (Cowan, 200
+   [unsent @0.10] The finding that the CDA amplitude is sensitive to the number of stimuli to be remembered has been replicated in numerous studies (Asp et al.
+   [unsent @0.13] Such practices to find statistically significant effects can lead to erroneous inferences and perpetuate replication problems in cognitive neuroscience (Clayson et al.
+   [unsent @0.13] #EEGManyLabs is an international, collaborative effort focussed on directly replicating some of the most influential EEG studies published to establish the robust of, and confidence in, widely cited phenomena.
+   (sent-abstract head) Visual working memory (VWM) is a temporary storage system capable of retaining information that can be accessed and manipulated by higher cognitive processes, thereby facilitating a wide range of cognitive functions. Electroencephalography (EEG) is used to understand the neural correlates of VWM wit
+
+##### 59578061 llm_references playwright/pdfminer body=54456 sent_ev=5759 prov=the discus
+TITLE_R: Evaluating Study Design Rigor in Preclinical Cardiovascular Research: A Replication Study | ORIG: Ramirez, F. D.; Motazedian, P.; Jung, R. 2017 Methodological Rigor in Preclinical Cardiovascular Studies
+PRE: cannot_be_determined :: The paper identifies Ramirez et al. as the replicated study but does not state what finding that study reported or explicitly compare its own results with that finding.
+FT : cannot_be_determined :: The supplied text identifies the replication target but does not state what finding Ramirez et al. (2017) reported or whether the present results agreed with it.
+   [unsent @0.00] Medicine Evaluating Study Design Rigor in Preclinical Cardiovascular Research: A Replication Study Reviewed Preprint Isaiah C.
+   [unsent @0.01] org/wiki/Open_access Copyright information Abstract Background Methodological rigor is a major priority in preclinical cardiovascular research to ensure experimental reproducibility and high quality research.
+   [unsent @0.02] Lack of reproducibility results in diminished translation of preclinical discoveries into medical practice and wastes resources.
+   [unsent @0.03] Our study replicates and extends a study published in 2017 by Ramirez et al.
+   [unsent @0.06] Limited incorporation of SDEs within research hinders experimental reproducibility that is critical to future research.
+   [unsent @0.10] Ultimately, each of these four SDEs influence the reproducibility of preclinical experimental outcomes.
+   (sent-abstract head) Abstract Background Methodological rigor is a major priority in preclinical cardiovascular research to ensure experimental reproducibility and high quality research. Lack of reproducibility results in diminished translation of preclinical discoveries into medical practice and wastes resources. In ad
+
+##### 4746e423 llm_title_search row_url/pdfminer body=91291 sent_ev=10888 prov=the discus
+TITLE_R: Assessment of SE-specific Sentiment Analysis Tools: An Extended Replication Study. | ORIG: Pletea, D.; Vasilescu, B.; Serebrenik, A 2014 Security and emotion: sentiment analysis of security discussions on GitHub
+PRE:  :: 
+FT : cannot_be_determined :: The supplied evidence identifies Pletea et al. as a replication target but does not state this paper's verdict on whether that original finding was confirmed or failed.
+   [unsent @0.02] Keywords sentiment analysis, human aspects of software engineering, replication study 1 Introduction Sentiment analysis, i.
+   [unsent @0.05] As such, we formulate our ﬁrst research question as follows – RQ1: Does the choice of the sentiment analysis tool introduce a threat to conclusion validity in a software engineering study? To address RQ1, we replicate two previously published studies on senti-
+   [unsent @0.05] We decided to perform exact, depen- dent replications (Shull et al.
+   [unsent @0.05] , 2008) to mitigate threats to validity that are inherent in replications.
+   [unsent @0.05] By doing so, we are able to replicate the original study design, use the same dataset as the original studies, and change only the sentiment analysis tools used to mine the developers’ sentiment.
+   [unsent @0.05] Speciﬁcally, we replicate the analysis of sentiment in GitHub security discussion by Pletea et al.
+   (sent-abstract head) Sentiment analysis methods have become popular for investigating human communication, including discussions related to software projects. Since general-purpose sentiment analysis tools do not fit well with the information exchanged by software developers, new tools, specific for software engineering
+
+##### 4cae50ae llm_author_year_search landing_Zenodo/pdfminer body=9375 sent_ev=10857 prov=the closin
+TITLE_R: Supplementary materials for paper: Mining Feature Requests and Bug Reports from Tweets and App Store Reviews: Are We There Yet? Insights from a Replic | ORIG: Henao, P. R.; Fischbach, J.; Spies, D.;  2021 Transfer Learning for Mining Feature Requests and Bug Reports from Tweets and App Store Re
+PRE: cannot_be_determined :: The paper explicitly identifies Henao et al. (2021) as the reproduced study, but the supplied text gives no result or author verdict about whether its finding was replicated.
+FT : cannot_be_determined :: The supplied text identifies the Henao et al. study as the replication target but does not state whether its reported finding was confirmed or contradicted.
+   (sent-abstract head) This project investigates mining feature requests, bug reports, and irrelevant content from app reviews and social media posts using a combination of traditional transformer-based models (BERT and RoBERTa) and recent LLM-based approaches (GPT-4o Mini). It includes multilingual datasets (English, Fre
+
+##### b1f81851 llm_author_year_search playwright/pdfminer body=0 sent_ev=1268 prov=
+TITLE_R: Using collgrams to assess L2 phraseological development: A replication study | ORIG: Bestgen, Y.; Granger, S. 2014 Quantifying the development of phraseological competence in L2 English writing: An automat
+PRE: successful :: The authors describe the main result as convergent between the original and replication, which supports the original finding despite noting some differences in other analyses.
+FT :  :: 
+   (sent-abstract head) Learner corpus research has led to a growing awareness of the significance of multiword units in foreign/second language (L2) learning and teaching (for a recent survey, see Paquot &amp; Granger 2012). One area that is still largely under-researched, however, is that of the development of L2 phraseo
+
+##### 18f27f0a llm_author_year_search crossref_search/grobid body=0 sent_ev=615 prov=
+TITLE_R: Facial width-to-height ratio predicts fighting success: A direct replication and extension of Zilioli et al. (2014) | ORIG: Zilioli, S.; Sell, A.; Stirrat, M.; Jago 2014 Face of a fighter: Bizygomatic width as a cue of formidability
+PRE: cannot_be_determined :: The supplied evidence identifies the direct replication target but does not report whether its finding was replicated.
+FT :  :: 
+   (sent-abstract head) 
+
+##### 5dbd5fc8 llm_title_search openalex_xml/openalex_xml body=96346 sent_ev=11277 prov=the discus
+TITLE_R: Evaluating classifiers in SE research: the ECSER pipeline and two replication studies | ORIG: Alshammari, A.; Morris, C.; Hilton, M.;  2021 Flakeflagger: predicting flakiness without rerunning tests
+PRE:  :: 
+FT :  :: 
+   [unsent @0.04] -We conduct two replication studies-one in software testing, one in requirements engineering-by applying the ECSER pipeline.
+   [unsent @0.04] The replications through ECSER allow us to strengthen some of the conclusions that the original papers had made, and also to identify additional findings, some of which contradict the original results.
+   [unsent @0.04] -We make available a replication package (Dell'Anna et al.
+   [unsent @0.08] How useful is the pipeline when applied to ML4SE research? To answer RQ3 and RQ4, we conduct two replication studies in different sub-fields of SE: (i) requirements engineering, via the classification of functional and quality requirements (Hey et al.
+   [unsent @0.08] These studies, reported in Sections 5 and 6, respectively, were selected because the authors provided ready-to-use replication packages, their classifier comparison represents well the current practice regarding classification in SE research, and these studies
+   [unsent @0.09] These replications allow us not only to derive a number of lessons learned regarding the pipeline (the object of our study), but also to identify findings concerning the replicated studies that were not present in the original publications.
+   (sent-abstract head) Abstract Context Automated classifiers, often based on machine learning (ML), are increasingly used in software engineering (SE) for labelling previously unseen SE data. Researchers have proposed automated classifiers that predict if a code chunk is a clone, if a requirement is functional or non-fun
+
+##### 87f2f0a2 llm_title_search openalex_xml/openalex_xml body=90667 sent_ev=9580 prov=the discus
+TITLE_R: Evaluating Amazon's Mechanical Turk as a Tool for Experimental Behavioral Research | ORIG: Lewandowsky, S. 2011 Working memory capacity and categorization: Individual differences and modeling
+PRE:  :: 
+FT :  :: 
+   [unsent @0.02] First, there are technical challenges in programming web-based experiment protocols and then ensuring the browser systems of the participant and experimenter support the same features.
+   [unsent @0.03] If the data obtained from AMT can replicate classic findings in the field with reasonable fidelity, it will validate the potential of the service for use in cognitive behavioral research.
+   [unsent @0.04] However, unlike existing work, in the present study we focus on qualitative replication of theoretically significant findings rather than on comparisons of the performance variance or mean performance of lab and online participants (e.
+   [unsent @0.04] The standard of qualitative replication (i.
+   [unsent @0.04] In the present study we attempted to replicate influential findings from several classic cognitive phenomena from the attention, performance, and learning literatures.
+   [unsent @0.04] The replication studies were chosen to represent and validate a broad range of multi-trial designs that require millisecond control over response collection and stimulus presentation, as well as designs that require complex decision making and where task instr
+   (sent-abstract head) Amazon Mechanical Turk (AMT) is an online crowdsourcing service where anonymous online workers complete web-based tasks for small sums of money. The service has attracted attention from experimental psychologists interested in gathering human subject data more efficiently. However, relative to tradi
+
+##### 281d6f90 llm_title_search openalex_xml/openalex_xml body=67111 sent_ev=61592 prov=
+TITLE_R: A Multiverse Analysis of Early Attempts to Replicate Memory Suppression with the Think/No-think Task | ORIG: Wessel, I.; Huntjens, R. J. C.; Verwoerd 2010 Cognitive control and suppression of memories of an emotional film
+PRE: cannot_be_determined :: The supplied matching list contains no 2010 record, and the text does not provide enough information to determine the reanalysis outcome for that study specifically.
+FT : cannot_be_determined :: The paper clearly reanalyses Wessel et al. (2010)'s data, but the supplied text does not state that study's reported finding or compare the reanalysis to it.
+   (sent-abstract head) In 2001, Anderson and Green (2001) showed memory suppression using a novel Think/No-think (TNT) task. When participants attempted to prevent studied words from entering awareness, they reported fewer of those words than baseline words in subsequent cued recall (i.e., suppression effect). The TNT lit
+
+##### f24a885f llm_references html_landing/openalex_xml body=17312 sent_ev=9940 prov=the closin
+TITLE_R: “For Whom” and “Under What Conditions” Is MSBI Effective? A Conceptual Replication With High School Students With Autism | ORIG: Root, J. R.; Cox, S. K.; Davis, K. A.; G 2021 Using Augmented Reality and Modified Schema-Based Instruction to Teach Problem Solving to 
+PRE: cannot_be_determined :: The supplied text identifies the work being replicated but reports no result or authorial verdict about whether its finding was reproduced.
+FT : cannot_be_determined :: The supplied text establishes that Root et al. is the replication target and that new participants were studied, but it does not report whether the original finding was reproduced.
+   [unsent @0.20] A replication by any other name: A systematic review of replicative intervention studies.
+   [unsent @0.23] Recommendations for replication research in special education: A framework of systematic, conceptual replications.
+   [unsent @0.32] Efficacy of peer-delivered mathematical problem-solving instruction to students with extensive support needs.
+   [unsent @0.34] Replication of special education research: Necessary but far too rare.
+   [unsent @0.53] Applying the universal design for learning framework to mathematics instruction for learners with extensive support needs.
+   [unsent @0.55] Replication research to support mathematical learning of students with extensive support needs.
+   (sent-abstract head) Replications provide credibility by demonstrating under what conditions experimental findings can be repeated, the premise behind evidence-based practices. Replications in single-case research also investigate generalization of findings across groups. For groups with high variability, such as indivi

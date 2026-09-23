@@ -1,0 +1,200 @@
+errors: 0
+                        n  cbd  no_target  prospective  not_rep  cbd_rate
+group         variant                                                    
+adj           V0       19   12          4            0        0      0.63
+              V0r      19   14          3            0        0      0.74
+              V1       19   10          3            0        0      0.53
+              V2       10    3          0            0        0      0.30
+              V3       10    1          0            0        0      0.10
+cbd_doc       V0       26   16          2            4        0      0.62
+              V1       26   15          2            4        0      0.58
+              V2       23    6          5            4        0      0.26
+              V3       23    7          2            4        0      0.30
+cbd_doc_osf   V0       14    2          1           10        0      0.14
+              V1       14    2          1           10        0      0.14
+              V2       13    2          0           10        0      0.15
+              V3       13    2          0           10        0      0.15
+cbd_nodoc     V0       20   15          2            1        0      0.75
+              V1       20   12          3            1        0      0.60
+control_doc   V0       30    1          0            0        0      0.03
+              V0r      30    1          2            0        0      0.03
+              V1       30    0          1            0        0      0.00
+              V2       30    0          1            0        0      0.00
+              V3       30    0          1            0        0      0.00
+control_nodoc V0       30    2          3            0        0      0.07
+              V0r      30    1          3            0        0      0.03
+              V1       30    2          2            0        0      0.07
+
+adj: V0 -> V0r  (n=19, changed=5)
+V0r                   (no target)  cannot_be_determined  failed  successful
+V0                                                                         
+(no target)                     2                     2       0           0
+cannot_be_determined            0                    11       0           1
+failed                          0                     1       1           0
+mixed                           1                     0       0           0
+
+adj: V0 -> V1  (n=19, changed=4)
+V1                    (no target)  cannot_be_determined  failed  mixed  successful
+V0                                                                                
+(no target)                     3                     0       0      0           1
+cannot_be_determined            0                    10       0      0           2
+failed                          0                     0       1      1           0
+mixed                           0                     0       0      1           0
+
+adj: V0 -> V2  (n=10, changed=6)
+V2                    cannot_be_determined  failed  mixed  successful  uninformative
+V0                                                                                  
+(no target)                              0       0      2           0              0
+cannot_be_determined                     3       0      0           3              1
+failed                                   0       1      0           0              0
+
+adj: V0 -> V3  (n=10, changed=8)
+V3                    cannot_be_determined  failed  mixed  successful  uninformative
+V0                                                                                  
+(no target)                              0       1      1           0              0
+cannot_be_determined                     1       0      0           5              1
+failed                                   0       1      0           0              0
+
+adj: V2 -> V3  (n=10, changed=3)
+V3                    cannot_be_determined  failed  mixed  successful  uninformative
+V2                                                                                  
+cannot_be_determined                     1       0      0           2              0
+failed                                   0       1      0           0              0
+mixed                                    0       1      1           0              0
+successful                               0       0      0           3              0
+uninformative                            0       0      0           0              1
+
+cbd_doc: V0 -> V1  (n=26, changed=1)
+V1                        (no target)  cannot_be_determined  failed  mixed  prospective_registration
+V0                                                                                                  
+(no target)                         2                     0       0      0                         0
+cannot_be_determined                0                    15       0      1                         0
+failed                              0                     0       1      0                         0
+mixed                               0                     0       0      3                         0
+prospective_registration            0                     0       0      0                         4
+
+cbd_doc: V0 -> V2  (n=23, changed=10)
+V2                        (no target)  cannot_be_determined  mixed  prospective_registration  successful  uninformative
+V0                                                                                                                     
+(no target)                         2                     0      0                         0           0              0
+cannot_be_determined                2                     6      2                         0           3              1
+failed                              0                     0      0                         0           1              0
+mixed                               1                     0      1                         0           0              0
+prospective_registration            0                     0      0                         4           0              0
+
+cbd_doc: V0 -> V3  (n=23, changed=10)
+V3                        (no target)  cannot_be_determined  mixed  prospective_registration  successful  uninformative
+V0                                                                                                                     
+(no target)                         1                     1      0                         0           0              0
+cannot_be_determined                1                     6      4                         0           2              1
+failed                              0                     0      0                         0           1              0
+mixed                               0                     0      2                         0           0              0
+prospective_registration            0                     0      0                         4           0              0
+
+cbd_doc: V2 -> V3  (n=23, changed=5)
+V3                        (no target)  cannot_be_determined  mixed  prospective_registration  successful  uninformative
+V2                                                                                                                     
+(no target)                         2                     2      1                         0           0              0
+cannot_be_determined                0                     5      1                         0           0              0
+mixed                               0                     0      3                         0           0              0
+prospective_registration            0                     0      0                         4           0              0
+successful                          0                     0      1                         0           3              0
+uninformative                       0                     0      0                         0           0              1
+
+cbd_doc_osf: V0 -> V1  (n=14, changed=0)
+V1                        (no target)  cannot_be_determined  prospective_registration  successful
+V0                                                                                               
+(no target)                         1                     0                         0           0
+cannot_be_determined                0                     2                         0           0
+prospective_registration            0                     0                        10           0
+successful                          0                     0                         0           1
+
+cbd_doc_osf: V0 -> V2  (n=13, changed=1)
+V2                        cannot_be_determined  prospective_registration  successful
+V0                                                                                  
+(no target)                                  0                         1           0
+cannot_be_determined                         2                         0           0
+prospective_registration                     0                         9           0
+successful                                   0                         0           1
+
+cbd_doc_osf: V0 -> V3  (n=13, changed=1)
+V3                        cannot_be_determined  prospective_registration  successful
+V0                                                                                  
+(no target)                                  0                         1           0
+cannot_be_determined                         2                         0           0
+prospective_registration                     0                         9           0
+successful                                   0                         0           1
+
+cbd_doc_osf: V2 -> V3  (n=13, changed=0)
+V3                        cannot_be_determined  prospective_registration  successful
+V2                                                                                  
+cannot_be_determined                         2                         0           0
+prospective_registration                     0                        10           0
+successful                                   0                         0           1
+
+cbd_nodoc: V0 -> V1  (n=20, changed=3)
+V1                        (no target)  cannot_be_determined  failed  mixed  prospective_registration  successful
+V0                                                                                                              
+(no target)                         2                     0       0      0                         0           0
+cannot_be_determined                1                    12       1      0                         0           1
+failed                              0                     0       1      0                         0           0
+mixed                               0                     0       0      1                         0           0
+prospective_registration            0                     0       0      0                         1           0
+
+control_doc: V0 -> V0r  (n=30, changed=3)
+V0r                   (no target)  cannot_be_determined  failed  mixed  successful
+V0                                                                                
+cannot_be_determined            0                     1       0      0           0
+failed                          0                     0       3      1           0
+mixed                           0                     0       0      5           0
+successful                      2                     0       0      0          18
+
+control_doc: V0 -> V1  (n=30, changed=3)
+V1                    (no target)  failed  mixed  successful
+V0                                                          
+cannot_be_determined            0       0      1           0
+failed                          0       4      0           0
+mixed                           0       0      5           0
+successful                      1       1      0          18
+
+control_doc: V0 -> V2  (n=30, changed=3)
+V2                    (no target)  failed  mixed  successful
+V0                                                          
+cannot_be_determined            0       0      1           0
+failed                          0       4      0           0
+mixed                           0       0      5           0
+successful                      1       1      0          18
+
+control_doc: V0 -> V3  (n=30, changed=2)
+V3                    (no target)  failed  mixed  successful
+V0                                                          
+cannot_be_determined            0       0      1           0
+failed                          0       4      0           0
+mixed                           0       0      5           0
+successful                      1       0      0          19
+
+control_doc: V2 -> V3  (n=30, changed=1)
+V3           (no target)  failed  mixed  successful
+V2                                                 
+(no target)            1       0      0           0
+failed                 0       4      0           1
+mixed                  0       0      6           0
+successful             0       0      0          18
+
+control_nodoc: V0 -> V0r  (n=30, changed=1)
+V0r                   (no target)  cannot_be_determined  failed  mixed  successful
+V0                                                                                
+(no target)                     3                     0       0      0           0
+cannot_be_determined            0                     1       1      0           0
+failed                          0                     0       8      0           0
+mixed                           0                     0       0      3           0
+successful                      0                     0       0      0          14
+
+control_nodoc: V0 -> V1  (n=30, changed=3)
+V1                    (no target)  cannot_be_determined  failed  mixed  successful
+V0                                                                                
+(no target)                     2                     0       0      0           1
+cannot_be_determined            0                     1       1      0           0
+failed                          0                     0       8      0           0
+mixed                           0                     0       0      3           0
+successful                      0                     1       0      0          13

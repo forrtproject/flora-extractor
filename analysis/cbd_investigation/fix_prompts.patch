@@ -1,0 +1,42 @@
+--- a/shared/prompts.py
++++ b/shared/prompts.py
+@@ -838,11 +838,14 @@
+    built to re-test the original's effect that reports "the predicted effect was found" has
+    compared, even without naming the original in that sentence. Two tests before you code
+    from an implicit comparison, and both must pass:
+-     (a) the evidence states what THE ORIGINAL THIS OUTCOME IS ABOUT found. You cannot
+-         compare against
+-         a finding the evidence never states, however positive this paper's own results
+-         sound;
+-     (b) you can name this paper's result that corresponds to it.
++     (a) you can tell which finding of THE ORIGINAL THIS OUTCOME IS ABOUT was re-tested,
++         and which way it pointed. The paper's own statement of the effect, association
++         or hypothesis it set out to replicate is enough: it need not restate the
++         original's numbers, and need not name the original in the same sentence. You
++         cannot compare against a finding the evidence never identifies, however
++         positive this paper's own results sound;
++     (b) you can name this paper's result that corresponds to it — reported anywhere in
++         the evidence, its results included.
+    Agreement with a general model, a theory, a method's usefulness or the wider literature
+    is not a comparison to that original's finding. The absence of a contradiction is not
+    agreement: "the findings support X rather than contradicting the original" fails both
+@@ -863,6 +866,19 @@
+ Answer "«cannot_be_determined»" when the evidence in front of you does not state the outcome.
+ Do not guess an outcome the evidence does not support, and do not withhold one it does state
+ (or implies through a comparison as defined in rule 2 above).
++
++Before answering "«cannot_be_determined»", look for the re-test's result in EVERY block you
++were given — title, abstract, and any results, discussion or body text — not only in a
++closing summary. A result does not have to be phrased as an overall verdict to count:
++- A sentence reporting how the re-tested effect came out — "the predicted effect was not
++  significant", "as in the original study, X predicted Y", "these findings did not
++  replicate those of the original study" — is a comparison under rule 2.
++- A title or abstract that states the verdict ("An informative failure to replicate X",
++  "we successfully replicated X") is an overall verdict under rule 1.
++- Authors who say their own results can neither confirm nor refute the original have given
++  the "«uninformative»" verdict; that is not "«cannot_be_determined»".
++"«cannot_be_determined»" is for evidence that never reports how the re-test came out, or
++reports results that cannot be tied to the original's finding.
+ 
+ OUTCOME CATEGORIES
+ 

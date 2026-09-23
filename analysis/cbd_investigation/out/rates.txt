@@ -1,0 +1,110 @@
+replication rows 3896 cbd 686 17.6%
+
+outcome distribution
+ outcome
+successful                             1719
+failed                                  895
+cannot_be_determined                    686
+mixed                                   533
+statistically successful but flawed      25
+descriptive only                         22
+uninformative                            16
+
+== by evidence
+            size  sum  mean
+evidence                  
+abs+nodoc  2272  297  13.1
+abs+doc    1484  357  24.1
+noabs+doc   140   32  22.9
+
+== by link_method
+                         size  sum  mean
+link_method                            
+llm_references          1737  196  11.3
+llm_title_search        1287  261  20.3
+llm_author_year_search   553  218  39.4
+llm_cited_candidates     250    1   0.4
+llm_fulltext              62    9  14.5
+title_pattern_match        6    1  16.7
+citation_context_match     1    0   0.0
+
+== by out_quote_source
+                             size  sum   mean
+out_quote_source                            
+abstract                    2336    9    0.4
+discussion                   751    6    0.8
+                             664  664  100.0
+title                         53    4    7.5
+abstract | discussion         25    0    0.0
+title | abstract              15    0    0.0
+abstract | abstract           11    0    0.0
+introduction                  10    2   20.0
+results                       10    0    0.0
+introduction | abstract        6    0    0.0
+introduction | discussion      5    0    0.0
+discussion | discussion        3    0    0.0
+conclusions and discussion     2    0    0.0
+conclusion                     1    0    0.0
+discussion | abstract          1    0    0.0
+discussion / conclusion        1    1  100.0
+results | discussion           1    0    0.0
+title | discussion             1    0    0.0
+
+== by pdf_source
+                                                     size  sum   mean
+pdf_source                                                          
+                                                    2272  297   13.1
+openalex_xml                                         726   76   10.5
+osf_files                                            400  222   55.5
+crossref_search                                      152    8    5.3
+row_url                                               87   21   24.1
+epmc_xml                                              43    4    9.3
+osf                                                   41    3    7.3
+html_landing                                          40   10   25.0
+openalex_oa                                           36   10   27.8
+osf_registration                                      33   20   60.6
+playwright                                            22    5   22.7
+arxiv                                                 11    3   27.3
+europepmc                                              8    1   12.5
+semanticscholar                                        7    0    0.0
+landing_Zenodo                                         5    3   60.0
+landing_repository                                     3    0    0.0
+landing_repo                                           2    0    0.0
+landing_European Organization for Nuclear Research     1    0    0.0
+landing_EJPMR                                          1    0    0.0
+landing_Association for Information Systems            1    0    0.0
+landing_University College London                      1    1  100.0
+landing_Leibniz Institut für Psychologie (ZPID)        1    1  100.0
+landing_Leibniz Institute for Psychology               1    1  100.0
+landing_TU Wien                                        1    0    0.0
+unpaywall_pdf                                          1    0    0.0
+
+== by parse_method
+               size  sum  mean
+parse_method                 
+              2272  297  13.1
+openalex_xml   799  106  13.3
+pdfminer       554  152  27.4
+docx           204  111  54.4
+epmc_xml        43    4   9.3
+grobid          24   16  66.7
+
+coded rows 3849 cbd 17.8%
+evidence                abs+doc  abs+nodoc  noabs+doc
+link_method                                          
+citation_context_match      NaN       0.00        NaN
+llm_author_year_search     0.46       0.35       0.36
+llm_cited_candidates        NaN       0.00        NaN
+llm_fulltext               0.15        NaN       0.00
+llm_references             0.37       0.09        NaN
+llm_title_search           0.19       0.40       0.19
+title_pattern_match         NaN       0.17        NaN
+evidence                abs+doc  abs+nodoc  noabs+doc
+link_method                                          
+citation_context_match        0          1          0
+llm_author_year_search      200        320         33
+llm_cited_candidates          0        250          0
+llm_fulltext                 61          0          1
+llm_references              123       1614          0
+llm_title_search           1100         81        106
+title_pattern_match           0          6          0

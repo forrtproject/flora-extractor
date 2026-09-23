@@ -1,0 +1,134 @@
+
+##### 2c58befb llm_title_search osf_files/pdfminer body=37922 sent_ev=4344 prov=the discus
+TITLE_R: ML5: Replications of Foerster et al. (2008) | ORIG: Förster, J.; Liberman, N.; Kuschel, S. 2008 The effect of global versus local processing styles on assimilation versus contrast in soc
+PRE: cannot_be_determined :: The title identifies Foerster et al. (2008) as the replication target, but the supplied text gives no result or verdict about the replication.
+FT : cannot_be_determined :: The supplied conclusion contains an unresolved placeholder about whether evidence for GLOMO was found, so the replication outcome cannot be determined.
+   [unsent @0.07] For the final replication study (N = xxx), we [did | did not] find moderation by protocol type, with patterns in [the RP:P | revised | both] protocol[s] [consistent | inconsistent] with the effects observed in the original study.
+   [unsent @0.08] Keywords: multilab, direct replication, processing style, assimilation and contrast, social judgment 3 Many Labs 5: Registered Replication Report of Förster, Liberman, and Kuschel’s (2008) Study 1 After priming a concept (such as “aggressive”), people can assi
+   [unsent @0.10] As part of the Reproducibility Project: Psychology (RP: P; Open Science Collaboration, 2015), Reinhard (2015) sought to directly replicate a study conducted by Förster et al.
+   [unsent @0.13] This original study (with 88 students; 60 women and 28 men) detected an interaction between cognitive processing style and primed concepts on ratings of aggressiveness (F(2, 76) = 21.
+   [unsent @0.14] Despite being sufficiently powered (given the original effect size) the replication study did not replicate the interaction (F (2, 65) = .
+   [unsent @0.15] Notably, manipulation checks revealed that the semantic prime and global/local prime did not work as intended in the replication study (Reinhard, 2015).
+   (sent-abstract head) OSF registration template: Open-Ended Registration  summary: The previous registration was prior to starting the present project. This registration includes the results-blind version of our manuscript (which was written after collecting the data and after approval from the journal).
+
+##### 9a913c31 llm_title_search osf_files/docx body=27626 sent_ev=10910 prov=the closin
+TITLE_R: A preregistered direct replication of the linguistic frame effect on perceived blame and financial liability | ORIG: Fausey, C. M.; Boroditsky, L. 2010 Subtle linguistic cues influence perceived blame and financial liability
+PRE: prospective_registration :: The paper is a prospective replication plan and provides no results or conclusion about whether the original findings were reproduced.
+FT : prospective_registration :: The paper is a study plan and supplies no results or authorial verdict about whether the original findings were reproduced.
+   [unsent @0.09] Therefore, it is not surprising that the results of their experiments confirm the hypothesis about different effects of agentive and nonagentive language in judgments about blame and liability.
+   [unsent @0.20] For example, these results suggest that because agentive language is a potential source of bias, it should be used in courts only in cases where the agent in the claim is known and confirmed.
+   [unsent @0.23] Since there are no published direct replication attempts of these findings, we decided to try to replicate their studies 1 and 2, both in the language originally used (English) and in a translated version (Croatian).
+   [unsent @0.24] Conducting a replication in English on a sample of American adult citizens will enable us to test the generalisability of obtained results to more heterogeneous samples than the sample of American students used in the original experiments, while conducting the
+   [unsent @0.31] In sum, given the importance of the described linguistic frame effect, here we propose high-powered replications of studies 1 and 2 by Fausey and Boroditsky (2010) using a large sample of native English-speaking residents of the United States of America as wel
+   [unsent @0.35] Study 1a (in Croatian) Participants We conducted a power analysis to determine the number of participants needed to detect an effect size that is as large as half of the smaller of the two original effect sizes (d = 0.
+   (sent-abstract head) Fausey and Boroditsky (2010) demonstrated that agentive descriptions of accidents can increase perceived blame and financial liability. Here we propose a direct replication of their studies 1 and 2, both in the language originally used (English) and in Croatian. Participants in the first experiment 
+
+##### 35e642c0 llm_title_search osf_files/pdfminer body=38623 sent_ev=9113 prov=the discus
+TITLE_R: Direct Replication, Experiment #2 | ORIG: Gal, D.; Rucker, D. D. 2010 When in Doubt, Shout!
+PRE: cannot_be_determined :: The supplied text identifies the replicated experiment but gives no result or verdict about whether its finding was reproduced.
+FT : cannot_be_determined :: The supplied results describe the three experiments reported in the Gal and Rucker paper rather than stating how the direct replication itself turned out.
+   [unsent @0.08] This explanation is consistent with dis- sonance theory, which assumes that people modify their beliefs in order to resolve inconsistencies among beliefs (Festinger, 1957).
+   [unsent @0.18] , to less confirmatory processing) of proattitudinal information (Cohen, Aronson, & Steele, 2000; Correll, Spencer, & Zanna, 2004; Reed & Aspin- wall, 1998).
+   [unsent @0.18] This finding is consistent with the perspective that attitude and belief confirmation is motivated by a need to maintain the self through protecting beliefs closely linked to one’s identity.
+   [unsent @0.30] First, participants read a brief paragraph outlining how animal testing is used to ensure the safety of consumer products and indicated whether they supported or did not sup- port such testing.
+   [unsent @0.35] Overall, 48% of participants supported animal testing, and 52% opposed it.
+   [unsent @0.37] This finding is consistent with our account that shaken confi- dence in a view can lead to increased persuasive effort.
+   (sent-abstract head) Direct Replication of Experiment #2 from: When in Doubt, Shout! Paradoxical Influences of Doubt on Proselytizing (Gal &amp; Rucker, 2010)
+
+##### 098e0b1a llm_title_search osf_files/pdfminer body=7633 sent_ev=2976 prov=the closin
+TITLE_R: The effect of prompts on the sharing of news headlines in social media: a pre-registered replication study of Capraro and Celadin (2023). | ORIG: Capraro, V.; Celadin, T. 2023 “I Think This News Is Accurate”: Endorsing Accuracy Decreases the Sharing of Fake News and
+PRE: cannot_be_determined :: The supplied text identifies the study being replicated but gives no replication results, so the outcome cannot be determined from the evidence shown.
+FT : cannot_be_determined :: The paper explicitly says it is conducting a replication of Capraro and Celadin (2023), and no results from that replication are provided in the supplied text.
+   (sent-abstract head) OSF registration template: Open-Ended Registration  Misinformation, such as fake news and conspiracy theories, is contaminated among information on the internet. Specifically, research has found that 40% of information in the medical domain from the internet has been found to be misinformation (Wasz
+
+##### ecda4276 llm_title_search osf_files/grobid body=0 sent_ev=1724 prov=
+TITLE_R: A pre-registered replication of “Evaluating the effects of a low-cost, online financial education program” by Clark et al. (2025) | ORIG: Clark, R. L.; Lin, C.; Lusardi, A.; Mitc 2025 Evaluating the effects of a low-cost, online financial education program
+PRE: cannot_be_determined :: The supplied text describes the planned replication but ends before reporting results or a verdict about whether the original finding held.
+FT :  :: 
+   (sent-abstract head) A replication of Clark et al. (2025)
+
+##### 94b6d241 llm_title_search osf/docx body=52093 sent_ev=11225 prov=the closin
+TITLE_R: Revisiting the Moral Forecasting Error – A Preregistered Replication and Extension of “Are We More Moral Than We Think?” | ORIG: Teper, R.; Inzlicht, M.; Page‐Gould, E. 2011 Are we more moral than we think
+PRE: successful :: The authors explicitly conclude that the original cheating-task finding is robust, while limiting the failure to generalization to a different task.
+FT : cannot_be_determined :: The paper is a pre-data working paper and supplies no results or verdict about whether the original finding was replicated.
+   [unsent @0.04] It is also inspired by the recent initiative to “make replication research mainstream” in psychology and social science, and to do so by using the format of registered reports.
+   [unsent @0.05] Even though open materials and replication research was not yet common practice when the original study was published, the authors were able to find and share stimuli materials from their piloting of the original experiments.
+   [unsent @0.08] Contrary to the well-established intention-behavior gap, recent research suggests that our moral behavior can exceed our moral predictions.
+   [unsent @0.10] The current study proposal is a pre-registered direct replication of the moral forecasting error (Teper et al.
+   [unsent @0.12] In our view, the moral forecasting error is far from trivial, and we would argue that a registered report replication is warranted for several reasons.
+   [unsent @0.12] First, there have not been any independent published replications (Teper et al.
+   (sent-abstract head) Predictions about the future are often inaccurate, but the direction of prediction errors may vary. Contrary to research on the intention-behavior gap, where people fail to live up to their future ambitions, a study on “moral forecasting” found that people behaved more honestly than they predicted. 
+
+##### 7899f695 llm_title_search osf_registration/openalex_xml body=8706 sent_ev=11793 prov=
+TITLE_R: Tackett lab hormones replication project | ORIG: Tackett, J. L.; Herzhoff, K.; Harden, K. 2014 Personality × hormone interactions in adolescent externalizing psychopathology.
+PRE: cannot_be_determined :: The paper identifies this study as a replication target and states its finding, but the supplied text does not report how the new analysis turned out.
+FT :  :: 
+   (sent-abstract head) OSF registration template: Open-Ended Registration  summary: The present study is an attempt to reproduce, in an independent pre-adolescent sample, analyses from three studies examining the interaction between personality traits and hormones in predicting youth externalizing behavior.  The three pap
+
+##### 05b5b1fc llm_title_search osf_files/docx body=52951 sent_ev=9927 prov=the closin
+TITLE_R: Pronin &amp; Kugler 2007 exp1 &amp; 1a replication | ORIG: Pronin, E.; Kugler, M. B. 2007 Valuing thoughts, ignoring behavior: The introspection illusion as a source of the bias bl
+PRE:  :: 
+FT : cannot_be_determined :: The supplied text describes the planned replication and reproduces the original results, but does not report the replication’s own findings or verdict.
+   [unsent @0.07] However, since this replication study will be conducted in a lecture of PSYC 2020, the sample will be limited within students who went to lecture.
+   [unsent @0.14] (Pronin, Lin & Ros, 2002) Note: Descriptions of sources are directly obtained from the original research paper Exclusion criteria An exclusion criteria is not mentioned explicitly in the original study.
+   [unsent @0.14] However, we assume that the original study would have excluded responses from participants: who were not fluent in English because the questionnaire was conducted in English.
+   [unsent @0.16] In our replication study, we will exclude responses from participants: that are not fully completed; and who have not answered the questionnaire seriously; in the ‘funneling section’ of our questionnaire, there is a question that asks “How serious were you in 
+   [unsent @0.17] Procedure Though it was assumed that the experiment was carried out using a pen-and-paper questionnaire, the way in which the questionnaire was presented to the students wasn’t mentioned in the original study.
+   [unsent @0.18] In this particular replication, the questionnaire will be presented to the participants using Qualtrics (an online survey software).
+   (sent-abstract head) OSF registration template: Open-Ended Registration  summary: See pre-registration folder for full article analysis, pre-registration template files, and Qualtrics survey
+
+##### ae4a7519 llm_title_search osf_files/pdfminer body=11635 sent_ev=11219 prov=the closin
+TITLE_R: Study 1: Conceptual Replication of Children’s Preferences for Shared-Language Speakers | ORIG: Kinzler, K. D.; Dupoux, E.; Spelke, E. S 2007 native language of social cognition
+PRE: cannot_be_determined :: The supplied text only describes the planned conceptual replication and hypothesis, not any results about whether the original finding was supported.
+FT : cannot_be_determined :: The supplied text describes the planned replication and pilot trends, but it does not state a final verdict on whether the Kinzler et al. finding was replicated.
+   (sent-abstract head) OSF registration template: Open-Ended Registration  Background. This is a conceptual replication of the study conducted with 5-year-old children described in Kinzler et al. (2007). The original study showed 8 monolingual English-speaking children, two children speaking: one spoke in French and one i
+
+##### f40ac284 llm_author_year_search osf_files/docx body=19979 sent_ev=8336 prov=the closin
+TITLE_R: Registered replication and extension of Perilloux and Kurzban (2015) | ORIG: Perilloux, C.; Muñoz‐Reyes, J. A.; Turié 2015 Do (non-American) Men Overestimate Women’s Sexual Intentions?
+PRE: cannot_be_determined :: The supplied text identifies the replication target but contains no results or conclusion about whether that study's finding was supported.
+FT : cannot_be_determined :: The supplied text is a preregistration and does not report the replication results, so the paper's conclusion about the original study cannot be determined from this evidence.
+   [unsent @0.00] Study Information Title: Registered replication and extension of Perilloux and Kurzban (2015) Authorship: Murray, D.
+   [unsent @0.28] This is to support potential exploratory analyses to quantify how much of any difference between the want and say questions that may be found in Conditions 1 and 2 can be accounted for by this language.
+   [unsent @0.29] Conditions 3 and 4 do not form any part of our confirmatory analysis plan.
+   [unsent @0.38] Though not a central hypothesis, we also expect that, consistent with past research, across both Conditions, Column 1 averages of sexual intentions (what I want) will be significantly lower than both column 2 and column 3 (tested with separate one-sample t-tes
+   [unsent @0.39] ) Experimental Condition 2 will replicate the results of PK Study 3, in that women will report what other women “want” significantly more than what they “say” they want.
+   [unsent @0.49] We will also ask for demographic details within the current survey to confirm and remove anyone who now reports a demographic profile that does not fit our requirements (this includes the requirement to be predominantly or exclusively heterosexual).
+   (sent-abstract head) Pre-registration for partial replication and extension of Perilloux and Kurzban (2015), Study 3.
+
+##### a53acf2b llm_author_year_search osf_files/docx body=17509 sent_ev=10782 prov=the closin
+TITLE_R: Unsolicited vs solicited advice in the workplace – a replication and extension of Landis et al. (2022) | ORIG: Landis, B.; Fisher, C. M.; Menges, J. I. 2022 How employees react to unsolicited and solicited advice in the workplace: Implications for
+PRE: cannot_be_determined :: The paper explicitly says it is replicating Landis et al. (2022) Study 3, and it provides no results or verdict about whether that study’s finding was confirmed.
+FT : cannot_be_determined :: The text identifies a close replication target but provides no results or verdict about whether that replication succeeded or failed.
+   [unsent @0.16] Extensions In this replication study, we also propose the following hypotheses based on our extensions.
+   (sent-abstract head) OSF registration template: Open-Ended Registration  The project aims to conduct a close replication of Study 3 in Landis, Fisher, and Menges (2022): “How employees react to unsolicited and solicited advice in the workplace: Implications for using advice, learning, and performance”, published in Jour
+
+##### c2078446 llm_title_search osf_files/pdfminer body=86898 sent_ev=9821 prov=the closin
+TITLE_R: Revisiting the link between error significance and the error-related negativity: A multi-lab direct replication | ORIG: Hajcak, G.; Moser, J. S.; Yeung, N.; Sim 2005 On the ERN and the significance of errors
+PRE: cannot_be_determined :: The abstract describes the planned replication and predictions but supplies no results or verdict about whether either original finding was reproduced.
+FT : cannot_be_determined :: The supplied text describes a planned replication and its success criteria but provides no results or verdict about whether either original finding was replicated.
+   [unsent @0.00] ERN and error significance Cortex Registered Report, Stage 1 manuscript, IPA awarded 23 Dec 2025 Revisiting the link between error significance and the error-related negativity: A multi-lab direct replication Magdalena Senderecka 1*, Jarosław M.
+   [unsent @0.02] This replication is supported by a grant funded by the Strategic Program Excellence Initiative at the Jagiellonian University, Kraków, Poland.
+   [unsent @0.04] Keywords: error-related negativity; error significance; event-related potentials, replication; #EEGManyLabs 2 ERN and error significance 1.
+   [unsent @0.17] On the other hand, some similarly designed studies have failed to find a clear association between ERN amplitude and short-term motivational states (e.
+   [unsent @0.18] , 2025), or when participants’ actions were observed by an unsupportive but not 6 ERN and error significance a supportive partner (Palmwood & Simons, 2021).
+   [unsent @0.18] (2009) reported a significant effect of motivation on ERN amplitude in a sample consisting solely of female participants, but this finding was not replicated by Clayson et al.
+   (sent-abstract head) Cortex Stage 1 IPA
+
+##### dc099974 llm_title_search osf_files/docx body=70426 sent_ev=9802 prov=the discus
+TITLE_R: Revisiting the link between true-self and morality: Replication and extensions of Newman, Bloom and Knobe (2014) Studies 1 and 2 | ORIG: Newman, G. E.; Bloom, P.; Knobe, J. 2014 Value judgments and the true self
+PRE: cannot_be_determined :: The title identifies the re-tested studies but provides no evidence about whether their findings were replicated.
+FT : successful :: The authors explicitly state that they successfully replicated Newman et al.’s results and found strong support for the replication effects.
+   [unsent @0.01] Financial disclosure/funding: The author(s) received no financial support for the research and/or authorship of this article.
+   [unsent @0.01] Authorship declaration: Shuk Ching (Janet) Lee conducted the replication as part of Thesis in Dissertation in Psychology PSY7308 course.
+   [unsent @0.02] Gilad was the course instructor for Dissertation in Psychology PSY7308 and led the replication efforts in the course.
+   [unsent @0.03] 1177/0146167213508791 Contributor Roles Taxonomy In the table below, employ CRediT (Contributor Roles Taxonomy) to identify the contribution and roles played by the contributors in the current replication effort.
+   [unsent @0.05] We conducted a replication and extensions of Newman et al.
+   [unsent @0.05] We found [weak to no] support for Study 1’s findings that morally positive changes in others are perceived as more reflective of true-self than morally negative changes [effect size and CIs].
+   (sent-abstract head) OSF registration template: Open-Ended Registration  PCIRR Stage 1 IPA received. See all materials in subfolder "PCIRR Stage 1", see the IPA manuscript in the PCIRR registration.  summary: PCIRR Stage 1 IPA received. See all materials in subfolder "PCIRR Stage 1", see the IPA manuscript in the PCIRR 
+
+##### 8a446335 llm_title_search osf_files/docx body=14254 sent_ev=9965 prov=the closin
+TITLE_R: Ownership effect replication: 2nd data collection | ORIG: Irmak, C.; Wakslak, C.; Trope, Y. 2013 Selling the Forest, Buying the Trees: The Effect of Construal Level on Seller-Buyer Price 
+PRE:  :: 
+FT : cannot_be_determined :: The paper clearly identifies this experiment as a replication target, but the supplied text contains no results or conclusion about whether its finding was reproduced.
+   [unsent @0.15] We changed the question from "who is the seller?" to "who is the owner?" to be closer to the scenario term specified in the original study.
+   (sent-abstract head) OSF registration template: Open-Ended Registration  summary: Please see pre-registration folder for pre-reg template and Qualtrics survey, and code on a generated dataset to see pre-reg analysis code.
