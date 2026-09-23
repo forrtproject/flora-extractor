@@ -627,11 +627,13 @@ def _flex_then_standard(calls: list, flex_exc: Exception):
     return create
 
 
-def test_openai_flex_capacity_refusal_falls_back_within_the_attempt(monkeypatch):
-    # 429 + resource_unavailable: the flex queue has nothing, standard will serve.
+@pytest.mark.parametrize("code", ["resource_unavailable", "flex_unavailable"])
+def test_openai_flex_capacity_refusal_falls_back_within_the_attempt(monkeypatch, code):
+    # 429 + resource_unavailable / flex_unavailable (the 2026-09 shape): the flex queue
+    # has nothing, standard will serve.
     _openai_flex_env(monkeypatch)
     calls: list = []
-    exc = _api_error(429, code="resource_unavailable",
+    exc = _api_error(429, code=code,
                      message="Service tier capacity exceeded for this model")
     fake_client = MagicMock()
     fake_client.chat.completions.create.side_effect = _flex_then_standard(calls, exc)

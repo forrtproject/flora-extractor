@@ -463,8 +463,9 @@ def _openai_flex_refused(exc: Exception) -> bool:
     shapes say the tier itself was unavailable, and both are answerable by an
     immediate standard-tier call because neither was served or billed.
 
-      * 429 with error code `resource_unavailable` — the flex queue has no
-        capacity.
+      * 429 with error code `resource_unavailable` or `flex_unavailable` (the
+        shape OpenAI sends since 2026-09: `type: resource_unavailable`, `code:
+        flex_unavailable`) — the flex queue has no capacity.
       * 400 naming `service_tier` as the offending parameter — flex is not
         offered for this model or account.
 
@@ -486,7 +487,8 @@ def _openai_flex_refused(exc: Exception) -> bool:
     param = getattr(exc, "param", None) or err.get("param")
 
     if status == 429:
-        return code == "resource_unavailable"
+        return (code in ("resource_unavailable", "flex_unavailable")
+                or err.get("type") == "resource_unavailable")
     # 400: the param field is the authority; the message is a secondary guard for
     # the same shape, where the SDK could not populate param.
     return (param == "service_tier"
