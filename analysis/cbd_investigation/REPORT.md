@@ -111,3 +111,19 @@ pass fixes both.
 - Mixed semantics with Dan.
 - Not fixed: the dead METHODS block; grobid/playwright parses with no raw text (send the
   abstract only); no `results` value for `out_quote_source`.
+
+## Sandbox check of the committed fix (af85ea6 + ladder 28), 2026-09-23
+
+60 random works from `out/reopen_cbd_only.txt` outside the `llm_references` redo
+(`out/sandbox_60.txt`), run `--mode validation`, rendered to `out/sandbox_60.csv`, compared
+in `out/sandbox_60_compare.csv`. 58 were extracted (2 skip-listed).
+
+| Ending of the 58 (all had a cbd row live) | works |
+|---|--:|
+| still has a cbd row | 19 |
+| `prospective_registration` (OSF plans; quarantined, not lost) | 25 |
+| settled outcome (successful / failed / mixed / partial) | ~8 |
+| `target_pending` / `no_original_found` / search-unconfirmed | ~6 |
+
+Works with a cbd row: 60 → 19. Most of the drop is the OSF plans moving to their own
+quarantine, as predicted; the titles read as prereg/replication projects. Spend ≈ $0.04.
