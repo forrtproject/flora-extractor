@@ -13,7 +13,7 @@ is named. `analysis/mo_observatory/adjudication/README.md` lists the scripts.
 
 ## Status 2026-09-24 (unattended session) — read this first
 
-Done and committed on local `main` (**not pushed**):
+Done and committed on `main`. Everything up to `6fa160d` is on origin (pushed outside this session); **the export `b31af65` and this status are local only**:
 
 | Step | Result | Where |
 |---|---|---|
