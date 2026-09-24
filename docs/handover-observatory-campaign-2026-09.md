@@ -11,6 +11,49 @@ is named. `analysis/mo_observatory/adjudication/README.md` lists the scripts.
 
 ---
 
+## Status 2026-09-24 (unattended session) — read this first
+
+Done and committed on local `main` (**not pushed**):
+
+| Step | Result | Where |
+|---|---|---|
+| 1 | gpt-6-luna switch committed (`a4495eb`) | — |
+| 2 | 14 `candidates-*.parquet` deleted from the HF pool repo (HF commit `e284f62`); a fresh pull fingerprints identical to the local pool. `~/.venvs/flora313` deleted | `PENDING_RUNS.md` |
+| 3 + 4 + 5 | Sibling-rule prompt text, `_2` key suffixes, and a blind second-vendor pick check (`deepseek/deepseek-v4.1-flash`, ladder 28): a flagged pick loses `match_certain` and descends to full text. Generation `765e053cd24611e5`, declared equivalent. Sandbox pilot on 150 random non-validated `llm_references` works, **scored against blinded truth coding** (10 coder agents): wrong originals shipped live 12 → v2 4; 6 correct links lost to declines | `analysis/pick_pilot/REPORT.md`, `analysis/contrastive_confirm/REPORT.md` |
+| 3.5 | **Live redo ran**: 1,599 non-validated `llm_references` works → 1,451 resolved, 136 target_pending, 8 provisional, 2 no_original_found, 2 api_error | `analysis/pick_pilot/live_redo.log` |
+| 3.6 | Retirement mechanism: export appends `data/retired_pairs.csv`; `csv_to_db.py --retire` on local branch `retire-superseded-records` in `~/flora-validation` (commit `82c48da`, **not pushed**). Found: **the nightly validation sync has been blocked since 2026-09-13** (`baseline_snapshot_unavailable`) | `docs/retiring-superseded-records.md` |
+| 4 (clean_doi) | Counted, not changed: ~30 values in our CSVs, 29 Supabase records; recommend a comparison-only `doi_match_key()` | `analysis/pick_pilot/clean_doi_impact.md` |
+| 6 | Causes found; fix committed (`af85ea6`: full documents sent whole; full-text outcome kept for a carried original). 60-work sandbox then **live reopen of 479 cbd works** (462 resolved, 12 target_pending) | `analysis/cbd_investigation/REPORT.md` |
+| export | `extracted.csv` 4,141 → 3,692 rows; replication cbd 17.6% → 9.3%; 687 retirements seeded (set aside 563: prospective 281, target_pending 175; superseded 118) — `b31af65` | `data/retired_pairs.csv` |
+| 7 | Recommendation: don't fetch for the 267M no-abstract snapshot works; run the gate over the **PubMed baseline** (all 165 gap works, $0, no rescan). The real switch is promoting the shadow abstract-claim rules — live routing screens 0 of 165 | `analysis/recall_pregate/REPORT.md` |
+| 8 + 9 | Shadowing `curated-observatory` would drop 908 extracted works — keep it live. DOI-twin audit over all 9,105 admitted works: exactly the known 30. `work_id_in` primitive committed; both specs prepared as patches only | `analysis/stage2_rules_2026-09/REPORT.md` |
+| 10 | DOI-issue sheet built, **private** (only your account): <https://docs.google.com/spreadsheets/d/1THZn3lSpP-IGcMcKtIHz7ZIt4ReeGn1gFvZZaXiotb4/edit> — 112 issues, 149 rows | `analysis/mo_observatory/observatory_doi_issues.csv` |
+| 11, 12 | No-replication-DOI note written; `report.html` regenerated with the 26 FLoRA items and corrected numbers (local, not published) | `analysis/mo_observatory/` |
+| — | `flex_unavailable` 429 now falls back to standard at once (`5001d4e`) | — |
+
+**Decisions for Lukas** (nothing is blocked on them locally):
+1. **Push?** `main` is ahead of origin with the export. Pushing makes the new CSV what the
+   sync imports once it is unblocked — its removal share is 16.3%, over the sync's 10% cap.
+2. **Unblock the sync** (re-baseline) and approve `csv_to_db.py --retire` + the
+   `retired_records` table (archive-then-delete; dry-run default). Push the flora-validation branch.
+3. **Declines drop correct rows.** The redo turned ~4% of works (pilot: 6/150) from a correct
+   resolved link into `target_pending`; the export retired 175 target_pending rows. Option: a
+   redo rule that keeps the previous resolved verdict when the new run only declines (old
+   verdict rows are still in the store, so this can be applied retroactively).
+4. Not reopened, same sibling risk: `llm_cited_candidates` (263 rows), `llm_fulltext` (75):
+   `--redo-status llm_cited_candidates,llm_fulltext`.
+5. Promote `replication-claim-text`/`-residual` (step 7) and/or apply
+   `analysis/stage2_rules_2026-09/01-add-shadow-specs.patch` at the next deliberate route.
+6. Mixed-vs-success semantics with Dan; OSF prereg-only projects → prospective quarantine
+   or `not_a_replication`?
+7. Publish the shared caches (`.venv/bin/python -m shared.cache_sync --push`) — not done.
+8. The sheet is unshared; share it and send the email yourself.
+
+Gmail / Google Calendar / Google Drive connectors need authorising in claude.ai settings if
+you want them used; this session could not (the sheet was made with the `gws` CLI).
+
+---
+
 ## Next steps (in order)
 
 Rules that apply to every step that spends: sandbox first
