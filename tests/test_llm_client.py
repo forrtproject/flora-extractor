@@ -552,6 +552,30 @@ def test_target_prompt_caches_only_shared_rules_on_luna(monkeypatch, model):
     assert "prompt_cache_options" not in older_request
 
 
+def test_screen_prompt_caches_shared_rules_before_paper_on_luna(monkeypatch):
+    _openai_flex_env(monkeypatch, use_flex=False)
+    client = MagicMock()
+    client.chat.completions.create.return_value = _resp('{"ok": true}')
+    prefixes = []
+
+    for title, abstract in (("First title", "First abstract"),
+                            ("Second title", "Second abstract")):
+        prompt = llm.build_classify_prompt(title, abstract)
+        with patch("openai.OpenAI", return_value=client):
+            assert llm.call_openai(prompt, model="gpt-6-luna",
+                                   reasoning_effort="low")[0] == {"ok": True}
+        request = client.chat.completions.create.call_args.kwargs
+        parts = request["messages"][0]["content"]
+        assert request["prompt_cache_options"] == {"mode": "explicit"}
+        assert parts[0]["prompt_cache_breakpoint"] == {"mode": "explicit"}
+        assert parts[0]["text"] + parts[1]["text"] == prompt
+        assert parts[0]["text"].endswith("\nTitle: ")
+        assert parts[1]["text"].startswith(f"{title}\n\nAbstract: {abstract}")
+        prefixes.append(parts[0]["text"])
+
+    assert prefixes[0] == prefixes[1]
+
+
 @pytest.mark.parametrize("builder_name", ["build_outcome_prompt",
                                          "build_repro_outcome_prompt"])
 @pytest.mark.parametrize("fulltext", [False, True])
@@ -862,12 +886,11 @@ def test_a_gemini_voter_is_sent_its_effort_rather_than_left_to_the_default(monke
     assert posts[0]["generationConfig"]["thinkingConfig"]["thinkingLevel"] == "minimal"
 
 
-def test_the_production_voter_pair_is_the_evaluated_configuration():
-    """The constants pin what the screen was EVALUATED at (2026-08-13 eval: DeepSeek
-    at effort "none" discarded 7 settled positives, at "low" it matched the incumbent
-    — the effort is load-bearing, not a tunable)."""
+def test_the_production_voter_pair_and_efforts_are_pinned():
+    """The DeepSeek effort is load-bearing: at "none" it discarded 7 settled
+    positives in the 2026-08-13 evaluation; at "low" it matched the incumbent."""
     assert llm.SCREENING_MODEL_1 == "deepseek/deepseek-v4-flash"
-    assert llm.SCREENING_MODEL_2 == "gpt-5.4-mini"
+    assert llm.SCREENING_MODEL_2 == "gpt-6-luna"
     assert (llm.SCREENING_EFFORT_1, llm.SCREENING_EFFORT_2) == ("low", "low")
     assert [p for p, _m, _e, _eff in llm.screen_voters()] == ["openrouter", "openai"]
 

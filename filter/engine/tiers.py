@@ -110,13 +110,15 @@ log = logging.getLogger(__name__)
 # cost is read from cache/token_usage.json afterwards. They live here, next to the
 # estimate() that is their only reader, and move only when a price or a voter model
 # does: update them in the same commit as the change they describe.
+# The expensive tier uses approximate standard rates for DeepSeek V4 Flash on
+# OpenRouter plus GPT-6 Luna; flex and prompt-cache savings are not assumed.
 TIER_PRICE_PER_1K_IN = {
     "screen_cheap":     0.00014,
-    "screen_expensive": 0.00055,
+    "screen_expensive": 0.00017,
 }
 TIER_PRICE_PER_1K_OUT = {
     "screen_cheap":     0.00045,
-    "screen_expensive": 0.00450,
+    "screen_expensive": 0.00067,
 }
 # Output tokens one row costs a tier. The cheap tier answers with one field; the
 # expensive tier returns the five-field v3.3 schema with a quote and a reasoning.

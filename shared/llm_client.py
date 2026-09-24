@@ -537,6 +537,12 @@ def call_openai(prompt: str, model: str,
     if model.startswith(("gpt-5.6", "gpt-6-")):
         if prompt.startswith(EVIDENCE_POLICY + _TARGET_TASK):
             marker = "\n\nPAPER\n\n"
+        elif prompt.startswith(
+            "You are screening papers for a database of replication and reproduction studies."
+        ):
+            # The title and abstract change on every screen; the preceding rules
+            # are shared by every paper and exceed Luna's 1,024-token minimum.
+            marker = "\nTitle: "
         elif prompt.startswith((
             "You are coding the outcome of a replication study for a database of replication studies.",
             "You are coding the outcome of a reproduction study for a database of reproduction studies.",
@@ -1244,10 +1250,9 @@ def _clean_study_numbers(value) -> str:
 
 # Q1's two voters, in call order. Both are required: with one provider the screen
 # cannot tell agreement from a lone opinion, so run_extract refuses to start.
-# Voter 2 is gpt-5.4-mini on OpenAI direct: on the v3.2 gate sweep this pair
-# discards 89% of adjudicated hard negatives with zero settled misses, against 73%
-# for Ministral via OpenRouter on the same gate. A model id containing "/" is an
-# OpenRouter id, so swapping the env var reroutes the call without a code change.
+# Voter 2 is GPT-6 Luna on OpenAI direct. The earlier gpt-5.4-mini pair was
+# evaluated on the v3.2 gate sweep; those results do not establish Luna's recall.
+# A model id containing "/" routes to OpenRouter through provider_for().
 SCREEN_CLASSIFICATIONS = ("replication", "reproduction", "both", "none", "unclear")
 SCREEN_QUALIFYING      = ("replication", "reproduction", "both")
 

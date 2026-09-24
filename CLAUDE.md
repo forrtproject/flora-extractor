@@ -234,7 +234,7 @@ carry it and the export still partitions them into `data/prescreen_discard.csv`.
 screen_expensive`): two voters — `SCREENING_MODEL_1`
 (default `deepseek/deepseek-v4-flash` at effort `low`; the effort is load-bearing —
 at `none` the same model discarded 7 settled positives) and `SCREENING_MODEL_2`
-(default `gpt-5.4-mini`);
+(default `gpt-6-luna`);
 each id routes to its own provider through `provider_for()` — each answer the validated v3.2
 schema: `classification` ∈ {replication, reproduction, both, none, unclear}, boolean
 `confident`, `categories` (11-value enum), `evidence_quote`, `reasoning`. Prompt:
@@ -245,8 +245,9 @@ gate change: `analysis/screening_eval/cheap_voter_2026-08.md`; earlier generatio
 are under `archive/analysis/screening_eval/`).
 
 **The gate is `screen_gate()`, defined once** (G-unanimous — no single voter
-discards alone; measured with the shipped pair at 1 settled miss and 86–90%
-hard-negative discard across two runs):
+discards alone; the earlier DeepSeek + `gpt-5.4-mini` pair measured 1 settled
+miss and 86–90% hard-negative discard across two runs. The `gpt-6-luna` pair
+has not yet been scored against that evaluation set):
 
 - **discard** — all votes `none`, at any confidence → `not_a_replication`.
 - **proceed** — everything else, including confident splits and a lone confident
@@ -269,7 +270,8 @@ stay cache hits. Entries from the pair-keyed era are split on first read
 the model AT the effort the joint era ran, `_JOINT_ERA_EFFORTS`). A voter or prompt
 change still mints a new SCREENING GENERATION, which is what makes those works
 claimable again — and, once they are re-screened, what puts them back in the extract
-tier's worklist.
+tier's worklist. For Luna, the OpenAI request marks the shared screening rules as an
+explicit prompt-cache prefix; the title and abstract follow the breakpoint.
 
 The verdict reaches Stage 3 on the worklist row, in `SCREEN_COLS`:
 `screen_verdict`, `screen_record_type`, `screen_categories`, `screen_votes`,
