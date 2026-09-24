@@ -130,6 +130,11 @@ SERPAPI_KEYS: list[str] = list(dict.fromkeys(
     ] if k
 ))
 SERPAPI_KEY = SERPAPI_KEYS[0] if SERPAPI_KEYS else ""  # backward-compat
+# Serper.dev keys (comma-separated), rotated on refusal. The Google Scholar tier asks
+# Serper when any key is set and SerpAPI otherwise: ~$1 per 1,000 searches against
+# SerpAPI's $75 a month for 5,000 (prices read 2026-09-24).
+SERPER_API_KEYS: list[str] = list(dict.fromkeys(
+    k.strip() for k in os.getenv("SERPER_API_KEYS", "").split(",") if k.strip()))
 
 # Dynamic Gemini key loading — add GEMINI_API_KEY_N to .env for any N ≥ 2.
 # Keys must be sequential (2, 3, 4, …); loading stops at the first missing slot.

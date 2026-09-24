@@ -25,7 +25,8 @@ Acquisition order (the tier numbers acquire_pdf's comments use):
       gated on a two-way title match before anything is fetched
   8.  Landing-page scraper over every index's landing pages and the DOI's own
       publisher page (`citation_pdf_url` first, then link patterns)
-  9.  SerpAPI / Google Scholar           (consumes quota; skipped without a key)
+  9.  Google Scholar via Serper.dev or SerpAPI (paid per search; skipped without a
+      key), each hit gated on its own title before its PDF link is fetched
   10. Playwright headless Chromium       (skipped when no browser build is installed)
   11. The row's own page, as HTML
 
@@ -73,7 +74,7 @@ import requests
 
 from .config import (
     CORE_API_KEY, CROSSREF_RATE_SEC, OA_CACHE_DIR, OA_XML_CACHE_DIR, OPENALEX_API_KEYS,
-    OSF_TOKEN, PDF_CACHE_DIR, RESEARCHER_EMAIL, SERPAPI_KEY, SERPAPI_KEYS, log,
+    OSF_TOKEN, PDF_CACHE_DIR, RESEARCHER_EMAIL, SERPAPI_KEYS, SERPER_API_KEYS, log,
 )
 
 from .openalex_keys import (current_index, headers as oa_headers,
@@ -2169,60 +2170,85 @@ def scrape_pdf_from_landing_page(landing_url: str) -> list[str]:
         return []
 
 
-# ── SerpAPI ───────────────────────────────────────────────────────────────────
+# ── Google Scholar (Serper.dev, else SerpAPI) ─────────────────────────────────
+#
+# A Scholar hit is only as good as its match to the row. Measured 2026-09-24 over the
+# 81 works of a 100-work sample that every other tier missed: the documents accepted by
+# download_pdf's title check alone were the wrong paper for about half of them, four of
+# them the ORIGINAL the row replicates — an OSF title such as "Replication of Hajcak &
+# Foti (2008, PS, Study 1)" carries the original's authors, and their paper passes.
+# Gating each result on its own Scholar title (_scholar_title_matches) kept 8 of those
+# works, 7 of them right (the eighth a CV that lists the paper). A title query found 24
+# accepted documents against the quoted DOI's 7, so it is asked first.
 
-def get_serpapi_pdf_url(doi: str, title: str = "") -> Optional[str]:
+# Share of the row title's tokens the hit's title must contain. One direction only:
+# SerpAPI truncates long hit titles, and a hit that ADDS words is gated by the
+# replication-stem rule instead.
+_SCHOLAR_TITLE_COVERAGE = 0.75
+
+
+def _scholar_title_matches(row_title: str, hit_title: str) -> bool:
+    """True when a Scholar hit's title names the row's paper, not a neighbour of it."""
+    row = re.sub(r"<[^>]+>", "", html.unescape(row_title or ""))
+    hit = re.sub(r"<[^>]+>", "", html.unescape(hit_title or ""))
+    if len(row.strip()) < _MIN_SEARCH_TITLE_CHARS:
+        return False
+    if _REPLICATION_STEM.search(row) and not _REPLICATION_STEM.search(hit):
+        return False
+    return token_coverage(row, hit) >= _SCHOLAR_TITLE_COVERAGE
+
+
+def _scholar_search(query: str) -> dict:
+    """The raw Scholar response for *query*, cached per provider and query.
+
+    Serper when a key is set, SerpAPI otherwise. Keys rotate on refusal. Raises
+    DocumentSourceUnavailable when no key got an answer — a spent quota is not an
+    empty result, and caching it would hide the paper for good.
     """
-    Search Google Scholar via SerpAPI for a PDF link.
-    Rotates through SERPAPI_KEYS on 429 or quota errors.
-    Returns first PDF URL found, or None.
-    """
-    if not SERPAPI_KEYS:
-        return None
-
-    query = f'"{doi}"' if doi else f'"{title}"'
-    cf    = OA_CACHE_DIR / f"serp_{cache_key(query)}.json"
-
+    provider = "serper" if SERPER_API_KEYS else "serpapi"
+    cf = OA_CACHE_DIR / f"scholar_{provider}_{cache_key(query)}.json"
     if cf.exists():
         with cf.open(encoding="utf-8") as fh:
-            results = json.load(fh)
-    else:
-        results = None
-        for key_idx, api_key in enumerate(SERPAPI_KEYS):
-            key_label = f"key {key_idx+1}/{len(SERPAPI_KEYS)}"
-            try:
-                r = requests.get(
-                    "https://serpapi.com/search",
-                    params={"engine": "google_scholar", "q": query,
-                            "api_key": api_key, "num": "5"},
-                    timeout=20,
-                )
-                if r.status_code == 429:
-                    log.warning("SerpAPI quota exhausted on %s", key_label)
-                    continue
-                if r.status_code != 200:
-                    log.warning("SerpAPI HTTP %s on %s", r.status_code, key_label)
-                    continue
-                body = r.json()
-                # quota error returned as 200 with error field
-                if "error" in body and "quota" in body["error"].lower():
-                    log.warning("SerpAPI quota error on %s: %s", key_label, body["error"])
-                    continue
-                results = body
-                break
-            except Exception as e:
-                log.warning("SerpAPI exception on %s: %s", key_label, e)
+            return json.load(fh)
+    for api_key in (SERPER_API_KEYS or SERPAPI_KEYS):
+        try:
+            if provider == "serper":
+                r = requests.post("https://google.serper.dev/scholar", timeout=30,
+                                  headers={"X-API-KEY": api_key},
+                                  json={"q": query})
+            else:
+                r = requests.get("https://serpapi.com/search", timeout=30,
+                                 params={"engine": "google_scholar", "q": query,
+                                         "api_key": api_key, "num": "10"})
+            body = r.json() if r.status_code == 200 else {}
+        except Exception as e:
+            log.warning("Scholar (%s) request failed: %s", provider, e)
+            continue
+        # SerpAPI answers an empty search with 200 and an `error` naming no results.
+        error = str(body.get("error") or "")
+        if r.status_code == 200 and (not error or "returned any results" in error):
+            write_json(cf, body)
+            return body
+        log.warning("Scholar (%s) refused a key: HTTP %s %s", provider, r.status_code,
+                    error[:80])
+    raise DocumentSourceUnavailable(f"Scholar ({provider}): no key got an answer")
 
-        if results is None:
-            return None
-        write_json(cf, results)
 
-    for organic in results.get("organic_results", []):
-        for res in organic.get("resources", []):
-            link = res.get("link", "")
-            if link.lower().endswith(".pdf") or "pdf" in link.lower():
-                return link
-    return None
+def scholar_pdf_urls(query: str, row_title: str) -> list[str]:
+    """PDF links of the Scholar hits for *query* whose titles match *row_title*.
+
+    ResearchGate links are left out: its terms forbid automated access, and it
+    answers scripted clients with a challenge page. Raises DocumentSourceUnavailable
+    when Scholar did not answer.
+    """
+    body = _scholar_search(query)
+    urls: list[str] = []
+    for hit in (body.get("organic") or body.get("organic_results") or []):
+        if not _scholar_title_matches(row_title, str(hit.get("title") or "")):
+            continue
+        links = [hit.get("pdfUrl")] + [res.get("link") for res in (hit.get("resources") or [])]
+        urls += [u for u in links if u and u.startswith("http") and "researchgate.net" not in u]
+    return list(dict.fromkeys(urls))
 
 
 # ── Playwright headless browser ───────────────────────────────────────────────
@@ -3092,7 +3118,7 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
         if not (ss and _try(ss, "semanticscholar")):
             _failed("semanticscholar")
 
-    # Tier 6 — CORE. No key is a SKIP, not a failure, like SerpAPI's below.
+    # Tier 6 — CORE. No key is a SKIP, not a failure, like Scholar's below.
     if not dl["success"] and doi_r and CORE_API_KEY and not _held("core"):
         try:
             core = get_core_pdf_url(doi_r)
@@ -3244,15 +3270,25 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
         if not won and need_unpaywall:
             _failed("landing")
 
-    # Tier 9 — SerpAPI (quota-limited, last HTTP resort before browser)
-    # No key is a SKIP, not a failure: a key added tomorrow must be used tomorrow.
-    if not dl["success"] and not _held("serpapi"):
-        if not SERPAPI_KEYS:
-            log.debug("  [%s] no SerpAPI key — tier skipped, not recorded", doi_r)
-        else:
-            serp = get_serpapi_pdf_url(doi_r, title)
-            if not (serp and _try(serp, "serpapi")):
-                _failed("serpapi")
+    # Tier 9 — Google Scholar (paid per search, last HTTP resort before the browser).
+    # The title first, the quoted DOI only when the title's links gave nothing. No key,
+    # or a title too short for the result gate, is a SKIP, not a failure: a key added
+    # tomorrow must be used tomorrow, and a title filled in tomorrow reaches it then.
+    if (not dl["success"] and not _held("scholar")
+            and (SERPER_API_KEYS or SERPAPI_KEYS)
+            and len(title.strip()) >= _MIN_SEARCH_TITLE_CHARS):
+        outage = False
+        for query in [title.strip()] + ([f'"{doi_r}"'] if doi_r else []):
+            try:
+                urls = scholar_pdf_urls(query, title)
+            except DocumentSourceUnavailable as exc:
+                log.info("  [%s] Scholar unavailable: %s", doi_r or url_r, exc)
+                outage = True
+                break
+            if any(_try(url, "scholar") for url in urls[:_MAX_LANDING_CANDIDATES]):
+                break
+        if not dl["success"] and not (outage or _only_transient("scholar")):
+            _failed("scholar")
 
     # Tier 10 — Playwright headless Chromium
     if not dl["success"] and not _held("playwright"):

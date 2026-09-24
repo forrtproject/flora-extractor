@@ -46,7 +46,7 @@ _ALL_TIERS = [
     "get_openalex_locations", "get_datacite_urls", "get_all_unpaywall_pdf_urls",
     "get_semanticscholar_pdf_url", "get_core_pdf_url", "get_europepmc_pmcid",
     "get_europepmc_fulltext",
-    "scrape_pdf_from_landing_page", "get_serpapi_pdf_url",
+    "scrape_pdf_from_landing_page", "scholar_pdf_urls",
     "list_osf_files", "crossref_reviewed_doi", "crossref_title_matches",
     "crossref_title", "crossref_pdf_links", "crossref_parent_doi",
     "datacite_related_dois", "get_zenodo_pdf_urls", "pmc_oa_pdf_url",
@@ -57,7 +57,10 @@ _ALL_TIERS = [
 _LIST_TIERS = {"get_all_unpaywall_pdf_urls", "get_openalex_locations",
                "get_datacite_urls", "scrape_pdf_from_landing_page",
                "list_osf_files", "crossref_title_matches", "crossref_pdf_links",
-               "datacite_related_dois", "get_zenodo_pdf_urls"}
+               "datacite_related_dois", "get_zenodo_pdf_urls", "scholar_pdf_urls"}
+
+# Long enough to reach the Scholar tier, which skips titles too short to gate on.
+_LONG_TITLE = "A Direct Replication of the Classic Ego Depletion Paradigm"
 _STRING_TIERS = {"crossref_reviewed_doi", "crossref_title", "crossref_parent_doi",
                  "pmc_oa_pdf_url"}
 
@@ -128,9 +131,9 @@ def _run_all_tiers_missing(doi: str, **tier_returns):
         with patch.object(ps, "get_pdf_via_playwright",
                           return_value=_NO_PLAYWRIGHT) as pw, \
              patch.object(ps, "download_pdf", return_value=_NO_PDF), \
-             patch.object(ps, "SERPAPI_KEYS", ["k"]), \
+             patch.object(ps, "SERPER_API_KEYS", ["k"]), \
              patch.object(ps, "CORE_API_KEY", "k"):
-            out = ps.acquire_pdf(doi, "A Title")
+            out = ps.acquire_pdf(doi, _LONG_TITLE)
     finally:
         for p in patchers.values():
             p.stop()
@@ -146,13 +149,13 @@ def test_a_tier_that_failed_inside_the_ttl_is_not_re_probed():
     assert out["pdf_ok"] is False
     recorded = _retry_log(doi)
     assert {"openalex_oa", "unpaywall_pdf", "semanticscholar", "core",
-            "europepmc", "landing", "serpapi", "playwright"} <= set(recorded)
+            "europepmc", "landing", "scholar", "playwright"} <= set(recorded)
 
     out2, mocks2 = _run_all_tiers_missing(doi)
     assert out2["pdf_ok"] is False
     for name in ("get_openalex_locations", "get_all_unpaywall_pdf_urls",
                  "get_semanticscholar_pdf_url", "get_core_pdf_url",
-                 "get_europepmc_pmcid", "get_serpapi_pdf_url",
+                 "get_europepmc_pmcid", "scholar_pdf_urls",
                  "get_pdf_via_playwright"):
         mocks2[name].assert_not_called()
 
@@ -164,7 +167,7 @@ def test_a_tier_is_re_probed_once_the_ttl_lapses():
     stale = _ago(ps.PDF_RETRY_AFTER_DAYS + 1)
     _write_retry_log(doi, {tier: stale for tier in
                            ("openalex_oa", "unpaywall_pdf", "semanticscholar", "core",
-                            "europepmc", "landing", "serpapi", "playwright")})
+                            "europepmc", "landing", "scholar", "playwright")})
 
     _, mocks = _run_all_tiers_missing(doi)
     mocks["get_openalex_locations"].assert_called_once()
@@ -184,15 +187,16 @@ def test_a_tier_skipped_for_a_missing_key_is_not_recorded_as_failed():
                                         "reason": "playwright_unavailable"}), \
              patch.object(ps, "download_pdf", return_value=_NO_PDF), \
              patch.object(ps, "SERPAPI_KEYS", []), \
+             patch.object(ps, "SERPER_API_KEYS", []), \
              patch.object(ps, "CORE_API_KEY", ""):
-            ps.acquire_pdf(doi, "A Title")
+            ps.acquire_pdf(doi, _LONG_TITLE)
     finally:
         for p in patchers.values():
             p.stop()
 
     recorded = _retry_log(doi)
-    assert not {"serpapi", "core", "playwright"} & set(recorded)
-    started["get_serpapi_pdf_url"].assert_not_called()
+    assert not {"scholar", "core", "playwright"} & set(recorded)
+    started["scholar_pdf_urls"].assert_not_called()
     started["get_core_pdf_url"].assert_not_called()
     assert "semanticscholar" in recorded   # the tiers that were actually asked ARE recorded
 
@@ -381,7 +385,7 @@ def test_openalex_xml_with_content_skips_the_download_tiers():
     dl.assert_not_called()
     pw.assert_not_called()
     for name in ("get_arxiv_pdf_url", "get_all_unpaywall_pdf_urls",
-                 "get_semanticscholar_pdf_url", "get_serpapi_pdf_url"):
+                 "get_semanticscholar_pdf_url", "scholar_pdf_urls"):
         started[name].assert_not_called()
 
 
@@ -1550,3 +1554,68 @@ def test_another_dois_document_is_not_re_judged_against_the_rows_title(source):
         out = ps.acquire_pdf(doi, "Figure 6")
     check.assert_not_called()
     assert out["pdf_source"] == source and path.exists()
+
+
+# ── Google Scholar ────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("row, hit, ok", [
+    # The measured failure: the original's own paper under a replication's title.
+    ("Replication of Hajcak &amp; Foti (2008, PS, Study 1) in a new sample",
+     "Differentiating neural responses to emotional pictures: evidence from PCA", False),
+    ("The Development of Conservation in Aboriginal Children: A Replication Study",
+     "The development of conservation in Aboriginal children", False),
+    # A truncated hit title still names the row's paper.
+    ("Giving and taking in dictator games – differences by gender? A replication study",
+     "Giving and taking in dictator games–differences by gender? A replication", True),
+    ("Replication Data", "Data replication strategies in wide-area systems", False),
+])
+def test_the_scholar_gate_reads_the_hits_own_title(row, hit, ok):
+    assert ps._scholar_title_matches(row, hit) is ok
+
+
+def test_scholar_links_come_only_from_gated_hits_and_never_from_researchgate(
+        _oa_cache_in_tmp, monkeypatch):
+    row = "The future failed: no evidence for precognition in a large scale replication"
+    body = {"organic": [
+        {"title": "Feeling the future: experimental evidence for anomalous retroactive "
+                  "influences", "pdfUrl": "https://orig/bem.pdf"},
+        {"title": "The future failed: No evidence for precognition in a large scale "
+                  "replication attempt of Bem (2011)", "pdfUrl": "https://unibe/paper.pdf",
+         "resources": [{"link": "https://www.researchgate.net/x.pdf"}]},
+    ]}
+    monkeypatch.setattr(ps, "SERPER_API_KEYS", ["k1", "k2"])
+    calls = []
+
+    def _post(url, **kwargs):
+        calls.append(kwargs["headers"]["X-API-KEY"])
+        return _Resp(403 if len(calls) == 1 else 200, json.dumps(body).encode())
+
+    with patch.object(ps.requests, "post", side_effect=_post):
+        assert ps.scholar_pdf_urls(row, row) == ["https://unibe/paper.pdf"]
+    assert calls == ["k1", "k2"]          # a refused key rotates to the next
+    with patch.object(ps.requests, "post", return_value=_Resp(429)):
+        with pytest.raises(ps.DocumentSourceUnavailable):
+            ps.scholar_pdf_urls("another query", row)
+
+
+def test_the_scholar_tier_asks_the_title_before_the_doi():
+    doi = "10.1037/cns0000342"
+    patchers = _mock_all_tiers()
+    started = {name: p.start() for name, p in patchers.items()}
+    started["scholar_pdf_urls"].side_effect = (
+        lambda q, t: ["https://x/p.pdf"] if q.startswith('"') else [])
+    try:
+        with patch.object(ps, "download_pdf",
+                          side_effect=lambda url, **k: (
+                              {"success": True, "path": "/tmp/p.pdf", "source": "d",
+                               "reason": ""} if url == "https://x/p.pdf" else _NO_PDF)), \
+             patch.object(ps, "get_pdf_via_playwright", return_value=_NO_PLAYWRIGHT), \
+             patch.object(ps, "_write_provenance"), \
+             patch.object(ps, "SERPER_API_KEYS", ["k"]):
+            out = ps.acquire_pdf(doi, _LONG_TITLE)
+    finally:
+        for p in patchers.values():
+            p.stop()
+    queries = [c.args[0] for c in started["scholar_pdf_urls"].call_args_list]
+    assert queries == [_LONG_TITLE, f'"{doi}"']
+    assert out["pdf_source"] == "scholar"
