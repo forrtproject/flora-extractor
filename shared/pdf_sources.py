@@ -942,7 +942,18 @@ _OSF_BUNDLED_SUPPLEMENT = re.compile(
 _OSF_NAME_EXCLUDE = re.compile(
     r"(?i)supplement|material|measure|instruction|question|transcript|codebook"
     r"|wrangl|correspondence|ethic|qualtrics|survey|analys|appendix|syntax"
-    r"|\bdata\b|dataset|_data|\blog\b")
+    r"|\bdata\b|dataset|_data|\blog\b"
+    # The review round's paperwork and the reporting checklists. Each is uploaded
+    # AFTER the manuscript it accompanies, so the recency order in rank_osf_files
+    # would put it first. 185 of the 2,833 file names in the 714 campaign projects
+    # match these words, 1 of them excluded by the words above. "Response" is
+    # matched only in the review sense: a bare "response" is in paper titles
+    # ("Stress Response Profiles in ...").
+    r"|respon[sd]\w*.to.(?:the.)?(?:review|decision|comment|editor)"
+    r"|response.?letter|comments?.?(?:&|and).?respon"
+    r"|reply.to.(?:the.)?decision|reply.to.[\w-]{0,20}reviews?"
+    r"|cover.?letter|decision.?letter|reviewer|rebuttal|checklist"
+    r"|transparen\w*[-_ ]report")
 # A Stage-1 Registered Report, a preregistration snapshot or an analysis plan is the
 # manuscript BEFORE the study ran — its "results" are simulated placeholders (measured
 # 2026-08-09: the 10.17605/osf.io/4jykd pick opens with "Abstract, method, and
@@ -973,6 +984,55 @@ _OSF_NAME_PREREG = re.compile(
 # Filename tokens covering this much of the row title make the file the paper's own
 # name, whatever else the name says.
 _OSF_TITLE_OVERLAP_MIN = 0.5
+
+# A filename does not always say what the file is, so the downloaded file's first page
+# is read too. Measured 2026-09-24 on the first pages of 182 files that were a top
+# pick under the name-count or the recency ranking:
+#   Stage 1 marker ("[Stage 1]", "Stage 1 Registered Report") in 24 title blocks, at
+#     character 0-182, every one a Stage 1 manuscript or preprint; project yu25a's
+#     top pick by name was one ("... Registered Report of Olivola and Shafir (2013)
+#     [Stage 1]"), with the completed thesis in the same listing.
+#   Stage 2 reports mention Stage 1 only in the body, at character 1,966 and 1,995,
+#     or carry "Stage 2" in the title block — neither is flagged.
+#   8 were Qualtrics survey exports ("Survey Flow" or "Qualtrics Survey Software"
+#     right after the file's own title), several named like the paper and uploaded
+#     the same day as it.
+# The window is 1,000 characters: five times the latest plan marker, half the
+# earliest Stage 2 body mention.
+_STAGE1_FRONT = re.compile(
+    r"(?i)\[\s*stage[\s-]*1\s*\]|stage[\s-]*1\s+registered\s+report"
+    r"|registered\s+report\W{0,5}stage[\s-]*1\b")
+_STAGE2_FRONT = re.compile(r"(?i)stage[\s-]*2\b")
+_SURVEY_FRONT = re.compile(r"Survey Flow|Qualtrics Survey Software")
+_FRONT_CHARS = 1_000
+
+
+def osf_front_page_kind(path: Path) -> str:
+    """"plan" for a Stage 1 Registered Report, "survey" for a survey export, else "".
+
+    Only the title block is read for the plan: a Stage 2 report restates its Stage 1
+    history in the body, and says "Stage 2" where the plan says "Stage 1".
+    """
+    try:
+        content = path.read_bytes()
+    except OSError:
+        return ""
+    if path.suffix == ".docx":
+        from .pdf_parsing import docx_text   # lazy: pdf_parsing pulls in grobid
+        text = docx_text(content)
+    else:
+        try:
+            import io
+            from pdfminer.high_level import extract_text
+            text = extract_text(io.BytesIO(content), maxpages=1) or ""
+        except Exception:
+            return ""
+    front = " ".join(text.split())[:_FRONT_CHARS]
+    if _SURVEY_FRONT.search(front):
+        return "survey"
+    if _STAGE1_FRONT.search(front) and not _STAGE2_FRONT.search(front):
+        return "plan"
+    return ""
 
 
 def _osf_headers() -> dict:
@@ -1053,7 +1113,11 @@ def _walk_osf_storage(url: str, budget: list[int], incomplete: list[bool],
                 if download:
                     files.append({"name": name,
                                   "size": int(attrs.get("size") or 0),
-                                  "download": download})
+                                  "download": download,
+                                  # The latest upload: a new version of a file moves
+                                  # date_modified, and date_created is its first.
+                                  "modified": str(attrs.get("date_modified")
+                                                  or attrs.get("date_created") or "")})
             elif kind == "folder" and budget[0] > 0:
                 related = (((entry.get("relationships") or {}).get("files") or {})
                            .get("links") or {}).get("related") or {}
@@ -1076,7 +1140,8 @@ def _walk_osf_storage(url: str, budget: list[int], incomplete: list[bool],
 
 
 def list_osf_files(guid: str) -> list[dict]:
-    """Every .pdf/.docx in *guid*'s OSF storage: [{"name", "size", "download"}].
+    """Every .pdf/.docx in *guid*'s OSF storage: [{"name", "size", "download",
+    "modified"}].
 
     Cached per guid, including a definitive empty listing — but only a COMPLETE
     listing, and only for PDF_RETRY_AFTER_DAYS. OSF storage is mutable by design (the
@@ -1093,10 +1158,13 @@ def list_osf_files(guid: str) -> list[dict]:
             cached = json.loads(cf.read_text(encoding="utf-8"))
         except Exception:
             cached = None
-        # No fetched_at at all is an entry written before the expiry existed: stale.
-        if isinstance(cached, dict) and _retry_suppressed(
-                {"listing": str(cached.get("fetched_at") or "")}, "listing",
-                PDF_RETRY_AFTER_DAYS):
+        # An entry with no fetched_at, or with a file that carries no "modified"
+        # field, was written without what the ranking reads: stale.
+        if (isinstance(cached, dict)
+                and all("modified" in f for f in cached.get("files") or [])
+                and _retry_suppressed(
+                    {"listing": str(cached.get("fetched_at") or "")}, "listing",
+                    PDF_RETRY_AFTER_DAYS)):
             return list(cached.get("files") or [])
 
     budget = [_OSF_MAX_LIST_REQUESTS]
@@ -1129,38 +1197,70 @@ def list_osf_files(guid: str) -> list[dict]:
     return documents
 
 
+def _upload_day(entry: dict) -> int:
+    """The day *entry* was last uploaded, as an ordinal; 0 when OSF gave no date."""
+    try:
+        return datetime.fromisoformat(str(entry.get("modified") or "")[:10]).toordinal()
+    except ValueError:
+        return 0
+
+
 def rank_osf_files(files: list[dict], title: str = "") -> list[dict]:
     """*files*, best manuscript candidate first, with the non-manuscripts dropped.
 
     A name that hits an exclusion and carries fewer than two positive signals is not
     offered at all: the title check downstream is the backstop, and a supplement to the
-    right paper passes it. Ties break to PDF over Word, then to the larger file.
+    right paper passes it. The order is: plan-named files last. Within each half come
+    first the ELIGIBLE names (any manuscript word, or the row's title), then the names
+    an exclusion hit but two manuscript words rescued, both newest upload day first;
+    then every other name. Ties break to PDF over Word, then to the larger file.
+
+    Eligibility is a yes/no, not a count, because a count rewards verbose names:
+    "PCIRR-...-Registered-Report-main-manuscript.docx" carries three manuscript words
+    and is the Stage 1 plan, "...-replication-thesis.pdf" carries one and is the
+    completed study, uploaded three months later (OSF project yu25a). A project's
+    final report is uploaded after its drafts and plans, so among eligible names
+    recency is the signal. Measured 2026-09-24 over the 731 works whose document
+    came from OSF storage: the top pick changes for 104, mostly from a draft or a
+    Stage 1 manuscript to the published print, a later preprint version or the
+    thesis. Recency outranks format: 14 of the 731 top picks are a Word file newer
+    than an eligible PDF; of the three read, two were the later version of the paper
+    and one a data summary (project tyjmq).
+    Recency does not order the other names: among them it picked posters, figure
+    files and electronic supplements over the paper (projects 3qujr, 49xz3, 69aex,
+    6jdg3), which size had ranked below it. The day, not the timestamp, is compared:
+    in 210 of the 731 works the top two candidates were uploaded the same day, and
+    those fall through to format and size.
     """
     scored: list[tuple] = []
     for entry in files:
         name = str(entry.get("name") or "")
         stem = re.sub(r"[_\-.,&]+", " ", name.rsplit(".", 1)[0])
-        score = len(set(m.group(0).lower()
-                        for m in _OSF_NAME_POSITIVE.finditer(name)))
+        positives = len(set(m.group(0).lower()
+                            for m in _OSF_NAME_POSITIVE.finditer(name)))
         if _name_is_excluded(name):
             # One positive word does not survive an exclusion: "final test
             # questions.pdf" carries "final" and is a questionnaire. Two positive
             # signals do — that is a manuscript whose name happens to mention its
-            # analyses. The row's title is deliberately NOT one of them:
-            # "Supplementary materials for <row title>.pdf" carries the whole title
-            # and is the supplement, so the bonus below ranks non-excluded names and
-            # rescues nothing.
-            if score < 2:
+            # analyses — but they rank behind a clean name: "Revised Final Report
+            # Supplementary.docx" is uploaded with "Revised Final Report Main
+            # Manuscript.docx" and is larger. The row's title is deliberately NOT a
+            # signal here: "Supplementary materials for <row title>.pdf" carries the
+            # whole title and is the supplement.
+            if positives < 2:
                 continue
-            score -= 1
-        elif title.strip() and token_coverage(title, stem) >= _OSF_TITLE_OVERLAP_MIN:
-            score += 2
+            group = 1
+        elif positives or (title.strip() and
+                           token_coverage(title, stem) >= _OSF_TITLE_OVERLAP_MIN):
+            group = 0
+        else:
+            group = 2
         is_pdf = name.lower().endswith(".pdf")
         prereg = 1 if _OSF_NAME_PREREG.search(name) else 0
-        scored.append((prereg, -score, 0 if is_pdf else 1,
-                       -int(entry.get("size") or 0), name, entry))
-    scored.sort(key=lambda row: row[:5])
-    return [row[5] for row in scored]
+        scored.append((prereg, group, -_upload_day(entry) if group < 2 else 0,
+                       0 if is_pdf else 1, -int(entry.get("size") or 0), name, entry))
+    scored.sort(key=lambda row: row[:6])
+    return [row[6] for row in scored]
 
 
 # ── HTML as a document ────────────────────────────────────────────────────────
@@ -2649,8 +2749,26 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
             log.info("  [%s] OSF file listing unavailable: %s", doi_r or url_r, exc)
         else:
             ranked = rank_osf_files(osf_files, title)[:_OSF_MAX_DOWNLOADS]
-            if any(_try(entry["download"], "osf_files",
-                        name=str(entry.get("name") or "")) for entry in ranked):
+            plan: "dict | None" = None
+            for entry in ranked:
+                if not _try(entry["download"], "osf_files",
+                            name=str(entry.get("name") or "")):
+                    continue
+                kind = osf_front_page_kind(Path(dl["path"]))
+                if not kind or (kind == "plan" and plan is None
+                                and entry is ranked[-1]):
+                    return _result()
+                # A survey export is never the paper; a plan is kept only when no
+                # candidate below it is. Either has to leave the disk first: every
+                # later download_pdf would otherwise answer from the cache entry it
+                # occupies. Falling back to the plan fetches it a second time.
+                if kind == "plan":
+                    plan = plan or entry
+                _discard_document(doi_r or url_r, Path(dl["path"]))
+                dl = {"success": False, "path": None, "reason": f"osf_{kind}"}
+                pdf_url = pdf_src = pdf_name = ""
+            if plan is not None and _try(plan["download"], "osf_files",
+                                         name=str(plan.get("name") or "")):
                 return _result()
             if not _only_transient("osf_files"):
                 _failed("osf_files")
