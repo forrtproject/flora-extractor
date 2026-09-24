@@ -171,10 +171,13 @@ Never change a column name without updating `schema.py` and notifying all teams.
   | `osf_registration` | The OSF registration form, from the API | `osf_registration_has_content()` — ≥ 1,000 chars of description + form fields |
   | `html_landing` | The row's own page, parsed with lxml | `html_document_has_content()` — ≥ 10,000 chars BEYOND the abstract, or a ≥ 2,000-char reference block |
 
-  Europe PMC is ONE tier with two routes: the JATS full text, which exists for the
-  OA-licensed subset only, and — when that answers 404 — the article page's rendered
-  PDF (`europepmc.org/articles/<PMCID>?pdf=render`). Both are keyed on the PMC id the
-  tier's one search returns, and both share the tier's single retry slot.
+  Europe PMC is ONE tier with three routes: the JATS full text, which exists for the
+  OA-licensed subset only; then the PDF in NIH's PMC Open Access bucket on S3
+  (`pmc_oa_pdf_url()`, `pdf_source = pmc_oa`), which also holds the NIH author
+  manuscripts; then the article page's rendered PDF
+  (`europepmc.org/articles/<PMCID>?pdf=render`), which serves a Cloudflare challenge
+  to scripted clients (measured 2026-09-24). All three are keyed on the PMC id the
+  tier's one search returns, and all three share the tier's single retry slot.
 
   A result that fails its check is no document: it ends the row at
   `no_fulltext_available` and is never cached as a success. Each guard lives in
