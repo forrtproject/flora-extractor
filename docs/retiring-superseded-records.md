@@ -242,3 +242,99 @@ instead of re-keying, and touched records are only flagged either way.
    the `pair_id` of every affected row. Those will show up as `superseded` and be
    re-keyed. Worth running `--check` before and after.
 8. This doc is not yet listed in `docs/README.md`.
+
+## 2026-09-24 check (flora-validation side)
+
+Read-only throughout: REST GETs of the live tables, nothing written.
+
+**Where the import runs.** In flora-validation's web process. `app.py` starts an
+APScheduler job at 02:00 UTC (`run_scheduled` → `extractor_maintenance.run_pipeline`
+→ subprocess `sync_csv.py` → `csv_to_db.run_import`). It downloads
+`raw.githubusercontent.com/forrtproject/flora-extractor/main/data/extracted.csv`
+(`GITHUB_REPO`/`GITHUB_BRANCH`). The archives live in `EXTRACTOR_DATA_DIR`, which
+defaults to `/app/data` inside the container. On Railway that directory is not
+durable. Admins can queue the same pipeline from the Extractor Pipeline tab
+(`POST /api/admin/maintenance/run`, stage `full`/`sync`), or with
+`python sync_csv.py` on the host.
+
+**Why it is blocked.** `extractor_maintenance_runs` holds 12 rows. The 2026-09-12
+14:26 admin sync imported `extracted_20260912T142657Z_88d4c0c8.csv` (sha256
+`8c33403f…`, which is `d7f55d9`). flora-validation redeployed at 16:22 that day, and
+every nightly run from 09-13 to 09-24 (none on 09-19) then blocked with
+`baseline_snapshot_unavailable`. `_resolve_baseline` accepts only that archive name
+or `extracted_latest.csv`, and the latter is the stale copy bundled in git. The runs
+of 09-13 to 09-21 downloaded exactly the baseline's bytes, but under new archive
+names. There is no admin action or CLI to re-baseline.
+
+**Fix (flora-validation branch `retire-superseded-records`, commit `2292e45`, local
+only).** When the baseline archive is missing, the sync now recovers it by digest:
+first from any archive on the host, then from the extractor's git history (the
+newest commits touching the file up to the archive's timestamp). Only the recorded
+sha256 is accepted. Checked live: the first candidate is `d7f55d9`.
+
+**The import after that.** Measured against the `d7f55d9` baseline with the sync's
+own code, current main removes 463 of 2,999 resolved pairs, which is **15.44%**. All
+463 are in `data/retired_pairs.csv`. A one-run `EXTRACTOR_MAX_REMOVAL_PERCENT=16` is
+needed. Simulated against the live tables, the import does 2,536 refreshes, 34
+re-keys and 1,092 inserts.
+
+**Import bug found and fixed on the branch.** A rank shuffle re-keyed the record of a
+pair the same CSV still ships. That hit 11 records in this import, and 2 shipped pairs
+would have ended with no record. With the fix, all 34 re-keys are manifest
+`superseded` pairs.
+
+**Retire plan** (`plan_retirements()` over a REST snapshot; the real dry run needs
+`DATABASE_URL`, which no local checkout has):
+
+| `--input` | retire | flag | held (unexplained) | already rejected | still shipped | absent |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `d7f55d9` (the CSV imported today) | 113 | 5 | 0 | 1 | 463 | 105 |
+| current main, after the import | **539** | 5 | 3 | 1 | 0 | 139 |
+
+After the import, the 539 break down as:
+- set_aside 512: prospective_registration 277, target_pending 143, no_evidence 36,
+  search_link_unconfirmed(+unidentified) 35, unidentified_original 7,
+  no_original_found 7, api_error 4, not_a_replication 2, keyed_link_disputed 1
+- superseded 24
+- not_admitted 3
+
+The 5 flags are 3 in progress and 2 validated, all set_aside. The 3 unexplained
+entries are all one work (`10.1186/1471-2350-13-27`). I spot-checked 10 retire
+records. All were `unvalidated`, created 2026-08-19, with 3 unshown and unjudged
+slots, no validator and no validated, assignment or skip row. Their works either ship
+other originals or sit in the named set-aside file.
+
+**Worth deciding.** 143 retirements are `target_pending` works, which are not final
+verdicts. They are untouched, so nothing is lost, and a work that later resolves is
+inserted fresh.
+
+**Open question 3: decided 2026-09-24 (Lukas). Retiring is automatic.** The branch
+(PR on forrtproject/flora-validation) adds `retire_superseded`, the last stage of the
+nightly and admin full routine. `EXTRACTOR_AUTO_RETIRE` turns it on and defaults to
+on. It runs only after `sync_csv` and `find_orphans` succeed in the same run. It
+applies `csv_to_db.py --retire` against the snapshot that run imported, with
+`data/retired_pairs.csv` read at the same flora-extractor commit: the sync now
+resolves the branch to a commit, downloads at it, and records `source_commit`.
+
+Safeguards:
+- Only the pair ids the manifest names, and only if the imported CSV no longer
+  ships them.
+- Untouched `unvalidated` records are archived in `retired_records`, then deleted.
+  Touched records are flagged and never deleted.
+- It is idempotent.
+- The child does not re-take the advisory lock, which the parent holds. It passes
+  cleanup's maintenance gate instead (run `running`, Parts 1 and 2 verified, same
+  snapshot sha256), plus a commit match.
+- A fail-closed cap, `EXTRACTOR_MAX_RETIRE_PERCENT`, defaults to 15% of
+  `unvalidated`. The first run is ~539 of ~4,800, about 11%. The cap is re-checked
+  per batch.
+- The outcome goes to `stage_status.retire_superseded` and `safety_report.retire`.
+  A retire problem is a warning, because the import stands.
+
+The manual CLI stays, as a dry run or as `--apply --expect-retire N`. `retired_records`
+is created by `db_schema.sql` at app startup on the first deploy.
+
+**Consequence for this repo.** From the deploy on, committing `data/retired_pairs.csv`
+together with `data/extracted.csv` is what retires records, the next night, with no
+review step. Review the manifest before pushing, as step 4 above says. Commit the two
+files together, because the stage reads both at one commit.
