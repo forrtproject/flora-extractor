@@ -268,10 +268,11 @@ prompt): swapping one voter re-buys exactly that voter's answers while the other
 stay cache hits. Entries from the pair-keyed era are split on first read
 (`_cached_vote()` in `shared/llm_client.py` lifts a vote out of a joint entry for
 the model AT the effort the joint era ran, `_JOINT_ERA_EFFORTS`). A voter or prompt
-change still mints a new SCREENING GENERATION, which is what makes those works
-claimable again — and, once they are re-screened, what puts them back in the extract
-tier's worklist. For Luna, the OpenAI request marks the shared screening rules as an
-explicit prompt-cache prefix; the title and abstract follow the breakpoint.
+change still mints a new SCREENING GENERATION. The `gpt-6-luna` generation explicitly
+accepts settled `gpt-5.4-mini` generation verdicts, so the switch does not re-screen
+the backlog; new and incomplete works use Luna. A later prompt or model change does
+not inherit that equivalence. The OpenAI request marks the shared screening rules as
+an explicit prompt-cache prefix; the title and abstract follow the breakpoint.
 
 The verdict reaches Stage 3 on the worklist row, in `SCREEN_COLS`:
 `screen_verdict`, `screen_record_type`, `screen_categories`, `screen_votes`,

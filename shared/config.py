@@ -211,8 +211,9 @@ PRESCREEN_MODEL_2 = "mistralai/mistral-small-24b-instruct-2501"
 # buys the confident-recall calibration the gate needs from this slot, so the effort
 # is part of the evaluated configuration, not a tunable.
 SCREENING_MODEL_1 = "deepseek/deepseek-v4-flash"
-# The earlier two-voter gate evaluation used gpt-5.4-mini in this slot. Changing the
-# model creates a new screening generation; the Luna pair needs its own measurement.
+# The earlier two-voter gate evaluation used gpt-5.4-mini in this slot. The Luna
+# generation accepts settled mini-era screens through the explicit equivalence in
+# filter/engine/tiers.py; newly screened works use Luna. That pair needs measurement.
 SCREENING_MODEL_2 = "gpt-6-luna"
 
 # Linking (resolve_targets_and_outcomes) — WHICH original does this paper re-test? One
