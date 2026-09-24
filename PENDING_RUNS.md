@@ -23,16 +23,14 @@ the command, pasteable from the project root, and what proves it worked.
 
 ## Open
 
-- [ ] **Import the 2026-09-24 export and retire what it stopped shipping.** Commit
-      `b31af65` renders `data/extracted.csv` (3,692 rows) after the `llm_references` redo and
-      the cbd reopen, and seeds `data/retired_pairs.csv` (687 pair ids). Nothing is pushed.
-      Owed, in order (`docs/retiring-superseded-records.md`): unblock the flora-validation
-      sync (blocked since 2026-09-13, `baseline_snapshot_unavailable`); push this repo; import
-      (the removal share is 16.3%, over the sync's 10% cap — raise it for that run); in
-      flora-validation, review and push branch `retire-superseded-records`, then
-      `csv_to_db.py --retire` dry run → approve → `--apply --expect-retire N`. Done when the
-      Supabase `unvalidated` table holds no pair id listed in `data/retired_pairs.csv` with
-      status `unvalidated`.
+- [ ] **Import the 2026-09-24 export and retire what it stopped shipping.** flora-extractor
+      `4de666d` (pushed) ships `data/extracted.csv` (3,683 rows) and `data/retired_pairs.csv`.
+      Owed in flora-validation: merge PR #13 (sync baseline recovery by checksum, import
+      pair-reassignment fix, nightly auto-retire; creates `retired_records` on startup), set
+      Railway `EXTRACTOR_MAX_REMOVAL_PERCENT=17` for one run (removal is 16.1% of the 2,999
+      pairs imported at `d7f55d9`), let the nightly run or "Sync + report" import and
+      auto-retire (~540 retired, ~5 flagged), then set it back to 10. Done when the run's
+      `stage_status` shows `sync_csv` and `retire_superseded` SUCCESS.
 
 ## Done
 
