@@ -349,9 +349,9 @@ def test_a_saved_pdf_without_provenance_still_runs_the_waterfall():
     assert out["pdf_ok"] is True
     assert out["pdf_source"] == "openalex_oa"
     # No name: only the OSF file tier knows one, and this document came from OpenAlex.
-    assert ps._read_provenance(ps.clean_doi(doi)) == {"source": "openalex_oa",
-                                                      "url": "https://x/z.pdf",
-                                                      "name": ""}
+    prov = ps._read_provenance(ps.clean_doi(doi))
+    assert (prov["source"], prov["url"], prov["name"]) == ("openalex_oa",
+                                                           "https://x/z.pdf", "")
 
 
 # ── Tier 0 short-circuit ──────────────────────────────────────────────────────
@@ -1534,3 +1534,19 @@ def test_core_needs_the_asked_doi_and_raises_when_it_does_not_answer(_oa_cache_i
     with patch.object(ps.requests, "get", return_value=_Resp(429)):
         with pytest.raises(ps.DocumentSourceUnavailable):
             ps.get_core_pdf_url("10.1/quota")
+
+
+@pytest.mark.parametrize("source", ["related_doi", "related_version"])
+def test_another_dois_document_is_not_re_judged_against_the_rows_title(source):
+    """A parent article saved under a figure DOI would fail the row's title ("Figure
+    6") on every later read, and be discarded and re-fetched for ever."""
+    doi = "10.1371/journal.pone.0211416.g006"
+    path = ps.pdf_cache_path(doi)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"%PDF-1.4 " + b"x" * 6000)
+    ps._write_provenance(doi, source, "https://plos/parent.pdf", "match", 0.9)
+    with patch.object(ps, "_title_check", return_value=("mismatch", 0.0)) as check:
+        assert ps.verified_cached_document(doi, "Figure 6") == path
+        out = ps.acquire_pdf(doi, "Figure 6")
+    check.assert_not_called()
+    assert out["pdf_source"] == source and path.exists()

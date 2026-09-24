@@ -124,6 +124,10 @@ PDF_RETRY_AFTER_DAYS    = 14
 OA_XML_RETRY_AFTER_DAYS = 14
 
 # Playwright reasons that mean "this machine cannot run the tier", not "no PDF exists".
+# The tiers that save ANOTHER DOI's document under the row's key, checked against that
+# DOI's title rather than the row's.
+_OTHER_DOI_SOURCES = {"related_doi", "related_version"}
+
 _PLAYWRIGHT_SKIP_REASONS = {"playwright_not_installed", "playwright_unavailable",
                             "no_doi"}
 
@@ -306,7 +310,8 @@ def _read_provenance(doi: str) -> dict:
     """What was recorded for a saved PDF, or {}.
 
     {"source": tier label, "url": the URL it came from, "name": the file's own name
-    where the tier knew one}.
+    where the tier knew one, "title_check" / "title_coverage": the acquisition-time
+    verdict, which the replay of another DOI's document relies on}.
     """
     try:
         path = _provenance_path(doi)
@@ -315,7 +320,9 @@ def _read_provenance(doi: str) -> dict:
             if isinstance(data, dict):
                 return {"source": str(data.get("source") or ""),
                         "url": str(data.get("url") or ""),
-                        "name": str(data.get("name") or "")}
+                        "name": str(data.get("name") or ""),
+                        "title_check": str(data.get("title_check") or ""),
+                        "title_coverage": data.get("title_coverage")}
     except Exception as e:
         log.debug("PDF provenance unreadable for %s: %s", doi, e)
     return {}
@@ -373,6 +380,11 @@ def verified_cached_document(doi_or_url: str, title: str,
     """
     path = cached_pdf(doi_or_url, cache_dir=cache_dir)
     if path is None or not title.strip():
+        return path
+    # Another DOI's document was checked against that DOI's title when it was fetched.
+    prov = _read_provenance(doi_or_url)
+    if (prov.get("source") in _OTHER_DOI_SOURCES
+            and prov.get("title_check") in ("match", "low")):
         return path
     verdict, coverage = _title_check(path.read_bytes(), path.suffix, title)
     if verdict != "mismatch":
@@ -1843,6 +1855,11 @@ def document_urls_for_doi(doi: str, title: str = "") -> tuple[list[str], bool]:
         outage = True
         log.info("  Zenodo unavailable for related %s: %s", doi, exc)
     try:
+        urls += crossref_pdf_links(doi)
+    except DocumentSourceUnavailable as exc:
+        outage = True
+        log.info("  Crossref unavailable for related %s: %s", doi, exc)
+    try:
         urls += [u["url"] for u in get_all_unpaywall_pdf_urls(doi) if u["type"] == "pdf"]
     except DocumentSourceUnavailable as exc:
         outage = True
@@ -2859,12 +2876,13 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
     if on_disk is not None and title.strip():
         # This shortcut does not go through download_pdf, so it carries the title
         # check itself — a mis-served file saved by an earlier run would otherwise be
-        # replayed here for ever, without any tier ever seeing it. A related_doi
-        # document is the REVIEWED work and matches that work's title, not the row's
-        # — its acquisition-time verdict (checked against the reviewed title) stands,
-        # or the correct preprint would be discarded and re-fetched on every run.
+        # replayed here for ever, without any tier ever seeing it. A document fetched
+        # for ANOTHER DOI (the reviewed preprint, a component's parent article) matches
+        # that DOI's title, not the row's — its acquisition-time verdict (checked
+        # against that title) stands, or the right document would be discarded and
+        # re-fetched on every run.
         replay_prov = _read_provenance(prov_key)
-        if (replay_prov.get("source") == "related_doi"
+        if (replay_prov.get("source") in _OTHER_DOI_SOURCES
                 and replay_prov.get("title_check") in ("match", "low")):
             verdict, coverage = replay_prov["title_check"], float(
                 replay_prov.get("title_coverage") or 0.0)
