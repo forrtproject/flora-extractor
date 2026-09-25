@@ -948,10 +948,10 @@ _OSF_NAME_EXCLUDE = re.compile(
     # would put it first. 185 of the 2,833 file names in the 714 campaign projects
     # match these words, 1 of them excluded by the words above. "Response" is
     # matched only in the review sense: a bare "response" is in paper titles
-    # ("Stress Response Profiles in ...").
-    r"|respon[sd]\w*.to.(?:the.)?(?:review|decision|comment|editor)"
+    # ("Stress Response Profiles in ...", "Neural responses to decision making").
+    r"|respon[sd]\w*.to.(?:the.)?(?:reviews?|reviewers?|editors?|rebuttal|comments)"
     r"|response.?letter|comments?.?(?:&|and).?respon"
-    r"|reply.to.(?:the.)?decision|reply.to.[\w-]{0,20}reviews?"
+    r"|repl(?:y|ies).to.(?:the.)?decision|repl(?:y|ies).to.[\w-]{0,20}reviews?"
     r"|cover.?letter|decision.?letter|reviewer|rebuttal|checklist"
     r"|transparen\w*[-_ ]report")
 # A Stage-1 Registered Report, a preregistration snapshot or an analysis plan is the
@@ -2748,7 +2748,12 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
             # Never recorded: a source that did not answer has said nothing.
             log.info("  [%s] OSF file listing unavailable: %s", doi_r or url_r, exc)
         else:
-            ranked = rank_osf_files(osf_files, title)[:_OSF_MAX_DOWNLOADS]
+            full = rank_osf_files(osf_files, title)
+            ranked = full[:_OSF_MAX_DOWNLOADS]
+            # Plan-named files rank last, so the slice can cut them all; the first is
+            # kept as the fallback the loop below may need.
+            ranked += [e for e in full[_OSF_MAX_DOWNLOADS:]
+                       if _OSF_NAME_PREREG.search(str(e.get("name") or ""))][:1]
             plan: "dict | None" = None
             for entry in ranked:
                 if not _try(entry["download"], "osf_files",

@@ -1514,3 +1514,76 @@ def test_both_epmc_routes_answering_nothing_records_the_stamp():
 def test_a_bundled_supplement_does_not_make_a_file_a_supplement(name, excluded):
     from shared.pdf_sources import _name_is_excluded
     assert _name_is_excluded(name) is excluded
+
+
+def test_a_survey_export_is_never_the_fallback(tmp_path):
+    """A plan may stand in when nothing better exists; a survey export may not — the
+    row falls through to the registration form instead."""
+    listing = [{"name": "Study survey.pdf", "size": 100, "modified": "2024-01-01",
+                "download": "https://osf.io/download/survey/"}]
+    path = tmp_path / "survey.pdf"
+
+    def _download(url, **kwargs):
+        path.write_bytes(b"%PDF-1.4 x")
+        return {"success": True, "path": str(path), "source": "download", "reason": ""}
+
+    patchers = _mock_all_tiers(list_osf_files=listing)
+    for p in patchers.values():
+        p.start()
+    try:
+        with patch.object(ps, "get_osf_registration", return_value=None) as reg, \
+             patch.object(ps, "download_pdf", side_effect=_download), \
+             patch.object(ps, "rank_osf_files", side_effect=lambda f, t: f), \
+             patch.object(ps, "osf_front_page_kind", return_value="survey"):
+            out = ps.acquire_pdf("10.17605/osf.io/abc14", "A Title")
+    finally:
+        for p in patchers.values():
+            p.stop()
+    reg.assert_called_once()
+    assert out["pdf_source"] != "osf_files" and not path.exists()
+
+
+def test_the_first_page_check_reads_a_pdf_too(tmp_path):
+    path = tmp_path / "file.pdf"
+    path.write_bytes(b"%PDF-1.4 x")
+    with patch("pdfminer.high_level.extract_text",
+               return_value="Stage 1 Registered Report: a replication of X") as ex:
+        assert ps.osf_front_page_kind(path) == "plan"
+    assert ex.call_args.kwargs["maxpages"] == 1
+
+
+def test_plural_replies_to_reviews_are_review_paperwork():
+    assert ps._name_is_excluded("Replies to reviews round 2.pdf")
+    assert not ps._name_is_excluded("Neural responses to decision making under risk.pdf")
+
+
+def test_a_plan_past_the_download_slice_is_still_the_fallback(tmp_path):
+    names = [f"paper-{i}.pdf" for i in range(ps._OSF_MAX_DOWNLOADS)] + ["preregistration.pdf"]
+    listing = [{"name": n, "size": 100, "modified": "2024-01-01",
+                "download": f"https://osf.io/download/{n}/"} for n in names]
+    tried = []
+
+    def _download(url, **kwargs):
+        tried.append(url)
+        if "preregistration" not in url:
+            return _NO_PDF
+        path = tmp_path / "plan.pdf"
+        path.write_bytes(b"%PDF-1.4 x")
+        return {"success": True, "path": str(path), "source": "download", "reason": ""}
+
+    patchers = _mock_all_tiers(list_osf_files=listing)
+    for p in patchers.values():
+        p.start()
+    try:
+        with patch.object(ps, "get_osf_registration") as reg, \
+             patch.object(ps, "download_pdf", side_effect=_download), \
+             patch.object(ps, "rank_osf_files", side_effect=lambda f, t: f), \
+             patch.object(ps, "osf_front_page_kind", return_value="plan"), \
+             patch.object(ps, "_write_provenance"):
+            out = ps.acquire_pdf("10.17605/osf.io/abc15", "A Title")
+    finally:
+        for p in patchers.values():
+            p.stop()
+    assert out["pdf_ok"] is True
+    assert tried[-1] == "https://osf.io/download/preregistration.pdf/"
+    reg.assert_not_called()
