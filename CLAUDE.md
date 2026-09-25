@@ -800,6 +800,10 @@ report, a commit message or a decision is read off the artifact.
    whole `.env` surface in one file. If an override could make two collaborators grade
    the same row differently, it is a constant. LLM rate
    intervals are charged per provider, so the screen's two votes never wait on each other.
+   One exception: the politeness intervals of the document sources that only the
+   acquisition waterfall calls (`_CORE_RATE_SEC`, `_ZENODO_RATE_SEC` and their
+   neighbours) are plain constants in `shared/pdf_sources.py`. No other module reaches
+   those endpoints, and none of them has a reason to differ between machines.
 9. API key values live in `.env` only; `config.py` only reads env. `.env.defaults` is
    committed, so nothing secret may go in it.
 
