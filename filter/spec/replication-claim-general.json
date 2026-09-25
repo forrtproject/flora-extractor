@@ -1,6 +1,6 @@
 {
   "id": "replication-claim-general",
-  "description": "GENERAL ADMISSION, drafted 2026-09-23 as the rule-book route for what `curated-observatory` admits (handover step 8; evidence analysis/stage2_rules_2026-09/REPORT.md). The curated rule's works that no live rule reaches are overwhelmingly works that state the design in the ABSTRACT, not the title \u2014 the live claim tiers are title-only \u2014 so this rule carries the abstract arms that measured highest-yield per new work, plus two title shapes the title tiers miss. Six arms: (1) the qualifier family (`direct|conceptual|registered|\u2026 replication`) anywhere in title+abstract; (2) `our replication(s)`; (3) `replication attempt(s)`; (4) a SUBTITLE replication (`X: a replication \u2026`, `X. Replicating \u2026`) and (5) `replication of the/a(n) \u2026` in the title, both minus the molecular-biology senses (DNA/viral/genome replication, replication fork/origin/stress, replicon, replicase); (6) `we \u2026 replicated` or `replication stud(y|ies)` in title+abstract TOGETHER WITH a reference to an original/previous/prior/published study, finding or result in the same text, minus the same biology senses. Arms 1\u20133 are carried verbatim from `replication-claim-text` (its arms 5, 7 and 6); the prior-study conjunction on arm 6 is what makes `we replicated` affordable \u2014 alone it adds 21,919 works. Measured offline over release c048ab6483d3's inputs with `curated-observatory` shadow: recovers 534 of the 1,345 curated works no other rule reaches (508 of the 1,229 the screen proceeded) and adds ~21.6k works beyond today's 9,105-work pile, 647 of them known replications (Observatory or FLoRA DOIs, 29.9/1k). Precedence 735: inside the claim band, below `replication-claim-title-broad` (740) so a title claim keeps its attribution, above `replication-claim-text` (730), whose arms it partly carries. No vocabulary: admission asks for the screen's attention. Admission rules need no `measured` entry.",
+  "description": "GENERAL ADMISSION, drafted 2026-09-23 as the rule-book route for what `curated-observatory` admits (handover step 8; evidence analysis/stage2_rules_2026-09/REPORT.md). The curated rule's works that no live rule reaches are overwhelmingly works that state the design in the ABSTRACT, not the title \u2014 the live claim tiers are title-only \u2014 so this rule carries the abstract arms that measured highest-yield per new work, plus two title shapes the title tiers miss. Six arms: (1) the qualifier family (`direct|conceptual|registered|\u2026 replication`) anywhere in title+abstract; (2) `our replication(s)`; (3) `replication attempt(s)`; (4) a SUBTITLE replication (`X: a replication \u2026`, `X. Replicating \u2026`) and (5) `replication of the/a(n) \u2026` in the title, both minus the molecular-biology senses (DNA/viral/genome replication, replication fork/origin/stress, replicon, replicase); (6) `we \u2026 replicated` or `replication stud(y|ies)` in title+abstract TOGETHER WITH a reference to an original/previous/prior/published study, finding or result in the same text, minus the same biology senses. Arms 1\u20133 are carried verbatim from `replication-claim-text` (its arms 5, 7 and 6); the prior-study conjunction on arm 6 is what makes `we replicated` affordable \u2014 alone it adds 21,919 works. Measured offline over release c048ab6483d3's inputs with `curated-observatory` shadow: recovers 534 of the 1,345 curated works no other rule reaches (508 of the 1,229 the screen proceeded) and adds ~21.6k works beyond today's 9,105-work pile, 647 of them known replications (Observatory or FLoRA DOIs, 29.9/1k). Precedence 735: inside the claim band, below `replication-claim-title-broad` (740) so a title claim keeps its attribution, above `replication-claim-text` (730), whose arms it partly carries. No vocabulary: admission asks for the screen's attention. LIVE since 2026-09-25 as option B\u2212repo (analysis/recall_options_2026-09/REPORT.md, maintainer decision): the six arms minus data-repository records, which the arms reach because an economics or software-engineering deposit calls itself a \"replication package\" \u2014 two of the eight noes in the hand-check of 20 random proceeds were exactly that. The exclusion is a top-level `none_of` with two arms: (a) a DOI on a data/code registrant \u2014 Zenodo 10.5281, figshare 10.6084, Harvard Dataverse 10.7910, ICPSR 10.3886, Mendeley Data 10.17632, ZBW Journal Data Archive 10.15456, Code Ocean 10.24433, Dryad 10.5061 (10.7910 and 10.3886 are already discarded by `deposit-registrant` and are repeated so this rule's own claim does not depend on that one); (b) a title that names the record a replication package/data/files/materials/code anywhere (a Zenodo/OSF deposit is titled `repo: Replication Package` or `Paper title: Replication Materials`, so the phrase is not front-anchored). Unlike `deposit-registrant` this is not a discard: an excluded record simply is not admitted by THIS rule and falls to whatever else matches (usually `pending/no_filter_matched`), so the real preprints Zenodo and figshare also host (2 of the 15 Zenodo works in the sample were proceeds that read as studies) are left unadmitted, not deleted. The measured B\u2212repo definition was Zenodo plus the title arm (19,369 new works on c048); figshare and the other registrants were added at promotion on the maintainer's instruction. `curated-observatory` (745) stays live above this rule, so a curated DOI on an excluded registrant is still admitted by that rule.",
   "match": {
     "any_of": [
       {
@@ -66,11 +66,53 @@
           }
         ]
       }
+    ],
+    "none_of": [
+      {
+        "doi_prefix": [
+          "10.5281",
+          "10.6084",
+          "10.7910",
+          "10.3886",
+          "10.17632",
+          "10.15456",
+          "10.24433",
+          "10.5061"
+        ]
+      },
+      {
+        "title_regex": "\\breplication\\s+(?:package|data|files?|materials?|code)"
+      }
     ]
   },
   "pile": "screen_expensive",
   "vocabulary": null,
   "precedence": 735,
-  "shadow": true,
-  "measured": []
+  "shadow": false,
+  "measured": [
+    {
+      "level": "llm:deepseek/deepseek-v4-flash@low+gpt-6-luna@low",
+      "precision": 0.644,
+      "n": 104,
+      "sample": "analysis/recall_options_2026-09/out/sample.parquet stratum B (seed 20260925): 120 works drawn uniformly from the 21,622 this rule's six arms added beyond release c048ab6483d3's screen_expensive pile, minus the 16 the repository exclusion drops",
+      "date": "2026-09-25",
+      "owner": "flora-extractor",
+      "rationale": "The production front-door screen (`classify_replication()`, prompt v3.3, the two shipped voters) run on each sampled work's title+abstract by analysis/recall_options_2026-09/screen_sample.py: 67 of 104 proceed (64%; 74 of 120 = 61.7%, 95% CI 53-70%, before the exclusion). This is the proceed rate the screen will buy, not precision against truth \u2014 see the human entry. It is an admission rule: the worst it does is buy a screen call, so this entry records what the promotion buys rather than licensing it (CONVENTIONS.md, 'Promoting a rule out of shadow', fact 4)."
+    },
+    {
+      "level": "human",
+      "n": 20,
+      "sample": "analysis/recall_options_2026-09/out/handcheck_B.txt: 20 random screen proceeds from the stratum-B sample above",
+      "date": "2026-09-25",
+      "owner": "flora-extractor",
+      "rationale": "One reader: 9 clearly a replication/reproduction, 3 borderline, 8 not (Zenodo 'Replication Package' deposits, supplementary records, CS/ML 'we replicate prior work'). The repository exclusion removes 2 of the 8 noes and none of the clear ones, leaving 9 / 3 / 6 of 18. Rough genuine yield: ~12.4k expected proceeds x ~half clear = ~6k."
+    },
+    {
+      "level": "downstream",
+      "sample": "every new work over release c048ab6483d3's inputs, counted exactly (analysis/recall_options_2026-09/options.py, with the exclusion applied to its B set)",
+      "date": "2026-09-25",
+      "owner": "flora-extractor",
+      "rationale": "Known-replication yield of the new works: their DOIs counted against data/flora.csv (doi_r), the Metascience Observatory database and data/extracted.csv \u2014 ~32.9 known per 1,000 new works for B\u2212repo (29.9 for B's 21,622; today's title rules reach the rest). Recall of the curated-only set: the six arms reach ~533 of the 1,345 works only `curated-observatory` admits, which is why that rule stays live."
+    }
+  ]
 }

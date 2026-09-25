@@ -36,6 +36,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 
 from filter.engine.spec import FilterSpec, MatchBlock
+from shared.utils import clean_doi
 
 # The pool columns a match block can read (`spec._MATCH_KEYS` / `_FIELD_KEYS`),
 # with the types the backend expects. `eval_spec_rows()` builds its batch from
@@ -245,11 +246,29 @@ def _normalize_array(col: pa.Array) -> pa.Array:
 
 
 def _clean_doi_array(col: pa.Array) -> pa.Array:
-    """`shared.utils.clean_doi()` vectorized: strip, drop URL/`doi:` prefix, lower."""
-    doi = pc.utf8_lower(pc.utf8_trim_whitespace(pc.fill_null(col, "")))
+    """`shared.utils.clean_doi()` vectorized: strip, drop URL/`doi:` prefix, collapse
+    a doubled slash after the prefix, lower — and percent-decode.
+
+    The decode is not vectorized: whether `%xx` is decoded depends on the decoded
+    value still being a DOI, which RE2 cannot answer. A value holding `%` is rare
+    (tens of pool rows), so those rows alone are handed to `clean_doi()` itself —
+    the definition, rather than a second implementation of it.
+    """
+    raw = pc.fill_null(col, "")
+    doi = pc.utf8_lower(pc.utf8_trim_whitespace(raw))
     doi = pc.replace_substring_regex(doi, "^https?://(?:dx\\.)?doi\\.org/", "")
     doi = pc.replace_substring_regex(doi, "^doi:", "")
-    return pc.utf8_rtrim(pc.utf8_trim_whitespace(doi), "/")
+    doi = pc.utf8_trim_whitespace(doi)
+    doi = pc.replace_substring_regex(doi, "^(10\\.[^/]+)/{2,}", "\\1/")
+    doi = pc.utf8_rtrim(doi, "/")
+    has_percent = np.asarray(pc.match_substring(raw, "%").to_numpy(zero_copy_only=False),
+                             dtype=bool)
+    if not has_percent.any():
+        return doi
+    values, raws = doi.to_pylist(), raw.to_pylist()
+    for index in np.nonzero(has_percent)[0]:
+        values[index] = clean_doi(raws[index])
+    return pa.array(values, type=pa.string())
 
 
 def _re_match(arr: pa.Array, pattern: str) -> pa.Array:

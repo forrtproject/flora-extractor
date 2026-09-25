@@ -37,7 +37,7 @@ EXPECTED = {
     "replication-claim-title-strong": ("screen_expensive", 750, None, False),
     "curated-observatory": ("screen_expensive", 745, None, False),
     "replication-claim-title-broad": ("screen_expensive", 740, None, False),
-    "replication-claim-general": ("screen_expensive", 735, None, True),
+    "replication-claim-general": ("screen_expensive", 735, None, False),
     "replication-claim-text": ("screen_expensive", 730, None, True),
     "replication-claim-residual": ("screen_expensive", 710, None, True),
     "not-a-study-type": ("discard", 500, None, False),
@@ -123,7 +123,7 @@ def test_the_live_claim_tiers_are_the_narrowest_prefix_of_the_family():
             if s.id in _CLAIM_TIERS and not s.shadow]
     assert live == list(_CLAIM_TIERS[:len(live)])
     assert live == ["replication-claim-cited-title", "replication-claim-title-strong",
-                    "replication-claim-title-broad"]
+                    "replication-claim-title-broad", "replication-claim-general"]
 
 
 def test_a_duplicate_id_across_two_files_is_rejected(tmp_path):

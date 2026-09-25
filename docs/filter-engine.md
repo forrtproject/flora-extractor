@@ -296,8 +296,8 @@ evidence in [`filter/spec/rule_ideas.md`](../filter/spec/rule_ideas.md).
 | `osf-registration-protocol` | discard | 935 | | the discard twin: an OSF registration whose template marks it a protocol, not a completed study |
 | `replication-claim-cited-title` | screen_expensive | 760 | | a claim arm in the TITLE **and** an author-year citation in the title — the narrowest of the three live admissions |
 | `replication-claim-title-strong` | screen_expensive | 750 | | the two title arms that measure as high-precision on their own |
-| `replication-claim-title-broad` | screen_expensive | 740 | ✓ | the other ten arms of the twelve-arm title family |
-| `replication-claim-general` | screen_expensive | 735 | ✓ | drafted as the rule-book route for what `curated-observatory` admits: three abstract claim arms, two title shapes, and `we replicated`/`replication study` only beside an original/prior-study mention (`analysis/stage2_rules_2026-09/REPORT.md`) |
+| `replication-claim-title-broad` | screen_expensive | 740 | | the other ten arms of the twelve-arm title family |
+| `replication-claim-general` | screen_expensive | 735 | | the rule-book route for what `curated-observatory` admits: three abstract claim arms, two title shapes, and `we replicated`/`replication study` only beside an original/prior-study mention (`analysis/stage2_rules_2026-09/REPORT.md`); minus data-repository records — a Zenodo/figshare/Dataverse/ICPSR/Mendeley Data/ZBW JDA/Code Ocean/Dryad DOI, or a title naming a replication package/data/files/materials/code. Live since 2026-09-25 as option B−repo (`analysis/recall_options_2026-09/REPORT.md`: 64% screen proceed, n=104) |
 | `replication-claim-text` | screen_expensive | 730 | ✓ | the 8 strong claim arms anywhere in title+abstract |
 | `replication-claim-residual` | screen_expensive | 710 | ✓ | the 4 measured-weak arms: fail/attempt · aim/set out · success* · the negation matrix |
 | `not-a-study-type` | discard | 500 | | `type ∈ {grant, libguides, paratext, peer-review, standard}` — a crosswalk that can be wrong about a real paper |

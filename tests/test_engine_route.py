@@ -163,6 +163,16 @@ CORPUS = [
     _row(work="https://openalex.org/W28", doi="10.1001/archgenpsychiatry.2009.155",
          title="Serotonin transporter genotype and depression",
          abstract="A cohort study of stressful life events."),
+    # replication-claim-general (735): its repository exclusion. W29 carries an
+    # arm in its abstract but is a Zenodo deposit, W30 an OSF "Replication
+    # materials" record; the general rule must claim neither, while W15 above
+    # (the same arms on an article) it does claim
+    _row(work="https://openalex.org/W29", doi="10.5281/zenodo.1234567",
+         title="lab/anchoring-study: Replication Package",
+         abstract="Code for our replication of the original anchoring study."),
+    _row(work="https://openalex.org/W30", doi="10.17605/OSF.IO/EF56G",
+         title="Anchoring in context: Replication materials",
+         abstract="Materials for our replication of the original anchoring study."),
     # doi-registry-twin (950, shadow): issue #210's example — a 1948 cosmic-ray
     # record filed under a JEAB 2010 replication's DOI, named by its record id
     _row(work="https://openalex.org/W21279159", doi="10.1901/jeab.2010.94-13",
@@ -264,6 +274,31 @@ def test_doi_in_is_an_allow_list_normalised_on_both_sides():
     # The evidence is the DOI itself: which entry of the list claimed the row is the
     # only thing a curated rule has to say about it.
     assert match_evidence(spec, batch)[:2] == ["10.1037/abc123", "10.1037/abc123"]
+
+
+def test_the_engine_cleans_a_doi_exactly_as_clean_doi_does():
+    """`_clean_doi_array()` is `clean_doi()` over a column: a `doi_in` list is cleaned
+    by the one and the pool by the other, so any disagreement is a listed work that
+    silently never matches. Covers the doubled slash, the once-only percent decode,
+    and the values the decode must leave alone."""
+    from filter.engine.backends import _clean_doi_array
+    from shared.utils import clean_doi
+
+    cases = [
+        None, "", "  ", "10.1037/ABC123", " https://doi.org/10.1037/abc123/ ",
+        "http://dx.doi.org/10.1037/abc123", "DOI:10.1037/abc123", "doi:10.1037/x//",
+        "10.1037//0022-3514.69.4.603", "https://doi.org/10.1037///0022-006x.48.5.555",
+        "10.1037//", "10.1037/abc//def",
+        "10.1002/(SICI)1097-4679(199602)52:2%3C107::AID-JCLP1%3E3.0.CO;2-X",
+        "10.1037%2fabc123", "10.1037/%2fabc", "10.1037/abc%2541", "10.1037/abc%20def",
+        "10.1037/abc%zz", "10.1037/abc%", "10.1037/abc%ff", "abc%3c", "10.1037/ABC%3Cd",
+    ]
+    got = _clean_doi_array(pa.array(cases, type=pa.string())).to_pylist()
+    assert got == [clean_doi(c) for c in cases]
+    # The vectorized path alone (no `%` in the batch) must agree too.
+    plain = [c for c in cases if c is None or "%" not in c]
+    assert _clean_doi_array(pa.array(plain, type=pa.string())).to_pylist() == \
+        [clean_doi(c) for c in plain]
 
 
 def test_work_id_in_names_the_record_not_its_doi():

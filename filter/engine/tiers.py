@@ -124,7 +124,9 @@ TIER_PRICE_PER_1K_OUT = {
 # expensive tier returns the five-field v3.3 schema with a quote and a reasoning.
 TIER_OUTPUT_TOKENS = {
     "screen_cheap":     20,
-    "screen_expensive": 300,
+    # 2026-09-25: measured ~775 DeepSeek v4-flash output incl. reasoning + ~300
+    # gpt-6-luna per work; analysis/llm_costs_2026-09/REPORT.md
+    "screen_expensive": 1_075,
 }
 # Characters per token for the estimate. Nothing is tokenized to produce a number
 # nobody will be billed on; 4.0 is the usual English-prose approximation.
