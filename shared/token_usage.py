@@ -14,7 +14,8 @@ Two jobs, one file on disk (cache/token_usage.json):
 
 Shape:  {"2026-08-01": {"openai": {"gpt-5.4-mini":
          {"in": 1200, "out": 340, "cached_in": 900, "cache_write_in": 0}}}}
-The cache fields are omitted when the provider did not report a positive count;
+The cache fields, and `usd` (the billed cost, which only OpenRouter reports), are
+omitted when the provider did not report a positive value;
 older records only have in/out. Cached and written tokens are subsets of in, not
 additional tokens. Use them for cost accounting, never for the daily token cap.
 
@@ -82,8 +83,10 @@ def _write_all(state: dict) -> None:
 def record(provider: str, model: str,
            input_tokens: int, output_tokens: int, day: str = "",
            *, cached_input_tokens: int = 0,
-           cache_write_input_tokens: int = 0) -> None:
-    """Add one call's reported usage to the day's record."""
+           cache_write_input_tokens: int = 0, usd: float = 0.0) -> None:
+    """Add one call's reported usage to the day's record. *usd* is what the
+    provider says it billed, where it says so (OpenRouter); it is summed as
+    `usd` and left out when unreported, never estimated."""
     if input_tokens <= 0 and output_tokens <= 0:
         return                    # the provider reported nothing; do not invent it
     day = day or _today()
@@ -101,6 +104,8 @@ def record(provider: str, model: str,
         if cache_write_input_tokens > 0:
             bucket["cache_write_in"] = (bucket.get("cache_write_in", 0)
                                         + cache_write_input_tokens)
+        if usd > 0:
+            bucket["usd"] = round(bucket.get("usd", 0.0) + usd, 9)
         _write_all(state)
 
 

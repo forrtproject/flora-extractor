@@ -20,7 +20,7 @@ import json
 import re
 import threading
 import time
-from typing import Optional
+from typing import NamedTuple, Optional
 
 import requests
 
@@ -36,6 +36,7 @@ from .config import (
     LINKING_MODEL,
     LLM_CACHE_DIR,
     OPENAI_API_KEY,
+    OPENAI_FLEX_PATIENCE,
     OPENAI_FLEX_TIMEOUT,
     OPENAI_RATE_SEC,
     OPENAI_USE_FLEX,
@@ -111,10 +112,11 @@ JSON_MAX_OUTPUT_TOKENS = 16384
 
 
 def _record_tokens(provider: str, model: str, n_in: int, n_out: int,
-                   cached_in: int = 0, cache_write_in: int = 0) -> None:
+                   cached_in: int = 0, cache_write_in: int = 0,
+                   usd: float = 0.0) -> None:
     """Charge a completed call to the run's stage total and the day's usage record."""
     token_counter.record(provider, n_in + n_out)
-    token_usage.record(provider, model, n_in, n_out,
+    token_usage.record(provider, model, n_in, n_out, usd=usd,
                        cached_input_tokens=cached_in,
                        cache_write_input_tokens=cache_write_in)
 
@@ -584,9 +586,30 @@ def call_openai(prompt: str, model: str,
             **extra,
         )
 
+    def _flex_after_refusal():
+        """Re-ask for flex after a capacity refusal, backing off, for up to
+        OPENAI_FLEX_PATIENCE seconds; then settle for standard tier. Only a refusal
+        is waited out — any other failure leaves here and takes the retry loop."""
+        waited, delay = 0, 15
+        while waited + delay <= OPENAI_FLEX_PATIENCE:
+            time.sleep(delay)
+            waited += delay
+            delay = min(delay * 2, 120)
+            try:
+                _throttle("openai")
+                return _create(True)
+            except Exception as exc:
+                if not _openai_flex_refused(exc):
+                    raise
+        log.warning("OpenAI would not serve service_tier=flex%s — retrying at "
+                    "standard tier", f" for {waited}s" if waited else "")
+        return _create(False)
+
     # Once a flex request has failed for any reason, the retries run at standard
     # tier: a refused tier will refuse again, and after a timeout a second 900s
     # queue wait is the worst way to find out whether the call went through.
+    # OPENAI_FLEX_PATIENCE is the one exception, inside a single attempt: a
+    # capacity refusal is waited out before standard is accepted.
     use_flex = OPENAI_USE_FLEX
     for attempt in range(3):
         try:
@@ -604,9 +627,8 @@ def call_openai(prompt: str, model: str,
                 # billed, so it takes the retry loop instead.
                 if not _openai_flex_refused(flex_exc):
                     raise
-                log.warning("OpenAI would not serve service_tier=flex (%s) — "
-                            "retrying at standard tier", flex_exc)
-                response = _create(False)
+                log.info("OpenAI refused service_tier=flex: %s", flex_exc)
+                response = _flex_after_refusal()
             if response.usage:
                 cached, written = _reported_cache_tokens(
                     getattr(response.usage, "prompt_tokens_details", None))
@@ -664,8 +686,181 @@ def _served_by(response: object) -> str:
         return ""
 
 
+# ── Which host behind OpenRouter serves a call ───────────────────────────────
+# OpenRouter serves one model id from many hosts at very different prices and
+# quantizations. Its own price sort weighs the PROMPT price heavily, and the screen's
+# DeepSeek voter is output-heavy (reasoning), so the sort kept picking a host at
+# $0.03 in / $1.28 out, fp4: $0.0011 a vote against $0.00015 at the cheapest
+# all-round fp8 host (probed 2026-09-25, analysis/llm_costs_2026-09/REPORT.md).
+#
+# So the host order is computed here: per model id, the endpoint list
+# (`/models/<id>/endpoints`, fetched once per process and refreshed hourly) is
+# filtered — fp8 or better only, live status, uptime, the parameters the call needs —
+# and ranked by the expected dollars of one call of this call site's token shape.
+# The ranking goes out as `provider.order` with `allow_fallbacks`, and the same
+# quantization filter as `provider.quantizations`, so a fallback cannot land on a
+# fp4 host either. It routes, and never names what answers: the model id, the prompt
+# and the cache key are unchanged, and the host was already chosen per call. What the
+# endpoint list says is METADATA — when it cannot be read, the call goes out with
+# the quantization filter and OpenRouter's price sort instead, and is never failed
+# for it.
+#
+# The quantization floor is deliberate (approved 2026-09-25): a 4-bit host is a
+# different model in all but name, and no evaluation of either DeepSeek call site
+# covered one. "unknown" — a host that does not publish its quantization, which
+# includes DeepSeek's own endpoint — is admitted only when fewer than
+# _OPENROUTER_MIN_KNOWN_HOSTS fp8-or-better hosts survive the filters: with enough
+# hosts that are known to be fine, an unlabelled one buys nothing but doubt; with too
+# few, excluding it would leave the call one outage from failing.
+_OPENROUTER_QUANTIZATIONS = ("fp8", "mxfp8", "fp16", "bf16", "fp32")
+_OPENROUTER_MIN_KNOWN_HOSTS = 3
+_OPENROUTER_MIN_UPTIME = 95.0          # % over the last 30 minutes, when reported
+_OPENROUTER_ENDPOINTS_TTL = 3600       # s a fetched endpoint list is trusted
+_OPENROUTER_ENDPOINTS_RETRY = 300      # s before a failed fetch is tried again
+
+
+class TokenShape(NamedTuple):
+    """What one call of a call site typically bills: prompt tokens, the share of them
+    a caching host serves from cache, and output tokens (reasoning included). Used
+    only to rank hosts — never to record or cap spend."""
+    n_in: int
+    cached_share: float
+    n_out: int
+
+
+# Measured 2026-09-21..25 (analysis/llm_costs_2026-09/REPORT.md).
+SCREEN_VOTE_TOKENS = TokenShape(2680, 0.60, 775)
+PICK_CHECK_TOKENS = TokenShape(3400, 0.0, 1650)
+# A call site that names no shape: a short-answer JSON call over one abstract.
+_DEFAULT_OPENROUTER_TOKENS = TokenShape(3000, 0.0, 800)
+
+_openrouter_endpoints_cache: dict[str, tuple[float, Optional[list]]] = {}
+_openrouter_endpoints_lock = threading.Lock()
+_openrouter_order_logged: set = set()
+
+
+def _fetch_openrouter_endpoints(model: str) -> Optional[list]:
+    """The endpoint list OpenRouter publishes for *model*, or None when unreadable.
+    Public and unmetered; no key is sent."""
+    try:
+        r = requests.get(f"https://openrouter.ai/api/v1/models/{model}/endpoints",
+                         timeout=10)
+        r.raise_for_status()
+        endpoints = r.json()["data"]["endpoints"]
+        return endpoints if isinstance(endpoints, list) else None
+    except Exception as exc:
+        log.warning("OpenRouter endpoint list for %s unreadable (%s) — routing by "
+                    "price sort with the quantization filter", model, exc)
+        return None
+
+
+def _openrouter_endpoints(model: str) -> Optional[list]:
+    """_fetch_openrouter_endpoints, memoised per process: a success for an hour, a
+    failure for five minutes, so an outage of the metadata API is not re-asked on
+    every call."""
+    with _openrouter_endpoints_lock:
+        hit = _openrouter_endpoints_cache.get(model)
+        if hit and time.monotonic() < hit[0]:
+            return hit[1]
+        endpoints = _fetch_openrouter_endpoints(model)
+        ttl = _OPENROUTER_ENDPOINTS_TTL if endpoints else _OPENROUTER_ENDPOINTS_RETRY
+        _openrouter_endpoints_cache[model] = (time.monotonic() + ttl, endpoints or None)
+        return endpoints or None
+
+
+def _price(pricing: dict, field: str) -> Optional[float]:
+    try:
+        value = float(pricing.get(field))
+    except (TypeError, ValueError):
+        return None
+    return value if value >= 0 else None
+
+
+def _expected_call_usd(endpoint: dict, shape: TokenShape) -> Optional[float]:
+    """Expected dollars for one call of *shape* on *endpoint*, from its listed
+    per-token prices (the listed price is what is billed: the `discount` field is
+    already applied to it). A host with no cache-read price is charged its prompt
+    price for the cached share. None when the prices are unreadable."""
+    pricing = endpoint.get("pricing") or {}
+    prompt, completion = _price(pricing, "prompt"), _price(pricing, "completion")
+    if prompt is None or completion is None:
+        return None
+    cache_read = _price(pricing, "input_cache_read")
+    cached = shape.n_in * shape.cached_share
+    return ((shape.n_in - cached) * prompt
+            + cached * (prompt if cache_read is None else cache_read)
+            + shape.n_out * completion)
+
+
+def _rank_openrouter_hosts(endpoints: list, shape: TokenShape,
+                           needed: tuple[str, ...]) -> tuple[list[str], bool]:
+    """Endpoint tags, cheapest expected call first, and whether "unknown"
+    quantization was admitted. Drops hosts below fp8, not live (status != 0),
+    under _OPENROUTER_MIN_UPTIME, or missing a parameter the call sends."""
+    usable = []
+    for ep in endpoints:
+        if not isinstance(ep, dict) or not ep.get("tag"):
+            continue
+        if ep.get("status") not in (0, None):
+            continue
+        uptime = ep.get("uptime_last_30m")
+        if isinstance(uptime, (int, float)) and uptime < _OPENROUTER_MIN_UPTIME:
+            continue
+        params = ep.get("supported_parameters")
+        if isinstance(params, list) and any(p not in params for p in needed):
+            continue
+        usd = _expected_call_usd(ep, shape)
+        if usd is None:
+            continue
+        usable.append((usd, str(ep.get("quantization") or "unknown").lower(), ep["tag"]))
+    known = [u for u in usable if u[1] in _OPENROUTER_QUANTIZATIONS]
+    allow_unknown = len(known) < _OPENROUTER_MIN_KNOWN_HOSTS
+    ranked = sorted(u for u in usable if u[1] in _OPENROUTER_QUANTIZATIONS
+                    or (allow_unknown and u[1] == "unknown"))
+    order: list[str] = []
+    for _usd, _q, tag in ranked:
+        if tag not in order:            # a host can list two endpoints under one tag
+            order.append(tag)
+    return order, allow_unknown
+
+
+def _openrouter_routing(model: str, shape: TokenShape,
+                        needed: tuple[str, ...]) -> dict:
+    """The `provider` preferences for one call of *model* at *shape*."""
+    # require_parameters keeps hosts that cannot honour response_format or the
+    # reasoning effort out of the rotation rather than silently ignoring them — the
+    # fallbacks included. preferred_min_throughput: a pure price sort once routed
+    # DeepSeek reasoning calls to a host queuing them at 57-249 s each (2026-08-13).
+    base = {"require_parameters": True, "preferred_min_throughput": 40}
+    endpoints = _openrouter_endpoints(model)
+    order, allow_unknown = (_rank_openrouter_hosts(endpoints, shape, needed)
+                            if endpoints else ([], True))
+    quantizations = list(_OPENROUTER_QUANTIZATIONS) + (["unknown"] if allow_unknown else [])
+    if not order:
+        if endpoints:
+            log.warning("No OpenRouter host of %s passes the fp8/uptime filters — "
+                        "routing by price sort with the quantization filter", model)
+        return {**base, "sort": "price", "quantizations": quantizations}
+    if (model, shape) not in _openrouter_order_logged:
+        _openrouter_order_logged.add((model, shape))
+        log.info("OpenRouter host order for %s: %s", model, ", ".join(order))
+    return {**base, "order": order, "allow_fallbacks": True,
+            "quantizations": quantizations}
+
+
+def _reported_cost(usage: object) -> float:
+    """What OpenRouter says it billed for a call, in USD, or 0.0 when unreported."""
+    cost = getattr(usage, "cost", None)
+    if cost is None:
+        extra = getattr(usage, "model_extra", None) or {}
+        cost = extra.get("cost") if isinstance(extra, dict) else None
+    return float(cost) if isinstance(cost, (int, float)) and cost > 0 else 0.0
+
+
 def call_openrouter(prompt: str, model: str,
-                    reasoning_effort: str = "") -> tuple[Optional[dict], str]:
+                    reasoning_effort: str = "",
+                    token_shape: Optional[TokenShape] = None
+                    ) -> tuple[Optional[dict], str]:
     """
     Call any model available on OpenRouter via the OpenAI-compatible API.
 
@@ -675,6 +870,8 @@ def call_openrouter(prompt: str, model: str,
     reasoning_effort — passed through only when set, as on OpenAI direct. A model
             that does not reason ignores it; sending nothing keeps the old behaviour
             for the pre-screen's two voters.
+    token_shape — the call site's typical token counts, used only to rank the
+            hosts (see _openrouter_routing); None ranks for a short JSON answer.
 
     Returns (result_dict_or_None, error_description).
     """
@@ -689,13 +886,12 @@ def call_openrouter(prompt: str, model: str,
 
     use_model = model
     extra = {"reasoning_effort": reasoning_effort} if reasoning_effort else {}
-    # Cheapest host that can still sustain a working rate. A pure price sort routed
-    # DeepSeek reasoning calls to a host queuing them at 57-249 s each (measured
-    # 2026-08-13); require_parameters keeps hosts that cannot honour response_format
-    # or the reasoning effort out of the rotation rather than silently ignoring them.
-    extra["extra_body"] = {"provider": {"sort": "price",
-                                        "preferred_min_throughput": 40,
-                                        "require_parameters": True}}
+    needed = ("response_format",) + (("reasoning_effort",) if reasoning_effort else ())
+    provider = _openrouter_routing(model, token_shape or _DEFAULT_OPENROUTER_TOKENS,
+                                   needed)
+    # usage.include asks OpenRouter to report what the call was billed, which
+    # depends on the host it picked and cannot be reconstructed from tokens.
+    extra["extra_body"] = {"provider": provider, "usage": {"include": True}}
     # The same three attempts with 1s/2s backoff call_openai runs, for the same
     # reason: a single transient failure at the provider must not be the answer a
     # row records. OpenRouter had one attempt, so the pre-screen's two voters and
@@ -722,7 +918,7 @@ def call_openrouter(prompt: str, model: str,
                 _record_tokens("openrouter", use_model,
                                response.usage.prompt_tokens,
                                response.usage.completion_tokens,
-                               cached, written)
+                               cached, written, _reported_cost(response.usage))
             if response.choices[0].finish_reason == "length":
                 log.warning("OpenRouter response hit the %d-token cap and was cut off — "
                             "the truncated JSON will fail to parse (model=%s)",
@@ -765,7 +961,9 @@ def provider_for(model: str) -> str:
 
 
 def call_model(prompt: str, model: str, *,
-               reasoning_effort: str = "") -> tuple[Optional[dict], str, str]:
+               reasoning_effort: str = "",
+               token_shape: Optional[TokenShape] = None
+               ) -> tuple[Optional[dict], str, str]:
     """One JSON call to *model*, on whichever provider serves it.
 
     How hard the model thinks comes from the caller and nowhere else: nothing is
@@ -775,6 +973,9 @@ def call_model(prompt: str, model: str, *,
     constant asks a Gemini id and an OpenAI id to think alike. An empty value sends
     nothing and leaves the provider default.
 
+    token_shape reaches only an OpenRouter call, where it ranks the hosts by the
+    expected cost of a call of that size; it never changes what is asked.
+
     Returns (result_dict_or_None, provider, error_description).
     """
     provider = provider_for(model)
@@ -783,7 +984,8 @@ def call_model(prompt: str, model: str, *,
                                   reasoning_effort=reasoning_effort)
     elif provider == "openrouter":
         result, err = call_openrouter(prompt, model=model,
-                                      reasoning_effort=reasoning_effort)
+                                      reasoning_effort=reasoning_effort,
+                                      token_shape=token_shape)
     else:
         result, err = call_openai(prompt, model=model,
                                   reasoning_effort=reasoning_effort)
@@ -1298,7 +1500,8 @@ def _classify_once(prompt: str, model: str, effort: str) -> "dict | None":
     the prompt. The effort IS passed in, from the same screen_voters() slot that
     names the model, because it is what the key claims the vote was produced at.
     """
-    result, provider, _err = call_model(prompt, model, reasoning_effort=effort)
+    result, provider, _err = call_model(prompt, model, reasoning_effort=effort,
+                                        token_shape=SCREEN_VOTE_TOKENS)
     if not result:
         return None
 
@@ -1835,7 +2038,8 @@ def check_reference_pick(doi_r: str, study_r: str, abstract_r: str,
     answer = read_cache(LLM_CACHE_DIR, key)
     if answer is None:
         result, _provider, llm_error = call_model(prompt, PICK_CHECK_MODEL,
-                                                  reasoning_effort=PICK_CHECK_EFFORT)
+                                                  reasoning_effort=PICK_CHECK_EFFORT,
+                                                  token_shape=PICK_CHECK_TOKENS)
         status = str((result or {}).get("status", "") or "").strip().lower()
         if status not in PICK_CHECK_STATUSES:
             return {"flag": None, "status": "", "originals": [], "alternatives": [],

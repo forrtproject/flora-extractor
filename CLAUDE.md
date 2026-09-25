@@ -424,6 +424,26 @@ When a provider reports them, each model's record also accumulates `cached_in` a
 `cache_write_in`. Both are subsets of `in`; use them to assess provider prompt-cache
 costs, not as extra tokens in the daily cap. Older records have only `in` and `out`,
 so they cannot establish past cache savings.
+OpenRouter also reports what it BILLED per call, which depends on the host and
+cannot be rebuilt from tokens; it accumulates as `usd` (absent where unreported —
+never estimated).
+
+**Two transport levers, neither of which reaches a prompt, a cache key or a
+generation.** `OPENAI_FLEX_PATIENCE` (seconds, default 0): after a flex capacity
+refusal (429 `flex_unavailable`) the call re-asks for flex with a 15 s → 120 s
+back-off for up to that long before accepting standard tier at twice the price.
+Refusals come in waves (90% of calls on 2026-09-24, 2% the evening before), so a
+campaign run wants `OPENAI_FLEX_PATIENCE=600`. **OpenRouter hosts are chosen here,
+not by OpenRouter's price sort** (`_openrouter_routing()` in `shared/llm_client.py`):
+per model id the endpoint list is fetched once per process, filtered to fp8 or
+better (`unknown` quantization only when fewer than three known fp8+ hosts remain),
+live status, ≥ 95% 30-minute uptime and the parameters the call sends, then ranked
+by expected $ per call from the call site's `TokenShape` (`SCREEN_VOTE_TOKENS`,
+`PICK_CHECK_TOKENS`) and sent as `provider.order` + `allow_fallbacks` +
+`quantizations`. The price sort weighs prompt price and picked an fp4 host 7× the
+cost of the cheapest fp8 one for the output-heavy DeepSeek vote. An unreadable
+endpoint list falls back to the quantization filter plus `sort: price`, logged,
+never a failed call. Evidence: `analysis/llm_costs_2026-09/REPORT.md`.
 
 **OpenAlex is metered too, and not uniformly.** It bills credits per request against
 a daily budget that resets at midnight UTC (`shared/openalex_keys.py` owns the key
@@ -836,10 +856,11 @@ and its rationale belong together in one committed place. Key variables:
 RESEARCHER_EMAIL=...            # required: OpenAlex/CrossRef politeness headers
 GEMINI_API_KEY=...              # required
 OPENAI_API_KEY=...              # required for Stage 3 (default screen voter 2)
-OPENROUTER_API_KEY=...          # only if SCREENING_MODEL_2 contains "/"
+OPENROUTER_API_KEY=...          # required: screen voter 1 and the pick check are "/" ids
 OPENAI_DAILY_TOKEN_BUDGET=9500000   # 0 disables the cap (default = the free daily allocation, resets midnight UTC)
 GEMINI_USE_FLEX=true            # 50% discount on paid keys; flex uses GEMINI_FLEX_TIMEOUT
 OPENAI_USE_FLEX=true            # same trade on OpenAI; refused flex falls back to standard
+OPENAI_FLEX_PATIENCE=600        # s to keep re-asking a refused flex call before standard (default 0)
 GEMINI_PAID_KEY_SLOTS=1         # which key SLOTS are billing-enabled, not key values
 EXTRACT_WORKERS=4               # Stage 3 rows in flight at once; 1 = no pool
 FLORA_CACHE_DIR=                # move cache/ to an SSD; FLORA_POOL_DIR does the same

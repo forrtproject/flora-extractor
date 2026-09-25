@@ -1115,12 +1115,15 @@ EXTRACT_RUNG_REACH = {
 }
 # Tokens one row sends and receives AT the rung it stops at, including everything
 # above it that was already paid for. The combined prompt asks target and outcome in
-# one call, so there is one call per rung reached, not two.
+# one call, so there is one call per rung reached, not two. Output re-measured
+# 2026-09-25 off the gpt-6-luna cache entries at LINKING_EFFORT medium: ~1,800 per
+# call (reasoning included; 700-900 had been assumed), ~2,200 per work across all
+# sites (analysis/llm_costs_2026-09/REPORT.md). Not broken down by rung.
 EXTRACT_RUNG_TOKENS = {
     "deterministic": (0, 0),
-    "abstract":      (3_000, 700),
-    "references":    (9_000, 700),
-    "fulltext":      (40_000, 900),
+    "abstract":      (3_000, 1_800),
+    "references":    (9_000, 1_800),
+    "fulltext":      (40_000, 1_800),
 }
 # Rough list prices per 1,000 tokens for LINKING_MODEL / OUTCOME_MODEL, which are the
 # same id today. Same status as the screens' table in `filter/engine/tiers.py`: they
@@ -1130,8 +1133,10 @@ EXTRACT_RUNG_TOKENS = {
 EXTRACT_PRICE_PER_1K_IN = 0.00005
 EXTRACT_PRICE_PER_1K_OUT = 0.00025
 # The PDF parse call, charged once per row that acquires a document. A whole PDF goes
-# to PDF_PARSE_MODEL, so it is priced separately and it dominates a fulltext row.
-EXTRACT_PDF_PARSE_USD = 0.0120
+# to PDF_PARSE_MODEL, so it is priced separately. Re-measured 2026-09-25: the LLM
+# parse is a rare fallback behind the local parsers, under $0.10 for a 12k-work
+# campaign (analysis/llm_costs_2026-09/REPORT.md) — $0.012 overstated it ~40x.
+EXTRACT_PDF_PARSE_USD = 0.0003
 
 # OpenAlex credits, in the units CLAUDE.md's table gives (a filter query is 1).
 # Reported as CREDITS and never converted: OpenAlex bills against a daily credit
