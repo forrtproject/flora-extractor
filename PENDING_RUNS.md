@@ -32,6 +32,14 @@ the command, pasteable from the project root, and what proves it worked.
       auto-retire (~540 retired, ~5 flagged), then set it back to 10. Done when the run's
       `stage_status` shows `sync_csv` and `retire_superseded` SUCCESS.
 
+- [ ] **Re-render after the flora-validation import lands** (not before: every render moves
+      the removal share the maintainer's one-off `EXTRACTOR_MAX_REMOVAL_PERCENT=17` was set
+      for). Owed by `6cbdb36` (clean_doi re-spelling: 24 pair ids superseded, 1 held) and any
+      later Stage 3 change. `.venv/bin/python -m extract.export --release <newest> --check`,
+      then without `--check`; commit `data/extracted.csv` together with
+      `data/retired_pairs.csv` and the set-aside CSVs, push. Done when the next nightly run
+      imports it with `retire_superseded` SUCCESS.
+
 ## Done
 
 - [x] **DONE 2026-09-23 — deleted.** HF commit `e284f62` removed the 14 `builds/*/candidates-*.parquet`; the remote now lists 2,232 pool files under gate `d536bc51b9b2`. A fresh `pool_sync --pull --no-overlay` into a scratch dir stamped `expected_files: 2232` and `pool_fingerprint()` returned `d34c277e…`, identical to the local pool. Original entry: **Decide what to do about the 14 `candidates-*.parquet` files in the shared
