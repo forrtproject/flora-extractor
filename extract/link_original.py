@@ -582,7 +582,20 @@ OUTCOME_DESCENT = True
 #      (`doi_registry_mismatch: …`); a registry that does not answer is not a
 #      mismatch (2026-09-25)
 #      reopen: --redo 16766644,22047302,22986889,23811235,31908667,37892775,2779677281,4415949651
-EXTRACT_LADDER_VERSION: int = 30
+#  31  on a registry mismatch the row's OpenAlex abstract is dropped when it describes
+#      the registry's paper rather than title_r's — it covers more of the registry
+#      title's words than of title_r's (`doi_registry.abstract_names_registry`; a tie
+#      keeps it). 6 of the 8 wrong-DOI studies carried the other paper's abstract (a
+#      diabetes-care review under an aphasia replication, a COPD cohort under a
+#      job-embeddedness one), and every abstract-level prompt read it as theirs. Over
+#      all 40 audit mismatches, each abstract read by hand, the rule is right 40/40:
+#      the 38 foreign abstracts cover 0.17–1.00 of a registry title and <= 0.25 of
+#      their own, the 2 own ones 0.57/0.93 of their own and <= 0.14 of the registry's.
+#      The row is then textless (Stage 3.5 looks for a document first), ships
+#      abstract_r blank, and says so in link_evidence; never asked without a
+#      mismatch (2026-09-25)
+#      reopen: --redo 16766644,22047302,22986889,23811235,31908667,37892775,4400060759
+EXTRACT_LADDER_VERSION: int = 31
 
 
 # Columns to pass through from the input row (no renaming). Only columns

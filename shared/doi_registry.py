@@ -220,7 +220,7 @@ def check(doi: str, title: str, year=None, *, network: bool = True) -> dict:
     sim = similarity(title, meta)
     gap = year_gap(year, meta)
     out = {"registry_title": reg_title, "similarity": sim, "year_gap": gap,
-           "agency": meta.get("agency", "")}
+           "agency": meta.get("agency", ""), "titles": registry_titles(meta)}
     if sim != sim:
         return {**out, "verdict": "no_title"}
     if sim > SIM_MAX:
@@ -230,3 +230,33 @@ def check(doi: str, title: str, year=None, *, network: bool = True) -> dict:
     if abs(latin_share(title) - latin_share(reg_title)) > 0.5 and (gap is None or gap <= 1):
         return {**out, "verdict": "translation_suspect"}
     return {**out, "verdict": "mismatch"}
+
+
+# ── Whose paper an abstract describes ─────────────────────────────────────────
+
+
+def title_coverage(title: str, text: str) -> float:
+    """The share of *title*'s content tokens that occur in *text*; 0.0 for an empty title."""
+    t = tokens(title)
+    return len(t & tokens(text)) / len(t) if t else 0.0
+
+
+def abstract_names_registry(abstract: str, title: str, reg_titles: list[str]) -> dict:
+    """Does *abstract* describe the registry's paper rather than the one titled *title*?
+
+    Asked only on a `mismatch`: the DOI already names another paper, and the question
+    is whether OpenAlex's abstract came with the DOI (it describes the registry record)
+    or with the title (it is the row's own). An abstract restates its own paper's
+    title words, so the side whose title it covers MORE is the paper it describes; a
+    tie — including an abstract that shares nothing with either — keeps it.
+
+    Measured 2026-09-25 over the 40 audit mismatches (issue #210: 30 twin records, 8
+    real studies under another paper's DOI, 2 withdrawn preprints), each abstract
+    read by hand: the 38 describing the registry's paper cover 0.17–1.00 of a
+    registry title and at most 0.25 of their own; the 2 describing the row's own
+    paper cover 0.57 and 0.93 of their own title and at most 0.14 of the registry's.
+    No threshold to tune — every case sits at least 0.17 from the tie.
+    """
+    own = title_coverage(title, abstract)
+    registry = max((title_coverage(t, abstract) for t in reg_titles), default=0.0)
+    return {"own": own, "registry": registry, "names_registry": registry > own}

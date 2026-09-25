@@ -2547,8 +2547,8 @@ def _url_names_doi(url: str, doi: str) -> bool:
     return doi in text or bool(arxiv and arxiv.group(1) in text)
 
 
-def _registry_guard(row: pd.Series, doi_r: str) -> "tuple[str, str | None, str]":
-    """What this row's documents may be fetched by: (doc_doi, doc_url, note).
+def _registry_guard(row: pd.Series, doi_r: str) -> "tuple[str, str | None, str, bool]":
+    """What this row's documents may be fetched by: (doc_doi, doc_url, note, drop_abstract).
 
     OpenAlex files some real replications under an unrelated paper's DOI (issue #210:
     8 in the admitted pool, 7 of them already extracted). Every DOI-keyed fetch then
@@ -2568,25 +2568,44 @@ def _registry_guard(row: pd.Series, doi_r: str) -> "tuple[str, str | None, str]"
 
     A registry that does not answer is not a mismatch: the row runs as before, and the
     note says the DOI went unchecked.
+
+    On a mismatch OpenAlex's abstract may have come with the DOI rather than with the
+    title — 6 of the 8 real studies carry the other paper's abstract, and every
+    abstract-level prompt read it as the replication's. `drop_abstract` is True when
+    the abstract covers the registry's title words more than title_r's
+    (`doi_registry.abstract_names_registry`, measured over all 40 audit mismatches);
+    the caller then treats the row as textless. Never asked without a mismatch.
     """
     if not doi_r:
-        return doi_r, None, ""
+        return doi_r, None, "", False
     title = str(row.get("title_r", "") or row.get("study_r", "") or "")
     found = doi_registry.check(doi_r, title, row.get("year_r"))
     if found["verdict"] == "unanswered":
         log.warning("[%s] DOI registry did not answer — DOI-keyed fetches unguarded", doi_r)
-        return doi_r, None, "doi_registry: unavailable, DOI not checked against its registry"
+        return (doi_r, None, "doi_registry: unavailable, DOI not checked against its "
+                "registry", False)
     if found["verdict"] != "mismatch":
-        return doi_r, None, ""
+        return doi_r, None, "", False
     url_r = str(row.get("url_r", "") or "")
     doc_url = "" if _url_names_doi(url_r, doi_r) else None
     log.warning("[%s] the DOI is registered to %r, not this row's %r — DOI-keyed "
                 "fetches skipped", doi_r, found["registry_title"][:80], title[:80])
+    note = (f"doi_registry_mismatch: {doi_r} is registered to "
+            f"\"{found['registry_title'][:150]}\" (title overlap "
+            f"{found['similarity']:.2f}); DOI-keyed fetches skipped"
+            + ("" if doc_url is None else ", and the DOI-derived url_r"))
+    raw = row.get("abstract_r")
+    abstract = "" if raw is None or pd.isna(raw) else str(raw)   # NaN is truthy
+    if not abstract.strip():
+        return "", doc_url, note, False
+    owner = doi_registry.abstract_names_registry(abstract, title, found["titles"])
+    if not owner["names_registry"]:
+        return "", doc_url, note, False
+    log.warning("[%s] the OpenAlex abstract describes the DOI's paper — dropped", doi_r)
     return "", doc_url, (
-        f"doi_registry_mismatch: {doi_r} is registered to "
-        f"\"{found['registry_title'][:150]}\" (title overlap "
-        f"{found['similarity']:.2f}); DOI-keyed fetches skipped"
-        + ("" if doc_url is None else ", and the DOI-derived url_r"))
+        f"{note}; the OpenAlex abstract describes that paper (it covers "
+        f"{owner['registry']:.2f} of the registry title's words, {owner['own']:.2f} of "
+        "title_r's) and was dropped"), True
 
 
 def _with_note(row: dict, note: str) -> dict:
@@ -2673,7 +2692,12 @@ def _process_row(row: pd.Series, doi_r: str, no_llm: bool, no_pdf: bool,
             row["paper_type"] = screen["record_type"]
             row["filter_method"] = "screen"   # the screen decided the type
 
-    doc_doi, doc_url, registry_note = _registry_guard(row, doi_r)
+    doc_doi, doc_url, registry_note, drop_abstract = _registry_guard(row, doi_r)
+    if drop_abstract:
+        # Blank on the shipped row too: a validator reading another paper's abstract
+        # under this title is misled, and the note names what was dropped and why.
+        row = row.copy()
+        row["abstract_r"] = ""
     try:
         rows = _resolve_and_code(
             doi_r, row, screen=screen, no_llm=no_llm, no_pdf=no_pdf,

@@ -719,12 +719,32 @@ class TestRegistryGuard:
         "replication,rule_based,direct replication,high\n"
     )
     _MISMATCH = {"verdict": "mismatch", "registry_title": "Sympathetic neural responses",
-                 "similarity": 0.0, "year_gap": 1, "agency": "crossref"}
+                 "similarity": 0.0, "year_gap": 1, "agency": "crossref",
+                 "titles": ["Sympathetic neural responses"]}
 
-    def _run(self, found: dict, url: str = ""):
+    def _run(self, found: dict, url: str = "", abstract: str = "Abstract text"):
         with patch.object(run_extract.doi_registry, "check", return_value=found):
-            result, m_link, _ = _run_pipeline(self._CSV.format(url=url))
+            result, m_link, _ = _run_pipeline(
+                self._CSV.format(url=url).replace("Abstract text", abstract))
         return result, m_link.call_args.kwargs
+
+    def test_an_abstract_that_came_with_the_doi_is_dropped_on_a_mismatch_only(self):
+        """The ladder reads no abstract and the shipped row shows none; the note says
+        why. The row's own abstract stays, and without a mismatch nothing is asked."""
+        foreign = "Sympathetic neural responses were recorded in humans."
+        result, kwargs = self._run(self._MISMATCH, abstract=foreign)
+        assert kwargs["cands_df"].iloc[0]["abstract_r"] == ""
+        row = result.iloc[0]
+        assert row["abstract_r"] == ""
+        assert "OpenAlex abstract describes that paper" in row["link_evidence"]
+
+        own = "We replicate the Test Paper with a new sample."
+        result, kwargs = self._run(self._MISMATCH, abstract=own)
+        assert kwargs["cands_df"].iloc[0]["abstract_r"] == own
+        assert result.iloc[0]["abstract_r"] == own
+
+        result, kwargs = self._run({"verdict": "match"}, abstract=foreign)
+        assert kwargs["cands_df"].iloc[0]["abstract_r"] == foreign
 
     def test_a_mismatch_fetches_as_a_doi_less_row_and_says_so(self):
         result, kwargs = self._run(self._MISMATCH, url="https://doi.org/10.1000/TEST")

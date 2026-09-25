@@ -115,7 +115,7 @@ never been independently validated. Discuss shared changes with all stage teams.
 | `shared/grobid.py`          | GROBID reference extraction |
 | `shared/disambiguation.py`  | Two string helpers only: `jaccard_similarity()` (used by `link_original.py` and `doi_verify.py`) and `is_umbrella_paper()`. The same-author/year resolvers it was named for are gone; nothing here decides a candidate any more |
 | `shared/doi_verify.py`      | doi_o verification/correction (CrossRef → OpenAlex) |
-| `shared/doi_registry.py`    | The DOI registry title check: `check()` compares the title a DOI is registered to (Crossref, doi.org fallback, cached) with the row's own title. Stage 2's twin audit and Stage 3's guard (`_registry_guard` in `extract/run_extract.py`: a mismatch skips every DOI-keyed fetch) share it |
+| `shared/doi_registry.py`    | The DOI registry title check: `check()` compares the title a DOI is registered to (Crossref, doi.org fallback, cached) with the row's own title. Stage 2's twin audit and Stage 3's guard (`_registry_guard` in `extract/run_extract.py`: a mismatch skips every DOI-keyed fetch, and drops an OpenAlex abstract that `abstract_names_registry()` finds describes the registry's paper) share it |
 | `shared/utils.py`           | `clean_doi()`, `cache_key()`, `non_article_doi()`, helpers |
 | `shared/config.py`          | All paths, env loading, rate limits — every tunable lives here |
 | `shared/schema.py`          | CSV column definitions — the contract between stages |

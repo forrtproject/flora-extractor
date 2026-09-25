@@ -48,3 +48,17 @@ def test_a_failure_is_never_cached_and_never_a_mismatch(monkeypatch):
     assert doi_registry.check("10.1/gone", "Title")["verdict"] == "unregistered"
     assert doi_registry.cached_only("10.1/gone")["registered"] is False
     assert doi_registry.check("10.1/gone", "Title", network=False)["verdict"] == "unregistered"
+
+
+def test_whose_paper_an_abstract_describes():
+    """The side whose title words the abstract covers more; a tie keeps the abstract.
+    Real cases from the issue #210 audit (W22986889, W4415949651)."""
+    names = doi_registry.abstract_names_registry
+    reg = ["Complementary and Alternative Medicine in Diabetes Care"]
+    cam = "People with diabetes use complementary and alternative medicine in their care."
+    assert names(cam, "Verb Network Strengthening Treatment in aphasia: replication",
+                 reg)["names_registry"]
+    own = "The CRepair wrapper improved structural self-repair across three LLM families."
+    assert not names(own, "CRepair Wrapper Improves Structural Self-Repair",
+                     ["Can LLMs Correct Themselves?"])["names_registry"]
+    assert not names("Unrelated words entirely.", "Aphasia treatment", reg)["names_registry"]
