@@ -1,0 +1,12 @@
+{
+ "id": "arm-r2",
+ "description": "arm 2 of replication-claim-residual",
+ "match": {
+  "text_regex": "\\b(?:aim\\w*|set\\s+out)\\s+to\\s+(?:\\w+ly\\s+)?replicate\\b"
+ },
+ "pile": "screen_expensive",
+ "vocabulary": null,
+ "precedence": 100,
+ "shadow": true,
+ "measured": []
+}

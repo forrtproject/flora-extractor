@@ -1,0 +1,12 @@
+{
+ "id": "arm-g1",
+ "description": "arm 1 of replication-claim-general",
+ "match": {
+  "text_regex": "\\b(?:direct|conceptual|registered|exact|close|high[-\\s]powered|pre[-\\s]?registered|large[-\\s]scale|many-?labs?|multi-?site)\\s+replications?\\b"
+ },
+ "pile": "screen_expensive",
+ "vocabulary": null,
+ "precedence": 100,
+ "shadow": true,
+ "measured": []
+}

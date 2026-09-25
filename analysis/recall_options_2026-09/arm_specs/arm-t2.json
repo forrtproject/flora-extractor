@@ -1,0 +1,12 @@
+{
+ "id": "arm-t2",
+ "description": "arm 2 of replication-claim-text",
+ "match": {
+  "text_regex": "\\breplication\\s+stud(?:y|ies)\\b"
+ },
+ "pile": "screen_expensive",
+ "vocabulary": null,
+ "precedence": 100,
+ "shadow": true,
+ "measured": []
+}

@@ -1,0 +1,12 @@
+{
+ "id": "arm-t1",
+ "description": "arm 1 of replication-claim-text",
+ "match": {
+  "text_regex": "\\bwe\\s+(?:\\w+\\s+){0,2}replicat(?:e|es|ed)\\b"
+ },
+ "pile": "screen_expensive",
+ "vocabulary": null,
+ "precedence": 100,
+ "shadow": true,
+ "measured": []
+}

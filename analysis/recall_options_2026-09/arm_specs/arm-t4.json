@@ -1,0 +1,12 @@
+{
+ "id": "arm-t4",
+ "description": "arm 4 of replication-claim-text",
+ "match": {
+  "text_regex": "\\bstudy\\s+replicate[sd]\\b"
+ },
+ "pile": "screen_expensive",
+ "vocabulary": null,
+ "precedence": 100,
+ "shadow": true,
+ "measured": []
+}
