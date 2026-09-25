@@ -945,7 +945,7 @@ def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False,
         # OTHER studies' replication failures, and the prompt says so.
         fulltext = " ".join(filter(None, (
             str(link.get(key) or "") for key in
-            ("grobid_abstract", "grobid_intro", "grobid_methods"))))
+            ("grobid_abstract", "grobid_intro"))))
         provenance = "sections" if fulltext else "none"
     if not intro:
         intro = str(link.get("grobid_intro") or "")

@@ -366,7 +366,20 @@ _GENERATION_EQUIVALENCES: dict[str, tuple[str, ...]] = {
     # name (`--redo-status llm_references`), so one redo buys both changes. So the
     # claim, deliberately incomplete as the step-3 entry's is: every work not reopened
     # keeps its recorded answer. `474e80e4c32a6dfa` joins the flattened chain.
-    "765e053cd24611e5": ("474e80e4c32a6dfa", "7dbb1e92452d8333",
+    # 2026-09-25: `author_year_candidate_keys` (spliced into
+    # `build_author_year_pick_prompt`) disambiguates a repeated surname-and-year key
+    # with `_2`, `_3` instead of a letter, the scheme the reference list moved to on
+    # 2026-09-23 — `@smith2010b` reads as the paper's own "(2010b)" citation of a
+    # different work. The rendered prompt changes ONLY for a pooled list holding two
+    # candidates with one surname and year; every other pick prompt is byte-identical
+    # and its cached answer is re-read under the old version
+    # (`_AUTHOR_YEAR_PICK_LEGACY_VERSIONS` in shared/llm_client.py). So the claim:
+    # every work not reopened keeps its recorded answer, and the works that could
+    # answer differently are the `llm_title_search` / `llm_author_year_search` picks
+    # over such a list — reopened by `--redo` with ids (they have no status of their
+    # own). `765e053cd24611e5` joins the flattened chain.
+    "25e2b6bb31821d84": ("765e053cd24611e5",
+                         "474e80e4c32a6dfa", "7dbb1e92452d8333",
                          "010cf32bb63351e1", "ca0706ef44827229",
                          "061cb5ca8e1888b6",
                          "243ae515c654b6e5", "5b716d061bb336f5",

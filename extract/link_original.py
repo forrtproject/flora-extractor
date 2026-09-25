@@ -42,10 +42,11 @@ from shared.pdf_parsing import (
     parse_cache_path,
     parse_result_is_empty,
     read_parse_cache,
+    score_parse_result,
 )
 from shared.openalex_client import TitleSearchUnavailable, author_matches, extract_author_year_patterns, find_all_candidates, fetch_opencitations_references, fetch_referenced_works_metadata, _search_crossref_by_title, _search_openalex_by_title
 from shared.prompts import (
-    TARGET_DISCUSSION_CHARS, TARGET_INTRO_CHARS, TARGET_METHODS_CHARS,
+    TARGET_DISCUSSION_CHARS, TARGET_INTRO_CHARS,
     _abstract_tail, rendered_reference_entries,
 )
 from shared.schema import outcome_is_settled
@@ -557,7 +558,17 @@ OUTCOME_DESCENT = True
 #      sent every document whole, and its settled outcome for a carried original it
 #      could not key is kept (analysis/cbd_investigation) (2026-09-23)
 #      reopen: --redo-status llm_references
-EXTRACT_LADDER_VERSION: int = 28
+#  29  the full-text rung reads the document's text from the best-scoring parse method
+#      that HAS text, not from the method that won on score: GROBID never stores
+#      raw_text and wins on its reference count, so a document it won was sent as the
+#      abstract plus a 2,000-char introduction — no body, no closing sections — while
+#      pdfminer's whole text sat in the same cached parse (71 of 3,314 cached parses
+#      measured 2026-09-25; the other 22 without raw text in `best` have none in any
+#      method — scanned PDFs, nothing to recover). References and sections still come
+#      from the winner. The always-empty METHODS block and the row's `grobid_methods`
+#      slice are gone; no prompt changed (2026-09-25)
+#      reopen: --redo-status parse_method=grobid
+EXTRACT_LADDER_VERSION: int = 29
 
 
 # Columns to pass through from the input row (no renaming). Only columns
@@ -1711,6 +1722,18 @@ def run_for_doi(doi_r:              str,
     log.info("[%s] parse_all best=%s refs=%d abstract=%d intro=%d",
              doi_r, best_src, len(best_refs),
              len(best.get("abstract") or ""), len(best.get("intro") or ""))
+    # The document's text is taken from the best-scoring method that HAS text, not
+    # from `best`: GROBID stores sections and references but never raw_text, and wins
+    # on its reference count, so taking its raw_text sent the full-text call the
+    # abstract and a 2,000-char introduction while pdfminer's whole document sat in
+    # the same parse (71 of 3,314 cached parses, 2026-09-25). The references and the
+    # sections still come from `best`. The standalone coder has read the text this
+    # way all along (`_best_fulltext_from_cache` in extract/run_extract.py).
+    raw_text = next((text for text in (
+        str(r.get("raw_text") or "").strip()
+        for r in sorted((r for r in parse_results.values()
+                         if isinstance(r, dict) and not r.get("error")),
+                        key=score_parse_result, reverse=True)) if text), "")
 
     # The closing sections, selected by outcome_text() rather than taken off the front
     # of the parse: an introduction routinely discusses OTHER studies' failures, and the
@@ -1718,7 +1741,7 @@ def run_for_doi(doi_r:              str,
     # makes the outcome answerable at this rung, and its provenance travels with it so
     # the model never attributes a quote to a section it was not shown.
     discussion, discussion_provenance = outcome_text(
-        str(best.get("raw_text") or ""), max_chars=TARGET_DISCUSSION_CHARS)
+        raw_text, max_chars=TARGET_DISCUSSION_CHARS)
     # WHERE the text came from outranks which slice of it outcome_text() picked. An OSF
     # registration form has no discussion section to find, so outcome_text labels its
     # closing lines "tail" — "the closing pages of the paper", which is the one thing
@@ -1729,7 +1752,6 @@ def run_for_doi(doi_r:              str,
     sections = {
         "abstract":   best.get("abstract") or "",
         "intro":      best.get("intro")    or "",
-        "methods":    "",
         "references": best_refs,
         "discussion": discussion,
         "discussion_provenance": discussion_provenance,
@@ -1737,17 +1759,15 @@ def run_for_doi(doi_r:              str,
     # A parse can carry the whole body and still have no section split: OpenAlex's
     # TEI lost its <head> elements to an HTML round-trip, so parse_tei_sections has
     # nothing to divide the text by and returns it whole in raw_text. Without this
-    # the recovered text reached nothing — the combined prompt only ever reads
+    # the recovered text reached nothing — the combined prompt only ever read
     # abstract/intro/methods, so a document with body text but no abstract and no
     # references passed the "we have a document" guard and was then dropped as
     # no_context. Treat that body the way a PDF's raw text is treated and open the
     # INTRODUCTION block with it: the front of a paper is where it says what it is
     # re-testing, which is what this prompt asks about. Sliced here at the size
     # the combined prompt sends, so the row stores exactly what the model read.
-    if not sections["intro"] and not sections["methods"]:
-        raw = str(best.get("raw_text") or "").strip()
-        if raw:
-            sections["intro"] = raw[:TARGET_INTRO_CHARS]
+    if not sections["intro"] and raw_text:
+        sections["intro"] = raw_text[:TARGET_INTRO_CHARS]
     # the combined prompt sends the PDF abstract only as the tail the OpenAlex abstract
     # does not already carry — often "" when the two agree. Record that tail so the row
     # shows the evidence the model was given rather than the section it came from.
@@ -1793,14 +1813,13 @@ def run_for_doi(doi_r:              str,
     # cached full-text prompts had no discussion heading at all ("tail"). Replayed on
     # gpt-6-luna it took sampled cbd rows with a document from 14/23 to 6/23 and moved
     # 3 of 30 settled controls — as many as a plain re-run of the old prompt moved.
-    full_body = str(best.get("raw_text") or "").strip()
+    full_body = raw_text
     llm = _stamp_stage(resolve_targets_and_outcomes(
         doi_r, study_r, abstract_r, candidates, sections.get("references") or [],
         record_type    = record_type,
         rung           = "fulltext",
         pdf_abstract   = sections.get("abstract",   ""),
         intro          = sections.get("intro",      ""),
-        methods        = sections.get("methods",    ""),
         discussion     = sections.get("discussion", ""),
         discussion_provenance = sections.get("discussion_provenance", ""),
         full_body      = full_body,
@@ -1922,10 +1941,6 @@ def _build_output(doi_r:     str,
         "grobid_discussion"     : (sections.get("discussion", "")
                                    or "")[:TARGET_DISCUSSION_CHARS],
         "discussion_provenance" : sections.get("discussion_provenance", "") or "",
-        # run_for_doi never populates methods today (the parsers do not split it out),
-        # so this slice is a contract for a section nothing currently supplies.
-        "grobid_methods"        : (sections.get("methods",  "")
-                                   or "")[:TARGET_METHODS_CHARS],
         "grobid_refs_json"      : json.dumps(
                                       (sections.get("references", []) or [])[:25],
                                       ensure_ascii=False),

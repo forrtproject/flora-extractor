@@ -638,6 +638,29 @@ class TestGateRestoresWhenNothingEnumerates:
         assert len(seen["intro"]) <= TARGET_INTRO_CHARS
         assert row["grobid_intro"] == seen["intro"]
 
+    def test_a_grobid_win_still_sends_the_text_another_parser_extracted(self):
+        """GROBID stores no raw_text and wins on its reference count. The full-text
+        call must still get the document's body — from the best method that has one —
+        while the references keep coming from the winner (ladder 29)."""
+        body = "INTRODUCTION\nWe re-test Smith (2010).\nRESULTS\nThe effect held. " * 10
+        parse = {"grobid":   {"source": "grobid", "abstract": "a", "intro": "",
+                              "references": [{"title": "Ref one", "year": 2010}],
+                              "raw_text": "", "error": None},
+                 "pdfminer": {"source": "pdfminer", "abstract": "", "intro": "",
+                              "references": [], "raw_text": body, "error": None}}
+        seen: dict = {}
+
+        def _capture(*a, **k):
+            seen.update(k)
+            seen["references"] = a[4]
+            return _answer()
+
+        row = _run_gate("An unrelated title", "", [], parse=parse, identify=_capture)
+        assert row["parse_method"] == "grobid"
+        assert seen["full_body"] == body.strip()
+        assert "methods" not in seen
+        assert [r["title"] for r in seen["references"]] == ["Ref one"]
+
     def test_the_no_document_exit_restores_it(self):
         row = _run_gate(_GATE_TITLE, _TWO_PAIRS, _GATE_CANDS, pdf_ok=False,
                         abstract_answer=_failed_answer())

@@ -25,7 +25,7 @@ from typing import Optional
 import requests
 
 from . import token_counter, token_usage
-from .cache import content_key, read_cache, write_cache
+from .cache import content_key, read_cache, read_cache_migrating, write_cache
 from .config import (
     GEMINI_API_KEYS,
     GEMINI_FLEX_TIMEOUT,
@@ -860,7 +860,6 @@ def resolve_targets_and_outcomes(doi_r:       str,
                                  rung:        str,
                                  pdf_abstract: str = "",
                                  intro:       str = "",
-                                 methods:     str = "",
                                  discussion:  str = "",
                                  discussion_provenance: str = "",
                                  full_body:   str = "") -> dict:
@@ -882,9 +881,10 @@ def resolve_targets_and_outcomes(doi_r:       str,
     key: a reproduction gets a different prompt and a different outcome vocabulary,
     so it must not read back a replication-coded entry.
 
-    *full_body* sends the whole parsed document instead of the intro/methods/closing
-    slices — what the ladder does at the full-text rung for a paper it already knows
-    re-tests several originals. It reaches the key through the rendered prompt, so
+    *full_body* sends the whole parsed document instead of the intro/closing slices —
+    what the ladder does at the full-text rung for every document with text. The
+    builders' METHODS block is never filled from here: no parser the ladder reads
+    splits a methods section out, and the whole body carries it. It reaches the key through the rendered prompt, so
     only the calls that use it miss.
 
     LINKING_MODEL answers all three rungs, and only it: a wrong original is worse
@@ -900,7 +900,7 @@ def resolve_targets_and_outcomes(doi_r:       str,
                     else "build_target_outcome_prompt")
     entries, key_map = assign_target_keys(candidates, references)
     prompt = build(study_r, abstract_r, entries,
-                   pdf_abstract=pdf_abstract, intro=intro, methods=methods,
+                   pdf_abstract=pdf_abstract, intro=intro,
                    discussion=discussion,
                    discussion_provenance=discussion_provenance,
                    full_body=full_body)
@@ -1637,6 +1637,15 @@ _UNPICKED_TARGET = {
 }
 
 
+# The pick prompt's version before 2026-09-25, when `author_year_candidate_keys` moved
+# its collision suffix from a letter (`@smith2010b`) to `_2`. That edit changes the
+# rendered prompt only for a list holding two candidates of one surname-and-year; every
+# other prompt is byte-identical, so its answer is provably the one on disk. Only the
+# version is substituted and the rendered prompt stays in the key, so a list that DID
+# carry a suffix renders differently now and misses the legacy key by itself.
+_AUTHOR_YEAR_PICK_LEGACY_VERSIONS = ("05e6a3033882",)
+
+
 def pick_author_year_original(doi_r: str, title_r: str, abstract_r: str,
                               target_as_named: str, evidence_quote: str,
                               candidates: list[dict], total: int = 0) -> dict:
@@ -1666,11 +1675,15 @@ def pick_author_year_original(doi_r: str, title_r: str, abstract_r: str,
                                            evidence_quote, candidates, total)
     identities = "|".join(f"{c.get('doi') or c.get('openalex_id') or ''}"
                           for c in candidates)
-    key = content_key("authoryearpick", doi_r or target_as_named,
-                      prompt_version("build_author_year_pick_prompt"),
-                      cache_model_id(LINKING_MODEL, LINKING_EFFORT),
+    version = prompt_version("build_author_year_pick_prompt")
+    model_id = cache_model_id(LINKING_MODEL, LINKING_EFFORT)
+    key = content_key("authoryearpick", doi_r or target_as_named, version, model_id,
                       identities, prompt)
-    cached = read_cache(LLM_CACHE_DIR, key)
+    legacy = [content_key("authoryearpick", doi_r or target_as_named, old, model_id,
+                          identities, prompt)
+              for old in _AUTHOR_YEAR_PICK_LEGACY_VERSIONS if old != version]
+    cached = read_cache_migrating(LLM_CACHE_DIR, key, legacy,
+                                  {"prompt_version": version, "model": model_id})
     if cached is not None:
         index = cached.get("pick_index")
         return {"pick": candidates[index] if isinstance(index, int)

@@ -2074,8 +2074,39 @@ class TestAPickThatIsNotOneOfTheCandidates:
         from shared.prompts import author_year_candidate_keys
         pair = [dict(self._CANDS[0]), {**self._CANDS[0], "doi": "10.1/b"}]
         # The suffix follows assign_target_keys' convention: the first collision is
-        # "b", so two candidates never share a key.
-        assert author_year_candidate_keys(pair) == ["@smith2010", "@smith2010b"]
+        # "_2", never a letter the model could read as the paper's own "(2010b)".
+        assert author_year_candidate_keys(pair) == ["@smith2010", "@smith2010_2"]
+
+    def test_a_pick_cached_before_the_suffix_change_is_read_only_if_the_prompt_is_unchanged(
+            self, tmp_path):
+        """The 2026-09-25 suffix edit moved the prompt version, not the prompt text of
+        a list without a collision: that answer is re-read under the old version. A
+        list WITH a collision renders differently and must be asked again."""
+        from shared.cache import content_key, write_cache
+        from shared.config import LINKING_EFFORT, LINKING_MODEL
+        from shared.prompts import build_author_year_pick_prompt
+        pair = [dict(self._CANDS[0]), {**self._CANDS[0], "doi": "10.1/b"}]
+        for cands in (self._CANDS, pair):
+            # What the pre-edit builder rendered: a letter for the collision.
+            prompt = build_author_year_pick_prompt(
+                "T", "A", "Smith (2010)", "q", cands).replace("@smith2010_2", "@smith2010b")
+            ids = "|".join(c["doi"] for c in cands)
+            write_cache(tmp_path, content_key(
+                "authoryearpick", "10.9/rep", llm._AUTHOR_YEAR_PICK_LEGACY_VERSIONS[0],
+                llm.cache_model_id(LINKING_MODEL, LINKING_EFFORT), ids, prompt),
+                {"pick_index": 0, "confident": True, "reasoning": "old"})
+        with patch("shared.llm_client.LLM_CACHE_DIR", tmp_path), \
+             patch("shared.llm_client.call_model",
+                   return_value=({"pick": None, "confident": False, "reasoning": "new"},
+                                 "openai", "")) as call:
+            single = llm.pick_author_year_original(
+                "10.9/rep", "T", "A", "Smith (2010)", "q", self._CANDS)
+            assert single["reasoning"] == "old" and call.call_count == 0
+            # The legacy entry for the pair was keyed on the LETTER rendering, which
+            # this checkout no longer produces — so it never matches.
+            doubled = llm.pick_author_year_original(
+                "10.9/rep", "T", "A", "Smith (2010)", "q", pair)
+            assert doubled["reasoning"] == "new" and call.call_count == 1
 
 
 class TestSearchConfirmGrading:
