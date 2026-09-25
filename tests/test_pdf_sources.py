@@ -958,10 +958,19 @@ def test_a_stage1_plan_is_skipped_for_the_next_candidate_and_kept_as_a_fallback(
     # Discarded, so the next download is not a cache hit.
     assert not plan.exists() and not (tmp_path / "survey.docx").exists()
 
-    out = _run(lambda url, **kw: _NO_PDF if "paper" in url else _download(url))
+    tried: list[str] = []
+
+    def _paper_fails(url, **kw):
+        tried.append(url)
+        return _NO_PDF if "paper" in url else _download(url)
+
+    out = _run(_paper_fails)
     assert out["pdf_ok"] is True
     assert out["pdf_url"] == "https://osf.io/download/plan/"
     assert out["pdf_source"] == "osf_files"
+    # The plan was discarded when first seen, so the fallback fetches it again
+    # rather than answering from a cache entry that no longer exists.
+    assert tried.count("https://osf.io/download/plan/") == 2
 
 
 @pytest.mark.parametrize("front, kind", [
