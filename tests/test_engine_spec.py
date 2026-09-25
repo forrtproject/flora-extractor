@@ -25,6 +25,7 @@ SPEC_DIR = Path(__file__).resolve().parent.parent / "filter" / "spec"
 EXPECTED = {
     # id: (pile, precedence, vocabulary, shadow)
     "not-a-paper-doi": ("discard", 960, None, False),
+    "doi-registry-twin": ("discard", 950, None, False),
     "deposit-registrant": ("discard", 958, None, False),
     "figshare-attachment": ("discard", 956, None, False),
     "not-a-paper-title": ("discard", 955, None, False),
@@ -36,6 +37,7 @@ EXPECTED = {
     "replication-claim-title-strong": ("screen_expensive", 750, None, False),
     "curated-observatory": ("screen_expensive", 745, None, False),
     "replication-claim-title-broad": ("screen_expensive", 740, None, False),
+    "replication-claim-general": ("screen_expensive", 735, None, True),
     "replication-claim-text": ("screen_expensive", 730, None, True),
     "replication-claim-residual": ("screen_expensive", 710, None, True),
     "not-a-study-type": ("discard", 500, None, False),
@@ -48,11 +50,11 @@ EXPECTED = {
 # with decreasing strength. Every tier routes to the same pile, so precedence
 # inside the family decides attribution rather than destination.
 _CLAIM_TIERS = ("replication-claim-cited-title", "replication-claim-title-strong",
-                "replication-claim-title-broad",
+                "replication-claim-title-broad", "replication-claim-general",
                 "replication-claim-text", "replication-claim-residual")
 _ADMISSION = _CLAIM_TIERS
-_ABOVE_ADMISSION = ("not-a-paper-doi", "deposit-registrant", "not-a-paper-title",
-                    "not-a-paper-abstract", "not-a-report-type")
+_ABOVE_ADMISSION = ("not-a-paper-doi", "doi-registry-twin", "deposit-registrant",
+                    "not-a-paper-title", "not-a-paper-abstract", "not-a-report-type")
 _BELOW_ADMISSION = ("not-a-study-type",)
 
 
@@ -109,6 +111,7 @@ def test_the_expensive_screen_has_exactly_three_routes():
                          "replication-claim-title-strong",
                          "curated-observatory",
                          "replication-claim-title-broad",
+                         "replication-claim-general",
                          "replication-claim-text", "replication-claim-residual"]
 
 

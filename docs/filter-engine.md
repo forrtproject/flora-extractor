@@ -224,6 +224,12 @@ Match semantics:
   a neighbouring DOI. A rule that names works rather than a pattern is a curated
   source and should say so in its `description`, including when it should be
   deleted (`filter/spec/curated-observatory.json`, if it is live).
+  `work_id_in` is the same shape for OpenAlex RECORDS: a list of work ids (`123`,
+  `"W123"` or the openalex.org URL) matched against the row's own `id` before alias
+  resolution. It exists for a claim about one record's metadata that its DOI cannot
+  carry — issue #210's DOI twins, where an unrelated record is filed under a real
+  paper's DOI and the real paper sits in the pool under the same DOI
+  (`doi-registry-twin`, derived by `analysis/stage2_rules_2026-09/doi_twins_audit.py`).
   `fields` is exact membership on pool
   columns (`type`, `publication_year`), except `fields.concept_ids`, which tests
   membership of bare concept ids in the row's `concepts` (both URL-form JSON and
@@ -263,7 +269,7 @@ A LIVE (`shadow: false`) `discard` spec has three extra validation rules, all in
 
 The full accepted key sets, from `spec.py`: top level `id, description, match,
 domain, pile, vocabulary, precedence, shadow, measured`; inside a match or a
-domain `doi_prefix,
+domain `doi_prefix, doi_in, work_id_in,
 doi_regex, title_regex, abstract_regex, text_regex, url_regex, fields,
 abstract_missing, any_of, all_of, none_of`; inside
 `fields` `type, publication_year, concept_ids`; inside a `measured` entry
@@ -284,12 +290,14 @@ evidence in [`filter/spec/rule_ideas.md`](../filter/spec/rule_ideas.md).
 | `deposit-registrant` | discard | 958 | | 11 deposit-only registrants. Figshare proper (10.6084) is not among them — D1 took it off the prefix list, and it has its own title-gated rule below |
 | `figshare-attachment` | discard | 956 | | figshare (10.6084) DOIs whose title marks the object as an attachment to a paper rather than the paper |
 | `not-a-paper-title` | discard | 955 | | the start-anchored genre-plus-parent title pattern |
+| `doi-registry-twin` | discard | 950 | | issue #210: 30 named OpenAlex records (`work_id_in`) filed under a DOI whose registry record names a different paper; derived by `analysis/stage2_rules_2026-09/doi_twins_audit.py --spec`, live since 2026-09-25; a regenerated list is a new claim and is re-read before it ships |
 | `not-a-report-type` | discard | 940 | | `type ∈ {component, database, dataset, software, supplementary-materials}` — not a report of a study |
 | `osf-registration-completed` | screen_expensive | 936 | | admission on the OSF registration TEMPLATE (registrant 10.17605) |
 | `osf-registration-protocol` | discard | 935 | | the discard twin: an OSF registration whose template marks it a protocol, not a completed study |
 | `replication-claim-cited-title` | screen_expensive | 760 | | a claim arm in the TITLE **and** an author-year citation in the title — the narrowest of the three live admissions |
 | `replication-claim-title-strong` | screen_expensive | 750 | | the two title arms that measure as high-precision on their own |
 | `replication-claim-title-broad` | screen_expensive | 740 | ✓ | the other ten arms of the twelve-arm title family |
+| `replication-claim-general` | screen_expensive | 735 | ✓ | drafted as the rule-book route for what `curated-observatory` admits: three abstract claim arms, two title shapes, and `we replicated`/`replication study` only beside an original/prior-study mention (`analysis/stage2_rules_2026-09/REPORT.md`) |
 | `replication-claim-text` | screen_expensive | 730 | ✓ | the 8 strong claim arms anywhere in title+abstract |
 | `replication-claim-residual` | screen_expensive | 710 | ✓ | the 4 measured-weak arms: fail/attempt · aim/set out · success* · the negation matrix |
 | `not-a-study-type` | discard | 500 | | `type ∈ {grant, libguides, paratext, peer-review, standard}` — a crosswalk that can be wrong about a real paper |

@@ -163,6 +163,12 @@ CORPUS = [
     _row(work="https://openalex.org/W28", doi="10.1001/archgenpsychiatry.2009.155",
          title="Serotonin transporter genotype and depression",
          abstract="A cohort study of stressful life events."),
+    # doi-registry-twin (950, shadow): issue #210's example — a 1948 cosmic-ray
+    # record filed under a JEAB 2010 replication's DOI, named by its record id
+    _row(work="https://openalex.org/W21279159", doi="10.1901/jeab.2010.94-13",
+         title="Distribution of penetrating particles and high energy electrons in "
+               "extensive atmospheric showers", year=1948,
+         abstract="Measurements of cosmic-ray showers."),
 ]
 
 
