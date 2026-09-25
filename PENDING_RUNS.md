@@ -40,6 +40,14 @@ the command, pasteable from the project root, and what proves it worked.
       `data/retired_pairs.csv` and the set-aside CSVs, push. Done when the next nightly run
       imports it with `retire_superseded` SUCCESS.
 
+- [ ] **Night run 2026-09-25 23:00 BST (systemd user timer `flora-night-run.timer`):**
+      `scripts/night_run.sh 2d767fe03199` screens the ~18.3k works option B added to
+      `screen_expensive`, then extracts the new proceeds (~12k expected), both with
+      `OPENAI_FLEX_PATIENCE=600`. Log: `logs/night_run_<stamp>.log`. It refuses to start on
+      uncommitted code under shared/ extract/ filter/ search/. Done when the log ends
+      `== done` and the extract dry run offers ~0 works; then compare the recorded `usd`
+      in `cache/token_usage.json` with the forecast (~$15 screen, ~$14 extraction).
+
 ## Done
 
 - [x] **DONE 2026-09-23 — deleted.** HF commit `e284f62` removed the 14 `builds/*/candidates-*.parquet`; the remote now lists 2,232 pool files under gate `d536bc51b9b2`. A fresh `pool_sync --pull --no-overlay` into a scratch dir stamped `expected_files: 2232` and `pool_fingerprint()` returned `d34c277e…`, identical to the local pool. Original entry: **Decide what to do about the 14 `candidates-*.parquet` files in the shared
