@@ -42,7 +42,15 @@ Identity effects:
   single-slash form, so the collapsed spelling is the canonical one and is safe to send
   to APIs. (Crossref rate-limited the probe, so its own record was not read.)
 
-## Recommendation
+## Decision (2026-09-25)
+
+Lukas chose option 2's first half: `clean_doi()` itself now collapses `//` and decodes
+`%xx` (only into a valid DOI with no `%` left, so it stays idempotent), and the export
+re-spells stored payloads at render (`_canonical_dois()` in `extract/tier.py`), so the
+old pair ids retire as `superseded` through the manifest rather than by a
+flora-validation migration. The recommendation below is what was weighed.
+
+## Recommendation (superseded by the decision above)
 
 **Do not change `clean_doi()` itself now.** The gain is 2 skip-list matches; the cost is
 29 queued validation records whose pair_id would move the next time their work is

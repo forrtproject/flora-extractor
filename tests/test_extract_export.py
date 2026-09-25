@@ -235,6 +235,33 @@ def test_a_doi_r_row_pair_id_is_untouched_by_the_repair():
     assert rendered["pair_id"] == _SINGLE["pair_id"]
 
 
+def test_a_doi_stored_in_an_old_spelling_is_respelled_and_its_pair_retired():
+    """`clean_doi()` collapses `10.1037//…` since 2026-09-25. A payload stored before
+    renders the canonical DOI and the pair_id of it — the old id provably was
+    md5(doi_r|old doi_o) — and the retirement manifest names the old id superseded by
+    the new one, which is how the validation queue learns of the move."""
+    from shared.schema import make_pair_id
+
+    old_doi_o = "10.1037//0022-3514.69.4.603"
+    stored = {**_MULTI_A, "doi_o": old_doi_o,
+              "pair_id": make_pair_id(_MULTI_A["doi_r"], old_doi_o),
+              "ref_o": f"Smith (1995). https://doi.org/{old_doi_o.upper()}"}
+    rendered = render_payload(_payload([_row(stored)]))[0]
+    assert rendered["doi_o"] == "10.1037/0022-3514.69.4.603"
+    assert rendered["pair_id"] == make_pair_id(_MULTI_A["doi_r"], rendered["doi_o"])
+    assert rendered["ref_o"].endswith("https://doi.org/10.1037/0022-3514.69.4.603")
+
+    report = export_mod.render(_client([_verdict(51, rows=[_row(stored)])]))
+    entries, _ = export_mod.retirements({stored["pair_id"]: _row(stored)}, report,
+                                        baseline="HEAD")
+    assert [(e["reason"], e["superseded_by"]) for e in entries] == \
+        [("superseded", rendered["pair_id"])]
+
+    # A pair id no writer's argument shape reproduces is not re-derived: left alone.
+    odd = render_payload(_payload([_row({**stored, "pair_id": "f" * 32})]))[0]
+    assert odd["pair_id"] == "f" * 32 and odd["doi_o"] == rendered["doi_o"]
+
+
 def _write(path: Path, rows: list[dict]) -> None:
     with path.open("w", newline="", encoding="utf-8-sig") as handle:
         writer = csv.DictWriter(handle, fieldnames=EXTRACTED_COLS,

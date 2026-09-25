@@ -9,6 +9,7 @@ Public API:
 import hashlib
 import re
 from pathlib import Path
+from urllib.parse import unquote
 
 from filelock import FileLock
 
@@ -24,9 +25,37 @@ def csv_lock(path, timeout: float = -1) -> FileLock:
     return FileLock(f"{path}.lock", timeout=timeout)
 
 
+# A decoded DOI must still look like one: the `10.` prefix, a suffix, and nothing a
+# DOI cannot hold. `%20` in a scraped URL tail decodes to a space and that value is
+# junk either way, so it is left exactly as it came rather than made into other junk.
+# No `%` may survive the decode either: `%2541` decodes to `%41`, which a second call
+# would decode again, and `clean_doi` must be idempotent — it is re-applied to values
+# it already cleaned at every comparison.
+_DECODED_DOI_RE = re.compile(r"^10\.\d{4,9}(?:\.\d+)*/[^\s\x00-\x1f\x7f%]+$")
+_DOUBLED_SLASH_RE = re.compile(r"^(10\.[^/]+)/{2,}")
+
+
+def _percent_decoded(doi: str) -> str:
+    """*doi* URL-decoded once, or unchanged when the decoded form is not a DOI."""
+    try:
+        decoded = unquote(doi, errors="strict")
+    except UnicodeDecodeError:
+        return doi
+    return decoded if _DECODED_DOI_RE.match(decoded) else doi
+
+
 def clean_doi(doi: str) -> str:
     """
     Strip URL prefix from a DOI string and normalise to lowercase.
+
+    Two spellings of one DOI are folded into its registered form, because a DOI is
+    an identity key here (skip lists, pair_id, cache keys) and two spellings of one
+    identity must not be two identities:
+
+    - a doubled slash after the prefix (`10.1037//0022-3514…`, the APA spelling
+      several indexes carry) — doi.org 301s it to the single-slash DOI;
+    - percent-encoding (`%3c` → `<` in Wiley SICI DOIs, `%2f` → `/`) — decoded
+      once, and only when the result is still a DOI (see `_percent_decoded`).
 
     Examples:
         "https://doi.org/10.1037/abc123" → "10.1037/abc123"
@@ -34,13 +63,19 @@ def clean_doi(doi: str) -> str:
         "doi:10.1037/abc123"               → "10.1037/abc123"
         "10.1037/abc123/"                  → "10.1037/abc123"
         "10.1037/abc123"                   → "10.1037/abc123"
+        "10.1037//0022-3514.69.4.603"      → "10.1037/0022-3514.69.4.603"
+        "10.1002/(SICI)…:2%3C107::…"       → "10.1002/(sici)…:2<107::…"
     """
     if not doi:
         return ""
     doi = str(doi).strip()
     doi = re.sub(r"^https?://(?:dx\.)?doi\.org/", "", doi, flags=re.IGNORECASE)
     doi = re.sub(r"^doi:", "", doi, flags=re.IGNORECASE)
-    return doi.strip().lower().rstrip("/")
+    doi = doi.strip()
+    if "%" in doi:
+        doi = _percent_decoded(doi)
+    doi = _DOUBLED_SLASH_RE.sub(r"\1/", doi)
+    return doi.lower().rstrip("/")
 
 
 def bare_work_id(value: str) -> str:

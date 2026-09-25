@@ -62,9 +62,10 @@ fallback hashes the TARGET RECORD's OpenAlex id, which is not on the row;
 (`_base_row` fills a blank `title_r` from `study_r`); and `screen_categories` is
 blank rather than copied on a row that reached no screen dict. They are stored.
 What IS copied from `input` at export is every FILTERED_COLS value the row did not
-change, which is the bulk of it. `render_payload()`'s `_repair_pair_id()` is the one
-deliberate exception: a narrow, unambiguous repair of the replication-side fallback
-on payloads written before it existed, not a general recompute — see its docstring.
+change, which is the bulk of it. `render_payload()`'s `_repair_pair_id()` and
+`_canonical_dois()` are the two deliberate exceptions: narrow, unambiguous repairs of
+payloads written before the replication-side fallback, and before `clean_doi()`'s
+2026-09-25 spelling rules, existed — not a general recompute. See their docstrings.
 
 **Claims and the lease.** One claim per batch of `EXTRACT_CLAIM_BATCH` works, with
 a `EXTRACT_CLAIM_TTL_MINUTES` lease renewed by a daemon heartbeat every third of it.
@@ -78,6 +79,7 @@ current `run_tier` call rather than claiming the next batch.
 import argparse
 import hashlib
 import json
+import re
 import sys
 import threading
 from dataclasses import dataclass, field
@@ -700,6 +702,53 @@ def _repair_pair_id(row: dict) -> None:
     )
 
 
+def _canonical_dois(row: dict) -> None:
+    """Re-spell a stored `doi_r`/`doi_o` the way `clean_doi()` spells it today.
+
+    `clean_doi()` learnt on 2026-09-25 to collapse `10.1037//…` and to decode `%3c`.
+    A payload stored before that holds the old spelling, and a DOI is an identity
+    key downstream — the validation import dedupes on `pair_id`, FLoRA and the
+    validated tables are matched on DOIs — so the render re-spells it rather than
+    waiting for a re-extraction that nothing schedules. The citation columns that
+    embed the DOI verbatim (`ref_o`, `bibtex_ref_*`, a `url_r` that is just the
+    DOI's doi.org URL) follow it; `link_evidence` is provenance and keeps what the
+    run saw.
+
+    `pair_id` is re-derived only when the stored one is PROVABLY the hash of the old
+    spelling: each (fallback-or-not) argument shape `make_pair_id()`'s writers use is
+    tried, and the matching one is re-run with the new DOIs. A pair id no shape
+    reproduces is left as stored — guessing would mint an identity no writer made.
+    The retirement manifest then records the old id as `superseded` by the new one
+    (`extract/export.py`), which is how the validation side learns of the move.
+    """
+    old = {col: str(row.get(col, "") or "") for col in ("doi_r", "doi_o")}
+    new = {col: clean_doi(value) for col, value in old.items()}
+    if new == old:
+        return
+    oa_r = str(row.get("oa_work_id_r", "") or row.get("openalex_id_r", "") or "")
+    title_r = str(row.get("title_r", "") or "")
+    oa_o = str(row.get("oa_work_id_o", "") or "")
+    title_o = str(row.get("title_o", "") or "")
+    stored = str(row.get("pair_id", "") or "")
+    shape = next(((side_o, side_r) for side_o in (("", ""), (oa_o, title_o))
+                  for side_r in (("", ""), (oa_r, title_r))
+                  if make_pair_id(old["doi_r"], old["doi_o"], *side_o, *side_r) == stored),
+                 None)
+    if shape is not None:
+        row["pair_id"] = make_pair_id(new["doi_r"], new["doi_o"], *shape[0], *shape[1])
+    for col, owners in (("doi_r", ("bibtex_ref_r", "url_r")),
+                        ("doi_o", ("ref_o", "bibtex_ref_o"))):
+        if new[col] == old[col] or not old[col]:
+            continue
+        row[col] = new[col]
+        spelled = re.compile(re.escape(old[col]), re.IGNORECASE)
+        for owner in owners:
+            if col == "doi_r" and owner == "url_r" and not spelled.fullmatch(
+                    str(row.get(owner, "") or "").removeprefix("https://doi.org/")):
+                continue  # a url_r that is not the DOI's own doi.org URL is a URL
+            row[owner] = spelled.sub(lambda _: new[col], str(row.get(owner, "") or ""))
+
+
 def render_payload(payload: dict) -> list[dict]:
     """A stored result payload back as its `EXTRACTED_COLS` rows.
 
@@ -710,9 +759,10 @@ def render_payload(payload: dict) -> list[dict]:
     Both halves of the payload go through `_renamed_columns`: the input row, and
     each target — a target carries a FILTERED_COLS value the run CHANGED, so a work
     the screen retyped holds the paper type there and not in `input`. `pair_id`
-    then goes through `_repair_pair_id`, the one deliberate exception to "nothing is
-    recomputed at export" (see the module docstring): a targeted repair for the
-    replication-side fallback, not a general recompute.
+    then goes through `_canonical_dois` and `_repair_pair_id`, the two deliberate
+    exceptions to "nothing is recomputed at export" (see the module docstring):
+    targeted repairs of the DOI spelling and the replication-side fallback, not a
+    general recompute.
     """
     input_row = _renamed_columns(payload.get("input") or {})
     base = {col: str(input_row.get(col, "") or "") for col in INPUT_COLS
@@ -723,6 +773,7 @@ def render_payload(payload: dict) -> list[dict]:
         row = {col: "" for col in EXTRACTED_COLS}
         row.update(base)
         row.update({k: v for k, v in target.items() if k in EXTRACTED_COLS})
+        _canonical_dois(row)
         _repair_pair_id(row)
         rows.append(row)
     return rows
