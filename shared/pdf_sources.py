@@ -1527,21 +1527,24 @@ def get_datacite_urls(doi: str) -> list[dict]:
     return results
 
 
-# The relations under which another DOI's document IS this record's paper: a
-# version of the same work, the same work under a second DOI, or the article a
-# supplement belongs to. `References`, `Cites` and the like name different papers.
-_DATACITE_SAME_PAPER_RELATIONS = ("isversionof", "isidenticalto", "issupplementto")
+# The relations under which another DOI's document is the paper this record should be
+# coded from: a version of the same work, the same work under a second DOI, or — for
+# a supplement or dataset deposit that Stage 2 admitted — the article it belongs to.
+# The last is the same choice as a Crossref component's parent (crossref_parent_doi):
+# a supplement has no text of its own that reports the study. `References`, `Cites`
+# and the like name different papers.
+_DATACITE_PAPER_RELATIONS = ("isversionof", "isidenticalto", "issupplementto")
 
 
 def datacite_related_dois(doi: str) -> list[str]:
-    """DOIs DataCite relates to *doi* as the same paper, in _DATACITE_SAME_PAPER_RELATIONS order.
+    """DOIs whose document DataCite names as *doi*'s paper, in _DATACITE_PAPER_RELATIONS order.
 
     Raises DocumentSourceUnavailable when the API did not answer.
     """
     doi = clean_doi(doi)
     rels = _datacite_attributes(doi).get("relatedIdentifiers") or []
     found: list[str] = []
-    for wanted in _DATACITE_SAME_PAPER_RELATIONS:
+    for wanted in _DATACITE_PAPER_RELATIONS:
         for rel in rels:
             if (str(rel.get("relationType") or "").lower() == wanted
                     and str(rel.get("relatedIdentifierType") or "").upper() == "DOI"):
@@ -1614,10 +1617,13 @@ def pmc_oa_pdf_url(pmc_id: str) -> str:
     pmc_id = str(pmc_id or "").strip().upper()
     if not re.fullmatch(r"PMC\d+", pmc_id):
         return ""
+    # A found version is permanent. An absence expires after PDF_RETRY_AFTER_DAYS: the
+    # bucket gains articles later, e.g. an author manuscript released after its embargo.
     cf = OA_CACHE_DIR / f"pmcoa_{pmc_id}.json"
-    if cf.exists():
-        with cf.open(encoding="utf-8") as fh:
-            version = json.load(fh).get("version") or ""
+    cached = json.loads(cf.read_text(encoding="utf-8")) if cf.exists() else None
+    if cached and (cached.get("version") or _retry_suppressed(
+            {"miss": str(cached.get("fetched_at") or "")}, "miss", PDF_RETRY_AFTER_DAYS)):
+        version = cached.get("version") or ""
     else:
         throttle("pmc_oa", _PMC_OA_RATE_SEC)
         try:
@@ -1633,7 +1639,7 @@ def pmc_oa_pdf_url(pmc_id: str) -> str:
         versions = [int(v) for v in re.findall(
             rf"<Prefix>{pmc_id}\.(\d+)/</Prefix>", r.text)]
         version = str(max(versions)) if versions else ""
-        write_json(cf, {"version": version})
+        write_json(cf, {"version": version, "fetched_at": _now_iso()})
     if not version:
         return ""
     return f"{_PMC_OA_BUCKET}/{pmc_id}.{version}/{pmc_id}.{version}.pdf"
@@ -2135,8 +2141,7 @@ def scrape_pdf_from_landing_page(landing_url: str) -> list[str]:
         page     = r.text
         # Relative links resolve against where the redirects ended, not where they
         # began: a doi.org landing is never the page's own host.
-        base     = re.match(r"https?://[^/]+", r.url or landing_url)
-        base_url = base.group(0) if base else ""
+        base_url = r.url or landing_url
 
         # The page's own statement of where its PDF is comes first: publishers and
         # repositories emit it for Google Scholar, and it names a file whose URL often
@@ -2154,9 +2159,7 @@ def scrape_pdf_from_landing_page(landing_url: str) -> list[str]:
         resolved: list[str] = []
         seen:     set[str]  = set()
         for link in pdf_links:
-            url = (link if link.startswith("http")
-                   else ("https:" + link if link.startswith("//")
-                         else base_url + link))
+            url = urljoin(base_url, link)
             if url not in seen:
                 seen.add(url)
                 resolved.append(url)
@@ -2222,7 +2225,9 @@ def _scholar_search(query: str) -> dict:
                                          "api_key": api_key, "num": "10"})
             body = r.json() if r.status_code == 200 else {}
         except Exception as e:
-            log.warning("Scholar (%s) request failed: %s", provider, e)
+            # The type only: SerpAPI's key rides in the query string, and a
+            # connection error's message repeats the whole URL.
+            log.warning("Scholar (%s) request failed: %s", provider, type(e).__name__)
             continue
         # SerpAPI answers an empty search with 200 and an `error` naming no results.
         error = str(body.get("error") or "")
@@ -2839,13 +2844,15 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
         holds one: a PCI recommendation or a figure DOI is titled in other words than
         the paper, and checking the paper against those refuses the right document.
         Without one (a DataCite DOI), the row's title is the check — a version of the
-        same work carries it.
+        same work carries it. A Crossref that did not answer is an outage, not a
+        missing title: checking the right paper against the row's title would refuse
+        it, and the refusal would be recorded as the tier's answer.
         """
         try:
             related_title = crossref_title(related)
         except DocumentSourceUnavailable as exc:
             log.info("  [%s] related title unavailable: %s", related, exc)
-            related_title = ""
+            return False, True
         urls, outage = document_urls_for_doi(related, related_title or title)
         log.info("  [%s] trying %d document URLs of related %s (%s)",
                  doi_r, len(urls), related, label)

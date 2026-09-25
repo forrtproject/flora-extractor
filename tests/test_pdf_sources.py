@@ -1619,3 +1619,42 @@ def test_the_scholar_tier_asks_the_title_before_the_doi():
     queries = [c.args[0] for c in started["scholar_pdf_urls"].call_args_list]
     assert queries == [_LONG_TITLE, f'"{doi}"']
     assert out["pdf_source"] == "scholar"
+
+
+def test_a_path_relative_link_resolves_against_the_final_page():
+    page = '<meta name="citation_pdf_url" content="downloads/7.pdf">'
+    resp = _Resp(200, page.encode(), url="https://repo.example/record/12/view")
+    with patch.object(ps.requests, "get", return_value=resp):
+        found = ps.scrape_pdf_from_landing_page("https://doi.org/10.1/x")
+    assert found == ["https://repo.example/record/12/downloads/7.pdf"]
+
+
+def test_a_pmc_oa_absence_is_asked_again_after_the_retry_window(_oa_cache_in_tmp):
+    (_oa_cache_in_tmp / "pmcoa_PMC9.json").write_text(
+        json.dumps({"version": "", "fetched_at": _ago(ps.PDF_RETRY_AFTER_DAYS + 1)}))
+    listing = b"<ListBucketResult><CommonPrefixes><Prefix>PMC9.1/</Prefix></CommonPrefixes>"
+    with patch.object(ps.requests, "get", return_value=_Resp(200, listing)) as get:
+        assert ps.pmc_oa_pdf_url("PMC9").endswith("/PMC9.1/PMC9.1.pdf")
+    get.assert_called_once()
+    with patch.object(ps.requests, "get") as get:     # a found version stays cached
+        ps.pmc_oa_pdf_url("PMC9")
+    get.assert_not_called()
+
+
+def test_a_crossref_outage_on_the_related_title_records_no_failure():
+    """Checking the reviewed preprint against the recommendation's own title would
+    refuse it, and that refusal would hold the tier for fourteen days."""
+    doi = "10.24072/pci.rr.100124"
+    patchers = _mock_all_tiers(crossref_reviewed_doi="10.31234/osf.io/abc13")
+    started = {name: p.start() for name, p in patchers.items()}
+    started["crossref_title"].side_effect = ps.DocumentSourceUnavailable("503")
+    try:
+        with patch.object(ps, "document_urls_for_doi") as urls, \
+             patch.object(ps, "download_pdf", return_value=_NO_PDF), \
+             patch.object(ps, "get_pdf_via_playwright", return_value=_NO_PLAYWRIGHT):
+            ps.acquire_pdf(doi, _LONG_TITLE)
+    finally:
+        for p in patchers.values():
+            p.stop()
+    urls.assert_not_called()
+    assert "related_doi" not in _retry_log(doi)
