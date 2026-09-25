@@ -1492,6 +1492,31 @@ class TestTextlessRowsStopAtTheDocument:
         assert ask.call_count == 0
 
 
+def test_a_guarded_row_fetches_its_documents_without_the_doi():
+    """Issue #210: when the DOI's registry names another paper, run_extract hands the
+    ladder doc_doi="" (and a blank doc_url when url_r was derived from the DOI). Every
+    DOI-keyed fetch — the waterfall and OpenCitations' reference list — must take
+    those, while doi_r keeps its other jobs."""
+    with patch.object(link_original, "find_all_candidates", return_value=[]), \
+         patch.object(link_original, "fetch_referenced_works_metadata", return_value=[]), \
+         patch.object(link_original, "fetch_opencitations_references",
+                      return_value=[]) as oc, \
+         patch.object(link_original, "screen_references_with_llm",
+                      return_value=_screen_result()), \
+         patch.object(link_original, "acquire_pdf", return_value=_NO_DOC) as acquire, \
+         patch.object(link_original, "resolve_targets_and_outcomes",
+                      return_value={"resolved": False, "resolution_method": "llm_no_target",
+                                    "llm_source": "gemini"}), \
+         patch.object(link_original, "_search_title_for_original", return_value=None):
+        row = run_for_doi("10.17605/osf.io/abcde", cands_df=_textless_row("An abstract."),
+                          doc_doi="", doc_url="")
+    oc.assert_called_once_with("")
+    assert acquire.call_args.args[0] == ""
+    assert acquire.call_args.kwargs["url_r"] == ""
+    assert acquire.call_args.kwargs["openalex_id"] == "W1", "the OpenAlex id path still runs"
+    assert row["doi_r"] == "10.17605/osf.io/abcde"
+
+
 def test_a_none_abstract_reaches_the_gate_as_empty():
     """A pool row with no usable inverted index carries abstract_r=None, which pandas
     stores as NaN. NaN is truthy, so `or ""` does not catch it and `str()` yields the

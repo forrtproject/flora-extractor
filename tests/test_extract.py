@@ -705,6 +705,54 @@ def _run_pipeline(csv_text: str, *, screen_row=SCREEN_PROCEED, screen=None,
     return df.fillna("").astype(str), m_link, m_out
 
 
+class TestRegistryGuard:
+    """Issue #210: a DOI whose registry names another paper is not fetched by.
+
+    8 real replications in the pool carry an unrelated paper's DOI on their OpenAlex
+    record; every DOI-keyed fetch then returned that other paper. The guard is the
+    seam between the row and the ladder: what `run_for_doi` is told to fetch by."""
+
+    _CSV = (
+        "doi_r,title_r,abstract_r,year_r,authors_r,journal_r,url_r,"
+        "openalex_id_r,source,paper_type,filter_method,filter_evidence,filter_confidence\n"
+        "10.1000/test,Test Paper,Abstract text,2020,Smith,J. Psych,{url},W999,openalex,"
+        "replication,rule_based,direct replication,high\n"
+    )
+    _MISMATCH = {"verdict": "mismatch", "registry_title": "Sympathetic neural responses",
+                 "similarity": 0.0, "year_gap": 1, "agency": "crossref"}
+
+    def _run(self, found: dict, url: str = ""):
+        with patch.object(run_extract.doi_registry, "check", return_value=found):
+            result, m_link, _ = _run_pipeline(self._CSV.format(url=url))
+        return result, m_link.call_args.kwargs
+
+    def test_a_mismatch_fetches_as_a_doi_less_row_and_says_so(self):
+        result, kwargs = self._run(self._MISMATCH, url="https://doi.org/10.1000/TEST")
+        assert kwargs["doc_doi"] == ""
+        assert kwargs["doc_url"] == "", "a URL derived from the DOI fetches the same paper"
+        assert kwargs["cache_id"] == "oa:W999", "the DOI's parse cache may hold the other paper"
+        row = result.iloc[0]
+        assert row["doi_r"] == "10.1000/test", "the row keeps its DOI; only fetching changes"
+        assert "doi_registry_mismatch: 10.1000/test" in row["link_evidence"]
+        assert run_extract.evidence_quote(row["link_evidence"]) == "Smith (1935)"
+
+    def test_a_repository_url_is_kept(self):
+        _, kwargs = self._run(self._MISMATCH, url="https://repo.example.org/paper.pdf")
+        assert kwargs["doc_doi"] == "" and kwargs["doc_url"] is None
+
+    def test_an_unanswered_registry_fails_open_with_a_note(self):
+        result, kwargs = self._run({"verdict": "unanswered"})
+        assert kwargs["doc_doi"] == "10.1000/test" and kwargs["doc_url"] is None
+        assert kwargs["cache_id"] == "10.1000/test"
+        assert "doi_registry: unavailable" in result.iloc[0]["link_evidence"]
+
+    def test_arxiv_urls_carry_the_id_not_the_doi(self):
+        assert run_extract._url_names_doi("https://arxiv.org/pdf/2510.16062",
+                                          "10.48550/arxiv.2510.16062")
+        assert not run_extract._url_names_doi("http://hdl.handle.net/10539/1757",
+                                              "10.4103/jpn.jpn_86_19")
+
+
 class TestTheRowPipeline:
     """What `_process_row` writes for one input row, end to end.
 

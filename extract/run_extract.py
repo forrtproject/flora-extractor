@@ -29,6 +29,7 @@ once through the engine's generic spine).
 import json
 import re
 from typing import Optional
+from urllib.parse import unquote
 
 import pandas as pd
 
@@ -58,6 +59,7 @@ from shared.pdf_parsing import (
     score_parse_result,
 )
 from shared.prompts import OUTCOME_TEXT_CHARS
+from shared import doi_registry
 from shared.doi_verify import keeps_no_doi, verify_and_correct
 from shared.row_key import primary_key
 from shared.schema import (
@@ -740,8 +742,12 @@ def _cache_id(row: pd.Series, doi_r: str = "") -> str:
     matches; otherwise `primary_key()`'s next-strongest identifier (`oa:` → `url:` →
     `title:`). Verified against the 2026-08-06 `extracted.csv`: all 278 rows with a
     DOI keep the key they already had on disk, and the 7 without stop sharing one.
+
+    A blank *doi_r* never falls back to the row's own DOI column: that is how a row
+    whose DOI names another paper (`_registry_guard`) stays off the entries the DOI
+    filed, which may hold that paper's document.
     """
-    return doi_r or primary_key(row)
+    return doi_r or primary_key({**dict(row), "doi_r": ""})
 
 
 def _read_parse_cache(cache_id: str) -> "dict | None":
@@ -919,7 +925,8 @@ def _apply_outcome(row: dict, outcome: dict) -> dict:
 
 def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False,
                  screen: "dict | None" = None, *,
-                 original: "dict | None" = None) -> dict:
+                 original: "dict | None" = None,
+                 doc_doi: "str | None" = None) -> dict:
     """The outcome for one (replication, original) pair, coded on its own.
 
     Only rows whose link no LLM chose reach here — a deterministic rule resolved them,
@@ -929,7 +936,8 @@ def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False,
 
     *original* names the original this call is about — the per-target adapter passes
     one entry per row, where the link carries a whole list; without it the link's own
-    resolved_* fields are the original, as on the single-link path.
+    resolved_* fields are the original, as on the single-link path. *doc_doi* is the
+    DOI the documents are keyed on (`_registry_guard`), *doi_r* when omitted.
     """
     abstract_r = str(row.get("abstract_r", ""))
     title_r    = str(row.get("title_r",    ""))
@@ -938,7 +946,8 @@ def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False,
     # receives whichever parser extracted the richest text, not always GROBID —
     # narrowed to the discussion/conclusion, which is where FLoRA's rule says the
     # outcome is stated when the abstract does not state it.
-    fulltext, provenance, intro = _best_fulltext_from_cache(_cache_id(row, doi_r))
+    fulltext, provenance, intro = _best_fulltext_from_cache(
+        _cache_id(row, doi_r if doc_doi is None else doc_doi))
     if not fulltext:
         # Fallback: sections that run_for_doi already extracted. The intro is in here
         # for want of anything better; it is the section that most often discusses
@@ -1991,7 +2000,8 @@ def _merge_duplicate_originals(rows: list[dict], doi_r: str) -> list[dict]:
 
 
 def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | None",
-                     no_llm: bool, no_pdf: bool, resolved_only: bool) -> list[dict]:
+                     no_llm: bool, no_pdf: bool, resolved_only: bool,
+                     doc_doi: "str | None" = None) -> list[dict]:
     """One row per original PAPER the merged target prompt named.
 
     The order is the single-original path's: resolve, merge, guard, --resolved-only,
@@ -2049,8 +2059,9 @@ def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | Non
     # cache, and the retired multi path never populated it — which is why its rows
     # were coded from the abstract alone however much full text had been acquired.
     oa_id_r = str(row.get("openalex_id_r", "") or "")
-    if not no_pdf and _has_document(doi_r, link, oa_id_r):
-        _save_parse_cache(_cache_id(row, doi_r), doi_r, oa_id_r,
+    doc_doi = doi_r if doc_doi is None else doc_doi
+    if not no_pdf and _has_document(doc_doi, link, oa_id_r):
+        _save_parse_cache(_cache_id(row, doc_doi), doc_doi, oa_id_r,
                           str(row.get("title_r", "") or ""))
 
     # An observation, not a prediction: the row count IS the match type.
@@ -2099,7 +2110,7 @@ def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | Non
             outcome = entry.get("outcome_block") or _get_outcome(
                 doi_r, row, link,
                 no_llm=no_llm,
-                screen=screen, original=entry)
+                screen=screen, original=entry, doc_doi=doc_doi)
         rows.append(_apply_outcome(result_row, outcome))
 
     rows = _merge_duplicate_originals(rows, doi_r)
@@ -2191,7 +2202,9 @@ def _observe_link(observed: "dict | None", link: dict) -> None:
 
 def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
                       no_llm: bool, no_pdf: bool, resolved_only: bool,
-                      observed: "dict | None" = None) -> list[dict]:
+                      observed: "dict | None" = None,
+                      doc_doi: "str | None" = None,
+                      doc_url: "str | None" = None) -> list[dict]:
     """Run the resolution ladder for one row and code the outcome of what it found.
 
     The order is deliberate: resolve, merge, guard, --resolved-only, and only THEN
@@ -2204,18 +2217,24 @@ def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
     adapter: that is a paper the target prompt read as re-testing several originals
     (or one it declined to link), and keeping a single link for it would silently drop
     N-1 originals. A resolved single link takes the merge path below unchanged.
+
+    *doc_doi* / *doc_url* are what the documents are fetched by (`_registry_guard`);
+    None is the row's own DOI and URL.
     """
+    doc_doi = doi_r if doc_doi is None else doc_doi
     link = run_for_doi(doi_r, cands_df=_build_cands_df(row),
                        no_llm=no_llm, no_pdf=no_pdf, classification=screen,
                        record_type=_record_type(row, screen),
-                       cache_id=_cache_id(row, doi_r))
+                       cache_id=_cache_id(row, doc_doi),
+                       doc_doi=doc_doi, doc_url=doc_url)
     _observe_link(observed, link)
 
     if link.get("targets") and not link.get("resolved"):
         n_targets = int(link.get("n_targets") or 0)
         log.info("[%s] target prompt named %d original(s) without a single accepted "
                  "link — writing one row per target", doi_r, n_targets)
-        rows = _per_target_rows(row, doi_r, link, screen, no_llm, no_pdf, resolved_only)
+        rows = _per_target_rows(row, doi_r, link, screen, no_llm, no_pdf, resolved_only,
+                                doc_doi=doc_doi)
         # Re-observed: the title searches happen INSIDE _per_target_rows, so the
         # observation taken above predates them and would report the run without the
         # one thing that says what was tried for a work that resolved nothing.
@@ -2289,7 +2308,7 @@ def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
                         "n_targets": 1, "multi_target": False,
                         "_recovered_entry": entry}
                 rows = _per_target_rows(row, doi_r, link, screen, no_llm, no_pdf,
-                                        resolved_only)
+                                        resolved_only, doc_doi=doc_doi)
                 if rows:
                     return rows
             else:
@@ -2342,7 +2361,7 @@ def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
                               "n_targets": 1, "multi_target": False,
                               "_recovered_entry": entry}
             rows = _per_target_rows(row, doi_r, recovered_link, screen, no_llm, no_pdf,
-                                    resolved_only)
+                                    resolved_only, doc_doi=doc_doi)
             _observe_link(observed, recovered_link)
             if rows:
                 return rows
@@ -2375,12 +2394,12 @@ def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
         outcome = link.get("outcome_block") or {}
         if not outcome:
             oa_id_r = str(row.get("openalex_id_r", "") or "")
-            if not no_pdf and _has_document(doi_r, link, oa_id_r):
-                _save_parse_cache(_cache_id(row, doi_r), doi_r, oa_id_r,
+            if not no_pdf and _has_document(doc_doi, link, oa_id_r):
+                _save_parse_cache(_cache_id(row, doc_doi), doc_doi, oa_id_r,
                                   str(row.get("title_r", "") or ""))
             outcome = _get_outcome(doi_r, row, link,
                                    no_llm=no_llm,
-                                   screen=screen)
+                                   screen=screen, doc_doi=doc_doi)
     return [_apply_outcome(result_row, outcome)]
 
 
@@ -2511,6 +2530,71 @@ def _resolve_missing_doi(row: pd.Series, doi_r: str) -> "tuple[pd.Series, str]":
     return row, doi_r
 
 
+_ARXIV_DOI = re.compile(r"^10\.48550/arxiv\.(.+)$")
+
+
+def _url_names_doi(url: str, doi: str) -> bool:
+    """Whether *url* is an address derived from *doi* — so it fetches what the DOI names.
+
+    The DOI itself in the URL (doi.org, a publisher path), or an arXiv DOI's id
+    (arxiv.org/pdf/<id>): the one registrant whose URLs carry the id and not the DOI.
+    A repository copy of the paper itself carries neither and is kept.
+    """
+    text = unquote(str(url or "")).lower()
+    if not text or not doi:
+        return False
+    arxiv = _ARXIV_DOI.match(doi)
+    return doi in text or bool(arxiv and arxiv.group(1) in text)
+
+
+def _registry_guard(row: pd.Series, doi_r: str) -> "tuple[str, str | None, str]":
+    """What this row's documents may be fetched by: (doc_doi, doc_url, note).
+
+    OpenAlex files some real replications under an unrelated paper's DOI (issue #210:
+    8 in the admitted pool, 7 of them already extracted). Every DOI-keyed fetch then
+    returns that other paper — a Europe PMC full text coded one of them as
+    `no_original_found` from a case report on Albright's hereditary osteodystrophy —
+    and the downloaded-document title check (`_title_check` in pdf_sources) catches
+    only part of it: structured sources skip it, and a wrong paper clears its 0.30
+    cut a third of the time.
+
+    So the DOI's registry title is compared with the row's own, before anything is
+    fetched (`shared.doi_registry.check`; one cached Crossref call, doi.org content
+    negotiation only on a Crossref 404). On a clear mismatch the row is fetched as a
+    DOI-less row is: doc_doi is "" (the OpenAlex id, the row's own URL and the
+    Crossref title search still run), and doc_url is "" when the row's URL is itself
+    derived from the DOI — None otherwise, meaning "the row's own". doi_r keeps every
+    other job — the self-link exclusion, the pair id, the LLM cache keys.
+
+    A registry that does not answer is not a mismatch: the row runs as before, and the
+    note says the DOI went unchecked.
+    """
+    if not doi_r:
+        return doi_r, None, ""
+    title = str(row.get("title_r", "") or row.get("study_r", "") or "")
+    found = doi_registry.check(doi_r, title, row.get("year_r"))
+    if found["verdict"] == "unanswered":
+        log.warning("[%s] DOI registry did not answer — DOI-keyed fetches unguarded", doi_r)
+        return doi_r, None, "doi_registry: unavailable, DOI not checked against its registry"
+    if found["verdict"] != "mismatch":
+        return doi_r, None, ""
+    url_r = str(row.get("url_r", "") or "")
+    doc_url = "" if _url_names_doi(url_r, doi_r) else None
+    log.warning("[%s] the DOI is registered to %r, not this row's %r — DOI-keyed "
+                "fetches skipped", doi_r, found["registry_title"][:80], title[:80])
+    return "", doc_url, (
+        f"doi_registry_mismatch: {doi_r} is registered to "
+        f"\"{found['registry_title'][:150]}\" (title overlap "
+        f"{found['similarity']:.2f}); DOI-keyed fetches skipped"
+        + ("" if doc_url is None else ", and the DOI-derived url_r"))
+
+
+def _with_note(row: dict, note: str) -> dict:
+    """*row* with *note* joined onto link_evidence — after " | " even when it is empty,
+    because `evidence_quote()` reads the part before the first " | " as the quote."""
+    return {**row, "link_evidence": f"{row.get('link_evidence', '') or ''} | {note}"}
+
+
 def _process_row(row: pd.Series, doi_r: str, no_llm: bool, no_pdf: bool,
                  no_reproductions: bool,
                  resolved_only: bool,
@@ -2589,11 +2673,13 @@ def _process_row(row: pd.Series, doi_r: str, no_llm: bool, no_pdf: bool,
             row["paper_type"] = screen["record_type"]
             row["filter_method"] = "screen"   # the screen decided the type
 
+    doc_doi, doc_url, registry_note = _registry_guard(row, doi_r)
     try:
-        return _resolve_and_code(
+        rows = _resolve_and_code(
             doi_r, row, screen=screen, no_llm=no_llm, no_pdf=no_pdf,
             resolved_only=resolved_only,
-            observed=observed)
+            observed=observed, doc_doi=doc_doi, doc_url=doc_url)
+        return [_with_note(r, registry_note) for r in rows] if registry_note else rows
     except (OpenAlexQuotaExhausted, TokenBudgetExhausted):
         # Not a per-row failure: the row was never examined, and writing it as
         # api_error would bury the reason the rest of the run stops too.

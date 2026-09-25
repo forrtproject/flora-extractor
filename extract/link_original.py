@@ -568,7 +568,21 @@ OUTCOME_DESCENT = True
 #      from the winner. The always-empty METHODS block and the row's `grobid_methods`
 #      slice are gone; no prompt changed (2026-09-25)
 #      reopen: --redo-status parse_method=grobid
-EXTRACT_LADDER_VERSION: int = 29
+#  30  a row whose DOI its REGISTRY files under another paper is fetched as a DOI-less
+#      row (`_registry_guard` in run_extract, issue #210): OpenAlex put 8 real
+#      replications under an unrelated paper's DOI, and every DOI-keyed step — Europe
+#      PMC, Unpaywall, the publisher, OpenCitations, the DOI-keyed parse caches — then
+#      returned that paper (one was closed no_original_found from a case report's
+#      full text). The DOI's registry title (Crossref; doi.org on a 404) is compared
+#      with title_r by the issue #210 audit's rule — all 30 known twins score 0.0,
+#      every one of 7,285 matching works >= 0.867 — and on a mismatch the waterfall,
+#      OpenCitations and the parse cache run without the DOI (a url_r derived from it
+#      goes too) while the OpenAlex id, the row's own URL and the Crossref title
+#      search still run. The row keeps doi_r and says so in link_evidence
+#      (`doi_registry_mismatch: …`); a registry that does not answer is not a
+#      mismatch (2026-09-25)
+#      reopen: --redo 16766644,22047302,22986889,23811235,31908667,37892775,2779677281,4415949651
+EXTRACT_LADDER_VERSION: int = 30
 
 
 # Columns to pass through from the input row (no renaming). Only columns
@@ -1168,9 +1182,18 @@ def run_for_doi(doi_r:              str,
                 no_pdf:             bool = False,
                 classification:     Optional[dict] = None,
                 record_type:        str = "replication",
-                cache_id:           str = "") -> dict:
+                cache_id:           str = "",
+                doc_doi:            Optional[str] = None,
+                doc_url:            Optional[str] = None) -> dict:
     """
     Run the full disambiguation pipeline for *doi_r*.
+
+    *doc_doi* and *doc_url* are the identifiers the paper's DOCUMENTS are fetched by —
+    the acquisition waterfall and OpenCitations' reference list — and default to
+    *doi_r* and the row's own url_r. They differ only when the DOI's registry names
+    another paper (`_registry_guard` in run_extract, issue #210): the row is then
+    fetched as if it had no DOI, while *doi_r* keeps its other jobs — the self-link
+    exclusion and the cache keys of the calls that read what was fetched.
 
     *cache_id* is the row's identity for the on-disk parse cache, and defaults to
     *doi_r*. A caller with rows that may carry no DOI must pass one — 30% of the
@@ -1225,6 +1248,8 @@ def run_for_doi(doi_r:              str,
     pattern_r  = cands_row.get("author_year_pattern_r", "")
     oa_id_r    = cands_row.get("openalex_id_r", "")
     cache_id   = cache_id or doi_r or (f"oa:{oa_id_r}" if oa_id_r else "")
+    doc_doi    = doi_r if doc_doi is None else clean_doi(doc_doi)
+    doc_url    = str(cands_row.get("url_r", "") or "") if doc_url is None else doc_url
 
     try:
         year_r = int(cands_row.get("year_r") or 2099)
@@ -1444,8 +1469,7 @@ def run_for_doi(doi_r:              str,
     # them would drop the link and keep only the outcome.
     pdf_early: "dict | None" = None
     if not abstract_r.strip() and not no_pdf:
-        pdf_early = acquire_pdf(doi_r, study_r, openalex_id=oa_id_r,
-                                url_r=str(cands_row.get("url_r", "") or ""))
+        pdf_early = acquire_pdf(doc_doi, study_r, openalex_id=oa_id_r, url_r=doc_url)
         if not pdf_early.get("pdf_path") and not pdf_early.get("openalex_xml"):
             log.info("[%s] textless row and no document (%s) — stopping above the "
                      "search rungs", doi_r, pdf_early.get("pdf_source", "none"))
@@ -1523,7 +1547,7 @@ def run_for_doi(doi_r:              str,
         oc_refs: list[dict] | None = []
         refs = list(oa_refs or [])
         if not refs:
-            oc_refs = fetch_opencitations_references(doi_r)
+            oc_refs = fetch_opencitations_references(doc_doi)
             refs = list(oc_refs or [])
         refs_unavailable = not refs and (oa_refs is None or oc_refs is None)
         token_counter.set_stage("extract_refscreen")
@@ -1676,8 +1700,7 @@ def run_for_doi(doi_r:              str,
         return _exit(_unresolved("needs_fulltext"))
 
     pdf = pdf_early if pdf_early is not None else acquire_pdf(
-        doi_r, study_r, openalex_id=oa_id_r,
-        url_r=str(cands_row.get("url_r", "") or ""))
+        doc_doi, study_r, openalex_id=oa_id_r, url_r=doc_url)
     log.info("[%s] PDF: %s (%s)", doi_r, pdf["pdf_source"], pdf["pdf_url"])
 
     pdf_path       = Path(pdf["pdf_path"]) if pdf.get("pdf_path") else None
@@ -1705,7 +1728,11 @@ def run_for_doi(doi_r:              str,
     # failure cache reads as a miss — read_parse_cache's job).
     parse_results = read_parse_cache(cache_id, PARSE_CACHE_DIR)
     if parse_results is None:
-        parse_results = _parse_all(doi_r, pdf_path, oa_xml=oa_xml_content, no_llm=no_llm)
+        # The parsers' own caches key on the id passed here (markitdown's on it
+        # alone), and under the registry guard the DOI's entries may hold the other
+        # paper's document — so a guarded row parses under its row identity instead.
+        parse_id = doi_r if doc_doi == doi_r else cache_id
+        parse_results = _parse_all(parse_id, pdf_path, oa_xml=oa_xml_content, no_llm=no_llm)
         _write_parse_cache(cache_id, parse_results)
     else:
         log.debug("[%s] parse cache hit — six parsers skipped", doi_r)
