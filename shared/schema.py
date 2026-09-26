@@ -145,9 +145,12 @@ EXTRACT_ADDED_COLS = [
     # Both are blank on every row that never acquired or never parsed a document,
     # which is the honest reading: no document, no provenance.
     "pdf_source",          # str   — acquisition tier that supplied the document
-                           #         (row_url | arxiv | osf | openalex_oa | unpaywall_pdf |
-                           #          semanticscholar | core | europepmc | landing_* |
-                           #          serpapi | playwright | openalex_xml | epmc_xml |
+                           #         (row_url | related_doi | arxiv | osf | zenodo |
+                           #          openalex_oa | datacite | unpaywall_pdf |
+                           #          crossref_link | semanticscholar | core | europepmc |
+                           #          pmc_oa | related_version | crossref_search |
+                           #          landing_* | scholar (serpapi on older rows) |
+                           #          playwright | osf_files | openalex_xml | epmc_xml |
                            #          osf_registration | html_landing); blank when none
     "pdf_url",             # str   — the URL the document was actually fetched from, as
                            #         `acquire_pdf` reported it. The one column that

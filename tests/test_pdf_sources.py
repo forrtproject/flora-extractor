@@ -46,16 +46,23 @@ _ALL_TIERS = [
     "get_openalex_locations", "get_datacite_urls", "get_all_unpaywall_pdf_urls",
     "get_semanticscholar_pdf_url", "get_core_pdf_url", "get_europepmc_pmcid",
     "get_europepmc_fulltext",
-    "scrape_pdf_from_landing_page", "get_serpapi_pdf_url",
+    "scrape_pdf_from_landing_page", "scholar_pdf_urls",
     "list_osf_files", "crossref_reviewed_doi", "crossref_title_matches",
-    "crossref_title",
+    "crossref_title", "crossref_pdf_links", "crossref_parent_doi",
+    "datacite_related_dois", "get_zenodo_pdf_urls", "pmc_oa_pdf_url",
 ]
 
 # The tier lookups that answer with a list; everything else answers with a scalar or
 # None. A default of None where a list is expected would raise rather than miss.
 _LIST_TIERS = {"get_all_unpaywall_pdf_urls", "get_openalex_locations",
                "get_datacite_urls", "scrape_pdf_from_landing_page",
-               "list_osf_files", "crossref_title_matches"}
+               "list_osf_files", "crossref_title_matches", "crossref_pdf_links",
+               "datacite_related_dois", "get_zenodo_pdf_urls", "scholar_pdf_urls"}
+
+# Long enough to reach the Scholar tier, which skips titles too short to gate on.
+_LONG_TITLE = "A Direct Replication of the Classic Ego Depletion Paradigm"
+_STRING_TIERS = {"crossref_reviewed_doi", "crossref_title", "crossref_parent_doi",
+                 "pmc_oa_pdf_url"}
 
 
 def _mock_all_tiers(**overrides):
@@ -66,8 +73,7 @@ def _mock_all_tiers(**overrides):
     """
     patchers = {}
     for name in _ALL_TIERS:
-        default = [] if name in _LIST_TIERS else (
-            "" if name in ("crossref_reviewed_doi", "crossref_title") else None)
+        default = [] if name in _LIST_TIERS else ("" if name in _STRING_TIERS else None)
         patchers[name] = patch.object(ps, name, return_value=overrides.get(name, default))
     return patchers
 
@@ -125,8 +131,9 @@ def _run_all_tiers_missing(doi: str, **tier_returns):
         with patch.object(ps, "get_pdf_via_playwright",
                           return_value=_NO_PLAYWRIGHT) as pw, \
              patch.object(ps, "download_pdf", return_value=_NO_PDF), \
-             patch.object(ps, "SERPAPI_KEYS", ["k"]):
-            out = ps.acquire_pdf(doi, "A Title")
+             patch.object(ps, "SERPER_API_KEYS", ["k"]), \
+             patch.object(ps, "CORE_API_KEY", "k"):
+            out = ps.acquire_pdf(doi, _LONG_TITLE)
     finally:
         for p in patchers.values():
             p.stop()
@@ -142,13 +149,13 @@ def test_a_tier_that_failed_inside_the_ttl_is_not_re_probed():
     assert out["pdf_ok"] is False
     recorded = _retry_log(doi)
     assert {"openalex_oa", "unpaywall_pdf", "semanticscholar", "core",
-            "europepmc", "landing", "serpapi", "playwright"} <= set(recorded)
+            "europepmc", "landing", "scholar", "playwright"} <= set(recorded)
 
     out2, mocks2 = _run_all_tiers_missing(doi)
     assert out2["pdf_ok"] is False
     for name in ("get_openalex_locations", "get_all_unpaywall_pdf_urls",
                  "get_semanticscholar_pdf_url", "get_core_pdf_url",
-                 "get_europepmc_pmcid", "get_serpapi_pdf_url",
+                 "get_europepmc_pmcid", "scholar_pdf_urls",
                  "get_pdf_via_playwright"):
         mocks2[name].assert_not_called()
 
@@ -160,7 +167,7 @@ def test_a_tier_is_re_probed_once_the_ttl_lapses():
     stale = _ago(ps.PDF_RETRY_AFTER_DAYS + 1)
     _write_retry_log(doi, {tier: stale for tier in
                            ("openalex_oa", "unpaywall_pdf", "semanticscholar", "core",
-                            "europepmc", "landing", "serpapi", "playwright")})
+                            "europepmc", "landing", "scholar", "playwright")})
 
     _, mocks = _run_all_tiers_missing(doi)
     mocks["get_openalex_locations"].assert_called_once()
@@ -169,27 +176,29 @@ def test_a_tier_is_re_probed_once_the_ttl_lapses():
 
 
 def test_a_tier_skipped_for_a_missing_key_is_not_recorded_as_failed():
-    """SerpAPI without a key and Playwright without the package were never asked —
-    a key or a pip install next week must take effect immediately."""
+    """SerpAPI and CORE without a key and Playwright without a browser were never
+    asked — a key or an install next week must take effect immediately."""
     doi = "10.1016/j.example.2020.01.004"
     patchers = _mock_all_tiers()
     started = {name: p.start() for name, p in patchers.items()}
     try:
         with patch.object(ps, "get_pdf_via_playwright",
                           return_value={"success": False, "path": None, "source": "",
-                                        "reason": "playwright_not_installed"}), \
+                                        "reason": "playwright_unavailable"}), \
              patch.object(ps, "download_pdf", return_value=_NO_PDF), \
-             patch.object(ps, "SERPAPI_KEYS", []):
-            ps.acquire_pdf(doi, "A Title")
+             patch.object(ps, "SERPAPI_KEYS", []), \
+             patch.object(ps, "SERPER_API_KEYS", []), \
+             patch.object(ps, "CORE_API_KEY", ""):
+            ps.acquire_pdf(doi, _LONG_TITLE)
     finally:
         for p in patchers.values():
             p.stop()
 
     recorded = _retry_log(doi)
-    assert "serpapi" not in recorded
-    assert "playwright" not in recorded
-    started["get_serpapi_pdf_url"].assert_not_called()
-    assert "core" in recorded          # the tiers that were actually asked ARE recorded
+    assert not {"scholar", "core", "playwright"} & set(recorded)
+    started["scholar_pdf_urls"].assert_not_called()
+    started["get_core_pdf_url"].assert_not_called()
+    assert "semanticscholar" in recorded   # the tiers that were actually asked ARE recorded
 
 
 def test_a_successful_acquisition_clears_the_record():
@@ -217,8 +226,9 @@ def test_an_unreadable_record_probes_everything():
 # ── The per-URL record of a dead URL ──────────────────────────────────────────
 
 class _Resp:
-    def __init__(self, status: int, body: bytes = b""):
+    def __init__(self, status: int, body: bytes = b"", url: str = ""):
         self.status_code = status
+        self.url = url
         self._body = body
         self.content = body
         self.text = body.decode("utf-8", errors="replace")
@@ -343,9 +353,9 @@ def test_a_saved_pdf_without_provenance_still_runs_the_waterfall():
     assert out["pdf_ok"] is True
     assert out["pdf_source"] == "openalex_oa"
     # No name: only the OSF file tier knows one, and this document came from OpenAlex.
-    assert ps._read_provenance(ps.clean_doi(doi)) == {"source": "openalex_oa",
-                                                      "url": "https://x/z.pdf",
-                                                      "name": ""}
+    prov = ps._read_provenance(ps.clean_doi(doi))
+    assert (prov["source"], prov["url"], prov["name"]) == ("openalex_oa",
+                                                           "https://x/z.pdf", "")
 
 
 # ── Tier 0 short-circuit ──────────────────────────────────────────────────────
@@ -375,7 +385,7 @@ def test_openalex_xml_with_content_skips_the_download_tiers():
     dl.assert_not_called()
     pw.assert_not_called()
     for name in ("get_arxiv_pdf_url", "get_all_unpaywall_pdf_urls",
-                 "get_semanticscholar_pdf_url", "get_serpapi_pdf_url"):
+                 "get_semanticscholar_pdf_url", "scholar_pdf_urls"):
         started[name].assert_not_called()
 
 
@@ -1013,7 +1023,7 @@ def test_a_review_doi_acquires_the_paper_it_reviews():
 
     assert out["pdf_source"] == "related_doi"
     assert out["pdf_url"] == "https://osf.io/download/abc12/"
-    urls.assert_called_once_with("10.31234/osf.io/abc12")
+    urls.assert_called_once_with("10.31234/osf.io/abc12", "A Title")
 
 
 _CR_SEARCH = {"message": {"items": [
@@ -1403,3 +1413,248 @@ def test_both_epmc_routes_answering_nothing_records_the_stamp():
 def test_a_bundled_supplement_does_not_make_a_file_a_supplement(name, excluded):
     from shared.pdf_sources import _name_is_excluded
     assert _name_is_excluded(name) is excluded
+
+
+# ── Routes added after the fetchpdf comparison (2026-09-24) ───────────────────
+
+def test_the_declared_pdf_comes_first_and_resolves_against_the_final_page():
+    """`citation_pdf_url` names a file whose URL has no ".pdf"; a doi.org landing
+    redirects, so a relative link belongs to the page the redirects ended on."""
+    page = ('<meta content="/downloads/73666g21k" name="citation_pdf_url">'
+            '<a href="/files/other.pdf">x</a>')
+    resp = _Resp(200, page.encode(), url="https://cdr.lib.unc.edu/concern/theses/1")
+    with patch.object(ps.requests, "get", return_value=resp):
+        found = ps.scrape_pdf_from_landing_page("https://doi.org/10.17615/6c4f-es68")
+    assert found == ["https://cdr.lib.unc.edu/downloads/73666g21k",
+                     "https://cdr.lib.unc.edu/files/other.pdf"]
+
+
+def test_zenodo_offers_its_downloadable_pdfs_largest_first(_oa_cache_in_tmp):
+    record = {"files": [
+        {"key": "supplement.pdf", "size": 10, "links": {"self": "https://z/s"}},
+        {"key": "paper.pdf", "size": 900, "links": {"self": "https://z/p"}},
+        {"key": "data.csv", "size": 5000, "links": {"self": "https://z/d"}},
+        {"key": "restricted.pdf", "size": 9999, "links": {}},
+    ]}
+    with patch.object(ps.requests, "get",
+                      return_value=_Resp(200, json.dumps(record).encode())):
+        assert ps.get_zenodo_pdf_urls("10.5281/zenodo.4733430") == ["https://z/p",
+                                                                     "https://z/s"]
+    assert ps.get_zenodo_pdf_urls("10.1016/j.x.2020.1") == []
+    with patch.object(ps.requests, "get", return_value=_Resp(503)):
+        with pytest.raises(ps.DocumentSourceUnavailable):
+            ps.get_zenodo_pdf_urls("10.5281/zenodo.1")
+
+
+def test_the_pmc_oa_bucket_takes_the_latest_version(_oa_cache_in_tmp):
+    listing = (b"<ListBucketResult><CommonPrefixes><Prefix>PMC42.1/</Prefix>"
+               b"</CommonPrefixes><CommonPrefixes><Prefix>PMC42.2/</Prefix>"
+               b"</CommonPrefixes></ListBucketResult>")
+    with patch.object(ps.requests, "get", return_value=_Resp(200, listing)):
+        assert ps.pmc_oa_pdf_url("PMC42") == ps._PMC_OA_BUCKET + "/PMC42.2/PMC42.2.pdf"
+    with patch.object(ps.requests, "get",
+                      return_value=_Resp(200, b"<ListBucketResult/>")):
+        assert ps.pmc_oa_pdf_url("PMC7") == ""
+
+
+def test_the_pmc_oa_copy_is_tried_before_the_rendered_route():
+    doi = "10.1016/j.example.2020.01.011"
+    patchers = _mock_all_tiers(get_europepmc_pmcid="PMC123",
+                               pmc_oa_pdf_url="https://bucket/PMC123.1/PMC123.1.pdf")
+    started = {name: p.start() for name, p in patchers.items()}
+    try:
+        with patch.object(ps, "download_pdf",
+                          return_value={"success": True, "path": "/tmp/x.pdf",
+                                        "source": "download", "reason": ""}), \
+             patch.object(ps, "_write_provenance"):
+            out = ps.acquire_pdf(doi, _TITLE)
+    finally:
+        for p in patchers.values():
+            p.stop()
+    assert out["pdf_source"] == "pmc_oa"
+    assert out["pdf_url_tried"][-1] == "https://bucket/PMC123.1/PMC123.1.pdf"
+
+
+def test_crossref_links_offer_pdfs_first_and_no_markup(_oa_cache_in_tmp):
+    record = {"message": {"link": [
+        {"URL": "https://p/192v1.xml", "content-type": "application/xml"},
+        {"URL": "https://p/download/7", "content-type": "unspecified"},
+        {"URL": "https://p/192v1.pdf", "content-type": "application/pdf"},
+    ]}}
+    with patch.object(ps, "_crossref_get", return_value=record):
+        assert ps.crossref_pdf_links("10.7287/peerj.preprints.192v1") == [
+            "https://p/192v1.pdf", "https://p/download/7"]
+
+
+def test_a_component_doi_acquires_its_parent_article_checked_against_its_title():
+    """A PLOS figure DOI has no text; the article it is a component of is the paper,
+    and that article's bytes are checked against the ARTICLE's title."""
+    doi = "10.1371/journal.pone.0069685.s001"
+    parent = "10.1371/journal.pone.0069685"
+    patchers = _mock_all_tiers(crossref_parent_doi=parent,
+                               crossref_title="The Parent Article")
+    started = {name: p.start() for name, p in patchers.items()}
+    asked: list[str] = []
+
+    def _download(url, **kwargs):
+        asked.append(kwargs.get("title"))
+        return {"success": True, "path": "/tmp/p.pdf", "source": "download",
+                "reason": ""}
+
+    try:
+        with patch.object(ps, "document_urls_for_doi",
+                          return_value=(["https://plos/parent.pdf"], False)) as urls, \
+             patch.object(ps, "download_pdf", side_effect=_download), \
+             patch.object(ps, "_write_provenance"):
+            out = ps.acquire_pdf(doi, "Figure 1")
+    finally:
+        for p in patchers.values():
+            p.stop()
+    assert out["pdf_source"] == "related_version"
+    urls.assert_called_once_with(parent, "The Parent Article")
+    assert asked == ["The Parent Article"]
+
+
+def test_datacite_names_only_same_paper_relations(_oa_cache_in_tmp):
+    attrs = {"relatedIdentifiers": [
+        {"relationType": "References", "relatedIdentifier": "10.17605/osf.io/aq89u",
+         "relatedIdentifierType": "DOI"},
+        {"relationType": "IsVersionOf", "relatedIdentifier": "10.17605/OSF.IO/YU25A",
+         "relatedIdentifierType": "DOI"},
+    ]}
+    with patch.object(ps, "_datacite_attributes", return_value=attrs):
+        assert ps.datacite_related_dois("10.17605/osf.io/fx8qa") == [
+            "10.17605/osf.io/yu25a"]
+
+
+def test_core_needs_the_asked_doi_and_raises_when_it_does_not_answer(_oa_cache_in_tmp):
+    body = {"results": [
+        {"doi": "10.1/other", "downloadUrl": "https://core/wrong.pdf"},
+        {"doi": "10.17615/6C4F-ES68", "downloadUrl": "https://core/right.pdf"},
+    ]}
+    with patch.object(ps.requests, "get",
+                      return_value=_Resp(200, json.dumps(body).encode())):
+        assert ps.get_core_pdf_url("10.17615/6c4f-es68") == "https://core/right.pdf"
+    with patch.object(ps.requests, "get", return_value=_Resp(429)):
+        with pytest.raises(ps.DocumentSourceUnavailable):
+            ps.get_core_pdf_url("10.1/quota")
+
+
+@pytest.mark.parametrize("source", ["related_doi", "related_version"])
+def test_another_dois_document_is_not_re_judged_against_the_rows_title(source):
+    """A parent article saved under a figure DOI would fail the row's title ("Figure
+    6") on every later read, and be discarded and re-fetched for ever."""
+    doi = "10.1371/journal.pone.0211416.g006"
+    path = ps.pdf_cache_path(doi)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"%PDF-1.4 " + b"x" * 6000)
+    ps._write_provenance(doi, source, "https://plos/parent.pdf", "match", 0.9)
+    with patch.object(ps, "_title_check", return_value=("mismatch", 0.0)) as check:
+        assert ps.verified_cached_document(doi, "Figure 6") == path
+        out = ps.acquire_pdf(doi, "Figure 6")
+    check.assert_not_called()
+    assert out["pdf_source"] == source and path.exists()
+
+
+# ── Google Scholar ────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("row, hit, ok", [
+    # The measured failure: the original's own paper under a replication's title.
+    ("Replication of Hajcak &amp; Foti (2008, PS, Study 1) in a new sample",
+     "Differentiating neural responses to emotional pictures: evidence from PCA", False),
+    ("The Development of Conservation in Aboriginal Children: A Replication Study",
+     "The development of conservation in Aboriginal children", False),
+    # A truncated hit title still names the row's paper.
+    ("Giving and taking in dictator games – differences by gender? A replication study",
+     "Giving and taking in dictator games–differences by gender? A replication", True),
+    ("Replication Data", "Data replication strategies in wide-area systems", False),
+])
+def test_the_scholar_gate_reads_the_hits_own_title(row, hit, ok):
+    assert ps._scholar_title_matches(row, hit) is ok
+
+
+def test_scholar_links_come_only_from_gated_hits_and_never_from_researchgate(
+        _oa_cache_in_tmp, monkeypatch):
+    row = "The future failed: no evidence for precognition in a large scale replication"
+    body = {"organic": [
+        {"title": "Feeling the future: experimental evidence for anomalous retroactive "
+                  "influences", "pdfUrl": "https://orig/bem.pdf"},
+        {"title": "The future failed: No evidence for precognition in a large scale "
+                  "replication attempt of Bem (2011)", "pdfUrl": "https://unibe/paper.pdf",
+         "resources": [{"link": "https://www.researchgate.net/x.pdf"}]},
+    ]}
+    monkeypatch.setattr(ps, "SERPER_API_KEYS", ["k1", "k2"])
+    calls = []
+
+    def _post(url, **kwargs):
+        calls.append(kwargs["headers"]["X-API-KEY"])
+        return _Resp(403 if len(calls) == 1 else 200, json.dumps(body).encode())
+
+    with patch.object(ps.requests, "post", side_effect=_post):
+        assert ps.scholar_pdf_urls(row, row) == ["https://unibe/paper.pdf"]
+    assert calls == ["k1", "k2"]          # a refused key rotates to the next
+    with patch.object(ps.requests, "post", return_value=_Resp(429)):
+        with pytest.raises(ps.DocumentSourceUnavailable):
+            ps.scholar_pdf_urls("another query", row)
+
+
+def test_the_scholar_tier_asks_the_title_before_the_doi():
+    doi = "10.1037/cns0000342"
+    patchers = _mock_all_tiers()
+    started = {name: p.start() for name, p in patchers.items()}
+    started["scholar_pdf_urls"].side_effect = (
+        lambda q, t: ["https://x/p.pdf"] if q.startswith('"') else [])
+    try:
+        with patch.object(ps, "download_pdf",
+                          side_effect=lambda url, **k: (
+                              {"success": True, "path": "/tmp/p.pdf", "source": "d",
+                               "reason": ""} if url == "https://x/p.pdf" else _NO_PDF)), \
+             patch.object(ps, "get_pdf_via_playwright", return_value=_NO_PLAYWRIGHT), \
+             patch.object(ps, "_write_provenance"), \
+             patch.object(ps, "SERPER_API_KEYS", ["k"]):
+            out = ps.acquire_pdf(doi, _LONG_TITLE)
+    finally:
+        for p in patchers.values():
+            p.stop()
+    queries = [c.args[0] for c in started["scholar_pdf_urls"].call_args_list]
+    assert queries == [_LONG_TITLE, f'"{doi}"']
+    assert out["pdf_source"] == "scholar"
+
+
+def test_a_path_relative_link_resolves_against_the_final_page():
+    page = '<meta name="citation_pdf_url" content="downloads/7.pdf">'
+    resp = _Resp(200, page.encode(), url="https://repo.example/record/12/view")
+    with patch.object(ps.requests, "get", return_value=resp):
+        found = ps.scrape_pdf_from_landing_page("https://doi.org/10.1/x")
+    assert found == ["https://repo.example/record/12/downloads/7.pdf"]
+
+
+def test_a_pmc_oa_absence_is_asked_again_after_the_retry_window(_oa_cache_in_tmp):
+    (_oa_cache_in_tmp / "pmcoa_PMC9.json").write_text(
+        json.dumps({"version": "", "fetched_at": _ago(ps.PDF_RETRY_AFTER_DAYS + 1)}))
+    listing = b"<ListBucketResult><CommonPrefixes><Prefix>PMC9.1/</Prefix></CommonPrefixes>"
+    with patch.object(ps.requests, "get", return_value=_Resp(200, listing)) as get:
+        assert ps.pmc_oa_pdf_url("PMC9").endswith("/PMC9.1/PMC9.1.pdf")
+    get.assert_called_once()
+    with patch.object(ps.requests, "get") as get:     # a found version stays cached
+        ps.pmc_oa_pdf_url("PMC9")
+    get.assert_not_called()
+
+
+def test_a_crossref_outage_on_the_related_title_records_no_failure():
+    """Checking the reviewed preprint against the recommendation's own title would
+    refuse it, and that refusal would hold the tier for fourteen days."""
+    doi = "10.24072/pci.rr.100124"
+    patchers = _mock_all_tiers(crossref_reviewed_doi="10.31234/osf.io/abc13")
+    started = {name: p.start() for name, p in patchers.items()}
+    started["crossref_title"].side_effect = ps.DocumentSourceUnavailable("503")
+    try:
+        with patch.object(ps, "document_urls_for_doi") as urls, \
+             patch.object(ps, "download_pdf", return_value=_NO_PDF), \
+             patch.object(ps, "get_pdf_via_playwright", return_value=_NO_PLAYWRIGHT):
+            ps.acquire_pdf(doi, _LONG_TITLE)
+    finally:
+        for p in patchers.values():
+            p.stop()
+    urls.assert_not_called()
+    assert "related_doi" not in _retry_log(doi)
