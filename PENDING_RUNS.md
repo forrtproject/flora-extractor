@@ -40,13 +40,13 @@ the command, pasteable from the project root, and what proves it worked.
       `data/retired_pairs.csv` and the set-aside CSVs, push. Done when the next nightly run
       imports it with `retire_superseded` SUCCESS.
 
-- [ ] **Night run 2026-09-25 23:00 BST (systemd user timer `flora-night-run.timer`):**
-      `scripts/night_run.sh 2d767fe03199` screens the ~18.3k works option B added to
-      `screen_expensive`, then extracts the new proceeds (~12k expected), both with
-      `OPENAI_FLEX_PATIENCE=600`. Log: `logs/night_run_<stamp>.log`. It refuses to start on
-      uncommitted code under shared/ extract/ filter/ search/. Done when the log ends
-      `== done` and the extract dry run offers ~0 works; then compare the recorded `usd`
-      in `cache/token_usage.json` with the forecast (~$15 screen, ~$14 extraction).
+- [ ] **Finish the option-B campaign: nightly runs at 01:15 BST (after the midnight-UTC
+      OpenAlex reset), systemd user timer `flora-night-run-2.timer`, `scripts/night_run.sh
+      2d767fe03199`.** First night (2026-09-25/26): screen 17,962 decided — proceed 11,514,
+      discard 6,227, 221 incomplete (re-asked by the next run); extraction ran ~2,575 works
+      until OpenAlex's daily budget ran out at 09:48 UTC; 8,757 left (≈61k OpenAlex credits,
+      so ~3-4 more nights at this budget). Done when the extract dry run offers ~0 works;
+      then `systemctl --user stop flora-night-run-2.timer` and re-render (after the import).
 
 ## Done
 
