@@ -799,7 +799,9 @@ _OSF_FOLDER_PAGE = {
                         "size": 90_000},
          "links": {"download": "https://osf.io/download/questions/"}},
         {"attributes": {"kind": "file", "name": "Breakthrough_final.pdf",
-                        "size": 300_000},
+                        "size": 300_000,
+                        "date_created": "2024-02-18T10:00:00.000000+00:00",
+                        "date_modified": "2024-05-03T10:00:00.000000+00:00"},
          "links": {"download": "https://osf.io/download/manuscript/"}},
     ],
     "links": {"next": None},
@@ -874,6 +876,124 @@ def test_a_plan_document_ranks_behind_the_manuscript(plan_name):
     assert ranked == ["manuscript.pdf", plan_name]
     # The only file a project deposited is still the best statement of the target.
     assert ps.rank_osf_files(files[:1])[0]["name"] == plan_name
+
+
+def test_the_newest_eligible_file_beats_a_keyword_heavy_older_plan():
+    """OSF project yu25a: the Stage 1 manuscript's name carries three manuscript
+    words, the completed thesis uploaded three months later carries one."""
+    files = [
+        {"name": "PCIRR-Olivola-Shafir-2013-replication-extension-Registered-Report"
+                 "-main-manuscript.docx", "size": 900_000,
+         "download": "https://osf.io/download/s1/",
+         "modified": "2024-02-18T10:00:00.000000+00:00"},
+        {"name": "CHENG-2024-Olivola-and-Shafir-2013-replication-thesis.pdf",
+         "size": 100_000, "download": "https://osf.io/download/thesis/",
+         "modified": "2024-05-03T10:00:00.000000+00:00"},
+        {"name": "Olivola_Shafir_2013.pdf", "size": 500_000,
+         "download": "https://osf.io/download/orig/",
+         "modified": "2024-06-01T10:00:00.000000+00:00"},
+    ]
+    ranked = [f["name"] for f in ps.rank_osf_files(files)]
+    # The name that says nothing about being a manuscript stays offered, behind both.
+    assert ranked == [files[1]["name"], files[0]["name"], files[2]["name"]]
+
+
+def test_a_dateless_cached_osf_listing_is_re_fetched(_oa_cache_in_tmp):
+    """The ranking reads each file's upload date; a listing cached without one would
+    rank by nothing until it expired."""
+    with patch.object(ps.requests, "get", side_effect=_osf_listing_response):
+        ps.list_osf_files("abc12")
+    cf = next(iter(_oa_cache_in_tmp.glob("osffiles_*.json")))
+    cf.write_text(json.dumps({"files": [{"name": "old.pdf", "size": 1,
+                                         "download": "https://osf.io/download/x/"}],
+                              "fetched_at": _ago(1)}), encoding="utf-8")
+
+    with patch.object(ps.requests, "get", side_effect=_osf_listing_response) as get:
+        files = ps.list_osf_files("abc12")
+    assert get.called
+    # The latest upload, not the first.
+    assert files[-1]["modified"] == "2024-05-03T10:00:00.000000+00:00"
+
+
+def test_a_stage1_plan_is_skipped_for_the_next_candidate_and_kept_as_a_fallback(
+        tmp_path):
+    """A file whose title block announces a Stage 1 Registered Report is the study
+    before it ran: the next candidate is tried, and the plan is used only when no
+    other candidate is a document. A survey export is never used."""
+    listing = [
+        {"name": "Smith_2020_replication_final.docx", "size": 900_000,
+         "download": "https://osf.io/download/survey/", "modified": "2024-06-01"},
+        {"name": "Registered-Report-main-manuscript.docx", "size": 900_000,
+         "download": "https://osf.io/download/plan/", "modified": "2024-05-03"},
+        {"name": "Replication_report.pdf", "size": 300_000,
+         "download": "https://osf.io/download/paper/", "modified": "2024-02-18"},
+    ]
+    kinds = {"survey": "survey", "plan": "plan", "paper": ""}
+    plan = tmp_path / "plan.docx"
+
+    def _download(url, **kwargs):
+        path = tmp_path / f"{url.rstrip('/').rsplit('/', 1)[-1]}.docx"
+        path.write_bytes(b"x")
+        return {"success": True, "path": str(path), "source": "download",
+                "reason": ""}
+
+    def _run(downloads):
+        patchers = _mock_all_tiers(list_osf_files=listing)
+        for p in patchers.values():
+            p.start()
+        try:
+            with patch.object(ps, "get_osf_registration") as reg, \
+                 patch.object(ps, "download_pdf", side_effect=downloads), \
+                 patch.object(ps, "osf_front_page_kind",
+                              side_effect=lambda p: kinds[p.stem]):
+                out = ps.acquire_pdf("10.17605/osf.io/abc12", "A Title")
+        finally:
+            for p in patchers.values():
+                p.stop()
+        reg.assert_not_called()
+        return out
+
+    out = _run(_download)
+    assert out["pdf_url"] == "https://osf.io/download/paper/"
+    # Discarded, so the next download is not a cache hit.
+    assert not plan.exists() and not (tmp_path / "survey.docx").exists()
+
+    tried: list[str] = []
+
+    def _paper_fails(url, **kw):
+        tried.append(url)
+        return _NO_PDF if "paper" in url else _download(url)
+
+    out = _run(_paper_fails)
+    assert out["pdf_ok"] is True
+    assert out["pdf_url"] == "https://osf.io/download/plan/"
+    assert out["pdf_source"] == "osf_files"
+    # The plan was discarded when first seen, so the fallback fetches it again
+    # rather than answering from a cache entry that no longer exists.
+    assert tried.count("https://osf.io/download/plan/") == 2
+
+
+@pytest.mark.parametrize("front, kind", [
+    ("Revisiting the Belief in the law of small numbers: Conceptual replication and "
+     "extensions Registered Report of problems reviewed in Tversky and Kahneman "
+     "(1971) [Stage 1] Cheuk Kiu Hong", "plan"),
+    ("Stage 1 Registered Report Does the Corollary Discharge Provide the Sensory "
+     "Content of Inner Speech?", "plan"),
+    # A Stage 2 report recounts its Stage 1 acceptance in the body, past the title.
+    ("Revisiting celebrity contagion: Replication and extension Registered Report of "
+     "Newman et al. (2011) " + "x " * 800 + "the Stage 1 Registered Report was "
+     "accepted in principle", ""),
+    ("Stage 2 Registered Report, following the Stage 1 Registered Report accepted "
+     "in principle", ""),
+    ("Weinstein1980-Unrealistic_Optimism-Group_B Survey Flow EmbeddedData", "survey"),
+    ("Outcome Bias in Evaluations of Ethical Decisions: Replication and Extensions",
+     ""),
+])
+def test_the_first_page_names_a_plan_or_a_survey(front, kind, tmp_path):
+    path = tmp_path / "file.docx"
+    path.write_bytes(b"x")
+    with patch("shared.pdf_parsing.docx_text", return_value=front):
+        assert ps.osf_front_page_kind(path) == kind
 
 
 def test_the_plan_demotion_reads_whole_words():
@@ -1403,3 +1523,76 @@ def test_both_epmc_routes_answering_nothing_records_the_stamp():
 def test_a_bundled_supplement_does_not_make_a_file_a_supplement(name, excluded):
     from shared.pdf_sources import _name_is_excluded
     assert _name_is_excluded(name) is excluded
+
+
+def test_a_survey_export_is_never_the_fallback(tmp_path):
+    """A plan may stand in when nothing better exists; a survey export may not — the
+    row falls through to the registration form instead."""
+    listing = [{"name": "Study survey.pdf", "size": 100, "modified": "2024-01-01",
+                "download": "https://osf.io/download/survey/"}]
+    path = tmp_path / "survey.pdf"
+
+    def _download(url, **kwargs):
+        path.write_bytes(b"%PDF-1.4 x")
+        return {"success": True, "path": str(path), "source": "download", "reason": ""}
+
+    patchers = _mock_all_tiers(list_osf_files=listing)
+    for p in patchers.values():
+        p.start()
+    try:
+        with patch.object(ps, "get_osf_registration", return_value=None) as reg, \
+             patch.object(ps, "download_pdf", side_effect=_download), \
+             patch.object(ps, "rank_osf_files", side_effect=lambda f, t: f), \
+             patch.object(ps, "osf_front_page_kind", return_value="survey"):
+            out = ps.acquire_pdf("10.17605/osf.io/abc14", "A Title")
+    finally:
+        for p in patchers.values():
+            p.stop()
+    reg.assert_called_once()
+    assert out["pdf_source"] != "osf_files" and not path.exists()
+
+
+def test_the_first_page_check_reads_a_pdf_too(tmp_path):
+    path = tmp_path / "file.pdf"
+    path.write_bytes(b"%PDF-1.4 x")
+    with patch("pdfminer.high_level.extract_text",
+               return_value="Stage 1 Registered Report: a replication of X") as ex:
+        assert ps.osf_front_page_kind(path) == "plan"
+    assert ex.call_args.kwargs["maxpages"] == 1
+
+
+def test_plural_replies_to_reviews_are_review_paperwork():
+    assert ps._name_is_excluded("Replies to reviews round 2.pdf")
+    assert not ps._name_is_excluded("Neural responses to decision making under risk.pdf")
+
+
+def test_a_plan_past_the_download_slice_is_still_the_fallback(tmp_path):
+    names = [f"paper-{i}.pdf" for i in range(ps._OSF_MAX_DOWNLOADS)] + ["preregistration.pdf"]
+    listing = [{"name": n, "size": 100, "modified": "2024-01-01",
+                "download": f"https://osf.io/download/{n}/"} for n in names]
+    tried = []
+
+    def _download(url, **kwargs):
+        tried.append(url)
+        if "preregistration" not in url:
+            return _NO_PDF
+        path = tmp_path / "plan.pdf"
+        path.write_bytes(b"%PDF-1.4 x")
+        return {"success": True, "path": str(path), "source": "download", "reason": ""}
+
+    patchers = _mock_all_tiers(list_osf_files=listing)
+    for p in patchers.values():
+        p.start()
+    try:
+        with patch.object(ps, "get_osf_registration") as reg, \
+             patch.object(ps, "download_pdf", side_effect=_download), \
+             patch.object(ps, "rank_osf_files", side_effect=lambda f, t: f), \
+             patch.object(ps, "osf_front_page_kind", return_value="plan"), \
+             patch.object(ps, "_write_provenance"):
+            out = ps.acquire_pdf("10.17605/osf.io/abc15", "A Title")
+    finally:
+        for p in patchers.values():
+            p.stop()
+    assert out["pdf_ok"] is True
+    assert tried[-1] == "https://osf.io/download/preregistration.pdf/"
+    reg.assert_not_called()
