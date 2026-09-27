@@ -672,3 +672,42 @@ class TestExtractionVersionInvalidatesCachedText:
                                 grobid.TEXT_EXTRACTION_VERSION + 1)
             grobid.parse_pdf_sections(pdf)
             assert extract.call_count == 2
+
+
+def _scatter_pdf(tmp_path: Path, n_words: int) -> Path:
+    """One page of *n_words* isolated words — each its own pdfminer text box, the
+    shape of a scatter plot whose glyphs are text."""
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page(width=600, height=800)
+    for i in range(n_words):
+        page.insert_text((20 + (i % 5) * 110, 40 + (i // 5) * 60), f"word{i}")
+    path = tmp_path / "scatter.pdf"
+    doc.save(path)
+    doc.close()
+    return path
+
+
+def test_pdfminer_text_bounds_layout_grouping_on_a_crowded_page(tmp_path, monkeypatch):
+    """pdfminer pairs every text box on a page (quadratic memory): a one-page plot of
+    121k glyph boxes took a night run past 14 GB. Above the cap the page is read in
+    flat order instead; at or under it the text is exactly pdfminer's own."""
+    from pdfminer.high_level import extract_text
+    from pdfminer.layout import LTLayoutContainer
+    from shared import grobid
+
+    pdf = _scatter_pdf(tmp_path, 40)
+    grouped: list[int] = []
+    real = LTLayoutContainer.group_textboxes
+    monkeypatch.setattr(LTLayoutContainer, "group_textboxes",
+                        lambda self, laparams, boxes: grouped.append(len(boxes))
+                        or real(self, laparams, boxes))
+
+    monkeypatch.setattr(grobid, "_MAX_GROUPED_TEXTBOXES", 40)
+    assert grobid.pdfminer_text(str(pdf)) == extract_text(str(pdf))
+
+    grouped.clear()
+    monkeypatch.setattr(grobid, "_MAX_GROUPED_TEXTBOXES", 10)
+    text = grobid.pdfminer_text(str(pdf))
+    assert grouped == []                       # the pairwise grouping never ran
+    assert all(f"word{i}" in text for i in range(40))

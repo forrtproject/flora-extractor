@@ -7,6 +7,15 @@
 #
 # Refuses to start on a dirty code tree: a scheduled run must run committed code,
 # never an agent's half-finished edit.
+#
+# Start it under a memory cap, always:
+#
+#   systemd-run --user -p MemoryMax=8G -p MemorySwapMax=0 [--on-calendar=…] \
+#     scripts/night_run.sh <release-id>
+#
+# The box has 15 GB. On 2026-09-27 the extract grew past 14 GB and thrashed the whole
+# machine until a hard reboot; capped, a runaway run is OOM-killed inside its own
+# unit, its claims lapse after the lease, and the next run resumes from the verdicts.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 

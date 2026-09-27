@@ -1403,3 +1403,40 @@ def test_both_epmc_routes_answering_nothing_records_the_stamp():
 def test_a_bundled_supplement_does_not_make_a_file_a_supplement(name, excluded):
     from shared.pdf_sources import _name_is_excluded
     assert _name_is_excluded(name) is excluded
+
+
+def test_playwright_closes_the_browser_when_the_session_raises(monkeypatch):
+    """The browser is closed on every exit, not just at the hand-written returns: an
+    exception between launch and close used to leave Chromium to the driver's
+    teardown (the extract tier launches one per unresolved document)."""
+    import sys
+    import types
+
+    closed: list[str] = []
+
+    class _Browser:
+        def new_context(self, **kwargs):
+            raise RuntimeError("context refused")
+
+        def close(self):
+            closed.append("browser")
+
+    class _Playwright:
+        chromium = types.SimpleNamespace(launch=lambda **kwargs: _Browser())
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    sync_api = types.ModuleType("playwright.sync_api")
+    sync_api.Error = type("Error", (Exception,), {})
+    sync_api.TimeoutError = type("TimeoutError", (sync_api.Error,), {})
+    sync_api.sync_playwright = _Playwright
+    monkeypatch.setitem(sys.modules, "playwright", types.ModuleType("playwright"))
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", sync_api)
+
+    with pytest.raises(RuntimeError, match="context refused"):
+        ps.get_pdf_via_playwright("10.1234/closed")
+    assert closed == ["browser"]
