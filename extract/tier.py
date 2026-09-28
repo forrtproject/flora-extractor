@@ -62,9 +62,10 @@ fallback hashes the TARGET RECORD's OpenAlex id, which is not on the row;
 (`_base_row` fills a blank `title_r` from `study_r`); and `screen_categories` is
 blank rather than copied on a row that reached no screen dict. They are stored.
 What IS copied from `input` at export is every FILTERED_COLS value the row did not
-change, which is the bulk of it. `render_payload()`'s `_repair_pair_id()` is the one
-deliberate exception: a narrow, unambiguous repair of the replication-side fallback
-on payloads written before it existed, not a general recompute — see its docstring.
+change, which is the bulk of it. `render_payload()`'s `_repair_pair_id()` and
+`_canonical_dois()` are the two deliberate exceptions: narrow, unambiguous repairs of
+payloads written before the replication-side fallback, and before `clean_doi()`'s
+2026-09-25 spelling rules, existed — not a general recompute. See their docstrings.
 
 **Claims and the lease.** One claim per batch of `EXTRACT_CLAIM_BATCH` works, with
 a `EXTRACT_CLAIM_TTL_MINUTES` lease renewed by a daemon heartbeat every third of it.
@@ -78,6 +79,7 @@ current `run_tier` call rather than claiming the next batch.
 import argparse
 import hashlib
 import json
+import re
 import sys
 import threading
 from dataclasses import dataclass, field
@@ -364,7 +366,20 @@ _GENERATION_EQUIVALENCES: dict[str, tuple[str, ...]] = {
     # name (`--redo-status llm_references`), so one redo buys both changes. So the
     # claim, deliberately incomplete as the step-3 entry's is: every work not reopened
     # keeps its recorded answer. `474e80e4c32a6dfa` joins the flattened chain.
-    "765e053cd24611e5": ("474e80e4c32a6dfa", "7dbb1e92452d8333",
+    # 2026-09-25: `author_year_candidate_keys` (spliced into
+    # `build_author_year_pick_prompt`) disambiguates a repeated surname-and-year key
+    # with `_2`, `_3` instead of a letter, the scheme the reference list moved to on
+    # 2026-09-23 — `@smith2010b` reads as the paper's own "(2010b)" citation of a
+    # different work. The rendered prompt changes ONLY for a pooled list holding two
+    # candidates with one surname and year; every other pick prompt is byte-identical
+    # and its cached answer is re-read under the old version
+    # (`_AUTHOR_YEAR_PICK_LEGACY_VERSIONS` in shared/llm_client.py). So the claim:
+    # every work not reopened keeps its recorded answer, and the works that could
+    # answer differently are the `llm_title_search` / `llm_author_year_search` picks
+    # over such a list — reopened by `--redo` with ids (they have no status of their
+    # own). `765e053cd24611e5` joins the flattened chain.
+    "25e2b6bb31821d84": ("765e053cd24611e5",
+                         "474e80e4c32a6dfa", "7dbb1e92452d8333",
                          "010cf32bb63351e1", "ca0706ef44827229",
                          "061cb5ca8e1888b6",
                          "243ae515c654b6e5", "5b716d061bb336f5",
@@ -700,6 +715,53 @@ def _repair_pair_id(row: dict) -> None:
     )
 
 
+def _canonical_dois(row: dict) -> None:
+    """Re-spell a stored `doi_r`/`doi_o` the way `clean_doi()` spells it today.
+
+    `clean_doi()` learnt on 2026-09-25 to collapse `10.1037//…` and to decode `%3c`.
+    A payload stored before that holds the old spelling, and a DOI is an identity
+    key downstream — the validation import dedupes on `pair_id`, FLoRA and the
+    validated tables are matched on DOIs — so the render re-spells it rather than
+    waiting for a re-extraction that nothing schedules. The citation columns that
+    embed the DOI verbatim (`ref_o`, `bibtex_ref_*`, a `url_r` that is just the
+    DOI's doi.org URL) follow it; `link_evidence` is provenance and keeps what the
+    run saw.
+
+    `pair_id` is re-derived only when the stored one is PROVABLY the hash of the old
+    spelling: each (fallback-or-not) argument shape `make_pair_id()`'s writers use is
+    tried, and the matching one is re-run with the new DOIs. A pair id no shape
+    reproduces is left as stored — guessing would mint an identity no writer made.
+    The retirement manifest then records the old id as `superseded` by the new one
+    (`extract/export.py`), which is how the validation side learns of the move.
+    """
+    old = {col: str(row.get(col, "") or "") for col in ("doi_r", "doi_o")}
+    new = {col: clean_doi(value) for col, value in old.items()}
+    if new == old:
+        return
+    oa_r = str(row.get("oa_work_id_r", "") or row.get("openalex_id_r", "") or "")
+    title_r = str(row.get("title_r", "") or "")
+    oa_o = str(row.get("oa_work_id_o", "") or "")
+    title_o = str(row.get("title_o", "") or "")
+    stored = str(row.get("pair_id", "") or "")
+    shape = next(((side_o, side_r) for side_o in (("", ""), (oa_o, title_o))
+                  for side_r in (("", ""), (oa_r, title_r))
+                  if make_pair_id(old["doi_r"], old["doi_o"], *side_o, *side_r) == stored),
+                 None)
+    if shape is not None:
+        row["pair_id"] = make_pair_id(new["doi_r"], new["doi_o"], *shape[0], *shape[1])
+    for col, owners in (("doi_r", ("bibtex_ref_r", "url_r")),
+                        ("doi_o", ("ref_o", "bibtex_ref_o"))):
+        if new[col] == old[col] or not old[col]:
+            continue
+        row[col] = new[col]
+        spelled = re.compile(re.escape(old[col]), re.IGNORECASE)
+        for owner in owners:
+            if col == "doi_r" and owner == "url_r" and not spelled.fullmatch(
+                    str(row.get(owner, "") or "").removeprefix("https://doi.org/")):
+                continue  # a url_r that is not the DOI's own doi.org URL is a URL
+            row[owner] = spelled.sub(lambda _: new[col], str(row.get(owner, "") or ""))
+
+
 def render_payload(payload: dict) -> list[dict]:
     """A stored result payload back as its `EXTRACTED_COLS` rows.
 
@@ -710,9 +772,10 @@ def render_payload(payload: dict) -> list[dict]:
     Both halves of the payload go through `_renamed_columns`: the input row, and
     each target — a target carries a FILTERED_COLS value the run CHANGED, so a work
     the screen retyped holds the paper type there and not in `input`. `pair_id`
-    then goes through `_repair_pair_id`, the one deliberate exception to "nothing is
-    recomputed at export" (see the module docstring): a targeted repair for the
-    replication-side fallback, not a general recompute.
+    then goes through `_canonical_dois` and `_repair_pair_id`, the two deliberate
+    exceptions to "nothing is recomputed at export" (see the module docstring):
+    targeted repairs of the DOI spelling and the replication-side fallback, not a
+    general recompute.
     """
     input_row = _renamed_columns(payload.get("input") or {})
     base = {col: str(input_row.get(col, "") or "") for col in INPUT_COLS
@@ -723,6 +786,7 @@ def render_payload(payload: dict) -> list[dict]:
         row = {col: "" for col in EXTRACTED_COLS}
         row.update(base)
         row.update({k: v for k, v in target.items() if k in EXTRACTED_COLS})
+        _canonical_dois(row)
         _repair_pair_id(row)
         rows.append(row)
     return rows
@@ -1051,12 +1115,15 @@ EXTRACT_RUNG_REACH = {
 }
 # Tokens one row sends and receives AT the rung it stops at, including everything
 # above it that was already paid for. The combined prompt asks target and outcome in
-# one call, so there is one call per rung reached, not two.
+# one call, so there is one call per rung reached, not two. Output re-measured
+# 2026-09-25 off the gpt-6-luna cache entries at LINKING_EFFORT medium: ~1,800 per
+# call (reasoning included; 700-900 had been assumed), ~2,200 per work across all
+# sites (analysis/llm_costs_2026-09/REPORT.md). Not broken down by rung.
 EXTRACT_RUNG_TOKENS = {
     "deterministic": (0, 0),
-    "abstract":      (3_000, 700),
-    "references":    (9_000, 700),
-    "fulltext":      (40_000, 900),
+    "abstract":      (3_000, 1_800),
+    "references":    (9_000, 1_800),
+    "fulltext":      (40_000, 1_800),
 }
 # Rough list prices per 1,000 tokens for LINKING_MODEL / OUTCOME_MODEL, which are the
 # same id today. Same status as the screens' table in `filter/engine/tiers.py`: they
@@ -1066,8 +1133,10 @@ EXTRACT_RUNG_TOKENS = {
 EXTRACT_PRICE_PER_1K_IN = 0.00005
 EXTRACT_PRICE_PER_1K_OUT = 0.00025
 # The PDF parse call, charged once per row that acquires a document. A whole PDF goes
-# to PDF_PARSE_MODEL, so it is priced separately and it dominates a fulltext row.
-EXTRACT_PDF_PARSE_USD = 0.0120
+# to PDF_PARSE_MODEL, so it is priced separately. Re-measured 2026-09-25: the LLM
+# parse is a rare fallback behind the local parsers, under $0.10 for a 12k-work
+# campaign (analysis/llm_costs_2026-09/REPORT.md) — $0.012 overstated it ~40x.
+EXTRACT_PDF_PARSE_USD = 0.0003
 
 # OpenAlex credits, in the units CLAUDE.md's table gives (a filter query is 1).
 # Reported as CREDITS and never converted: OpenAlex bills against a daily credit

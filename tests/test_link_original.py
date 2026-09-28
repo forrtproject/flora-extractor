@@ -638,6 +638,29 @@ class TestGateRestoresWhenNothingEnumerates:
         assert len(seen["intro"]) <= TARGET_INTRO_CHARS
         assert row["grobid_intro"] == seen["intro"]
 
+    def test_a_grobid_win_still_sends_the_text_another_parser_extracted(self):
+        """GROBID stores no raw_text and wins on its reference count. The full-text
+        call must still get the document's body — from the best method that has one —
+        while the references keep coming from the winner (ladder 29)."""
+        body = "INTRODUCTION\nWe re-test Smith (2010).\nRESULTS\nThe effect held. " * 10
+        parse = {"grobid":   {"source": "grobid", "abstract": "a", "intro": "",
+                              "references": [{"title": "Ref one", "year": 2010}],
+                              "raw_text": "", "error": None},
+                 "pdfminer": {"source": "pdfminer", "abstract": "", "intro": "",
+                              "references": [], "raw_text": body, "error": None}}
+        seen: dict = {}
+
+        def _capture(*a, **k):
+            seen.update(k)
+            seen["references"] = a[4]
+            return _answer()
+
+        row = _run_gate("An unrelated title", "", [], parse=parse, identify=_capture)
+        assert row["parse_method"] == "grobid"
+        assert seen["full_body"] == body.strip()
+        assert "methods" not in seen
+        assert [r["title"] for r in seen["references"]] == ["Ref one"]
+
     def test_the_no_document_exit_restores_it(self):
         row = _run_gate(_GATE_TITLE, _TWO_PAIRS, _GATE_CANDS, pdf_ok=False,
                         abstract_answer=_failed_answer())
@@ -1467,6 +1490,31 @@ class TestTextlessRowsStopAtTheDocument:
             run_for_doi("10.17605/osf.io/abcde",
                         cands_df=_textless_row("A real abstract."))
         assert ask.call_count == 0
+
+
+def test_a_guarded_row_fetches_its_documents_without_the_doi():
+    """Issue #210: when the DOI's registry names another paper, run_extract hands the
+    ladder doc_doi="" (and a blank doc_url when url_r was derived from the DOI). Every
+    DOI-keyed fetch — the waterfall and OpenCitations' reference list — must take
+    those, while doi_r keeps its other jobs."""
+    with patch.object(link_original, "find_all_candidates", return_value=[]), \
+         patch.object(link_original, "fetch_referenced_works_metadata", return_value=[]), \
+         patch.object(link_original, "fetch_opencitations_references",
+                      return_value=[]) as oc, \
+         patch.object(link_original, "screen_references_with_llm",
+                      return_value=_screen_result()), \
+         patch.object(link_original, "acquire_pdf", return_value=_NO_DOC) as acquire, \
+         patch.object(link_original, "resolve_targets_and_outcomes",
+                      return_value={"resolved": False, "resolution_method": "llm_no_target",
+                                    "llm_source": "gemini"}), \
+         patch.object(link_original, "_search_title_for_original", return_value=None):
+        row = run_for_doi("10.17605/osf.io/abcde", cands_df=_textless_row("An abstract."),
+                          doc_doi="", doc_url="")
+    oc.assert_called_once_with("")
+    assert acquire.call_args.args[0] == ""
+    assert acquire.call_args.kwargs["url_r"] == ""
+    assert acquire.call_args.kwargs["openalex_id"] == "W1", "the OpenAlex id path still runs"
+    assert row["doi_r"] == "10.17605/osf.io/abcde"
 
 
 def test_a_none_abstract_reaches_the_gate_as_empty():

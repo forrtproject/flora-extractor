@@ -110,19 +110,23 @@ log = logging.getLogger(__name__)
 # cost is read from cache/token_usage.json afterwards. They live here, next to the
 # estimate() that is their only reader, and move only when a price or a voter model
 # does: update them in the same commit as the change they describe.
+# The expensive tier uses approximate standard rates for DeepSeek V4 Flash on
+# OpenRouter plus GPT-6 Luna; flex and prompt-cache savings are not assumed.
 TIER_PRICE_PER_1K_IN = {
     "screen_cheap":     0.00014,
-    "screen_expensive": 0.00055,
+    "screen_expensive": 0.00017,
 }
 TIER_PRICE_PER_1K_OUT = {
     "screen_cheap":     0.00045,
-    "screen_expensive": 0.00450,
+    "screen_expensive": 0.00067,
 }
 # Output tokens one row costs a tier. The cheap tier answers with one field; the
 # expensive tier returns the five-field v3.3 schema with a quote and a reasoning.
 TIER_OUTPUT_TOKENS = {
     "screen_cheap":     20,
-    "screen_expensive": 300,
+    # 2026-09-25: measured ~775 DeepSeek v4-flash output incl. reasoning + ~300
+    # gpt-6-luna per work; analysis/llm_costs_2026-09/REPORT.md
+    "screen_expensive": 1_075,
 }
 # Characters per token for the estimate. Nothing is tokenized to produce a number
 # nobody will be billed on; 4.0 is the usual English-prose approximation.
@@ -209,6 +213,17 @@ def screening_generation(tier: str) -> str:
                           "prompt": prompt_version(_TIER_PROMPT[tier])},
                          sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _expensive_equivalent_generations() -> tuple[str, ...]:
+    """Keep settled mini-era screens while new work uses Luna.
+
+    Key the declaration to the exact Luna generation: a later prompt, effort or
+    voter change stops accepting the older result until reviewed separately.
+    """
+    if screening_generation(TIER_EXPENSIVE) == "3b93ecf06901e653":
+        return ("98bcab0eff366d1d",)
+    return ()
 
 
 def question_hash(work: "Work", tier: str) -> str:
@@ -976,21 +991,46 @@ def _write_run_report(report: dict) -> Path:
 
 def _by_work(tier: str, rows: list[dict],
              generations: dict) -> dict[int, list[dict]]:
-    """Verdict rows of the CURRENT generation, grouped by work id.
+    """Verdict rows of one accepted generation per work id.
 
     Grouped by claim first because the generation is recorded on the claim and one
     claim is one screening of that work; the surviving rows are then pooled per
     work, because two claims can each hold half a screen of the same work and the
-    question every reader asks is what is known about the WORK.
+    question every reader asks is what is known about the WORK. Equivalent model
+    generations stay separate so their votes cannot jointly make a decision.
     """
     by_claim: dict[tuple, list[dict]] = {}
     for row in rows:
         by_claim.setdefault((row.get("claim_id"), int(row["work_id"])), []).append(row)
-    by_work: dict[int, list[dict]] = {}
+    by_work_generation: dict[int, dict[str, list[dict]]] = {}
     for (claim_id, work), claim_rows in by_claim.items():
-        if _generation_current(tier, generations.get(claim_id), claim_rows):
-            by_work.setdefault(work, []).extend(claim_rows)
-    return by_work
+        generation = generations.get(claim_id)
+        if _generation_current(tier, generation, claim_rows):
+            by_work_generation.setdefault(work, {}).setdefault(
+                str(generation or ""), []).extend(claim_rows)
+
+    # Equivalent generations keep their OWN complete answers. Combining their
+    # votes would turn the old mini and new Luna into a three-voter gate, or let
+    # two different one-vote attempts masquerade as a complete screen. Prefer a
+    # complete current-generation answer when one exists; otherwise retain a
+    # complete older answer. Incomplete attempts never settle on their own.
+    current = tier_spec(tier).generation()
+    decide = tier_spec(tier).decide
+    selected: dict[int, list[dict]] = {}
+    for work, groups in by_work_generation.items():
+        ordered = ([(current, groups[current])] if current in groups else [])
+        ordered.extend(sorted(
+            ((generation, claim_rows) for generation, claim_rows in groups.items()
+             if generation != current),
+            key=lambda item: max((_recorded_at(row) for row in item[1]),
+                                 default=("", "")), reverse=True))
+        for _generation, claim_rows in ordered:
+            if decide(claim_rows)["outcome"] != INCOMPLETE:
+                selected[work] = claim_rows
+                break
+        else:
+            selected[work] = groups.get(current) or next(iter(groups.values()))
+    return selected
 
 
 def _mode_rows(client: ClaimsClient, tier: str, mode: Optional[str]
@@ -1553,6 +1593,7 @@ SCREEN_EXPENSIVE = register_tier(TierSpec(
     decide=_expensive_decision,
     generation=partial(screening_generation, TIER_EXPENSIVE),
     accepts_legacy=partial(_screen_accepts_legacy, TIER_EXPENSIVE),
+    equivalent_generations=_expensive_equivalent_generations,
     estimate=partial(estimate, tier=TIER_EXPENSIVE),
     render_estimate=render_estimate,
 ))

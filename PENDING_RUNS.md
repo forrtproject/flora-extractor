@@ -23,7 +23,35 @@ the command, pasteable from the project root, and what proves it worked.
 
 ## Open
 
-_(none)_
+- [ ] **Import the 2026-09-24 export and retire what it stopped shipping.** flora-extractor
+      `4de666d` (pushed) ships `data/extracted.csv` (3,683 rows) and `data/retired_pairs.csv`.
+      Owed in flora-validation: merge PR #13 (sync baseline recovery by checksum, import
+      pair-reassignment fix, nightly auto-retire; creates `retired_records` on startup), set
+      Railway `EXTRACTOR_MAX_REMOVAL_PERCENT=17` for one run (removal is 16.1% of the 2,999
+      pairs imported at `d7f55d9`), let the nightly run or "Sync + report" import and
+      auto-retire (~540 retired, ~5 flagged), then set it back to 10. Done when the run's
+      `stage_status` shows `sync_csv` and `retire_superseded` SUCCESS.
+
+- [ ] **Re-render after the flora-validation import lands** (not before: every render moves
+      the removal share the maintainer's one-off `EXTRACTOR_MAX_REMOVAL_PERCENT=17` was set
+      for). Owed by `6cbdb36` (clean_doi re-spelling: 24 pair ids superseded, 1 held) and any
+      later Stage 3 change. `.venv/bin/python -m extract.export --release <newest> --check`,
+      then without `--check`; commit `data/extracted.csv` together with
+      `data/retired_pairs.csv` and the set-aside CSVs, push. Done when the next nightly run
+      imports it with `retire_superseded` SUCCESS.
+
+- [ ] **Finish the option-B campaign: nightly runs at 01:15 BST (after the midnight-UTC
+      OpenAlex reset), systemd user timer `flora-night-run-2.timer`, `scripts/night_run.sh
+      2d767fe03199`.** First night (2026-09-25/26): screen 17,962 decided — proceed 11,514,
+      discard 6,227, 221 incomplete (re-asked by the next run); extraction ran ~2,575 works
+      until OpenAlex's daily budget ran out at 09:48 UTC; 8,757 left (≈61k OpenAlex credits,
+      so ~3-4 more nights at this budget). Done when the extract dry run offers ~0 works;
+      then `systemctl --user stop flora-night-run-2.timer` and re-render (after the import).
+      **Start every run under a memory cap:** `systemd-run --user -p MemoryMax=8G -p
+      MemorySwapMax=0 … scripts/night_run.sh 2d767fe03199` (as a timer's service
+      properties, the same two). The 2026-09-27 night grew past 14 GB of the box's 15 and
+      thrashed it until a hard reboot; with the cap a runaway run is killed on its own,
+      its claims lapse, and the next night resumes.
 
 ## Done
 

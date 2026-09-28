@@ -477,10 +477,10 @@ def get_all_unpaywall_pdf_urls(doi: str) -> list[dict]:
 
     best = data.get("best_oa_location") or {}
     _add(best.get("url_for_pdf"), "pdf",     best.get("host_type"), best.get("license"))
-    for loc in data.get("oa_locations", []):
+    for loc in data.get("oa_locations") or []:
         _add(loc.get("url_for_pdf"), "pdf",  loc.get("host_type"), loc.get("license"))
     _add(best.get("url"),           "landing", best.get("host_type"), best.get("license"))
-    for loc in data.get("oa_locations", []):
+    for loc in data.get("oa_locations") or []:
         _add(loc.get("url"),        "landing", loc.get("host_type"), loc.get("license"))
 
     return results
@@ -2395,127 +2395,18 @@ def get_pdf_via_playwright(doi: str, min_bytes: int = 5_000, title: str = "",
                             str(exc).splitlines()[0])
                 return {"success": False, "path": None, "source": "",
                         "reason": "playwright_unavailable"}
-            ctx = browser.new_context(
-                user_agent=user_agent,
-                viewport={"width": 1280, "height": 900},
-                accept_downloads=True,
-            )
-            page = ctx.new_page()
-
-            # ── Intercept PDF responses sent inline (Content-Type: application/pdf) ─
-            def _on_response(response):
-                if captured["bytes"]:
-                    return
-                ct = response.headers.get("content-type", "")
-                if "application/pdf" in ct:
-                    try:
-                        captured["bytes"] = response.body()
-                        captured["url"]   = response.url
-                        log.debug("Playwright intercepted inline PDF: %s", response.url)
-                    except Exception:
-                        pass
-
-            page.on("response", _on_response)
-
-            # ── Navigate to the landing page ─────────────────────────────────
+            # Closed in a finally, on every exit. The close used to be written out at
+            # each of four returns, so anything that raised between the launch and one
+            # of them left the browser to the driver's teardown.
             try:
-                page.goto(landing, wait_until="domcontentloaded", timeout=30_000)
-                page.wait_for_timeout(3_000)   # let JS render
-            except PWTimeout:
-                log.debug("Playwright: page load timeout for %s", cache_id)
-            except PWError as exc:
-                # Any other navigation failure — a bad certificate, a refused
-                # connection, a DNS miss. Only PWTimeout was caught, so these escaped
-                # the tier and aborted the whole ROW: two works on the frozen dev
-                # sample were written api_error by ERR_CERT_COMMON_NAME_INVALID on
-                # doi.org, having never reached the abstract rung that would have
-                # named their original. One acquisition tier failing is that tier
-                # failing.
-                log.debug("Playwright: navigation failed for %s: %s", cache_id, exc)
-
-            # ── If inline PDF was served directly, we already have bytes ──────────
-            if captured["bytes"] and captured["bytes"][:4] == b"%PDF":
-                saved = _save(captured["bytes"])
-                ctx.close(); browser.close()
-                if saved:
-                    return saved
-                return {"success": False, "path": None, "source": "",
-                        "reason": "wrong_document"}
-
-            # ── The page's declared PDF, fetched inside the browser context ──────
-            # Same cookies and challenge clearance as the page, which a plain
-            # request would not have.
-            try:
-                declared = _declared_pdf_urls(page.content())
-            except PWError:
-                declared = []
-            for url in declared[:2]:
+                result = _drive(browser, user_agent, captured)
+            finally:
                 try:
-                    resp = ctx.request.get(urljoin(page.url, html.unescape(url)),
-                                           timeout=60_000)
-                    content = resp.body() if resp.ok else b""
-                except PWError:
-                    continue
-                if content[:4] == b"%PDF" and len(content) >= min_bytes:
-                    saved = _save(content)
-                    if saved:
-                        ctx.close(); browser.close()
-                        return saved
-
-            # ── Try clicking a download link / button ─────────────────────────────
-            for selector in _PDF_SELECTORS:
-                try:
-                    el = page.query_selector(selector)
-                    if el is None:
-                        continue
-
-                    href = el.get_attribute("href") or ""
-
-                    # If href points directly to a PDF URL, download it with requests
-                    if href and (".pdf" in href.lower() or "/pdf/" in href.lower()
-                                 or "=pdf" in href.lower()):
-                        if href.startswith("/"):
-                            # Resolve relative URL against current page origin
-                            origin = re.match(r"https?://[^/]+", page.url)
-                            href   = (origin.group(0) if origin else "") + href
-                        if href.startswith("http"):
-                            # Download via normal requests (has cookies from ctx if needed)
-                            try:
-                                raw = requests.get(
-                                    href,
-                                    headers={"User-Agent": user_agent},
-                                    timeout=60,
-                                    stream=True,
-                                )
-                                content = b"".join(raw.iter_content(65_536))
-                                if content[:4] == b"%PDF" and len(content) >= min_bytes:
-                                    saved = _save(content)
-                                    if saved:
-                                        ctx.close(); browser.close()
-                                        return saved
-                            except Exception:
-                                pass
-
-                    # Otherwise click and wait for a download event
-                    with ctx.expect_download(timeout=20_000) as dl_info:
-                        el.click()
-                    download = dl_info.value
-                    tmp      = download.path()
-                    if tmp:
-                        content = Path(tmp).read_bytes()
-                        if content[:4] == b"%PDF" and len(content) >= min_bytes:
-                            saved = _save(content)
-                            if saved:
-                                ctx.close(); browser.close()
-                                return saved
-
-                except PWTimeout:
-                    log.debug("Playwright: download timeout for selector '%s'", selector)
-                except Exception as e:
-                    log.debug("Playwright: selector '%s' failed: %s", selector, e)
-
-            ctx.close()
-            browser.close()
+                    browser.close()
+                except Exception as exc:  # noqa: BLE001 — a dead browser is closed
+                    log.debug("Playwright: browser close failed for %s: %s", cache_id, exc)
+        if result is not None:
+            return result
 
         # Check once more — the response interceptor may have fired after a click
         if captured["bytes"] and captured["bytes"][:4] == b"%PDF":
@@ -2527,6 +2418,124 @@ def get_pdf_via_playwright(doi: str, min_bytes: int = 5_000, title: str = "",
 
         return {"success": False, "path": None, "source": "",
                 "reason": "playwright_no_pdf_found"}
+
+    def _drive(browser, user_agent: str, captured: dict) -> "dict | None":
+        """One browser session; a result, or None when nothing was saved in it."""
+        ctx = browser.new_context(
+            user_agent=user_agent,
+            viewport={"width": 1280, "height": 900},
+            accept_downloads=True,
+        )
+        page = ctx.new_page()
+
+        # ── Intercept PDF responses sent inline (Content-Type: application/pdf) ─
+        def _on_response(response):
+            if captured["bytes"]:
+                return
+            ct = response.headers.get("content-type", "")
+            if "application/pdf" in ct:
+                try:
+                    captured["bytes"] = response.body()
+                    captured["url"]   = response.url
+                    log.debug("Playwright intercepted inline PDF: %s", response.url)
+                except Exception:
+                    pass
+
+        page.on("response", _on_response)
+
+        # ── Navigate to the landing page ─────────────────────────────────
+        try:
+            page.goto(landing, wait_until="domcontentloaded", timeout=30_000)
+            page.wait_for_timeout(3_000)   # let JS render
+        except PWTimeout:
+            log.debug("Playwright: page load timeout for %s", cache_id)
+        except PWError as exc:
+            # Any other navigation failure — a bad certificate, a refused
+            # connection, a DNS miss. Only PWTimeout was caught, so these escaped
+            # the tier and aborted the whole ROW: two works on the frozen dev
+            # sample were written api_error by ERR_CERT_COMMON_NAME_INVALID on
+            # doi.org, having never reached the abstract rung that would have
+            # named their original. One acquisition tier failing is that tier
+            # failing.
+            log.debug("Playwright: navigation failed for %s: %s", cache_id, exc)
+
+        # ── If inline PDF was served directly, we already have bytes ──────────
+        if captured["bytes"] and captured["bytes"][:4] == b"%PDF":
+            saved = _save(captured["bytes"])
+            if saved:
+                return saved
+            return {"success": False, "path": None, "source": "",
+                    "reason": "wrong_document"}
+
+        # ── The page's declared PDF, fetched inside the browser context ──────
+        # Same cookies and challenge clearance as the page, which a plain
+        # request would not have.
+        try:
+            declared = _declared_pdf_urls(page.content())
+        except PWError:
+            declared = []
+        for url in declared[:2]:
+            try:
+                resp = ctx.request.get(urljoin(page.url, html.unescape(url)),
+                                       timeout=60_000)
+                content = resp.body() if resp.ok else b""
+            except PWError:
+                continue
+            if content[:4] == b"%PDF" and len(content) >= min_bytes:
+                saved = _save(content)
+                if saved:
+                    return saved
+
+        # ── Try clicking a download link / button ─────────────────────────────
+        for selector in _PDF_SELECTORS:
+            try:
+                el = page.query_selector(selector)
+                if el is None:
+                    continue
+
+                href = el.get_attribute("href") or ""
+
+                # If href points directly to a PDF URL, download it with requests
+                if href and (".pdf" in href.lower() or "/pdf/" in href.lower()
+                             or "=pdf" in href.lower()):
+                    if href.startswith("/"):
+                        # Resolve relative URL against current page origin
+                        origin = re.match(r"https?://[^/]+", page.url)
+                        href   = (origin.group(0) if origin else "") + href
+                    if href.startswith("http"):
+                        # Download via normal requests (has cookies from ctx if needed)
+                        try:
+                            raw = requests.get(
+                                href,
+                                headers={"User-Agent": user_agent},
+                                timeout=60,
+                                stream=True,
+                            )
+                            content = b"".join(raw.iter_content(65_536))
+                            if content[:4] == b"%PDF" and len(content) >= min_bytes:
+                                saved = _save(content)
+                                if saved:
+                                    return saved
+                        except Exception:
+                            pass
+
+                # Otherwise click and wait for a download event
+                with ctx.expect_download(timeout=20_000) as dl_info:
+                    el.click()
+                download = dl_info.value
+                tmp      = download.path()
+                if tmp:
+                    content = Path(tmp).read_bytes()
+                    if content[:4] == b"%PDF" and len(content) >= min_bytes:
+                        saved = _save(content)
+                        if saved:
+                            return saved
+
+            except PWTimeout:
+                log.debug("Playwright: download timeout for selector '%s'", selector)
+            except Exception as e:
+                log.debug("Playwright: selector '%s' failed: %s", selector, e)
+        return None
 
     result = _attempt(_PW_CHROME_UA)
     if result["reason"] == "playwright_no_pdf_found":
@@ -2635,8 +2644,8 @@ def _front_matter_text(content: bytes, suffix: str) -> str:
         return docx_text(content)[:_TITLE_CHECK_DOCX_CHARS]
     try:
         import io
-        from pdfminer.high_level import extract_text
-        return extract_text(io.BytesIO(content), maxpages=_TITLE_CHECK_PAGES) or ""
+        from .grobid import pdfminer_text   # lazy, as above; bounded on plot pages
+        return pdfminer_text(io.BytesIO(content), maxpages=_TITLE_CHECK_PAGES) or ""
     except Exception as exc:
         # Unreadable front matter is no evidence either way, and _title_check reads it
         # as such. A PDF pdfminer cannot open is still a PDF the parsers may manage.

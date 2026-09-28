@@ -552,6 +552,30 @@ def test_target_prompt_caches_only_shared_rules_on_luna(monkeypatch, model):
     assert "prompt_cache_options" not in older_request
 
 
+def test_screen_prompt_caches_shared_rules_before_paper_on_luna(monkeypatch):
+    _openai_flex_env(monkeypatch, use_flex=False)
+    client = MagicMock()
+    client.chat.completions.create.return_value = _resp('{"ok": true}')
+    prefixes = []
+
+    for title, abstract in (("First title", "First abstract"),
+                            ("Second title", "Second abstract")):
+        prompt = llm.build_classify_prompt(title, abstract)
+        with patch("openai.OpenAI", return_value=client):
+            assert llm.call_openai(prompt, model="gpt-6-luna",
+                                   reasoning_effort="low")[0] == {"ok": True}
+        request = client.chat.completions.create.call_args.kwargs
+        parts = request["messages"][0]["content"]
+        assert request["prompt_cache_options"] == {"mode": "explicit"}
+        assert parts[0]["prompt_cache_breakpoint"] == {"mode": "explicit"}
+        assert parts[0]["text"] + parts[1]["text"] == prompt
+        assert parts[0]["text"].endswith("\nTitle: ")
+        assert parts[1]["text"].startswith(f"{title}\n\nAbstract: {abstract}")
+        prefixes.append(parts[0]["text"])
+
+    assert prefixes[0] == prefixes[1]
+
+
 @pytest.mark.parametrize("builder_name", ["build_outcome_prompt",
                                          "build_repro_outcome_prompt"])
 @pytest.mark.parametrize("fulltext", [False, True])
@@ -770,6 +794,38 @@ def test_openai_standard_fallback_failure_enters_the_retry_loop(monkeypatch):
     assert sum("service_tier" in c for c in calls) == 1
 
 
+def test_openai_flex_patience_waits_out_a_capacity_refusal(monkeypatch):
+    # With patience, a refused flex call is re-asked at flex after a back-off, and
+    # standard tier is only accepted once the patience is spent.
+    _openai_flex_env(monkeypatch)
+    sleeps: list = []
+    monkeypatch.setattr(llm.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr(llm, "OPENAI_FLEX_PATIENCE", 60)
+    refusal = _api_error(429, code="flex_unavailable", message="no flex capacity")
+    calls: list = []
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        if len(calls) < 3:
+            raise refusal
+        return _resp('{"ok": true}')
+
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.side_effect = create
+    with patch("openai.OpenAI", return_value=fake_client):
+        assert llm.call_openai("prompt", model="m")[0] == {"ok": True}
+    assert [("service_tier" in c) for c in calls] == [True, True, True]
+    assert sleeps == [15, 30]
+
+    # Patience spent: 15 + 30 fit in 60, the next 60 does not — then standard.
+    calls.clear(); sleeps.clear()
+    fake_client.chat.completions.create.side_effect = _flex_then_standard(calls, refusal)
+    with patch("openai.OpenAI", return_value=fake_client):
+        assert llm.call_openai("prompt", model="m")[0] == {"ok": True}
+    assert [("service_tier" in c) for c in calls] == [True, True, True, False]
+    assert sleeps == [15, 30]
+
+
 def test_openai_flex_off_by_default(monkeypatch):
     _openai_flex_env(monkeypatch, use_flex=False)
     calls: list = []
@@ -862,12 +918,11 @@ def test_a_gemini_voter_is_sent_its_effort_rather_than_left_to_the_default(monke
     assert posts[0]["generationConfig"]["thinkingConfig"]["thinkingLevel"] == "minimal"
 
 
-def test_the_production_voter_pair_is_the_evaluated_configuration():
-    """The constants pin what the screen was EVALUATED at (2026-08-13 eval: DeepSeek
-    at effort "none" discarded 7 settled positives, at "low" it matched the incumbent
-    — the effort is load-bearing, not a tunable)."""
+def test_the_production_voter_pair_and_efforts_are_pinned():
+    """The DeepSeek effort is load-bearing: at "none" it discarded 7 settled
+    positives in the 2026-08-13 evaluation; at "low" it matched the incumbent."""
     assert llm.SCREENING_MODEL_1 == "deepseek/deepseek-v4-flash"
-    assert llm.SCREENING_MODEL_2 == "gpt-5.4-mini"
+    assert llm.SCREENING_MODEL_2 == "gpt-6-luna"
     assert (llm.SCREENING_EFFORT_1, llm.SCREENING_EFFORT_2) == ("low", "low")
     assert [p for p, _m, _e, _eff in llm.screen_voters()] == ["openrouter", "openai"]
 
@@ -1652,7 +1707,106 @@ def test_openrouter_records_a_truncated_response(monkeypatch):
         result, err = llm.call_openrouter("prompt", model="v/m")
 
     assert result is None and "truncated" in err
-    assert recorded == [("openrouter", "v/m", 900, 4096, 0, 0)]
+    assert recorded == [("openrouter", "v/m", 900, 4096, 0, 0, 0.0)]
+
+
+# The real fetcher, captured before conftest stubs it for every test.
+_REAL_ENDPOINT_FETCH = llm._fetch_openrouter_endpoints
+
+
+def _endpoint(tag, quant, prompt, completion, cache_read=None, *, status=0,
+              uptime=99.9, params=("response_format", "reasoning_effort")):
+    """One entry of OpenRouter's /models/<id>/endpoints list; prices per MILLION."""
+    pricing = {"prompt": f"{prompt / 1e6:.12f}", "completion": f"{completion / 1e6:.12f}"}
+    if cache_read is not None:
+        pricing["input_cache_read"] = f"{cache_read / 1e6:.12f}"
+    return {"tag": tag, "quantization": quant, "pricing": pricing, "status": status,
+            "uptime_last_30m": uptime, "supported_parameters": list(params)}
+
+
+# The 2026-09-25 shape of deepseek-v4-flash: the prompt-cheapest host is fp4 and
+# output-expensive, which is what OpenRouter's own price sort kept choosing.
+_V4_FLASH = [
+    _endpoint("relace/fp4", "fp4", 0.03, 1.28, 0.016),
+    _endpoint("open-inference/fp8", "fp8", 0.04, 0.50, 0.014),
+    _endpoint("baidu/fp8", "fp8", 0.049, 0.098, 0.0098),
+    _endpoint("deepinfra/fp8", "fp8", 0.09, 0.18, 0.018),
+    _endpoint("digitalocean", "unknown", 0.098, 0.196, 0.0196),
+    _endpoint("down/fp8", "fp8", 0.001, 0.001, status=-1),
+    _endpoint("flaky/fp8", "fp8", 0.001, 0.001, uptime=80.0),
+    _endpoint("noformat/fp8", "fp8", 0.001, 0.001, params=("reasoning_effort",)),
+]
+
+
+def test_openrouter_hosts_ranked_by_expected_cost_fp8_or_better():
+    # Weighted cost, not prompt price: the output-heavy vote puts Baidu first and
+    # Open Inference ($0.50/M out) behind DeepInfra. fp4, a host that is down, one
+    # under the uptime floor and one that cannot honour response_format are dropped;
+    # with three known fp8 hosts left, an unlabelled one is not admitted.
+    order, allow_unknown = llm._rank_openrouter_hosts(
+        _V4_FLASH, llm.SCREEN_VOTE_TOKENS, ("response_format", "reasoning_effort"))
+    assert order == ["baidu/fp8", "deepinfra/fp8", "open-inference/fp8"]
+    assert allow_unknown is False
+
+    # Too few known fp8+ hosts: "unknown" is admitted rather than leave the call
+    # one outage from failing; fp4 never is.
+    few = [_V4_FLASH[0], _V4_FLASH[2], _V4_FLASH[4]]
+    order, allow_unknown = llm._rank_openrouter_hosts(
+        few, llm.SCREEN_VOTE_TOKENS, ("response_format",))
+    assert order == ["baidu/fp8", "digitalocean"] and allow_unknown is True
+
+
+def test_openrouter_sends_the_ranked_order_and_records_the_billed_cost(monkeypatch):
+    monkeypatch.setattr(llm, "OPENROUTER_API_KEY", "or-test")
+    fetched: list = []
+    monkeypatch.setattr(llm, "_fetch_openrouter_endpoints",
+                        lambda model: fetched.append(model) or list(_V4_FLASH))
+    recorded: list = []
+    monkeypatch.setattr(llm, "_record_tokens", lambda *a: recorded.append(a))
+    served = _resp('{"ok": true}')
+    served.usage = MagicMock(prompt_tokens=2400, completion_tokens=800, cost=0.00015)
+    served.usage.prompt_tokens_details = MagicMock(cached_tokens=2048,
+                                                   cache_write_tokens=0)
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.return_value = served
+    with patch("openai.OpenAI", return_value=fake_client):
+        for _ in range(2):
+            assert llm.call_openrouter("p", model="deepseek/deepseek-v4-flash",
+                                       reasoning_effort="low",
+                                       token_shape=llm.SCREEN_VOTE_TOKENS)[0] == {"ok": True}
+
+    assert fetched == ["deepseek/deepseek-v4-flash"]        # once per process
+    body = fake_client.chat.completions.create.call_args.kwargs["extra_body"]
+    provider = body["provider"]
+    assert provider["order"] == ["baidu/fp8", "deepinfra/fp8", "open-inference/fp8"]
+    assert provider["allow_fallbacks"] is True and "sort" not in provider
+    assert provider["quantizations"] == ["fp8", "mxfp8", "fp16", "bf16", "fp32"]
+    assert provider["require_parameters"] is True
+    assert body["usage"] == {"include": True}
+    assert recorded[0] == ("openrouter", "deepseek/deepseek-v4-flash",
+                           2400, 800, 2048, 0, 0.00015)
+
+
+def test_openrouter_unreadable_endpoint_list_falls_back_to_price_sort(monkeypatch):
+    # Routing metadata never fails a call: no list → the quantization filter (with
+    # "unknown", since nothing says enough fp8 hosts exist) and OpenRouter's sort.
+    monkeypatch.setattr(llm, "OPENROUTER_API_KEY", "or-test")
+
+    import requests as _requests
+
+    def down(*a, **k):
+        raise _requests.ConnectionError("metadata API down")
+
+    monkeypatch.setattr(llm, "_fetch_openrouter_endpoints", _REAL_ENDPOINT_FETCH)
+    monkeypatch.setattr(llm.requests, "get", down)
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.return_value = _resp('{"ok": true}')
+    with patch("openai.OpenAI", return_value=fake_client):
+        assert llm.call_openrouter("p", model="v/m")[0] == {"ok": True}
+    provider = fake_client.chat.completions.create.call_args.kwargs["extra_body"]["provider"]
+    assert provider["sort"] == "price" and "order" not in provider
+    assert provider["quantizations"][-1] == "unknown"
+    assert "fp4" not in provider["quantizations"]
 
 
 def test_openrouter_retries_three_times_like_openai(monkeypatch):
@@ -2051,8 +2205,39 @@ class TestAPickThatIsNotOneOfTheCandidates:
         from shared.prompts import author_year_candidate_keys
         pair = [dict(self._CANDS[0]), {**self._CANDS[0], "doi": "10.1/b"}]
         # The suffix follows assign_target_keys' convention: the first collision is
-        # "b", so two candidates never share a key.
-        assert author_year_candidate_keys(pair) == ["@smith2010", "@smith2010b"]
+        # "_2", never a letter the model could read as the paper's own "(2010b)".
+        assert author_year_candidate_keys(pair) == ["@smith2010", "@smith2010_2"]
+
+    def test_a_pick_cached_before_the_suffix_change_is_read_only_if_the_prompt_is_unchanged(
+            self, tmp_path):
+        """The 2026-09-25 suffix edit moved the prompt version, not the prompt text of
+        a list without a collision: that answer is re-read under the old version. A
+        list WITH a collision renders differently and must be asked again."""
+        from shared.cache import content_key, write_cache
+        from shared.config import LINKING_EFFORT, LINKING_MODEL
+        from shared.prompts import build_author_year_pick_prompt
+        pair = [dict(self._CANDS[0]), {**self._CANDS[0], "doi": "10.1/b"}]
+        for cands in (self._CANDS, pair):
+            # What the pre-edit builder rendered: a letter for the collision.
+            prompt = build_author_year_pick_prompt(
+                "T", "A", "Smith (2010)", "q", cands).replace("@smith2010_2", "@smith2010b")
+            ids = "|".join(c["doi"] for c in cands)
+            write_cache(tmp_path, content_key(
+                "authoryearpick", "10.9/rep", llm._AUTHOR_YEAR_PICK_LEGACY_VERSIONS[0],
+                llm.cache_model_id(LINKING_MODEL, LINKING_EFFORT), ids, prompt),
+                {"pick_index": 0, "confident": True, "reasoning": "old"})
+        with patch("shared.llm_client.LLM_CACHE_DIR", tmp_path), \
+             patch("shared.llm_client.call_model",
+                   return_value=({"pick": None, "confident": False, "reasoning": "new"},
+                                 "openai", "")) as call:
+            single = llm.pick_author_year_original(
+                "10.9/rep", "T", "A", "Smith (2010)", "q", self._CANDS)
+            assert single["reasoning"] == "old" and call.call_count == 0
+            # The legacy entry for the pair was keyed on the LETTER rendering, which
+            # this checkout no longer produces — so it never matches.
+            doubled = llm.pick_author_year_original(
+                "10.9/rep", "T", "A", "Smith (2010)", "q", pair)
+            assert doubled["reasoning"] == "new" and call.call_count == 1
 
 
 class TestSearchConfirmGrading:

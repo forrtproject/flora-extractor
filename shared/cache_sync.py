@@ -60,11 +60,14 @@ manifest records is how many abstracts that machine actually recovered per sourc
 
 import argparse
 import datetime
+import contextlib
 import gzip
-import io
+import hashlib
 import json
+import shutil
 import sqlite3
 import subprocess
+import os
 import tarfile
 import tempfile
 from pathlib import Path
@@ -110,6 +113,11 @@ _MANIFEST = "cache/cache_manifest.json"
 # a shard it holds, and leaving the pre-push digest there made the pusher
 # re-download its own work.
 _PULL_STATE = CACHE_DIR / ".cache_sync_pulled.json"
+
+# Where shards are spooled on their way to and from the Hub. On DISK, and beside the
+# cache rather than in the system temp dir, because /tmp may be a tmpfs — which is
+# RAM, and memory is exactly what spooling exists to save (see `pack_shard`).
+_SPOOL_DIR = CACHE_DIR
 
 class Part:
     """One cache directory and how it is sharded on the remote.
@@ -224,29 +232,50 @@ def _shards_of(part: Part) -> dict[str, list[Path]]:
     return shards
 
 
-def pack_shard(files: Iterable[Path]) -> bytes:
-    """A deterministic ``.tar.gz`` of *files*, by basename.
+def pack_shard(files: Iterable[Path], dest: Path) -> str:
+    """Write a deterministic ``.tar.gz`` of *files*, by basename, to *dest*.
 
-    Deterministic — sorted members, every timestamp and owner zeroed — because the
+    Returns the shard's digest (`_file_digest`). Deterministic — sorted members,
+    every timestamp and owner zeroed, no file name in the gzip header — because the
     push decides what to transfer by comparing the shard's hash against the one in
     the remote manifest. A tar that embedded mtimes would hash differently on every
     run and re-upload all 256 abstract shards to share ten new files.
+
+    STREAMED, file by file, from disk to disk. This used to build the tar in memory,
+    then its gzip, then a hex copy of the gzip to hash — and the push held every
+    changed shard's bytes until the upload. An `openalex` shard is ~2.4 GB of JSON,
+    and on 2026-09-24 a push reached 14 GB and was OOM-killed with the box.
+    The bytes are identical to what the in-memory version produced (zlib's output
+    does not depend on how its input is chunked), so no remote shard re-uploads.
     """
-    raw = io.BytesIO()
-    with tarfile.open(fileobj=raw, mode="w") as tar:
+    with open(dest, "wb") as out, \
+            gzip.GzipFile(filename="", fileobj=out, mode="wb", compresslevel=6,
+                          mtime=0) as gz, \
+            tarfile.open(fileobj=gz, mode="w") as tar:
         for path in sorted(files, key=lambda p: p.name):
-            info = tarfile.TarInfo(name=path.name)
-            data = path.read_bytes()
-            info.size = len(data)
-            info.mtime = 0
-            info.uid = info.gid = 0
-            info.uname = info.gname = ""
-            info.mode = 0o644
-            tar.addfile(info, io.BytesIO(data))
-    packed = io.BytesIO()
-    with gzip.GzipFile(fileobj=packed, mode="wb", compresslevel=6, mtime=0) as gz:
-        gz.write(raw.getvalue())
-    return packed.getvalue()
+            with open(path, "rb") as handle:
+                info = tarfile.TarInfo(name=path.name)
+                info.size = os.fstat(handle.fileno()).st_size
+                info.mtime = 0
+                info.uid = info.gid = 0
+                info.uname = info.gname = ""
+                info.mode = 0o644
+                tar.addfile(info, handle)
+    return _file_digest(dest)
+
+
+def _file_digest(path: Path) -> str:
+    """``cache_key(blob.hex())`` of the file's bytes, computed in 1 MB chunks.
+
+    The manifest's digests have always been the MD5 of the blob's hex string; the
+    hex of a concatenation is the concatenation of the hexes, so hashing chunk by
+    chunk gives the same value without a 2x-size hex copy of a multi-GB shard.
+    """
+    digest = hashlib.md5()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk.hex().encode("ascii"))
+    return digest.hexdigest()
 
 
 def abstract_source_evidence() -> dict[str, dict[str, int]]:
@@ -337,7 +366,7 @@ def _remote_shard(part: Part, shard: str) -> str:
 
 
 def _remote_only_entries(hf, repo_id: str, token: str, remote: str,
-                         local_names: set[str]) -> set[str]:
+                         local_names: set[str], spool: Path) -> set[str]:
     """Entry names the remote shard holds and this machine does not.
 
     A shard is uploaded WHOLE, so a machine holding a subset of one replaces the
@@ -347,11 +376,11 @@ def _remote_only_entries(hf, repo_id: str, token: str, remote: str,
     the other side, and it needs the members rather than the digest because a
     digest only says the shards differ, not which way.
     """
-    blob = _download_shard(hf, repo_id, token, remote)
-    if blob is None:
-        return set()
-    with tarfile.open(fileobj=io.BytesIO(gzip.decompress(blob)), mode="r") as tar:
-        remote_names = {Path(member.name).name for member in tar if member.isfile()}
+    with _downloaded(hf, repo_id, token, remote, spool) as path:
+        if path is None:
+            return set()
+        with tarfile.open(path, mode="r|gz") as tar:
+            remote_names = {Path(member.name).name for member in tar if member.isfile()}
     return remote_names - local_names
 
 
@@ -425,7 +454,24 @@ def push_cache(parts: list[Part], repo: Optional[str] = None,
         remote_manifest = None
     known = (remote_manifest or {}).get("parts") or {}
 
-    uploads: list[tuple[str, bytes]] = []
+    # Changed shards wait for the upload as FILES in the spool, never as bytes: the
+    # push used to hold every one of them in memory at once (see `pack_shard`).
+    with _spool() as spool:
+        return _push_with_spool(spool, api, hf, repo_id, token, parts, known,
+                                remote_manifest, manifest_unreadable, dry_run, force)
+
+
+@contextlib.contextmanager
+def _spool():
+    _SPOOL_DIR.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=_SPOOL_DIR, prefix=".cache_sync_spool_") as tmp:
+        yield Path(tmp)
+
+
+def _push_with_spool(spool: Path, api, hf, repo_id: str, token: str,
+                     parts: list[Part], known: dict, remote_manifest: Optional[dict],
+                     manifest_unreadable: bool, dry_run: bool, force: bool) -> int:
+    uploads: list[tuple[str, Path]] = []
     hashes: dict[str, dict[str, str]] = {}
     losses: dict[str, set[str]] = {}
     for part in parts:
@@ -437,8 +483,8 @@ def push_cache(parts: list[Part], repo: Optional[str] = None,
             continue
         files = changed = 0
         for shard, paths in sorted(shards.items()):
-            blob = pack_shard(paths)
-            digest = cache_key(blob.hex())
+            packed = spool / f"{part.name}-{shard}.tar.gz"
+            digest = pack_shard(paths, packed)
             hashes.setdefault(part.name, {})[shard] = digest
             files += len(paths)
             if (known.get(part.name) or {}).get(shard) != digest:
@@ -451,11 +497,14 @@ def push_cache(parts: list[Part], repo: Optional[str] = None,
                 # what the manifest would have said.
                 if not force and not dry_run and not manifest_unreadable:
                     missing = _remote_only_entries(hf, repo_id, token, remote,
-                                                   {p.name for p in paths})
+                                                   {p.name for p in paths}, spool)
                     if missing:
                         losses[remote] = missing
-                uploads.append((remote, blob))
                 changed += 1
+                if not dry_run:
+                    uploads.append((remote, packed))
+                    continue
+            packed.unlink()
         log.info("Cache push: %s — %d file(s) in %d shard(s), %d to upload",
                  part.name, files, len(shards), changed)
     if losses:
@@ -587,6 +636,22 @@ def pull_cache(parts: list[Part], repo: Optional[str] = None, dry_run: bool = Fa
     if any(p.name == ABSTRACTS_PART for p in parts):
         if pull_abstracts(hf, repo_id, token, unreliable, dry_run) or dry_run:
             unpacked += 1
+    with _spool() as spool:
+        unpacked += _pull_shards(spool, hf, repo_id, token, parts, manifest, state,
+                                 unreliable, dry_run, force)
+
+    if not dry_run:
+        _save_pull_state(state)
+
+    log.info("Cache pull%s: %d shard(s) from %s", " (dry run)" if dry_run else "",
+             unpacked, repo_id)
+    return unpacked
+
+
+def _pull_shards(spool: Path, hf, repo_id: str, token: str, parts: list[Part],
+                 manifest: dict, state: dict[str, str], unreliable: set[str],
+                 dry_run: bool, force: bool) -> int:
+    unpacked = 0
     for part in parts:
         if part.sqlite:
             continue
@@ -597,52 +662,53 @@ def pull_cache(parts: list[Part], repo: Optional[str] = None, dry_run: bool = Fa
             if dry_run:
                 unpacked += 1
                 continue
-            blob = _download_shard(hf, repo_id, token, remote)
-            if blob is None:
-                continue
-            _unpack(part, blob, unreliable)
+            with _downloaded(hf, repo_id, token, remote, spool) as path:
+                if path is None:
+                    continue
+                _unpack(part, path, unreliable)
             state[remote] = digest
             unpacked += 1
             if unpacked % 25 == 0:
                 _save_pull_state(state)
                 log.info("Cache pull: %d shard(s) unpacked", unpacked)
-
-    if not dry_run:
-        _save_pull_state(state)
-
-    log.info("Cache pull%s: %d shard(s) from %s", " (dry run)" if dry_run else "",
-             unpacked, repo_id)
     return unpacked
 
 
-def _download_shard(hf, repo_id: str, token: str, remote: str) -> Optional[bytes]:
-    """The shard's bytes, or None when the manifest names one the repo does not hold.
+@contextlib.contextmanager
+def _downloaded(hf, repo_id: str, token: str, remote: str, spool: Path):
+    """The shard downloaded into *spool* as a FILE, deleted on exit; None when the
+    manifest names one the repo does not hold.
 
     A manifest entry with no shard behind it is a push that was interrupted between
     its data and its manifest. That is worth saying and worth continuing past — the
     other shards are fine — but it is not worth failing the whole pull over.
+
+    A path, not bytes: readers stream it (`tarfile` mode ``r|gz``), because a whole
+    shard read and then decompressed in memory is several GB for `openalex`.
     """
-    try:
-        with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory(dir=spool) as tmp:
+        try:
             path = hf.hf_hub_download(repo_id=repo_id, filename=remote,
                                       repo_type=REPO_TYPE, token=token, local_dir=tmp)
-            return Path(path).read_bytes()
-    except Exception as exc:  # noqa: BLE001 — boundary: absence vs. a real failure
-        if is_absent(hf, exc):
-            log.warning("%s is in the manifest but not in the repo — skipping it", remote)
-            return None
-        raise RuntimeError(auth_hint(hf, repo_id, exc)) from exc
+        except Exception as exc:  # noqa: BLE001 — boundary: absence vs. a real failure
+            if is_absent(hf, exc):
+                log.warning("%s is in the manifest but not in the repo — skipping it",
+                            remote)
+                path = None
+            else:
+                raise RuntimeError(auth_hint(hf, repo_id, exc)) from exc
+        yield None if path is None else Path(path)
 
 
-def _unpack(part: Part, blob: bytes, unreliable: set[str]) -> None:
-    """Extract *blob*'s members into the part's directory, skipping what is there.
+def _unpack(part: Part, shard: Path, unreliable: set[str]) -> None:
+    """Extract *shard*'s members into the part's directory, skipping what is there.
 
     Members are written by basename through an explicit `write_bytes`, never
     `tar.extractall`: the archives are ours, but a dataset repo is still input, and
     the one thing a cache sync must not do is write outside its cache directory.
     """
     part.directory.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(fileobj=io.BytesIO(gzip.decompress(blob)), mode="r") as tar:
+    with tarfile.open(shard, mode="r|gz") as tar:
         for member in tar:
             if not member.isfile():
                 continue
@@ -657,7 +723,8 @@ def _unpack(part: Part, blob: bytes, unreliable: set[str]) -> None:
             handle = tar.extractfile(member)
             if handle is None:
                 continue
-            target.write_bytes(handle.read())
+            with open(target, "wb") as out:
+                shutil.copyfileobj(handle, out)
 
 
 def push_abstracts(api, hf, repo_id: str, known: dict, dry_run: bool) -> bool:
@@ -705,12 +772,15 @@ def pull_abstracts(hf, repo_id: str, token: str, unreliable: set[str],
     identifier already answered locally keeps its local answer, and an unproven
     miss can be dropped row by row — none of which replacing the file allows.
     """
-    blob = _download_shard(hf, repo_id, token, _ABSTRACTS_REMOTE)
-    if blob is None or dry_run:
+    if dry_run:
         return 0
-    with tempfile.TemporaryDirectory() as tmp:
-        remote_db = Path(tmp) / "remote.sqlite"
-        remote_db.write_bytes(gzip.decompress(blob))
+    with _spool() as spool, \
+            _downloaded(hf, repo_id, token, _ABSTRACTS_REMOTE, spool) as packed:
+        if packed is None:
+            return 0
+        remote_db = spool / "remote.sqlite"
+        with gzip.open(packed, "rb") as src, open(remote_db, "wb") as out:
+            shutil.copyfileobj(src, out, 1 << 20)
         connection = sqlite3.connect(remote_db)
         try:
             rows = [(ident, abstract) for ident, abstract in

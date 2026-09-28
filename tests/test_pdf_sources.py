@@ -1658,3 +1658,73 @@ def test_a_crossref_outage_on_the_related_title_records_no_failure():
             p.stop()
     urls.assert_not_called()
     assert "related_doi" not in _retry_log(doi)
+
+
+def test_playwright_closes_the_browser_when_the_session_raises(monkeypatch):
+    """The browser is closed on every exit, not just at the hand-written returns: an
+    exception between launch and close used to leave Chromium to the driver's
+    teardown (the extract tier launches one per unresolved document)."""
+    import sys
+    import types
+
+    closed: list[str] = []
+
+    class _Browser:
+        def new_context(self, **kwargs):
+            raise RuntimeError("context refused")
+
+        def close(self):
+            closed.append("browser")
+
+    class _Playwright:
+        chromium = types.SimpleNamespace(launch=lambda **kwargs: _Browser())
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    sync_api = types.ModuleType("playwright.sync_api")
+    sync_api.Error = type("Error", (Exception,), {})
+    sync_api.TimeoutError = type("TimeoutError", (sync_api.Error,), {})
+    sync_api.sync_playwright = _Playwright
+    monkeypatch.setitem(sys.modules, "playwright", types.ModuleType("playwright"))
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", sync_api)
+
+    with pytest.raises(RuntimeError, match="context refused"):
+        ps.get_pdf_via_playwright("10.1234/closed")
+    assert closed == ["browser"]
+
+
+def test_a_browser_that_will_not_launch_is_a_skip_not_a_crash(monkeypatch):
+    """An installed package without its browser build raises at launch; that is this
+    machine's state, so the tier skips and is not retried under the second agent."""
+    import sys
+    import types
+
+    sync_api = types.ModuleType("playwright.sync_api")
+    sync_api.Error = type("Error", (Exception,), {})
+    sync_api.TimeoutError = type("TimeoutError", (sync_api.Error,), {})
+    launches: list[int] = []
+
+    def _launch(**kwargs):
+        launches.append(1)
+        raise sync_api.Error("Executable doesn't exist at /ms-playwright/chromium\nmore")
+
+    class _Playwright:
+        chromium = types.SimpleNamespace(launch=_launch)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    sync_api.sync_playwright = _Playwright
+    monkeypatch.setitem(sys.modules, "playwright", types.ModuleType("playwright"))
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", sync_api)
+
+    out = ps.get_pdf_via_playwright("10.1234/nobrowser")
+    assert out["reason"] == "playwright_unavailable"
+    assert launches == [1]

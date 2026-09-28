@@ -99,6 +99,36 @@ def _no_provider_throttle(monkeypatch):
     _rate_limit._next_call_at.clear()
 
 
+@pytest.fixture(autouse=True)
+def _no_openrouter_endpoint_list(monkeypatch):
+    """Serve every OpenRouter call the "endpoint list unreadable" branch.
+
+    call_openrouter fetches the host list to rank hosts; unstubbed, every mocked
+    OpenRouter call in the suite would try the network. Tests of the ranking patch
+    _fetch_openrouter_endpoints themselves; the memo is cleared either way.
+    """
+    monkeypatch.setattr(_llm_client, "_fetch_openrouter_endpoints", lambda model: None)
+    _llm_client._openrouter_endpoints_cache.clear()
+
+
+@pytest.fixture(autouse=True)
+def _doi_registry_unregistered(tmp_path_factory, monkeypatch):
+    """Answer every DOI registry lookup "not registered", from a throwaway cache.
+
+    Stage 3 compares every row's DOI with its registry title before fetching
+    (`_registry_guard` in extract/run_extract.py). Unstubbed, each test row's fake DOI
+    would read the real cache and then fail on the blocked socket, and the guard's
+    fail-open note would land on every row the suite writes. An unregistered DOI is
+    the one answer that leaves a row exactly as it was; tests of the guard patch
+    `_get` or `check` themselves.
+    """
+    from shared import doi_registry as _doi_registry
+
+    monkeypatch.setattr(_doi_registry, "REGISTRY_CACHE_DIR",
+                        tmp_path_factory.mktemp("doi_registry"))
+    monkeypatch.setattr(_doi_registry, "_get", lambda url, params, headers: (None, True))
+
+
 # ── The screen verdict a Stage 3 input row carries ───────────────────────────
 # The front-door screen runs in Stage 2, so every filtered.csv Stage 3 accepts has
 # SCREEN_COLS on it (shared/schema.py) and Stage 3 reads its verdict from there. A

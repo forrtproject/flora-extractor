@@ -30,6 +30,7 @@ def _isolated_cache(tmp_path, monkeypatch):
     """Every path the module touches, under tmp_path."""
     monkeypatch.setattr(cs, "FLORA_POOL_REPO", "me/flora", raising=False)
     monkeypatch.setattr(cs, "_PULL_STATE", tmp_path / "pulled.json")
+    monkeypatch.setattr(cs, "_SPOOL_DIR", tmp_path / "spool")
     monkeypatch.setattr(cs, "ABSTRACT_DB_PATH", abstract_store.ABSTRACT_DB_PATH)
     monkeypatch.setattr(cs.PARTS["llm"], "directory", tmp_path / "llm")
     (tmp_path / "llm").mkdir()
@@ -40,6 +41,13 @@ def _llm_entry(tmp_path: Path, name: str, payload: str) -> Path:
     path = tmp_path / "llm" / name
     path.write_text(payload)
     return path
+
+
+def _packed(files: list[Path]) -> bytes:
+    """A shard's bytes, packed the way a push packs it."""
+    dest = files[0].parent.parent / "packed.tar.gz"
+    cs.pack_shard(files, dest)
+    return dest.read_bytes()
 
 
 def _manifest(calls: dict) -> dict:
@@ -56,7 +64,40 @@ def test_pack_shard_is_byte_identical_across_runs(_isolated_cache):
     embedded mtimes would re-upload every shard to share ten files."""
     files = [_llm_entry(_isolated_cache, "a.json", "A"),
              _llm_entry(_isolated_cache, "b.json", "B")]
-    assert cs.pack_shard(files) == cs.pack_shard(list(reversed(files)))
+    assert _packed(files) == _packed(list(reversed(files)))
+
+
+def test_pack_shard_digest_is_the_hash_of_the_shard_bytes(_isolated_cache):
+    """The shard streams to disk and is hashed in chunks; the digest must still be
+    the manifest's `cache_key(blob.hex())`, or every remote shard re-uploads."""
+    from shared.utils import cache_key
+    import random
+    rng = random.Random(0)
+    files = [_llm_entry(_isolated_cache, f"{i}.json", "%x" % rng.getrandbits(80_000))
+             for i in range(150)]
+    dest = _isolated_cache / "shard.tar.gz"
+    assert cs.pack_shard(files, dest) == cache_key(dest.read_bytes().hex())
+    assert dest.stat().st_size > 1 << 20        # spans several hash chunks
+
+
+def test_push_spools_shards_to_disk_and_cleans_up(_isolated_cache, monkeypatch):
+    """What is uploaded is a FILE, not bytes held until the commit — a push once held
+    every changed shard in memory and was OOM-killed at 14 GB — and the spool is gone
+    once the push returns."""
+    _llm_entry(_isolated_cache, "a.json", "A")
+    calls = _fake_hub(monkeypatch, {})
+    payloads: list = []
+    real_upload = cs.upload_batched
+    def spy(api, hf, repo_id, uploads, *args, **kwargs):
+        payloads.extend(payload for _, payload in uploads)
+        return real_upload(api, hf, repo_id, uploads, *args, **kwargs)
+    monkeypatch.setattr(cs, "upload_batched", spy)
+    assert cs.push_cache([cs.PARTS["llm"]]) == 1
+    shard_payloads = [p for p in payloads if not isinstance(p, bytes)]
+    assert len(shard_payloads) == 1 and isinstance(shard_payloads[0], Path)
+    assert list((_isolated_cache / "spool").iterdir()) == []
+    shard = cs._remote_shard(cs.PARTS["llm"], cs.PARTS["llm"].shard_of("a.json"))
+    assert calls["remote"][shard] == _packed([_isolated_cache / "llm" / "a.json"])
 
 
 def test_push_skips_shards_the_remote_already_holds(_isolated_cache, monkeypatch):
@@ -98,7 +139,7 @@ def test_push_refuses_to_replace_a_shard_with_a_smaller_one(_isolated_cache,
     monkeypatch.setattr(cs.PARTS["llm"], "hex_chars", 0)
     a = _llm_entry(_isolated_cache, "a.json", "A")
     b = _llm_entry(_isolated_cache, "b.json", "B")
-    remote_blob = cs.pack_shard([a, b])
+    remote_blob = _packed([a, b])
     b.unlink()                                    # this machine never had b.json
     remote = cs._remote_shard(cs.PARTS["llm"], "all")
     store = {remote: remote_blob,
@@ -213,7 +254,7 @@ def test_pull_never_overwrites_a_local_entry(_isolated_cache, monkeypatch):
     """Keys are content-complete, so a name that exists locally holds the same
     answer; overwriting could only change the mtime."""
     local = _llm_entry(_isolated_cache, "a.json", "mine")
-    blob = cs.pack_shard([Path(_isolated_cache / "llm" / "a.json")])
+    blob = _packed([Path(_isolated_cache / "llm" / "a.json")])
     shard = cs.PARTS["llm"].shard_of("a.json")
     local.write_text("mine")          # the shard captured it; now it is local state
     _fake_hub(monkeypatch, {}, store={

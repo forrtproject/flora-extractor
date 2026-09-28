@@ -221,7 +221,10 @@ PRESCREEN_MODEL_2 = "mistralai/mistral-small-24b-instruct-2501"
 # buys the confident-recall calibration the gate needs from this slot, so the effort
 # is part of the evaluated configuration, not a tunable.
 SCREENING_MODEL_1 = "deepseek/deepseek-v4-flash"
-SCREENING_MODEL_2 = "gpt-5.4-mini"
+# The earlier two-voter gate evaluation used gpt-5.4-mini in this slot. The Luna
+# generation accepts settled mini-era screens through the explicit equivalence in
+# filter/engine/tiers.py; newly screened works use Luna. That pair needs measurement.
+SCREENING_MODEL_2 = "gpt-6-luna"
 
 # Linking (resolve_targets_and_outcomes) — WHICH original does this paper re-test? One
 # model for all three rungs: the abstract, the reference list and the full text ask
@@ -306,9 +309,10 @@ SCREENING_EFFORT_2 = "low"
 # a deliberate, evaluated change that re-codes rows, not a default.
 OUTCOME_EFFORT = "medium"
 
-# OpenRouter (OpenAI-compatible API at openrouter.ai). Nothing routes here by
-# default: it is reached only by a model id that names it — the pre-screen's two
-# models, and SCREENING_MODEL_2 when it carries a "/".
+# OpenRouter (OpenAI-compatible API at openrouter.ai). Reached only by a model id
+# that names it (a "/"): today SCREENING_MODEL_1, PICK_CHECK_MODEL and the dormant
+# pre-screen's two models. Which host serves each call: _openrouter_routing() in
+# shared/llm_client.py.
 OPENROUTER_API_KEY    = os.getenv("OPENROUTER_API_KEY",    "")
 
 # ── Stage 2 curated sources ───────────────────────────────────────────────────
@@ -405,6 +409,13 @@ GEMINI_PAID_KEY_SLOTS: set[int] = {
 OPENAI_USE_FLEX     = os.getenv("OPENAI_USE_FLEX", "").lower() in ("1", "true", "yes")
 # Timeout in seconds for flex calls — must cover the queueing worst case.
 OPENAI_FLEX_TIMEOUT = int(os.getenv("OPENAI_FLEX_TIMEOUT", "900"))
+# How long, in seconds, one call keeps re-asking for flex after OpenAI refuses it for
+# lack of capacity (429 flex_unavailable) before settling for standard tier. 0 — the
+# default — falls back at once, as before. The refusals come in waves (2026-09-24:
+# 90% of two live runs' calls fell back and were billed at twice the flex price;
+# 2026-09-23 evening: 2%), so a few minutes of patience buys the discount back at the
+# price of wall clock. Transport only: the tier never reaches a prompt or a key.
+OPENAI_FLEX_PATIENCE = int(os.getenv("OPENAI_FLEX_PATIENCE", "0"))
 
 # ── Daily OpenAI token budget ─────────────────────────────────────────────────
 # A hard ceiling on OpenAI tokens (prompt + completion) bought per calendar day —

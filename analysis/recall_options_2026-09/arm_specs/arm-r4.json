@@ -1,0 +1,12 @@
+{
+ "id": "arm-r4",
+ "description": "arm 4 of replication-claim-residual",
+ "match": {
+  "text_regex": "\\b(?:(?:d(?:oes|o|id)|w(?:as|ere)|is|are|ha[sd]|have|could|would|should|can|may|might)\\s+(?:not|never)|cannot|can['\u2019]t)\\s+(?:(?:be|been)\\s+)?replicat\\w+\\b"
+ },
+ "pile": "screen_expensive",
+ "vocabulary": null,
+ "precedence": 100,
+ "shadow": true,
+ "measured": []
+}

@@ -115,6 +115,7 @@ never been independently validated. Discuss shared changes with all stage teams.
 | `shared/grobid.py`          | GROBID reference extraction |
 | `shared/disambiguation.py`  | Two string helpers only: `jaccard_similarity()` (used by `link_original.py` and `doi_verify.py`) and `is_umbrella_paper()`. The same-author/year resolvers it was named for are gone; nothing here decides a candidate any more |
 | `shared/doi_verify.py`      | doi_o verification/correction (CrossRef → OpenAlex) |
+| `shared/doi_registry.py`    | The DOI registry title check: `check()` compares the title a DOI is registered to (Crossref, doi.org fallback, cached) with the row's own title. Stage 2's twin audit and Stage 3's guard (`_registry_guard` in `extract/run_extract.py`: a mismatch skips every DOI-keyed fetch, and drops an OpenAlex abstract that `abstract_names_registry()` finds describes the registry's paper) share it |
 | `shared/utils.py`           | `clean_doi()`, `cache_key()`, `non_article_doi()`, helpers |
 | `shared/config.py`          | All paths, env loading, rate limits — every tunable lives here |
 | `shared/schema.py`          | CSV column definitions — the contract between stages |
@@ -237,7 +238,7 @@ carry it and the export still partitions them into `data/prescreen_discard.csv`.
 screen_expensive`): two voters — `SCREENING_MODEL_1`
 (default `deepseek/deepseek-v4-flash` at effort `low`; the effort is load-bearing —
 at `none` the same model discarded 7 settled positives) and `SCREENING_MODEL_2`
-(default `gpt-5.4-mini`);
+(default `gpt-6-luna`);
 each id routes to its own provider through `provider_for()` — each answer the validated v3.2
 schema: `classification` ∈ {replication, reproduction, both, none, unclear}, boolean
 `confident`, `categories` (11-value enum), `evidence_quote`, `reasoning`. Prompt:
@@ -248,8 +249,9 @@ gate change: `analysis/screening_eval/cheap_voter_2026-08.md`; earlier generatio
 are under `archive/analysis/screening_eval/`).
 
 **The gate is `screen_gate()`, defined once** (G-unanimous — no single voter
-discards alone; measured with the shipped pair at 1 settled miss and 86–90%
-hard-negative discard across two runs):
+discards alone; the earlier DeepSeek + `gpt-5.4-mini` pair measured 1 settled
+miss and 86–90% hard-negative discard across two runs. The `gpt-6-luna` pair
+has not yet been scored against that evaluation set):
 
 - **discard** — all votes `none`, at any confidence → `not_a_replication`.
 - **proceed** — everything else, including confident splits and a lone confident
@@ -270,9 +272,11 @@ prompt): swapping one voter re-buys exactly that voter's answers while the other
 stay cache hits. Entries from the pair-keyed era are split on first read
 (`_cached_vote()` in `shared/llm_client.py` lifts a vote out of a joint entry for
 the model AT the effort the joint era ran, `_JOINT_ERA_EFFORTS`). A voter or prompt
-change still mints a new SCREENING GENERATION, which is what makes those works
-claimable again — and, once they are re-screened, what puts them back in the extract
-tier's worklist.
+change still mints a new SCREENING GENERATION. The `gpt-6-luna` generation explicitly
+accepts settled `gpt-5.4-mini` generation verdicts, so the switch does not re-screen
+the backlog; new and incomplete works use Luna. A later prompt or model change does
+not inherit that equivalence. The OpenAI request marks the shared screening rules as
+an explicit prompt-cache prefix; the title and abstract follow the breakpoint.
 
 The verdict reaches Stage 3 on the worklist row, in `SCREEN_COLS`:
 `screen_verdict`, `screen_record_type`, `screen_categories`, `screen_votes`,
@@ -424,6 +428,26 @@ When a provider reports them, each model's record also accumulates `cached_in` a
 `cache_write_in`. Both are subsets of `in`; use them to assess provider prompt-cache
 costs, not as extra tokens in the daily cap. Older records have only `in` and `out`,
 so they cannot establish past cache savings.
+OpenRouter also reports what it BILLED per call, which depends on the host and
+cannot be rebuilt from tokens; it accumulates as `usd` (absent where unreported —
+never estimated).
+
+**Two transport levers, neither of which reaches a prompt, a cache key or a
+generation.** `OPENAI_FLEX_PATIENCE` (seconds, default 0): after a flex capacity
+refusal (429 `flex_unavailable`) the call re-asks for flex with a 15 s → 120 s
+back-off for up to that long before accepting standard tier at twice the price.
+Refusals come in waves (90% of calls on 2026-09-24, 2% the evening before), so a
+campaign run wants `OPENAI_FLEX_PATIENCE=600`. **OpenRouter hosts are chosen here,
+not by OpenRouter's price sort** (`_openrouter_routing()` in `shared/llm_client.py`):
+per model id the endpoint list is fetched once per process, filtered to fp8 or
+better (`unknown` quantization only when fewer than three known fp8+ hosts remain),
+live status, ≥ 95% 30-minute uptime and the parameters the call sends, then ranked
+by expected $ per call from the call site's `TokenShape` (`SCREEN_VOTE_TOKENS`,
+`PICK_CHECK_TOKENS`) and sent as `provider.order` + `allow_fallbacks` +
+`quantizations`. The price sort weighs prompt price and picked an fp4 host 7× the
+cost of the cheapest fp8 one for the output-heavy DeepSeek vote. An unreadable
+endpoint list falls back to the quantization filter plus `sort: price`, logged,
+never a failed call. Evidence: `analysis/llm_costs_2026-09/REPORT.md`.
 
 **OpenAlex is metered too, and not uniformly.** It bills credits per request against
 a daily budget that resets at midnight UTC (`shared/openalex_keys.py` owns the key
@@ -840,10 +864,11 @@ and its rationale belong together in one committed place. Key variables:
 RESEARCHER_EMAIL=...            # required: OpenAlex/CrossRef politeness headers
 GEMINI_API_KEY=...              # required
 OPENAI_API_KEY=...              # required for Stage 3 (default screen voter 2)
-OPENROUTER_API_KEY=...          # only if SCREENING_MODEL_2 contains "/"
+OPENROUTER_API_KEY=...          # required: screen voter 1 and the pick check are "/" ids
 OPENAI_DAILY_TOKEN_BUDGET=9500000   # 0 disables the cap (default = the free daily allocation, resets midnight UTC)
 GEMINI_USE_FLEX=true            # 50% discount on paid keys; flex uses GEMINI_FLEX_TIMEOUT
 OPENAI_USE_FLEX=true            # same trade on OpenAI; refused flex falls back to standard
+OPENAI_FLEX_PATIENCE=600        # s to keep re-asking a refused flex call before standard (default 0)
 GEMINI_PAID_KEY_SLOTS=1         # which key SLOTS are billing-enabled, not key values
 EXTRACT_WORKERS=4               # Stage 3 rows in flight at once; 1 = no pool
 FLORA_CACHE_DIR=                # move cache/ to an SSD; FLORA_POOL_DIR does the same
