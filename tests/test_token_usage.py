@@ -174,3 +174,13 @@ def test_gemini_is_recorded_but_never_charged_to_the_cap(monkeypatch):
     assert result == {"ok": True}
     assert tu.spent("gemini") == 1200
     assert tu.spent("openai") == 8_000_000
+
+
+def test_a_reported_cost_is_summed_and_an_unreported_one_is_absent(tmp_path, monkeypatch):
+    monkeypatch.setattr(tu, "USAGE_STATE_PATH", tmp_path / "u.json")
+    tu.record("openrouter", "a/b", 100, 10, day="2026-09-25", usd=0.0001)
+    tu.record("openrouter", "a/b", 100, 10, day="2026-09-25", usd=0.0002)
+    tu.record("openai", "m", 100, 10, day="2026-09-25")
+    day = tu.usage("2026-09-25")
+    assert day["openrouter"]["a/b"]["usd"] == pytest.approx(0.0003)
+    assert "usd" not in day["openai"]["m"]

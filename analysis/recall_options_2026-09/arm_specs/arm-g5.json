@@ -1,0 +1,23 @@
+{
+ "id": "arm-g5",
+ "description": "arm 5 of replication-claim-general",
+ "match": {
+  "title_regex": "\\breplicat\\w*\\s+of\\s+(?:the|an?)\\s",
+  "none_of": [
+   {
+    "text_regex": "\\b(?:dna|rna|viral|virus|virion|genom\\w*|chromosom\\w*|plasmid|phage|mitochondrial|hbv|hcv|hiv(?:-1)?|influenza|bacterial|intracellular|telomer\\w*|centrosom\\w*|origin|rolling[-\\s]circle)\\s+replicat"
+   },
+   {
+    "text_regex": "\\breplicat\\w*\\s+(?:fork|origin|stress|timing|licens\\w*|initiat\\w*|protein|complex|machinery|cycle|competen\\w*|defective|kinetics|fidelity|factor|intermediate|compartment|organelle)s?\\b"
+   },
+   {
+    "text_regex": "\\breplicon|\\breplicase|\\bself-replicat|\\breplication-(?:competent|defective|deficient)"
+   }
+  ]
+ },
+ "pile": "screen_expensive",
+ "vocabulary": null,
+ "precedence": 100,
+ "shadow": true,
+ "measured": []
+}

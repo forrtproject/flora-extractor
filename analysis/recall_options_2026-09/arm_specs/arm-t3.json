@@ -1,0 +1,12 @@
+{
+ "id": "arm-t3",
+ "description": "arm 3 of replication-claim-text",
+ "match": {
+  "text_regex": "\\breplicat\\w*\\s+(?:and|&)\\s+exten\\w*\\b"
+ },
+ "pile": "screen_expensive",
+ "vocabulary": null,
+ "precedence": 100,
+ "shadow": true,
+ "measured": []
+}

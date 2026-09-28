@@ -36,6 +36,7 @@ from functools import lru_cache
 from types import FunctionType
 
 from .schema import OUTCOME_LABELS
+from .target_keys import _suffix
 
 # ── The retired provider system message ──────────────────────────────────────
 # This text used to be sent as a system message with every call_openai() and
@@ -1187,7 +1188,8 @@ def author_year_candidate_keys(candidates: list[dict]) -> list[str]:
     namespace: the caller maps a returned key back to ITS candidate by position, so
     the list has to stay one key per candidate. Two candidates that would merge in
     that namespace — a CrossRef and an OpenAlex record of one work — are two entries
-    here, told apart by the collision suffix.
+    here, told apart by the same collision suffix (`_2`, `_3`) — never a letter, which
+    a model reads as the paper's own "(2010b)" citation of a different work.
 
     The parser reads these back, so the derivation lives in one place: a key the
     prompt printed and a key the reply is checked against can never disagree.
@@ -1206,8 +1208,7 @@ def author_year_candidate_keys(candidates: list[dict]) -> list[str]:
         base = f"@{surname or 'anon'}{year}"
         n = used.get(base, 0)
         used[base] = n + 1
-        keys.append(base if n == 0 else
-                    f"{base}{chr(ord('a') + n) if n < 26 else n}")
+        keys.append(base if n == 0 else f"{base}{_suffix(n)}")
     return keys
 
 
@@ -1743,7 +1744,6 @@ def _canonical_source(fn: FunctionType) -> str:
 # Generated once (2026-09-22, Python 3.13) against the ast.unparse form; the two
 # plain string constants are omitted because their hash never went through it.
 _FROZEN_VERSIONS: dict[str, tuple[str, str]] = {
-    "build_author_year_pick_prompt": ("057eed1fefcb", "05e6a3033882"),
     "build_classify_prompt": ("9bdd4fb8f91f", "fde7296fafad"),
     "build_keyed_confirm_prompt": ("7afb003df03c", "abc811d2859b"),
     "build_outcome_prompt": ("ad7b2bc26e1f", "556e48911415"),

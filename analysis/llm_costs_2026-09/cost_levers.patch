@@ -1,0 +1,269 @@
+diff -ruN a/shared/config.py b/shared/config.py
+--- a/shared/config.py	2026-09-25 13:44:12.600029012 +0100
++++ b/shared/config.py	2026-09-25 13:44:12.601134120 +0100
+@@ -398,6 +398,13 @@
+ OPENAI_USE_FLEX     = os.getenv("OPENAI_USE_FLEX", "").lower() in ("1", "true", "yes")
+ # Timeout in seconds for flex calls — must cover the queueing worst case.
+ OPENAI_FLEX_TIMEOUT = int(os.getenv("OPENAI_FLEX_TIMEOUT", "900"))
++# How long, in seconds, one call keeps re-asking for flex after OpenAI refuses it for
++# lack of capacity (429 flex_unavailable) before settling for standard tier. 0 — the
++# default — falls back at once, as before. The refusals come in waves (2026-09-24:
++# 90% of two live runs' calls fell back and were billed at twice the flex price;
++# 2026-09-23 evening: 2%), so a few minutes of patience buys the discount back at the
++# price of wall clock. Transport only: the tier never reaches a prompt or a key.
++OPENAI_FLEX_PATIENCE = int(os.getenv("OPENAI_FLEX_PATIENCE", "0"))
+ 
+ # ── Daily OpenAI token budget ─────────────────────────────────────────────────
+ # A hard ceiling on OpenAI tokens (prompt + completion) bought per calendar day —
+diff -ruN a/shared/llm_client.py b/shared/llm_client.py
+--- a/shared/llm_client.py	2026-09-25 13:44:12.594493719 +0100
++++ b/shared/llm_client.py	2026-09-25 13:44:12.595696436 +0100
+@@ -36,6 +36,7 @@
+     LINKING_MODEL,
+     LLM_CACHE_DIR,
+     OPENAI_API_KEY,
++    OPENAI_FLEX_PATIENCE,
+     OPENAI_FLEX_TIMEOUT,
+     OPENAI_RATE_SEC,
+     OPENAI_USE_FLEX,
+@@ -111,10 +112,11 @@
+ 
+ 
+ def _record_tokens(provider: str, model: str, n_in: int, n_out: int,
+-                   cached_in: int = 0, cache_write_in: int = 0) -> None:
++                   cached_in: int = 0, cache_write_in: int = 0,
++                   usd: float = 0.0) -> None:
+     """Charge a completed call to the run's stage total and the day's usage record."""
+     token_counter.record(provider, n_in + n_out)
+-    token_usage.record(provider, model, n_in, n_out,
++    token_usage.record(provider, model, n_in, n_out, usd=usd,
+                        cached_input_tokens=cached_in,
+                        cache_write_input_tokens=cache_write_in)
+ 
+@@ -584,9 +586,30 @@
+             **extra,
+         )
+ 
++    def _flex_after_refusal():
++        """Re-ask for flex after a capacity refusal, backing off, for up to
++        OPENAI_FLEX_PATIENCE seconds; then settle for standard tier. Only a refusal
++        is waited out — any other failure leaves here and takes the retry loop."""
++        waited, delay = 0, 15
++        while waited + delay <= OPENAI_FLEX_PATIENCE:
++            time.sleep(delay)
++            waited += delay
++            delay = min(delay * 2, 120)
++            try:
++                _throttle("openai")
++                return _create(True)
++            except Exception as exc:
++                if not _openai_flex_refused(exc):
++                    raise
++        log.warning("OpenAI would not serve service_tier=flex%s — retrying at "
++                    "standard tier", f" for {waited}s" if waited else "")
++        return _create(False)
++
+     # Once a flex request has failed for any reason, the retries run at standard
+     # tier: a refused tier will refuse again, and after a timeout a second 900s
+     # queue wait is the worst way to find out whether the call went through.
++    # OPENAI_FLEX_PATIENCE is the one exception, inside a single attempt: a
++    # capacity refusal is waited out before standard is accepted.
+     use_flex = OPENAI_USE_FLEX
+     for attempt in range(3):
+         try:
+@@ -604,9 +627,8 @@
+                 # billed, so it takes the retry loop instead.
+                 if not _openai_flex_refused(flex_exc):
+                     raise
+-                log.warning("OpenAI would not serve service_tier=flex (%s) — "
+-                            "retrying at standard tier", flex_exc)
+-                response = _create(False)
++                log.info("OpenAI refused service_tier=flex: %s", flex_exc)
++                response = _flex_after_refusal()
+             if response.usage:
+                 cached, written = _reported_cache_tokens(
+                     getattr(response.usage, "prompt_tokens_details", None))
+@@ -664,6 +686,29 @@
+         return ""
+ 
+ 
++# The most a host behind OpenRouter may charge per MILLION tokens, per model id. The
++# price sort weighs prompt price heavily, and the screen's DeepSeek voter is
++# output-heavy (~2,400 in / ~800 out with reasoning), so the sort alone kept picking
++# a host at $0.03 in / $1.28 out: $0.0011 a vote against $0.00015 at the cheapest
++# all-round host (probed 2026-09-25, OpenRouter /generation). The cap removes the
++# output-expensive hosts from the rotation and leaves ~10 fp8 hosts. It routes, and
++# never names what answers: the model id, the prompt and the cache key are
++# unchanged, and the host was already chosen per call. OpenRouter refuses a request
++# no host can serve under the cap — re-read the endpoint prices before raising it.
++_OPENROUTER_MAX_PRICE = {
++    "deepseek/deepseek-v4-flash": {"completion": 0.3},
++}
++
++
++def _reported_cost(usage: object) -> float:
++    """What OpenRouter says it billed for a call, in USD, or 0.0 when unreported."""
++    cost = getattr(usage, "cost", None)
++    if cost is None:
++        extra = getattr(usage, "model_extra", None) or {}
++        cost = extra.get("cost") if isinstance(extra, dict) else None
++    return float(cost) if isinstance(cost, (int, float)) and cost > 0 else 0.0
++
++
+ def call_openrouter(prompt: str, model: str,
+                     reasoning_effort: str = "") -> tuple[Optional[dict], str]:
+     """
+@@ -693,9 +738,13 @@
+     # DeepSeek reasoning calls to a host queuing them at 57-249 s each (measured
+     # 2026-08-13); require_parameters keeps hosts that cannot honour response_format
+     # or the reasoning effort out of the rotation rather than silently ignoring them.
+-    extra["extra_body"] = {"provider": {"sort": "price",
+-                                        "preferred_min_throughput": 40,
+-                                        "require_parameters": True}}
++    provider = {"sort": "price", "preferred_min_throughput": 40,
++                "require_parameters": True}
++    if model in _OPENROUTER_MAX_PRICE:
++        provider["max_price"] = _OPENROUTER_MAX_PRICE[model]
++    # usage.include asks OpenRouter to report what the call was billed, which
++    # depends on the host it picked and cannot be reconstructed from tokens.
++    extra["extra_body"] = {"provider": provider, "usage": {"include": True}}
+     # The same three attempts with 1s/2s backoff call_openai runs, for the same
+     # reason: a single transient failure at the provider must not be the answer a
+     # row records. OpenRouter had one attempt, so the pre-screen's two voters and
+@@ -722,7 +771,7 @@
+                 _record_tokens("openrouter", use_model,
+                                response.usage.prompt_tokens,
+                                response.usage.completion_tokens,
+-                               cached, written)
++                               cached, written, _reported_cost(response.usage))
+             if response.choices[0].finish_reason == "length":
+                 log.warning("OpenRouter response hit the %d-token cap and was cut off — "
+                             "the truncated JSON will fail to parse (model=%s)",
+diff -ruN a/shared/token_usage.py b/shared/token_usage.py
+--- a/shared/token_usage.py	2026-09-25 13:44:12.605247201 +0100
++++ b/shared/token_usage.py	2026-09-25 13:44:12.606307215 +0100
+@@ -14,7 +14,8 @@
+ 
+ Shape:  {"2026-08-01": {"openai": {"gpt-5.4-mini":
+          {"in": 1200, "out": 340, "cached_in": 900, "cache_write_in": 0}}}}
+-The cache fields are omitted when the provider did not report a positive count;
++The cache fields, and `usd` (the billed cost, which only OpenRouter reports), are
++omitted when the provider did not report a positive value;
+ older records only have in/out. Cached and written tokens are subsets of in, not
+ additional tokens. Use them for cost accounting, never for the daily token cap.
+ 
+@@ -82,8 +83,10 @@
+ def record(provider: str, model: str,
+            input_tokens: int, output_tokens: int, day: str = "",
+            *, cached_input_tokens: int = 0,
+-           cache_write_input_tokens: int = 0) -> None:
+-    """Add one call's reported usage to the day's record."""
++           cache_write_input_tokens: int = 0, usd: float = 0.0) -> None:
++    """Add one call's reported usage to the day's record. *usd* is what the
++    provider says it billed, where it says so (OpenRouter); it is summed as
++    `usd` and left out when unreported, never estimated."""
+     if input_tokens <= 0 and output_tokens <= 0:
+         return                    # the provider reported nothing; do not invent it
+     day = day or _today()
+@@ -101,6 +104,8 @@
+         if cache_write_input_tokens > 0:
+             bucket["cache_write_in"] = (bucket.get("cache_write_in", 0)
+                                         + cache_write_input_tokens)
++        if usd > 0:
++            bucket["usd"] = round(bucket.get("usd", 0.0) + usd, 9)
+         _write_all(state)
+ 
+ 
+diff -ruN a/tests/test_llm_client.py b/tests/test_llm_client.py
+--- a/tests/test_llm_client.py	2026-09-25 13:44:12.610294272 +0100
++++ b/tests/test_llm_client.py	2026-09-25 13:44:12.611366610 +0100
+@@ -794,6 +794,38 @@
+     assert sum("service_tier" in c for c in calls) == 1
+ 
+ 
++def test_openai_flex_patience_waits_out_a_capacity_refusal(monkeypatch):
++    # With patience, a refused flex call is re-asked at flex after a back-off, and
++    # standard tier is only accepted once the patience is spent.
++    _openai_flex_env(monkeypatch)
++    sleeps: list = []
++    monkeypatch.setattr(llm.time, "sleep", lambda s: sleeps.append(s))
++    monkeypatch.setattr(llm, "OPENAI_FLEX_PATIENCE", 60)
++    refusal = _api_error(429, code="flex_unavailable", message="no flex capacity")
++    calls: list = []
++
++    def create(**kwargs):
++        calls.append(kwargs)
++        if len(calls) < 3:
++            raise refusal
++        return _resp('{"ok": true}')
++
++    fake_client = MagicMock()
++    fake_client.chat.completions.create.side_effect = create
++    with patch("openai.OpenAI", return_value=fake_client):
++        assert llm.call_openai("prompt", model="m")[0] == {"ok": True}
++    assert [("service_tier" in c) for c in calls] == [True, True, True]
++    assert sleeps == [15, 30]
++
++    # Patience spent: 15 + 30 fit in 60, the next 60 does not — then standard.
++    calls.clear(); sleeps.clear()
++    fake_client.chat.completions.create.side_effect = _flex_then_standard(calls, refusal)
++    with patch("openai.OpenAI", return_value=fake_client):
++        assert llm.call_openai("prompt", model="m")[0] == {"ok": True}
++    assert [("service_tier" in c) for c in calls] == [True, True, True, False]
++    assert sleeps == [15, 30]
++
++
+ def test_openai_flex_off_by_default(monkeypatch):
+     _openai_flex_env(monkeypatch, use_flex=False)
+     calls: list = []
+@@ -1675,7 +1707,32 @@
+         result, err = llm.call_openrouter("prompt", model="v/m")
+ 
+     assert result is None and "truncated" in err
+-    assert recorded == [("openrouter", "v/m", 900, 4096, 0, 0)]
++    assert recorded == [("openrouter", "v/m", 900, 4096, 0, 0, 0.0)]
++
++
++def test_openrouter_caps_the_host_price_and_records_the_billed_cost(monkeypatch):
++    # The screen's DeepSeek voter is routed away from output-expensive hosts, and
++    # what OpenRouter billed is recorded as reported — never estimated.
++    monkeypatch.setattr(llm, "OPENROUTER_API_KEY", "or-test")
++    recorded: list = []
++    monkeypatch.setattr(llm, "_record_tokens", lambda *a: recorded.append(a))
++    served = _resp('{"ok": true}')
++    served.usage = MagicMock(prompt_tokens=2400, completion_tokens=800, cost=0.00015)
++    served.usage.prompt_tokens_details = MagicMock(cached_tokens=2048,
++                                                   cache_write_tokens=0)
++    fake_client = MagicMock()
++    fake_client.chat.completions.create.return_value = served
++    with patch("openai.OpenAI", return_value=fake_client):
++        assert llm.call_openrouter("p", model="deepseek/deepseek-v4-flash")[0] == {"ok": True}
++        llm.call_openrouter("p", model="v/m")
++
++    first, other = (c.kwargs["extra_body"]
++                    for c in fake_client.chat.completions.create.call_args_list)
++    assert first["provider"]["max_price"] == {"completion": 0.3}
++    assert first["usage"] == {"include": True}
++    assert "max_price" not in other["provider"]          # only the named model
++    assert recorded[0] == ("openrouter", "deepseek/deepseek-v4-flash",
++                           2400, 800, 2048, 0, 0.00015)
+ 
+ 
+ def test_openrouter_retries_three_times_like_openai(monkeypatch):
+diff -ruN a/tests/test_token_usage.py b/tests/test_token_usage.py
+--- a/tests/test_token_usage.py	2026-09-25 13:44:12.615398997 +0100
++++ b/tests/test_token_usage.py	2026-09-25 13:44:12.616474812 +0100
+@@ -174,3 +174,13 @@
+     assert result == {"ok": True}
+     assert tu.spent("gemini") == 1200
+     assert tu.spent("openai") == 8_000_000
++
++
++def test_a_reported_cost_is_summed_and_an_unreported_one_is_absent(tmp_path, monkeypatch):
++    monkeypatch.setattr(tu, "USAGE_STATE_PATH", tmp_path / "u.json")
++    tu.record("openrouter", "a/b", 100, 10, day="2026-09-25", usd=0.0001)
++    tu.record("openrouter", "a/b", 100, 10, day="2026-09-25", usd=0.0002)
++    tu.record("openai", "m", 100, 10, day="2026-09-25")
++    day = tu.usage("2026-09-25")
++    assert day["openrouter"]["a/b"]["usd"] == pytest.approx(0.0003)
++    assert "usd" not in day["openai"]["m"]

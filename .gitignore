@@ -89,3 +89,4 @@ data/*.bak
 # Local-only scratch — not part of the pipeline
 claude-skills-starter/
 old.env
+logs/

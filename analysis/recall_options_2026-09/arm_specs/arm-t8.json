@@ -1,0 +1,12 @@
+{
+ "id": "arm-t8",
+ "description": "arm 8 of replication-claim-text",
+ "match": {
+  "text_regex": "\\b(?:failures?\\s+to\\s+replicate|failed\\s+replications?|replication\\s+failures?|unsuccessful\\s+replications?)\\b"
+ },
+ "pile": "screen_expensive",
+ "vocabulary": null,
+ "precedence": 100,
+ "shadow": true,
+ "measured": []
+}

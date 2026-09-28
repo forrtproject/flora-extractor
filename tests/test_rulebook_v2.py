@@ -172,3 +172,31 @@ def test_the_citation_pattern_is_a_word_then_a_year_and_no_more(specs):
     # punctuation between the word and the year breaks the pattern
     assert not _matches(specs, "replication-claim-cited-title",
                         _row("A direct replication: 2009", "No target."))
+
+
+# ---------------------------------------------------------------------------
+# replication-claim-general: the repository exclusion (option B-repo)
+# ---------------------------------------------------------------------------
+
+_GENERAL_ABSTRACT = "Our replication used the original materials throughout."
+
+
+@pytest.mark.parametrize("title,doi,claimed", [
+    # the arm on an article: admitted
+    ("Anchoring in context", "10.1177/095679761", True),
+    # the same arm on a data/code registrant: not this rule's to admit
+    ("Anchoring in context", "10.5281/zenodo.1234567", False),
+    ("Anchoring in context", "10.6084/m9.figshare.123456", False),
+    ("Anchoring in context", "10.7910/DVN/ABCDEF", False),
+    ("Anchoring in context", "10.24433/CO.1234567.v1", False),
+    # a deposit titled as one, on any registrant, anywhere in the title
+    ("Replication package for: Anchoring in context", "10.17605/OSF.IO/AB12D", False),
+    ("lab/anchoring: Replication Files", "10.1000/x.1", False),
+    ("Anchoring in context (replication data)", "10.15456/x.1", False),
+    ("Anchoring in context: replication code and materials", "10.1000/x.2", False),
+    # a registrant that merely shares digits with an excluded one is not excluded
+    ("Anchoring in context", "10.52810/x.1", True),
+])
+def test_general_admits_a_claim_but_not_a_repository_deposit(specs, title, doi, claimed):
+    row = _row(title, _GENERAL_ABSTRACT, doi=doi)
+    assert _matches(specs, "replication-claim-general", row) is claimed

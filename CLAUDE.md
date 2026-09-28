@@ -115,6 +115,7 @@ never been independently validated. Discuss shared changes with all stage teams.
 | `shared/grobid.py`          | GROBID reference extraction |
 | `shared/disambiguation.py`  | Two string helpers only: `jaccard_similarity()` (used by `link_original.py` and `doi_verify.py`) and `is_umbrella_paper()`. The same-author/year resolvers it was named for are gone; nothing here decides a candidate any more |
 | `shared/doi_verify.py`      | doi_o verification/correction (CrossRef → OpenAlex) |
+| `shared/doi_registry.py`    | The DOI registry title check: `check()` compares the title a DOI is registered to (Crossref, doi.org fallback, cached) with the row's own title. Stage 2's twin audit and Stage 3's guard (`_registry_guard` in `extract/run_extract.py`: a mismatch skips every DOI-keyed fetch, and drops an OpenAlex abstract that `abstract_names_registry()` finds describes the registry's paper) share it |
 | `shared/utils.py`           | `clean_doi()`, `cache_key()`, `non_article_doi()`, helpers |
 | `shared/config.py`          | All paths, env loading, rate limits — every tunable lives here |
 | `shared/schema.py`          | CSV column definitions — the contract between stages |
@@ -171,10 +172,13 @@ Never change a column name without updating `schema.py` and notifying all teams.
   | `osf_registration` | The OSF registration form, from the API | `osf_registration_has_content()` — ≥ 1,000 chars of description + form fields |
   | `html_landing` | The row's own page, parsed with lxml | `html_document_has_content()` — ≥ 10,000 chars BEYOND the abstract, or a ≥ 2,000-char reference block |
 
-  Europe PMC is ONE tier with two routes: the JATS full text, which exists for the
-  OA-licensed subset only, and — when that answers 404 — the article page's rendered
-  PDF (`europepmc.org/articles/<PMCID>?pdf=render`). Both are keyed on the PMC id the
-  tier's one search returns, and both share the tier's single retry slot.
+  Europe PMC is ONE tier with three routes: the JATS full text, which exists for the
+  OA-licensed subset only; then the PDF in NIH's PMC Open Access bucket on S3
+  (`pmc_oa_pdf_url()`, `pdf_source = pmc_oa`), which also holds the NIH author
+  manuscripts; then the article page's rendered PDF
+  (`europepmc.org/articles/<PMCID>?pdf=render`), which serves a Cloudflare challenge
+  to scripted clients (measured 2026-09-24). All three are keyed on the PMC id the
+  tier's one search returns, and all three share the tier's single retry slot.
 
   A result that fails its check is no document: it ends the row at
   `no_fulltext_available` and is never cached as a success. Each guard lives in
@@ -424,6 +428,26 @@ When a provider reports them, each model's record also accumulates `cached_in` a
 `cache_write_in`. Both are subsets of `in`; use them to assess provider prompt-cache
 costs, not as extra tokens in the daily cap. Older records have only `in` and `out`,
 so they cannot establish past cache savings.
+OpenRouter also reports what it BILLED per call, which depends on the host and
+cannot be rebuilt from tokens; it accumulates as `usd` (absent where unreported —
+never estimated).
+
+**Two transport levers, neither of which reaches a prompt, a cache key or a
+generation.** `OPENAI_FLEX_PATIENCE` (seconds, default 0): after a flex capacity
+refusal (429 `flex_unavailable`) the call re-asks for flex with a 15 s → 120 s
+back-off for up to that long before accepting standard tier at twice the price.
+Refusals come in waves (90% of calls on 2026-09-24, 2% the evening before), so a
+campaign run wants `OPENAI_FLEX_PATIENCE=600`. **OpenRouter hosts are chosen here,
+not by OpenRouter's price sort** (`_openrouter_routing()` in `shared/llm_client.py`):
+per model id the endpoint list is fetched once per process, filtered to fp8 or
+better (`unknown` quantization only when fewer than three known fp8+ hosts remain),
+live status, ≥ 95% 30-minute uptime and the parameters the call sends, then ranked
+by expected $ per call from the call site's `TokenShape` (`SCREEN_VOTE_TOKENS`,
+`PICK_CHECK_TOKENS`) and sent as `provider.order` + `allow_fallbacks` +
+`quantizations`. The price sort weighs prompt price and picked an fp4 host 7× the
+cost of the cheapest fp8 one for the output-heavy DeepSeek vote. An unreadable
+endpoint list falls back to the quantization filter plus `sort: price`, logged,
+never a failed call. Evidence: `analysis/llm_costs_2026-09/REPORT.md`.
 
 **OpenAlex is metered too, and not uniformly.** It bills credits per request against
 a daily budget that resets at midnight UTC (`shared/openalex_keys.py` owns the key
@@ -800,6 +824,10 @@ report, a commit message or a decision is read off the artifact.
    whole `.env` surface in one file. If an override could make two collaborators grade
    the same row differently, it is a constant. LLM rate
    intervals are charged per provider, so the screen's two votes never wait on each other.
+   One exception: the politeness intervals of the document sources that only the
+   acquisition waterfall calls (`_CORE_RATE_SEC`, `_ZENODO_RATE_SEC` and their
+   neighbours) are plain constants in `shared/pdf_sources.py`. No other module reaches
+   those endpoints, and none of them has a reason to differ between machines.
 9. API key values live in `.env` only; `config.py` only reads env. `.env.defaults` is
    committed, so nothing secret may go in it.
 
@@ -836,10 +864,11 @@ and its rationale belong together in one committed place. Key variables:
 RESEARCHER_EMAIL=...            # required: OpenAlex/CrossRef politeness headers
 GEMINI_API_KEY=...              # required
 OPENAI_API_KEY=...              # required for Stage 3 (default screen voter 2)
-OPENROUTER_API_KEY=...          # only if SCREENING_MODEL_2 contains "/"
+OPENROUTER_API_KEY=...          # required: screen voter 1 and the pick check are "/" ids
 OPENAI_DAILY_TOKEN_BUDGET=9500000   # 0 disables the cap (default = the free daily allocation, resets midnight UTC)
 GEMINI_USE_FLEX=true            # 50% discount on paid keys; flex uses GEMINI_FLEX_TIMEOUT
 OPENAI_USE_FLEX=true            # same trade on OpenAI; refused flex falls back to standard
+OPENAI_FLEX_PATIENCE=600        # s to keep re-asking a refused flex call before standard (default 0)
 GEMINI_PAID_KEY_SLOTS=1         # which key SLOTS are billing-enabled, not key values
 EXTRACT_WORKERS=4               # Stage 3 rows in flight at once; 1 = no pool
 FLORA_CACHE_DIR=                # move cache/ to an SSD; FLORA_POOL_DIR does the same

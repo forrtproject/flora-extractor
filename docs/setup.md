@@ -168,7 +168,7 @@ See `.env.example` for the full list with descriptions. Key variables:
 | `SUPABASE_SERVICE_KEY` | No | Validation monitoring tab |
 | `GROBID_URL` | No | PDF reference extraction. **Code default is the public server `https://kermitt2-grobid.hf.space`**; `.env.example` sets `http://localhost:8070`. See the GROBID section above |
 | `GEMINI_USE_FLEX` / `GEMINI_FLEX_TIMEOUT` | No | 50% cheaper Gemini calls on paid keys, at the price of queueing |
-| `OPENAI_USE_FLEX` / `OPENAI_FLEX_TIMEOUT` | No | Same trade on OpenAI; a request flex will not serve falls back to standard tier |
+| `OPENAI_USE_FLEX` / `OPENAI_FLEX_TIMEOUT` / `OPENAI_FLEX_PATIENCE` | No | Same trade on OpenAI; a request flex will not serve falls back to standard tier, after up to `OPENAI_FLEX_PATIENCE` seconds of re-asking |
 
 Model ids are **constants, not env vars** (`shared/config.py`, code-style rule 8):
 `PRESCREEN_MODEL_1`/`_2`, `SCREENING_MODEL_1`/`_2`, `LINKING_MODEL`,

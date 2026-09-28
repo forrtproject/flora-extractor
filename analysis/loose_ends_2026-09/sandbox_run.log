@@ -1,0 +1,359 @@
+13:28:42  INFO      flora.disambiguation  FLoRA entry sheet: 1376 already-validated DOIs will be skipped
+13:28:42  INFO      flora.disambiguation  flora.csv: 2283 already-in-FLoRA DOIs will be skipped
+13:28:42  INFO      flora.disambiguation  validated skip list: 1735 work id(s) and 1765 DOI(s) will be skipped
+13:30:22  INFO      flora.disambiguation  [10.17605/osf.io/2sb7x] 0 candidate(s) from OpenAlex re-query
+13:30:22  INFO      flora.disambiguation  [url:https://eric.ed.gov/?id=EJ704955] could not resolve DOI — will extract from URL/abstract only
+13:30:22  INFO      flora.disambiguation  [10.48550/arxiv.2008.05414] 0 candidate(s) from OpenAlex re-query
+13:30:22  INFO      flora.disambiguation  [10.48550/arxiv.2008.05414] Title/abstract has 2 author-year pattern(s) — early abstract LLM
+13:30:22  INFO      flora.disambiguation  [10.17605/osf.io/g9czs] 0 candidate(s) from OpenAlex re-query
+13:30:22  INFO      flora.disambiguation  [10.17605/osf.io/g9czs] Title/abstract has 1 author-year pattern(s) — early abstract LLM
+13:30:22  INFO      flora.disambiguation  [] 0 candidate(s) from OpenAlex re-query
+13:30:22  INFO      flora.disambiguation  [] Title/abstract has 8 author-year pattern(s) — early abstract LLM
+13:30:23  INFO      flora.disambiguation  [10.17605/osf.io/g9czs] PDF: osf_files (https://osf.io/download/xdpkt/)
+13:30:23  INFO      flora.disambiguation  [10.17605/osf.io/g9czs] parse_all best=grobid refs=27 abstract=1500 intro=0
+13:30:23  INFO      flora.disambiguation  [10.17605/osf.io/2sb7x] PDF: osf_files (https://osf.io/download/z95u6/)
+13:30:23  INFO      flora.disambiguation  [10.17605/osf.io/2sb7x] parse_all best=grobid refs=53 abstract=1500 intro=0
+13:30:49  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:30:49  INFO      flora.disambiguation  [10.17605/osf.io/g9czs] LLM: resolved=True source=openai
+13:30:51  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:30:51  INFO      flora.disambiguation  [10.17605/osf.io/2sb7x] LLM: resolved=True source=openai
+13:30:54  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:30:54  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:30:54  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:30:54  INFO      flora.disambiguation  [10.17605/osf.io/2sb7x] the accepted record has no identifier; 'Epley, N. (2008) Creating social connection through inferential reproduction: Loneliness and perceived agency in gadgets, Gods, and greyhounds.' was looked up (resolved)
+13:30:54  INFO      flora.disambiguation  [url:http://hdl.handle.net/1842/2883] could not resolve DOI — will extract from URL/abstract only
+13:30:54  INFO      flora.disambiguation  [] 0 candidate(s) from OpenAlex re-query
+13:30:54  INFO      flora.disambiguation  [] Title/abstract has 3 author-year pattern(s) — early abstract LLM
+13:30:55  INFO      flora.disambiguation  [10.48550/arxiv.2008.05414] PDF: arxiv (https://arxiv.org/pdf/2008.05414)
+13:30:55  INFO      flora.disambiguation  [10.48550/arxiv.2008.05414] parse_all best=pdfminer refs=1 abstract=1500 intro=3000
+13:30:59  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:30:59  INFO      flora.disambiguation  [10.1257/aer.97.5.2026] 4 candidate(s) from OpenAlex re-query
+13:30:59  INFO      flora.disambiguation  [10.1257/aer.97.5.2026] Title/abstract has 6 author-year pattern(s) — early abstract LLM
+13:30:59  INFO      flora.disambiguation  [10.1257/aer.97.5.2026] Resolved by abstract LLM: Does Competition Among Public Schools Benefit Students and Taxpayers?
+13:30:59  INFO      flora.disambiguation  [10.1257/aer.97.5.2026] descent: the abstract named the target but not the outcome — reading on
+13:30:59  INFO      flora.disambiguation  [10.1257/aer.97.5.2026] Resolved from reference list: Does Competition Among Public Schools Benefit Students and Taxpayers?
+13:30:59  INFO      flora.disambiguation  [10.1257/aer.97.5.2026] descent: the reference list named the target but not the outcome — reading on
+13:31:00  INFO      flora.disambiguation  [10.1257/aer.97.5.2026] PDF: semanticscholar (http://www.aeaweb.org/aer/data/dec07/20040120_app.pdf)
+13:31:00  INFO      flora.disambiguation  [10.1257/aer.97.5.2026] parse_all best=grobid refs=1 abstract=738 intro=0
+13:31:11  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:31:11  INFO      flora.disambiguation  [10.1257/aer.97.5.2026] LLM: resolved=True source=openai
+13:31:11  INFO      flora.disambiguation  [url:https://osf.io/w5eq4] could not resolve DOI — will extract from URL/abstract only
+13:31:11  INFO      flora.disambiguation  [] 0 candidate(s) from OpenAlex re-query
+13:31:11  INFO      flora.disambiguation  [] Title/abstract has 1 author-year pattern(s) — early abstract LLM
+13:31:11  INFO      flora.disambiguation  [] PDF: osf_files (https://osf.io/download/gk7tz/)
+13:31:11  INFO      flora.disambiguation  [] parse_all best=grobid refs=1 abstract=727 intro=0
+13:31:18  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:31:18  INFO      flora.disambiguation  [10.48550/arxiv.2008.05414] LLM: resolved=False source=openai
+13:31:18  INFO      flora.disambiguation  [10.48550/arxiv.2008.05414] target prompt named 4 original(s) without a single accepted link — writing one row per target
+13:31:20  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:31:21  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:31:22  INFO      flora.disambiguation    [] All HTTP tiers failed — trying Playwright headless
+13:31:22  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:31:22  INFO      flora.disambiguation  [] LLM: resolved=True source=openai
+13:31:22  INFO      flora.disambiguation  [10.1037/cns0000342] 0 candidate(s) from OpenAlex re-query
+13:31:22  INFO      flora.disambiguation  [10.1037/cns0000342] Title/abstract has 1 author-year pattern(s) — early abstract LLM
+13:31:26  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:31:26  INFO      flora.disambiguation  [10.48550/arxiv.2008.05414] 2 targeted studies → 1 original paper(s) (FLoRA coding level: one row per reference pair)
+13:31:31  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:31:31  INFO      flora.disambiguation  [url:https://osf.io/aq8py] could not resolve DOI — will extract from URL/abstract only
+13:31:31  INFO      flora.disambiguation  [] 0 candidate(s) from OpenAlex re-query
+13:31:31  INFO      flora.disambiguation  [] Title/abstract has 2 author-year pattern(s) — early abstract LLM
+13:31:31  INFO      flora.disambiguation  [] PDF: none ()
+13:31:31  INFO      flora.disambiguation  [] no document acquired (none) — writing target_pending
+13:31:31  INFO      flora.disambiguation  [] target prompt named 1 original(s) without a single accepted link — writing one row per target
+13:31:33  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:31:35  INFO      flora.disambiguation    [] All HTTP tiers failed — trying Playwright headless
+13:31:43  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:31:45  INFO      flora.disambiguation  [] PDF: none ()
+13:31:45  INFO      flora.disambiguation  [] no document acquired (none) — writing target_pending
+13:31:45  INFO      flora.disambiguation  [] target prompt named 1 original(s) without a single accepted link — writing one row per target
+13:31:45  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:31:46  WARNING   flora.disambiguation  OpenAlex 503 for https://api.openalex.org/works/Whttps://openalex.org/W4297998882 — retry 1/3 in 1s
+13:31:46  INFO      flora.disambiguation  [] PDF: none ()
+13:31:46  INFO      flora.disambiguation  [] no document acquired (none) — writing target_pending
+13:31:46  INFO      flora.disambiguation  [] target prompt named 1 original(s) without a single accepted link — writing one row per target
+13:31:49  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:31:49  INFO      flora.disambiguation  [url:http://hdl.handle.net/10211.3/163691] could not resolve DOI — will extract from URL/abstract only
+13:31:49  INFO      flora.disambiguation  [] 0 candidate(s) from OpenAlex re-query
+13:31:49  INFO      flora.disambiguation  [] Title/abstract has 2 author-year pattern(s) — early abstract LLM
+13:31:50  WARNING   flora.disambiguation    Document served for 10.1037/cns0000342 is not 'The future failed: No evidence for precognition in a large scale replication att' (title coverage 0.25) — refused: https://supp.apa.org:443/psycarticles/supplemental/cns0000342/cns0000342_sm.pdf
+13:31:50  INFO      flora.disambiguation    [10.1037/cns0000342] All HTTP tiers failed — trying Playwright headless
+13:31:52  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:31:56  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:31:56  INFO      flora.disambiguation  [10.17605/osf.io/nrwpv] 0 candidate(s) from OpenAlex re-query
+13:31:56  INFO      flora.disambiguation  [10.17605/osf.io/nrwpv] Title/abstract has 3 author-year pattern(s) — early abstract LLM
+13:31:56  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:31:57  INFO      flora.disambiguation  [10.17605/osf.io/786jg] 0 candidate(s) from OpenAlex re-query
+13:31:57  INFO      flora.disambiguation  [10.17605/osf.io/nrwpv] PDF: osf_files (https://osf.io/download/60e5c821924b4000554e8b56/)
+13:31:57  INFO      flora.disambiguation  [10.17605/osf.io/nrwpv] parse_all best=pdfminer refs=0 abstract=1500 intro=0
+13:31:57  INFO      flora.disambiguation  [10.17605/osf.io/nrwpv] LLM: resolved=False source=openai
+13:31:57  INFO      flora.disambiguation  [10.17605/osf.io/nrwpv] target prompt named 6 original(s) without a single accepted link — writing one row per target
+13:31:57  INFO      flora.disambiguation  [10.17605/osf.io/786jg] Title/abstract has 1 author-year pattern(s) — early abstract LLM
+13:31:58  INFO      flora.disambiguation  [10.1037/cns0000342] PDF: none ()
+13:31:58  INFO      flora.disambiguation  [10.1037/cns0000342] no document acquired (none) — writing target_pending
+13:31:58  INFO      flora.disambiguation  [10.1037/cns0000342] target prompt named 1 original(s) without a single accepted link — writing one row per target
+13:32:02  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:32:05  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:32:06  INFO      flora.disambiguation  OpenAlex XML acquired for Whttps://openalex.org/W2339342283 (24 refs)
+13:32:06  INFO      flora.disambiguation    [] OpenAlex XML acquired (source=openalex_xml) — skipping the download tiers
+13:32:06  INFO      flora.disambiguation  [] PDF: openalex_xml ()
+13:32:06  INFO      flora.disambiguation  [] parse_all best=openalex_xml refs=24 abstract=0 intro=0
+13:32:06  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:32:07  INFO      flora.disambiguation  [10.17605/osf.io/cfkpa] 0 candidate(s) from OpenAlex re-query
+13:32:07  INFO      flora.disambiguation  [10.17605/osf.io/cfkpa] Title/abstract has 1 author-year pattern(s) — early abstract LLM
+13:32:07  INFO      flora.disambiguation  [10.17605/osf.io/cfkpa] PDF: none ()
+13:32:07  INFO      flora.disambiguation  [10.17605/osf.io/cfkpa] no document acquired (none) — writing target_pending
+13:32:07  INFO      flora.disambiguation  [10.17605/osf.io/cfkpa] target prompt named 1 original(s) without a single accepted link — writing one row per target
+13:32:10  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:32:10  INFO      flora.disambiguation  [10.17605/osf.io/786jg] PDF: osf_files (https://osf.io/download/dyhtn/)
+13:32:10  INFO      flora.disambiguation  [10.17605/osf.io/786jg] parse_all best=grobid refs=62 abstract=2000 intro=0
+13:32:11  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:32:12  INFO      flora.disambiguation  [10.17605/osf.io/fxpwb] 0 candidate(s) from OpenAlex re-query
+13:32:12  INFO      flora.disambiguation  [10.17605/osf.io/fxpwb] Title/abstract has 1 author-year pattern(s) — early abstract LLM
+13:32:13  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:32:16  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:32:19  INFO      flora.disambiguation  [] LLM: resolved=True source=openai
+13:32:22  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:32:22  INFO      flora.disambiguation  [10.17605/osf.io/fxpwb] PDF: osf_files (https://osf.io/download/qvpa5/)
+13:32:22  INFO      flora.disambiguation  [10.17605/osf.io/fxpwb] parse_all best=grobid refs=32 abstract=1500 intro=0
+13:32:23  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:32:23  INFO      flora.disambiguation  [10.17605/osf.io/7m8n5] 0 candidate(s) from OpenAlex re-query
+13:32:23  INFO      flora.disambiguation  [10.17605/osf.io/7m8n5] Title/abstract has 1 author-year pattern(s) — early abstract LLM
+13:32:25  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:32:25  INFO      flora.disambiguation  [10.17605/osf.io/786jg] LLM: resolved=True source=openai
+13:32:31  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:32:31  INFO      flora.disambiguation  [10.17605/osf.io/fxpwb] LLM: resolved=True source=openai
+13:32:32  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:32:33  INFO      flora.disambiguation  [10.17605/osf.io/c7t6k] 0 candidate(s) from OpenAlex re-query
+13:32:33  INFO      flora.disambiguation  [10.17605/osf.io/c7t6k] Title/abstract has 1 author-year pattern(s) — early abstract LLM
+13:32:35  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:32:36  INFO      flora.disambiguation  [10.17605/osf.io/fmuv2] 0 candidate(s) from OpenAlex re-query
+13:32:36  INFO      flora.disambiguation  [10.17605/osf.io/fmuv2] Title/abstract has 1 author-year pattern(s) — early abstract LLM
+13:32:36  WARNING   flora.disambiguation    Document served for 10.17605/osf.io/c7t6k is not 'Data and Video Material for "Replicating Roaches: a Preregistered Replication of' (title coverage 0.00) — refused: https://osf.io/download/vzfsb/
+13:32:36  INFO      flora.disambiguation    [10.17605/osf.io/c7t6k] OSF registration acquired (source=osf_registration)
+13:32:36  INFO      flora.disambiguation  [10.17605/osf.io/c7t6k] PDF: osf_registration ()
+13:32:36  INFO      flora.disambiguation  [10.17605/osf.io/c7t6k] parse_all best=openalex_xml refs=0 abstract=368 intro=0
+13:32:36  INFO      flora.disambiguation  [10.17605/osf.io/c7t6k] LLM: resolved=False source=openai
+13:32:36  INFO      flora.disambiguation  [10.17605/osf.io/c7t6k] target prompt named 2 original(s) without a single accepted link — writing one row per target
+13:32:36  WARNING   flora.disambiguation  OpenCitations lookup failed for 10.17605/osf.io/fmuv2: 404 Client Error: Not Found for url: https://api.opencitations.net/index/v1/references/10.17605/osf.io/fmuv2
+13:32:36  WARNING   flora.disambiguation  [10.17605/osf.io/fmuv2] reference list unavailable (OpenCitations lookup failed) — screened without one
+13:32:36  INFO      flora.disambiguation  [10.17605/osf.io/fmuv2] PDF: osf_files (https://osf.io/download/dx9qr/)
+13:32:36  INFO      flora.disambiguation  [10.17605/osf.io/fmuv2] parse_all best=grobid refs=89 abstract=1500 intro=0
+13:32:39  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:32:39  INFO      flora.disambiguation  [10.17605/osf.io/c7t6k] 2 targeted studies → 1 original paper(s) (FLoRA coding level: one row per reference pair)
+13:32:39  INFO      flora.disambiguation  [10.17605/osf.io/mxef2] 0 candidate(s) from OpenAlex re-query
+13:32:39  INFO      flora.disambiguation  [10.17605/osf.io/mxef2] Title/abstract has 2 author-year pattern(s) — early abstract LLM
+13:32:40  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:32:40  INFO      flora.disambiguation  [10.17605/osf.io/nrwpv] 4 targeted studies → 2 original paper(s) (FLoRA coding level: one row per reference pair)
+13:32:41  INFO      flora.disambiguation  [10.17605/osf.io/e5k4j] 0 candidate(s) from OpenAlex re-query
+13:32:41  INFO      flora.disambiguation  [10.17605/osf.io/e5k4j] Title/abstract has 1 author-year pattern(s) — early abstract LLM
+13:32:41  INFO      flora.disambiguation  [10.17605/osf.io/e5k4j] PDF: osf_files (https://osf.io/download/dtpz7/)
+13:32:41  INFO      flora.disambiguation  [10.17605/osf.io/e5k4j] parse_all best=grobid refs=43 abstract=1500 intro=0
+13:32:48  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:32:49  INFO      flora.disambiguation  [10.17605/osf.io/7m8n5] PDF: osf_files (https://osf.io/download/mbhqu/)
+13:32:49  INFO      flora.disambiguation  [10.17605/osf.io/7m8n5] parse_all best=docx refs=0 abstract=1500 intro=0
+13:32:52  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:32:52  INFO      flora.disambiguation  [10.17605/osf.io/mxef2] PDF: osf_files (https://osf.io/download/cnmr8/)
+13:32:52  INFO      flora.disambiguation  [10.17605/osf.io/mxef2] parse_all best=grobid refs=114 abstract=2000 intro=1039
+13:33:05  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:33:05  INFO      flora.disambiguation  [10.17605/osf.io/e5k4j] LLM: resolved=True source=openai
+13:33:10  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:33:10  INFO      flora.disambiguation  [10.1080/14622200210142689] 0 candidate(s) from OpenAlex re-query
+13:33:10  INFO      flora.disambiguation  [10.1080/14622200210142689] Title/abstract has 1 author-year pattern(s) — early abstract LLM
+13:33:12  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:33:12  INFO      flora.disambiguation  [10.17605/osf.io/mxef2] LLM: resolved=True source=openai
+13:33:13  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:33:13  INFO      flora.disambiguation  [10.17605/osf.io/fmuv2] LLM: resolved=True source=openai
+13:33:16  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:33:16  INFO      flora.disambiguation  [10.1037/emo0001339] 0 candidate(s) from OpenAlex re-query
+13:33:16  INFO      flora.disambiguation  [10.1037/emo0001339] Title/abstract has 1 author-year pattern(s) — early abstract LLM
+13:33:18  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:33:18  INFO      flora.disambiguation  [url:https://hdl.handle.net/11250/3095522] could not resolve DOI — will extract from URL/abstract only
+13:33:18  INFO      flora.disambiguation  [] 0 candidate(s) from OpenAlex re-query
+13:33:18  INFO      flora.disambiguation  [] Title/abstract has 3 author-year pattern(s) — early abstract LLM
+13:33:23  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:33:23  INFO      flora.disambiguation  [10.17605/osf.io/7m8n5] LLM: resolved=False source=openai
+13:33:23  INFO      flora.disambiguation  [10.17605/osf.io/7m8n5] target prompt named 2 original(s) without a single accepted link — writing one row per target
+13:33:26  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:33:26  INFO      flora.disambiguation  [10.17605/osf.io/7m8n5] 2 targeted studies → 1 original paper(s) (FLoRA coding level: one row per reference pair)
+13:33:30  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:33:30  INFO      flora.disambiguation  [url:https://osf.io/76kx3] could not resolve DOI — will extract from URL/abstract only
+13:33:30  INFO      flora.disambiguation  [] 0 candidate(s) from OpenAlex re-query
+13:33:32  INFO      flora.disambiguation  [] PDF: osf_files (https://osf.io/download/j86zh/)
+13:33:32  INFO      flora.disambiguation  [] parse_all best=pdfminer refs=0 abstract=1500 intro=0
+13:33:40  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:33:41  INFO      flora.disambiguation  [10.1037/emo0001339] PDF: crossref_search (https://osf.io/download/7vsau/)
+13:33:41  INFO      flora.disambiguation  [10.1037/emo0001339] parse_all best=pdfminer refs=61 abstract=1915 intro=3000
+13:33:44  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:33:47  INFO      flora.disambiguation    [10.1080/14622200210142689] All HTTP tiers failed — trying Playwright headless
+13:33:54  INFO      flora.disambiguation  [10.1080/14622200210142689] PDF: none ()
+13:33:54  INFO      flora.disambiguation  [10.1080/14622200210142689] no document acquired (none) — writing target_pending
+13:33:54  INFO      flora.disambiguation  [10.1080/14622200210142689] target prompt named 3 original(s) without a single accepted link — writing one row per target
+13:34:00  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:34:11  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:34:12  INFO      flora.disambiguation    [] All HTTP tiers failed — trying Playwright headless
+13:34:13  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:34:15  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:34:15  INFO      flora.disambiguation  [] LLM: resolved=False source=openai
+13:34:15  INFO      flora.disambiguation  [] target prompt named 2 original(s) without a single accepted link — writing one row per target
+13:34:19  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:34:20  INFO      flora.disambiguation  [] PDF: none ()
+13:34:20  INFO      flora.disambiguation  [] no document acquired (none) — writing target_pending
+13:34:20  INFO      flora.disambiguation  [] target prompt named 2 original(s) without a single accepted link — writing one row per target
+13:34:24  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:34:29  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:34:30  INFO      flora.disambiguation  [url:https://osf.io/6uvs8] could not resolve DOI — will extract from URL/abstract only
+13:34:30  INFO      flora.disambiguation  [] 0 candidate(s) from OpenAlex re-query
+13:34:30  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:34:32  INFO      flora.disambiguation  [] PDF: osf_files (https://osf.io/download/3fqwh/)
+13:34:32  INFO      flora.disambiguation  [] parse_all best=grobid refs=32 abstract=1500 intro=3000
+13:34:35  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:34:39  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:34:39  INFO      flora.disambiguation  [url:https://osf.io/gweay] could not resolve DOI — will extract from URL/abstract only
+13:34:39  INFO      flora.disambiguation  [] 0 candidate(s) from OpenAlex re-query
+13:34:39  INFO      flora.disambiguation  [] Title/abstract has 1 author-year pattern(s) — early abstract LLM
+13:34:51  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:34:58  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:34:58  INFO      flora.disambiguation  [10.1037/emo0001339] LLM: resolved=False source=openai
+13:34:58  INFO      flora.disambiguation  [10.1037/emo0001339] target prompt named 2 original(s) without a single accepted link — writing one row per target
+13:34:58  INFO      flora.disambiguation  [] PDF: osf_files (https://osf.io/download/6556c1ec062a3e18e2edfe37/)
+13:34:58  INFO      flora.disambiguation  [] parse_all best=grobid refs=5 abstract=1500 intro=537
+13:34:58  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:34:58  INFO      flora.disambiguation  [] LLM: resolved=True source=openai
+13:35:04  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:35:04  INFO      flora.disambiguation  [] 2 targeted studies → 1 original paper(s) (FLoRA coding level: one row per reference pair)
+13:35:05  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:35:05  INFO      flora.disambiguation  [url:https://osf.io/scde7] could not resolve DOI — will extract from URL/abstract only
+13:35:05  INFO      flora.disambiguation  [] 0 candidate(s) from OpenAlex re-query
+13:35:06  INFO      flora.disambiguation  [] Title/abstract has 1 author-year pattern(s) — early abstract LLM
+13:35:06  INFO      flora.disambiguation  [] PDF: crossref_search (https://www.crimrxiv.com/pub/4osaz72m/download/pdf)
+13:35:06  INFO      flora.disambiguation  [] parse_all best=grobid refs=1 abstract=439 intro=0
+13:35:15  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:35:15  INFO      flora.disambiguation  [10.1037/emo0001339] 2 targeted studies → 1 original paper(s) (FLoRA coding level: one row per reference pair)
+13:35:19  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:35:19  INFO      flora.disambiguation  [url:http://api.osf.io/v2/nodes/d38g2/] could not resolve DOI — will extract from URL/abstract only
+13:35:19  INFO      flora.disambiguation  [] 0 candidate(s) from OpenAlex re-query
+13:35:19  INFO      flora.disambiguation  [] Title/abstract has 1 author-year pattern(s) — early abstract LLM
+13:35:20  INFO      flora.disambiguation  [] PDF: osf_files (https://osf.io/download/pxf83/)
+13:35:20  INFO      flora.disambiguation  [] parse_all best=grobid refs=9 abstract=1500 intro=0
+13:35:30  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:35:30  INFO      flora.disambiguation  [] LLM: resolved=True source=openai
+13:35:33  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:35:33  INFO      flora.disambiguation  [] LLM: resolved=True source=openai
+13:35:37  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:35:37  INFO      flora.disambiguation  [url:http://api.osf.io/v2/nodes/9qcpj/] could not resolve DOI — will extract from URL/abstract only
+13:35:37  INFO      flora.disambiguation  [] 0 candidate(s) from OpenAlex re-query
+13:35:37  INFO      flora.disambiguation  [] Title/abstract has 1 author-year pattern(s) — early abstract LLM
+13:35:39  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:35:39  INFO      flora.disambiguation  [] the accepted record has no identifier; 'Zilioli (2014) Facial width-to-height ratio predicts fighting success: A direct replication and extension' was looked up (resolved)
+13:35:51  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:35:51  INFO      flora.disambiguation  [10.17605/osf.io/a2tgb] 0 candidate(s) from OpenAlex re-query
+13:35:51  INFO      flora.disambiguation  [10.17605/osf.io/a2tgb] Title/abstract has 1 author-year pattern(s) — early abstract LLM
+13:35:51  INFO      flora.disambiguation  [10.17605/osf.io/a2tgb] PDF: osf_files (https://osf.io/download/jw4z6/)
+13:35:51  INFO      flora.disambiguation  [10.17605/osf.io/a2tgb] parse_all best=grobid refs=55 abstract=1500 intro=0
+13:36:08  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:36:08  INFO      flora.disambiguation  [10.7554/elife.109042.1.sa3] 0 candidate(s) from OpenAlex re-query
+13:36:09  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:36:09  INFO      flora.disambiguation  [] LLM: resolved=True source=openai
+13:36:10  INFO      flora.disambiguation  [10.7554/elife.109042.1.sa3] PDF: playwright (https://doi.org/10.7554/elife.109042.1.sa3)
+13:36:10  INFO      flora.disambiguation  [10.7554/elife.109042.1.sa3] parse_all best=pdfminer refs=1 abstract=1573 intro=3000
+13:36:13  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:36:13  INFO      flora.disambiguation  [url:https://osf.io/sdyha] could not resolve DOI — will extract from URL/abstract only
+13:36:13  INFO      flora.disambiguation  [] 0 candidate(s) from OpenAlex re-query
+13:36:16  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:36:16  INFO      flora.disambiguation  [10.17605/osf.io/a2tgb] LLM: resolved=True source=openai
+13:36:17  INFO      flora.disambiguation  [] PDF: osf_files (https://osf.io/download/5svmc/)
+13:36:17  INFO      flora.disambiguation  [] parse_all best=grobid refs=1 abstract=1352 intro=0
+13:36:19  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:36:24  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:36:24  INFO      flora.disambiguation  [10.1177/00332941211026836] 0 candidate(s) from OpenAlex re-query
+13:36:27  INFO      flora.disambiguation    [10.1177/00332941211026836] Europe PMC XML acquired (source=epmc_xml) — skipping the download tiers below
+13:36:27  INFO      flora.disambiguation  [10.1177/00332941211026836] PDF: epmc_xml ()
+13:36:27  INFO      flora.disambiguation  [10.1177/00332941211026836] parse_all best=epmc_xml refs=75 abstract=1896 intro=12090
+13:36:28  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:36:28  INFO      flora.disambiguation  [] LLM: resolved=False source=openai
+13:36:28  INFO      flora.disambiguation  [10.1101/2020.08.20.258871] 0 candidate(s) from OpenAlex re-query
+13:36:32  INFO      flora.disambiguation  [] PDF: osf_files (https://osf.io/download/ybz2a/)
+13:36:32  INFO      flora.disambiguation  [] parse_all best=grobid refs=53 abstract=1500 intro=0
+13:36:48  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:36:48  INFO      flora.disambiguation  [10.7554/elife.109042.1.sa3] LLM: resolved=False source=openai
+13:36:48  INFO      flora.disambiguation  [10.7554/elife.109042.1.sa3] target prompt named 4 original(s) without a single accepted link — writing one row per target
+13:36:57  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:37:05  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:37:05  INFO      flora.disambiguation  [10.7554/elife.109042.1.sa3] 4 targeted studies → 2 original paper(s) (FLoRA coding level: one row per reference pair)
+13:37:12  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:37:17  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:37:18  INFO      flora.disambiguation  [10.1192/bjp.148.6.642] 0 candidate(s) from OpenAlex re-query
+13:37:30  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:37:31  INFO      flora.disambiguation    [10.1101/2020.08.20.258871] OpenAlex XML acquired (source=openalex_xml) — skipping the download tiers
+13:37:31  INFO      flora.disambiguation  [10.1101/2020.08.20.258871] PDF: openalex_xml ()
+13:37:31  INFO      flora.disambiguation  [10.1101/2020.08.20.258871] parse_all best=openalex_xml refs=18 abstract=788 intro=2227
+13:37:54  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:37:55  INFO      httpx2  HTTP Request: POST https://openrouter.ai/api/v1/chat/completions "HTTP/1.1 200 OK"
+13:37:59  INFO      flora.disambiguation  [10.1192/bjp.148.6.642] Resolved from reference list: The Influence of Family and Social Factors on the Course of Psychiatric Illness
+13:38:06  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:38:06  INFO      flora.disambiguation  [10.1098/rsos.210254] 1 candidate(s) from OpenAlex re-query
+13:38:06  INFO      flora.disambiguation  [10.1098/rsos.210254] Resolved rule-based (single_candidate_after_requery): Foraging for Thought
+13:38:06  INFO      flora.disambiguation  [10.1098/rsos.210254] gate: single_candidate_after_requery withheld — the paper's text does not rule out a second target
+13:38:06  INFO      flora.disambiguation  [10.1098/rsos.210254] Title/abstract has 1 author-year pattern(s) — early abstract LLM
+13:38:06  INFO      flora.disambiguation  [10.1098/rsos.210254] Resolved by abstract LLM: Foraging for Thought
+13:38:06  INFO      flora.disambiguation  [10.1098/rsos.210254] descent: the abstract named the target but not the outcome — reading on
+13:38:06  INFO      flora.disambiguation  [10.1098/rsos.210254] Resolved from reference list: Foraging for Thought
+13:38:06  INFO      flora.disambiguation  [10.1098/rsos.210254] descent: the reference list named the target but not the outcome — reading on
+13:38:07  INFO      flora.disambiguation  [10.1098/rsos.210254] PDF: playwright (https://doi.org/10.1098/rsos.210254)
+13:38:07  INFO      flora.disambiguation  [10.1098/rsos.210254] parse_all best=grobid refs=9 abstract=1500 intro=3000
+13:38:13  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:38:13  INFO      flora.disambiguation  [10.1177/00332941211026836] LLM: resolved=False source=openai
+13:38:13  INFO      flora.disambiguation  [10.1177/00332941211026836] target prompt named 6 original(s) without a single accepted link — writing one row per target
+13:38:18  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:38:18  INFO      flora.disambiguation  [] LLM: resolved=False source=openai
+13:38:18  INFO      flora.disambiguation  [] target prompt named 2 original(s) without a single accepted link — writing one row per target
+13:38:18  INFO      flora.disambiguation  [] named original has neither a DOI nor a work id — kept, flagged unidentified_original
+13:38:23  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:38:28  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:38:29  INFO      flora.disambiguation  [url:https://escholarship.org/uc/item/8k04w5s6] could not resolve DOI — will extract from URL/abstract only
+13:38:29  INFO      flora.disambiguation  [] 0 candidate(s) from OpenAlex re-query
+13:38:29  INFO      flora.disambiguation  [] Title/abstract has 1 author-year pattern(s) — early abstract LLM
+13:38:29  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:38:34  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:38:34  INFO      flora.disambiguation  [10.1101/2020.08.20.258871] LLM: resolved=False source=openai
+13:38:34  INFO      flora.disambiguation  [10.1101/2020.08.20.258871] target prompt named 3 original(s) without a single accepted link — writing one row per target
+13:38:35  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:38:35  INFO      flora.disambiguation  [10.1098/rsos.210254] LLM: resolved=True source=openai
+13:38:37  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:38:37  INFO      flora.disambiguation  [10.1177/00332941211026836] 6 targeted studies → 3 original paper(s) (FLoRA coding level: one row per reference pair)
+13:38:39  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:38:39  INFO      flora.disambiguation  [10.2307/2579435] 0 candidate(s) from OpenAlex re-query
+13:38:39  INFO      flora.disambiguation  [10.2307/2579435] Title/abstract has 2 author-year pattern(s) — early abstract LLM
+13:38:43  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:38:43  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:38:47  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:38:51  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:38:52  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:38:52  INFO      flora.disambiguation  [10.1038/ejhg.2014.137] 0 candidate(s) from OpenAlex re-query
+13:38:55  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:38:57  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:38:58  INFO      flora.disambiguation    [] All HTTP tiers failed — trying Playwright headless
+13:38:59  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:39:00  INFO      flora.disambiguation    [10.2307/2579435] All HTTP tiers failed — trying Playwright headless
+13:39:06  INFO      flora.disambiguation  [] PDF: none ()
+13:39:06  INFO      flora.disambiguation  [] no document acquired (none) — writing target_pending
+13:39:06  INFO      flora.disambiguation  [] target prompt named 1 original(s) without a single accepted link — writing one row per target
+13:39:08  INFO      flora.disambiguation  [10.2307/2579435] PDF: none ()
+13:39:08  INFO      flora.disambiguation  [10.2307/2579435] no document acquired (none) — writing target_pending
+13:39:08  INFO      flora.disambiguation  [10.2307/2579435] target prompt named 2 original(s) without a single accepted link — writing one row per target
+13:39:18  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:39:22  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:39:30  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:39:37  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:40:07  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:40:09  INFO      flora.disambiguation  [10.1038/ejhg.2014.137] PDF: row_url (https://www.nature.com/articles/ejhg2014137.pdf)
+13:40:09  INFO      flora.disambiguation  [10.1038/ejhg.2014.137] parse_all best=grobid refs=63 abstract=1500 intro=1795
+13:40:24  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:40:47  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:41:05  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:41:08  INFO      flora.disambiguation  [10.1038/ejhg.2014.137] LLM: resolved=True source=openai
+13:41:36  INFO      httpx2  HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+13:41:36  INFO      httpx  HTTP Request: POST https://huggingface.co/api/datasets/lukaswallrich/flora-survivor-pool/preupload/main "HTTP/1.1 200 OK"
+13:41:39  INFO      httpx  HTTP Request: POST https://huggingface.co/api/datasets/lukaswallrich/flora-survivor-pool/commit/main "HTTP/1.1 200 OK"
+release 236bc39c2263 was routed under a different bundle — bundle_hash: release 65c62dd8283c, /home/lukas/flora-extractor/filter/spec now c6292310718b. The export reads the bundle for vocabulary and pile policy, so it would label these rows with a release they do not match. Re-run `python -m filter.engine route` and export the new release.

@@ -238,9 +238,13 @@ instead of re-keying, and touched records are only flagged either way.
    other snapshot was ever imported. The table above ("Measured against the live
    tables") used every commit since 2026-05. That adds 1,691 never-imported pair ids,
    all no-ops, and found nothing more to retire, so the small seed loses nothing today.
-7. **`clean_doi` change (handover step 4).** Normalising `10.1037//` and `%3c` changes
-   the `pair_id` of every affected row. Those will show up as `superseded` and be
-   re-keyed. Worth running `--check` before and after.
+7. **`clean_doi` change (handover step 4) — made 2026-09-25.** `clean_doi()` now
+   collapses `10.1037//` and decodes `%xx` (when the result is still a DOI), and
+   `render_payload()` re-spells stored DOIs through `_canonical_dois()`, re-deriving
+   a `pair_id` only when the stored one provably hashes the old spelling. Measured on
+   release 236bc39c2263: 24 shipped pair ids retire as `superseded` (21 of them queued
+   in `unvalidated`), 13 set-aside rows re-key, and 2 works newly match the validated
+   skip list and stop shipping (1 held, 1 from `target_pending.csv`).
 8. This doc is not yet listed in `docs/README.md`.
 
 ## 2026-09-24 check (flora-validation side)

@@ -58,6 +58,59 @@ from .utils import clean_citation_title, usable_title
 TEXT_EXTRACTION_VERSION = 2
 
 
+# The most text boxes on one page that pdfminer's layout analysis may GROUP. Its
+# `group_textboxes` seeds a heap with every PAIR of boxes on the page, so memory is
+# quadratic in them: a one-page OSF plot whose 121k scatter glyphs are each a box
+# grew ~130 MB/s towards hundreds of GB, and on 2026-09-27 took the night run — and
+# the box — down. Above the cap the page's boxes are read in plain top-to-bottom,
+# left-to-right order (one flat group), linear in memory: that plot now reads in
+# 23 s at 314 MB. Measured 2026-09-27 before setting it: 400 random cached PDFs
+# (first 10 pages) peak at 1,068 boxes on a page (q99 400, median 29), so no text
+# already extracted reads differently and TEXT_EXTRACTION_VERSION stands; a
+# synthetic page costs ~200 MB at 1,000 boxes and ~790 MB at 2,000, per worker.
+_MAX_GROUPED_TEXTBOXES = 1_500
+
+
+def pdfminer_text(source, *, maxpages: int = 0,
+                  page_numbers: Optional[set[int]] = None) -> str:
+    """`pdfminer.high_level.extract_text` with the page-size guard above.
+
+    The same converter, parameters and page loop as pdfminer's own function, so a
+    page under the cap reads as pdfminer reads it, with an LTPage that refuses to
+    pair-group a page of more than `_MAX_GROUPED_TEXTBOXES` boxes. ("As pdfminer
+    reads it", not byte-identically: pdfminer breaks distance ties by `id()`, so two
+    of its own runs can order a page's boxes differently — measured, 1 of 4 PDFs.)
+    *source* is a path or a binary file object.
+    """
+    from io import StringIO
+
+    from pdfminer.converter import TextConverter
+    from pdfminer.layout import LAParams, LTPage, LTTextGroupLRTB
+    from pdfminer.pdfinterp import PDFPageInterpreter, PDFResourceManager
+    from pdfminer.pdfpage import PDFPage
+    from pdfminer.utils import open_filename
+
+    class _BoundedPage(LTPage):
+        def group_textboxes(self, laparams, boxes):
+            if len(boxes) <= _MAX_GROUPED_TEXTBOXES:
+                return super().group_textboxes(laparams, boxes)
+            return [LTTextGroupLRTB(boxes)]
+
+    class _BoundedConverter(TextConverter):
+        def begin_page(self, page, ctm) -> None:
+            super().begin_page(page, ctm)
+            self.cur_item = _BoundedPage(self.cur_item.pageid, self.cur_item.bbox)
+
+    with open_filename(source, "rb") as fp, StringIO() as output:
+        manager = PDFResourceManager(caching=True)
+        device = _BoundedConverter(manager, output, codec="utf-8", laparams=LAParams())
+        interpreter = PDFPageInterpreter(manager, device)
+        for page in PDFPage.get_pages(fp, page_numbers, maxpages=maxpages,
+                                      caching=True):
+            interpreter.process_page(page)
+        return output.getvalue()
+
+
 def pdf_text_head_tail(pdf_path: Path, head: int = 40, tail: int = 20) -> str:
     """Extract text with pdfminer.six; a long document is read head AND tail.
 
@@ -67,15 +120,14 @@ def pdf_text_head_tail(pdf_path: Path, head: int = 40, tail: int = 20) -> str:
     longer one is read as its first *head* and last *tail* pages in one pass.
     Raises on failure — each caller keeps its own error contract.
     """
-    from pdfminer.high_level import extract_text
     from pdfminer.pdfpage import PDFPage
 
     with open(pdf_path, "rb") as fh:
         n_pages = sum(1 for _ in PDFPage.get_pages(fh))
     if n_pages <= head + tail:
-        return extract_text(str(pdf_path)) or ""
+        return pdfminer_text(str(pdf_path)) or ""
     wanted = set(range(head)) | set(range(n_pages - tail, n_pages))
-    return extract_text(str(pdf_path), page_numbers=wanted) or ""
+    return pdfminer_text(str(pdf_path), page_numbers=wanted) or ""
 
 
 def _extract_pdf_text(pdf_path: Path) -> str:

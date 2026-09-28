@@ -1,0 +1,12 @@
+{
+ "id": "arm-g3",
+ "description": "arm 3 of replication-claim-general",
+ "match": {
+  "text_regex": "\\breplication\\s+attempts?\\b"
+ },
+ "pile": "screen_expensive",
+ "vocabulary": null,
+ "precedence": 100,
+ "shadow": true,
+ "measured": []
+}

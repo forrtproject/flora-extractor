@@ -4,9 +4,32 @@ import pytest
 
 from analysis.apa_resolver import format_apa_reference
 from shared.utils import (author_surname, bare_work_id, citation_fragment,
-                          clean_citation_title, clean_search_query, non_article_doi,
+                          clean_citation_title, clean_doi, clean_search_query, non_article_doi,
                           non_article_title, non_article_type, osf_type,
                           sentence_spans, usable_title)
+
+
+class TestCleanDoi:
+    """Two spellings of one DOI must be one identity: skip lists, pair_id and cache
+    keys all compare `clean_doi()` output."""
+
+    def test_a_doubled_slash_after_the_prefix_collapses(self):
+        assert clean_doi("https://doi.org/10.1037//0022-3514.69.4.603") == \
+            "10.1037/0022-3514.69.4.603"
+        # Only after the prefix: a doubled slash inside the suffix is left alone.
+        assert clean_doi("10.1234/a//b") == "10.1234/a//b"
+
+    def test_percent_encoding_is_decoded_only_into_a_valid_doi(self):
+        assert clean_doi("10.1002/(SICI)1099-0771(199806)11:2%3C107::AID-BDM286%3E3.0.CO;2-Y") \
+            == "10.1002/(sici)1099-0771(199806)11:2<107::aid-bdm286>3.0.co;2-y"
+        assert clean_doi("10.17605/osf.io%2fvk6d9") == "10.17605/osf.io/vk6d9"
+        # A space, a stray `%`, or bytes that are not UTF-8: left exactly as they came.
+        for junk in ("10.1002/x?msg=from+10%3a00%20gmt", "10.17921/p%25p", "10.1/x%ff"):
+            assert clean_doi(junk) == junk.lower()
+
+    def test_idempotent(self):
+        for doi in ("10.1037//x", "10.1002/a%3cb", "10.17921/p%2541", "10.1037/%2f%2fx"):
+            assert clean_doi(clean_doi(doi)) == clean_doi(doi)
 
 
 class TestOsfType:

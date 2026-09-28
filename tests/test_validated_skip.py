@@ -37,6 +37,15 @@ class TestLoadValidatedSkip:
         ])
         assert load_validated_skip(p) == ({11, 12}, {"10.1/a", "10.1/b"})
 
+    def test_two_spellings_of_one_doi_meet(self, tmp_path):
+        """The skip file holds `10.1037//…`, the row the registered single-slash DOI:
+        both sides go through `clean_doi()`, so one identity, one skip."""
+        p = _skip_csv(tmp_path, [{"work_id": "", "doi": "10.1037//0021-843x.108.3.532",
+                                  "record_id": "r1"}])
+        row = {"doi_r": "10.1037/0021-843X.108.3.532", "openalex_id_r": "",
+               "paper_type": "replication"}
+        assert _should_skip(row, "", load_validated_skip(p)) == "validated"
+
     def test_a_missing_file_skips_nothing_and_does_not_crash(self, tmp_path):
         assert load_validated_skip(tmp_path / "nope.csv") == (set(), set())
 
