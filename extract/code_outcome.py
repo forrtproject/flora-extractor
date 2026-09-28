@@ -21,11 +21,14 @@ parsed document, and a row resolved from the abstract never acquired one. Readin
 for an unsettled verdict is the ladder's job now — see OUTCOME_DESCENT in
 extract/link_original.py.
 
-The keyword scan is the --no-llm fallback, not a pre-filter. Every outcome the
-pipeline records with an LLM available comes from the LLM, which also applies the
-record_type_check veto that a keyword match cannot. The one other consumer of the
-keyword patterns is predict_outcome_keyword(), the --predicted-outcome sampling
-filter.
+The keyword scan WAS the --no-llm fallback and is now off by default
+(KEYWORD_OUTCOME_FALLBACK): measured over 214 works it got 6 of 6 substantive codings
+wrong, at confidence "high", by coding whichever sentence a pattern landed in. With no
+model a row is now written cannot_be_determined, which is what it is. Every outcome the
+pipeline records comes from the LLM, which also applies the record_type_check veto that
+a keyword match cannot. The one other consumer of the keyword patterns is
+predict_outcome_keyword(), whose --predicted-outcome sampling filter retired with the
+CSV runner — it has no caller left.
 
 A reproduction is coded on two independent axes (computation and robustness), each
 with its own quote and quote source; the shared `outcome` column carries the two
@@ -183,6 +186,53 @@ def _failure_match(text: str) -> "re.Match | None":
         if not _SUCCESS_EXPLICIT.search(sentence):
             return m
     return None
+
+
+# Whether `--no-llm` may code an outcome from the keyword scan instead of leaving it
+# `cannot_be_determined`. OFF, because the only measurement anyone has made of it says
+# it is wrong far more often than it is right.
+#
+# Measured 2026-09-21 over 214 works run through `_process_row(no_llm=True)`: the scan
+# coded 13, and of the 6 that named an actual outcome — the ones that matter, since
+# `cannot_be_determined` is the honest default anyway — 6 of 6 were wrong, every one at
+# `outcome_confidence: "high"`. It codes whatever sentence a pattern lands in, and in a
+# replication paper the patterns land in background prose about the ORIGINAL study:
+#
+#   "successful" <- "Saini et al. (2019) urged caution with respect to the use of
+#                    practical functional assessment (PFA) procedures…"
+#   "failed"     <- "We consider young children's construals of biological phenomena
+#                    and the forces that shape them, using Carey's (1985) task…"
+#   "successful" <- "Cortical and subcortical contributions to Stop signal response
+#                    inhibition: role of the subthalamic nucleus. J Neurosci 26…"
+#
+# That last one is a citation in a reference list. The rate is unsurprising in
+# hindsight: the module docstring already warned that "a bare keyword hit like 'failed
+# to replicate' can fire on background prose", which is the argument for not letting it
+# short-circuit the LLM — and the same argument against letting it code a row alone.
+#
+# A constant rather than an env var, per code-style rule 8: it decides what the
+# pipeline CONCLUDES, so it is changed by a commit and a review, not by a machine.
+# Turning it on logs a warning naming this measurement. What would justify flipping it
+# is an evaluation against hand-coded outcomes — precision per pattern, on the rows the
+# scan actually fires on — of the kind `analysis/screening_eval/` holds for the screen.
+KEYWORD_OUTCOME_FALLBACK = False
+
+_WARNED_KEYWORD = False
+
+
+def _warn_keyword_fallback() -> None:
+    """Say, once per process, what enabling the keyword fallback means."""
+    global _WARNED_KEYWORD
+    if _WARNED_KEYWORD:
+        return
+    _WARNED_KEYWORD = True
+    log.warning(
+        "KEYWORD_OUTCOME_FALLBACK is ON. Outcomes on --no-llm rows are being coded by "
+        "regex from whichever sentence a pattern lands in, and stamped "
+        "outcome_confidence='high'. The only measurement of this (2026-09-21, 214 "
+        "works) got 6 of 6 substantive codings WRONG — one of them read out of a "
+        "reference list. These rows are not evidence about any paper: do not export "
+        "them, validate them, or count them.")
 
 
 def _keyword_scan(text: str, source: str) -> Optional[dict]:
@@ -466,6 +516,11 @@ def extract_outcome(doi_r: str,
     # AI-generated abstract, so short-circuiting on it would let obvious
     # non-replications through as coded replications.
     if no_llm:
+        if not KEYWORD_OUTCOME_FALLBACK:
+            return {"outcome": "cannot_be_determined", "outcome_phrase": "",
+                    "outcome_confidence": "low", "out_quote_source": "",
+                    "outcome_reasoning": "", "llm_model": "", **_EMPTY_AXES}
+        _warn_keyword_fallback()
         # Title scan — only high-confidence hits (avoid "replication of X" false triggers).
         if title_r:
             hit = _keyword_scan(title_r, "title")

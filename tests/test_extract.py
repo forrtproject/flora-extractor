@@ -214,23 +214,39 @@ class TestExtractOutcome:
                                      title_r="A Study")
         assert result["outcome"] == "not_a_replication"
 
-    def test_keyword_hit_skips_llm_in_no_llm_mode(self):
-        """The keyword fast-path, whole: with the LLM off a replication abstract is
-        coded from the keyword scan alone — no call, no reasoning, and the row names
-        the rule rather than a model that never answered."""
+    def _no_llm_outcome(self, **kwargs) -> dict:
+        defaults = {"abstract_r": "we found no evidence of the original effect",
+                    "title_r": "A Replication Study",
+                    "record_type": "replication", "no_llm": True}
         with patch("extract.code_outcome.call_model") as mock_llm:
-            result = extract_outcome(
-                "10.1234/test",
-                abstract_r="we found no evidence of the original effect",
-                title_r="A Replication Study",
-                record_type="replication",
-                no_llm=True,
-            )
+            result = extract_outcome("10.1234/test", **{**defaults, **kwargs})
         mock_llm.assert_not_called()
+        return result
+
+    def test_no_llm_does_not_code_an_outcome_by_default(self):
+        """With no model, the row says so. The keyword scan CAN read this abstract —
+        the next test proves it — and is still not asked, because a regex that codes
+        whichever sentence it lands in got 6 of 6 substantive codings wrong when it was
+        finally measured (2026-09-21, 214 works), every one at confidence "high"."""
+        result = self._no_llm_outcome()
+        assert result["outcome"] == "cannot_be_determined"
+        assert result["llm_model"] == ""
+        assert result["outcome_phrase"] == ""
+
+    def test_the_keyword_fallback_still_works_when_it_is_switched_on(self, caplog):
+        """The flag is a real switch, not a removal — and it says what it is doing.
+        The warning is the point: a row coded this way must not be exported, validated
+        or counted, and nothing downstream can tell from the row alone."""
+        with patch("extract.code_outcome.KEYWORD_OUTCOME_FALLBACK", True), \
+                patch("extract.code_outcome._WARNED_KEYWORD", False):
+            with caplog.at_level("WARNING"):
+                result = self._no_llm_outcome()
+
         assert result["outcome"] == "failed"
         assert result["out_quote_source"] == "abstract"
         assert result.get("outcome_reasoning", "") == ""
         assert result["llm_model"] == "keyword"
+        assert "KEYWORD_OUTCOME_FALLBACK is ON" in caplog.text
 
     def test_uninformative_triggers_llm(self):
         """No keyword match should fall through to LLM."""
