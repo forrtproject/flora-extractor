@@ -43,6 +43,24 @@ export OPENAI_FLEX_PATIENCE=600
   .venv/bin/python -m filter.engine screen --tier screen_expensive --release "$RELEASE" --run
   echo "screen exit $?"
 
+  # A sandbox batch gates the live run whenever Stage 3 code changed since the last
+  # night run (CLAUDE.md "Before a Run That Spends", rule 1). A crash stops the night;
+  # running out of OpenAlex budget is not a crash.
+  STAGE3_REV="$(git log -1 --format=%h -- extract shared)"
+  if [ "$(cat logs/.night_run_stage3_rev 2>/dev/null)" != "$STAGE3_REV" ]; then
+    echo "== sandbox gate: Stage 3 code changed (${STAGE3_REV})"
+    SB="logs/night_run_${STAMP}_sandbox.log"
+    .venv/bin/python -m extract.tier --run --release "$RELEASE" --mode validation \
+      --limit 30 --batch-label "night-gate-${STAMP}" > "$SB" 2>&1
+    rc=$?
+    grep -v "INFO\|WARNING" "$SB" | tail -12
+    if [ $rc -ne 0 ] && ! grep -q "OpenAlexQuotaExhausted" "$SB"; then
+      echo "REFUSED: the sandbox batch failed (exit $rc); see $SB"
+      exit 3
+    fi
+    echo "$STAGE3_REV" > logs/.night_run_stage3_rev
+  fi
+
   echo "== extract dry run"
   .venv/bin/python -m extract.tier --release "$RELEASE" ${LIMIT:+--limit "$LIMIT"} 2>&1 \
     | grep -v "INFO\|WARNING"
