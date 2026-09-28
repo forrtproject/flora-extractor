@@ -1553,7 +1553,8 @@ def test_a_survey_export_is_never_the_fallback(tmp_path):
         with patch.object(ps, "get_osf_registration", return_value=None) as reg, \
              patch.object(ps, "download_pdf", side_effect=_download), \
              patch.object(ps, "rank_osf_files", side_effect=lambda f, t: f), \
-             patch.object(ps, "osf_front_page_kind", return_value="survey"):
+             patch.object(ps, "osf_front_page_kind", return_value="survey"), \
+             patch.object(ps, "get_pdf_via_playwright", return_value=_NO_PLAYWRIGHT):
             out = ps.acquire_pdf("10.17605/osf.io/abc14", "A Title")
     finally:
         for p in patchers.values():
@@ -1565,7 +1566,7 @@ def test_a_survey_export_is_never_the_fallback(tmp_path):
 def test_the_first_page_check_reads_a_pdf_too(tmp_path):
     path = tmp_path / "file.pdf"
     path.write_bytes(b"%PDF-1.4 x")
-    with patch("pdfminer.high_level.extract_text",
+    with patch("shared.grobid.pdfminer_text",
                return_value="Stage 1 Registered Report: a replication of X") as ex:
         assert ps.osf_front_page_kind(path) == "plan"
     assert ex.call_args.kwargs["maxpages"] == 1

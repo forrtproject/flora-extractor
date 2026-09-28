@@ -1058,8 +1058,8 @@ def osf_front_page_kind(path: Path) -> str:
     else:
         try:
             import io
-            from pdfminer.high_level import extract_text
-            text = extract_text(io.BytesIO(content), maxpages=1) or ""
+            from .grobid import pdfminer_text   # lazy; bounded on plot pages
+            text = pdfminer_text(io.BytesIO(content), maxpages=1) or ""
         except Exception:
             return ""
     front = " ".join(text.split())[:_FRONT_CHARS]
