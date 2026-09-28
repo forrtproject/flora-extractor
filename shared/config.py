@@ -120,14 +120,21 @@ OPENALEX_API_KEYS: list[str] = [
 # and the first entry of OPENALEX_API_KEYS usually are.
 OPENALEX_API_KEYS = list(dict.fromkeys(OPENALEX_API_KEYS))
 
-# SerpAPI keys in rotation order — add SERPAPI_KEY_2 to .env for failover
-SERPAPI_KEYS: list[str] = [
+# SerpAPI keys in rotation order: SERPAPI_KEY, SERPAPI_KEY_2, then the
+# comma-separated SERPAPI_API_KEYS (the name the download-paper skill reads).
+SERPAPI_KEYS: list[str] = list(dict.fromkeys(
     k for k in [
         os.getenv("SERPAPI_KEY",  ""),
         os.getenv("SERPAPI_KEY_2", ""),
+        *[k.strip() for k in os.getenv("SERPAPI_API_KEYS", "").split(",")],
     ] if k
-]
+))
 SERPAPI_KEY = SERPAPI_KEYS[0] if SERPAPI_KEYS else ""  # backward-compat
+# Serper.dev keys (comma-separated), rotated on refusal. The Google Scholar tier asks
+# Serper when any key is set and SerpAPI otherwise: ~$1 per 1,000 searches against
+# SerpAPI's $75 a month for 5,000 (prices read 2026-09-24).
+SERPER_API_KEYS: list[str] = list(dict.fromkeys(
+    k.strip() for k in os.getenv("SERPER_API_KEYS", "").split(",") if k.strip()))
 
 # Dynamic Gemini key loading — add GEMINI_API_KEY_N to .env for any N ≥ 2.
 # Keys must be sequential (2, 3, 4, …); loading stops at the first missing slot.
@@ -147,6 +154,9 @@ RESEARCHER_EMAIL = os.getenv("RESEARCHER_EMAIL", "research@example.com")
 S2_API_KEY = os.getenv("S2_API_KEY") or os.getenv("SEMANTIC_SCHOLAR_KEY", "")
 # Elsevier Scopus API key — optional abstract-backfill tier (~10k requests/week quota)
 ELSEVIER_API_KEY = os.getenv("ELSEVIER_API_KEY", "")
+# CORE (core.ac.uk) API v3 key — the CORE acquisition tier is skipped without one,
+# because the v3 search answers anonymous callers with 429.
+CORE_API_KEY = os.getenv("CORE_API_KEY", "").strip()
 # An institutional token grants Scopus entitlement off the subscribing network;
 # without it Elsevier entitlement is IP-bound (campus network / VPN).
 ELSEVIER_INSTTOKEN = os.getenv("ELSEVIER_INSTTOKEN", "").strip()
