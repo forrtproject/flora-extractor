@@ -41,7 +41,7 @@ the command, pasteable from the project root, and what proves it worked.
       imports it with `retire_superseded` SUCCESS.
 
 - [ ] **Finish the option-B campaign: nightly runs at 01:15 BST (after the midnight-UTC
-      OpenAlex reset), systemd user timers `flora-night-run-4.timer` (nightly from 2026-10-02; the 2026-10-01 run moved to 13:15 as `flora-day-run-1001.timer` because another project had OpenAlex priority that night), `scripts/night_run.sh
+      OpenAlex reset), systemd user timers `flora-night-run-4.timer` (nightly from 2026-10-02; paused on 2026-10-01 because another project had OpenAlex priority), `scripts/night_run.sh
       2d767fe03199`.** First night (2026-09-25/26): screen 17,962 decided — proceed 11,514,
       discard 6,227, 221 incomplete (re-asked by the next run); extraction ran ~2,575 works
       until OpenAlex's daily budget ran out at 09:48 UTC; 8,757 left (≈61k OpenAlex credits,
