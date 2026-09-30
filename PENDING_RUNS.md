@@ -23,23 +23,6 @@ the command, pasteable from the project root, and what proves it worked.
 
 ## Open
 
-- [ ] **Import the 2026-09-24 export and retire what it stopped shipping.** flora-extractor
-      `4de666d` (pushed) ships `data/extracted.csv` (3,683 rows) and `data/retired_pairs.csv`.
-      Owed in flora-validation: merge PR #13 (sync baseline recovery by checksum, import
-      pair-reassignment fix, nightly auto-retire; creates `retired_records` on startup), set
-      Railway `EXTRACTOR_MAX_REMOVAL_PERCENT=17` for one run (removal is 16.1% of the 2,999
-      pairs imported at `d7f55d9`), let the nightly run or "Sync + report" import and
-      auto-retire (~540 retired, ~5 flagged), then set it back to 10. Done when the run's
-      `stage_status` shows `sync_csv` and `retire_superseded` SUCCESS.
-
-- [ ] **Re-render after the flora-validation import lands** (not before: every render moves
-      the removal share the maintainer's one-off `EXTRACTOR_MAX_REMOVAL_PERCENT=17` was set
-      for). Owed by `6cbdb36` (clean_doi re-spelling: 24 pair ids superseded, 1 held) and any
-      later Stage 3 change. `.venv/bin/python -m extract.export --release <newest> --check`,
-      then without `--check`; commit `data/extracted.csv` together with
-      `data/retired_pairs.csv` and the set-aside CSVs, push. Done when the next nightly run
-      imports it with `retire_superseded` SUCCESS.
-
 - [ ] **Finish the option-B campaign: nightly runs at 01:15 BST (after the midnight-UTC
       OpenAlex reset), systemd user timers `flora-night-run-4.timer` (nightly from 2026-10-02; paused on 2026-10-01 because another project had OpenAlex priority), `scripts/night_run.sh
       2d767fe03199`.** First night (2026-09-25/26): screen 17,962 decided — proceed 11,514,
@@ -54,6 +37,23 @@ the command, pasteable from the project root, and what proves it worked.
       its claims lapse, and the next night resumes.
 
 ## Done
+
+- [x] **DONE 2026-09-30** — rendered on release 2d767fe03199: extracted.csv 3,683 → 7,792 rows; 28 retirements appended (0.8% of the imported pairs). Later campaign nights need another render. Original entry:  **Re-render after the flora-validation import lands** (not before: every render moves
+      the removal share the maintainer's one-off `EXTRACTOR_MAX_REMOVAL_PERCENT=17` was set
+      for). Owed by `6cbdb36` (clean_doi re-spelling: 24 pair ids superseded, 1 held) and any
+      later Stage 3 change. `.venv/bin/python -m extract.export --release <newest> --check`,
+      then without `--check`; commit `data/extracted.csv` together with
+      `data/retired_pairs.csv` and the set-aside CSVs, push. Done when the next nightly run
+      imports it with `retire_superseded` SUCCESS.
+
+- [x] **DONE 2026-09-30** — admin "Sync + report" run cd9302ef at 19:12 UTC imported commit d7d239d (same data as 4de666d): +1,137 / −483 pairs (16.1%, cap 17), retire_superseded SUCCESS: 550 archived and deleted, 10 flagged. Original entry:  **Import the 2026-09-24 export and retire what it stopped shipping.** flora-extractor
+      `4de666d` (pushed) ships `data/extracted.csv` (3,683 rows) and `data/retired_pairs.csv`.
+      Owed in flora-validation: merge PR #13 (sync baseline recovery by checksum, import
+      pair-reassignment fix, nightly auto-retire; creates `retired_records` on startup), set
+      Railway `EXTRACTOR_MAX_REMOVAL_PERCENT=17` for one run (removal is 16.1% of the 2,999
+      pairs imported at `d7f55d9`), let the nightly run or "Sync + report" import and
+      auto-retire (~540 retired, ~5 flagged), then set it back to 10. Done when the run's
+      `stage_status` shows `sync_csv` and `retire_superseded` SUCCESS.
 
 - [x] **DONE 2026-09-23 — deleted.** HF commit `e284f62` removed the 14 `builds/*/candidates-*.parquet`; the remote now lists 2,232 pool files under gate `d536bc51b9b2`. A fresh `pool_sync --pull --no-overlay` into a scratch dir stamped `expected_files: 2232` and `pool_fingerprint()` returned `d34c277e…`, identical to the local pool. Original entry: **Decide what to do about the 14 `candidates-*.parquet` files in the shared
       pool repo.** `lukaswallrich/flora-survivor-pool` carries them in the pool root
