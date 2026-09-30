@@ -46,7 +46,7 @@ the command, pasteable from the project root, and what proves it worked.
       discard 6,227, 221 incomplete (re-asked by the next run); extraction ran ~2,575 works
       until OpenAlex's daily budget ran out at 09:48 UTC; 8,757 left (≈61k OpenAlex credits,
       so ~3-4 more nights at this budget). Done when the extract dry run offers ~0 works;
-      then `systemctl --user stop flora-night-run-2.timer` and re-render (after the import).
+      then `systemctl --user stop flora-night-run-4.timer` and re-render (after the import).
       **Start every run under a memory cap:** `systemd-run --user -p MemoryMax=8G -p
       MemorySwapMax=0 … scripts/night_run.sh 2d767fe03199` (as a timer's service
       properties, the same two). The 2026-09-27 night grew past 14 GB of the box's 15 and
