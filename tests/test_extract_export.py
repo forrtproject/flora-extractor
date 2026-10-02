@@ -523,6 +523,33 @@ def test_a_resolved_method_with_no_doi_o_is_demoted_before_it_is_bucketed():
     assert filed["link_evidence"].startswith("demoted by sanity_check")
 
 
+def test_two_works_with_one_pair_id_ship_once_and_a_repeat_is_never_written(tmp_path):
+    """OpenAlex holds some papers twice (an APA `10.1037//` record, a repository
+    copy); both copies extract to the same pair_id, which the validation import
+    refuses. A shippable row wins, then the previously shipped work, then
+    confidence, then the lower id."""
+    publisher = _row({**_MULTI_A, "oa_work_id_r": "W2000000001"})
+    duplicate = _row({**_MULTI_A, "oa_work_id_r": "W4200000001"})
+    unshipped = _row({**_MULTI_A, "oa_work_id_r": "W1000000001", "paper_type": ""})
+    kept, dropped = export_mod.collapse_duplicate_pairs(
+        [duplicate, unshipped, publisher], set())
+    assert [r["oa_work_id_r"] for r in kept] == ["W2000000001"]
+    assert len(dropped) == 2
+
+    kept, _ = export_mod.collapse_duplicate_pairs([publisher, duplicate], {4200000001})
+    assert [r["oa_work_id_r"] for r in kept] == ["W4200000001"]
+
+    low = _row({**_MULTI_A, "oa_work_id_r": "W1000000001",
+                "original_match_confidence": "low"})
+    kept, _ = export_mod.collapse_duplicate_pairs([low, duplicate], set())
+    assert [r["oa_work_id_r"] for r in kept] == ["W4200000001"]
+
+    with pytest.raises(SystemExit, match="repeated"):
+        export_mod.write({"main": [publisher, duplicate], "aside": {}},
+                         tmp_path / "extracted.csv")
+    assert not (tmp_path / "extracted.csv").exists()
+
+
 def test_check_reports_a_difference_and_writing_removes_it(tmp_path):
     out = tmp_path / "extracted.csv"
     report = export_mod.render(_client([_verdict(21, row_id="v-21")]))

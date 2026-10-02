@@ -379,10 +379,54 @@ def partition(rows: list[dict], *, include_unconfirmed_search: bool = False
     return main, aside
 
 
+_CONFIDENCE_RANK = {"high": 0, "medium": 1, "low": 2}
+
+
+def collapse_duplicate_pairs(rows: list[dict], shipped_before: set[int]
+                             ) -> tuple[list[dict], list[tuple[dict, dict]]]:
+    """`(rows with one per pair_id, [(dropped, kept)])`.
+
+    The work is the unit a verdict is stored under, but `pair_id` is the unit the
+    validation import keys on, and OpenAlex holds some papers as two works with one
+    DOI — an APA `10.1037//` record beside the `10.1037/` one, a repository copy
+    carrying the publisher's DOI. Each is screened and extracted on its own, and once
+    `clean_doi()` collapsed `//` (2026-09-25) both copies hash to one pair_id, which
+    the import refuses. One copy is kept by a fixed preference: a row the import would
+    take, then the work the committed file already shipped, then the higher link and
+    match confidence, then the lower work id.
+    """
+    # ponytail: "publisher over repository copy" is not decidable here — the source
+    # type lives in the pool's primary_location, which a pure render does not read;
+    # the lower work id stands in. Carry the source type on the payload if it matters.
+    def preference(row: dict) -> tuple:
+        work = _work_number(row.get("oa_work_id_r"))
+        return (not shipped(row), work not in shipped_before,
+                _CONFIDENCE_RANK.get(str(row.get("link_confidence") or "").strip(), 3),
+                _CONFIDENCE_RANK.get(
+                    str(row.get("original_match_confidence") or "").strip(), 3),
+                work if work is not None else float("inf"))
+
+    best: dict[str, dict] = {}
+    for row in rows:
+        pair = str(row.get("pair_id") or "").strip()
+        if pair and (pair not in best or preference(row) < preference(best[pair])):
+            best[pair] = row
+    kept: list[dict] = []
+    dropped: list[tuple[dict, dict]] = []
+    for row in rows:
+        pair = str(row.get("pair_id") or "").strip()
+        if not pair or best[pair] is row:
+            kept.append(row)
+        else:
+            dropped.append((row, best[pair]))
+    return kept, dropped
+
+
 def render(client: ClaimsClient, *, mode: str = "live",
            current_generation_only: bool = False,
            admitted: Optional[set[int]] = None,
            include_unconfirmed_search: bool = False,
+           shipped_before: frozenset[int] = frozenset(),
            data_dir: Path = DATA_DIR) -> dict:
     """The whole export, in memory: the main rows, the set-asides, and the counts.
 
@@ -390,6 +434,9 @@ def render(client: ClaimsClient, *, mode: str = "live",
     before anything is counted or rendered, so every number below it, `--check`
     included, describes the same filtered set. The superseded-generation count is
     recomputed over what survived, or it would report rows this render did not carry.
+
+    *shipped_before* — the work ids the committed file shipped, preferred when two
+    works render the same pair_id (`collapse_duplicate_pairs`).
     """
     results, stale = latest_results(
         client, mode=mode, current_generation_only=current_generation_only)
@@ -448,7 +495,9 @@ def render(client: ClaimsClient, *, mode: str = "live",
     rows = list(rows_from_results(results))
     main, aside = partition(rows,
                             include_unconfirmed_search=include_unconfirmed_search)
+    main, duplicate_pairs = collapse_duplicate_pairs(main, set(shipped_before))
     return {"works": len(results), "rows": len(rows), "main": main, "aside": aside,
+            "duplicate_pairs": duplicate_pairs,
             "already_in_flora": suppressed,
             "superseded_generation": stale, "not_admitted": not_admitted,
             "screen_discarded": screen_discarded, "dropped": dropped,
@@ -669,6 +718,12 @@ def write(report: dict, out_csv: Path) -> dict:
     and their `.lock` sidecars are removed: production's set-aside directory IS
     `data/`, which holds `flora.csv`, the entry sheet and the DVC pointers.
     """
+    # The validation import refuses a file with a repeated pair_id; refuse it here first.
+    pairs = Counter(str(row.get("pair_id") or "").strip() for row in report["main"])
+    repeated = sorted(pair for pair, count in pairs.items() if pair and count > 1)
+    if repeated:
+        raise SystemExit(f"refusing to write {out_csv}: {len(repeated)} pair_id(s) "
+                         f"repeated in the main rows: {', '.join(repeated[:10])}")
     out_csv = Path(out_csv)
     written = {out_csv.name: _write_csv(out_csv, report["main"])}
     out_dir = set_aside_dir(out_csv)
@@ -805,10 +860,21 @@ def main(argv: Optional[list[str]] = None) -> int:
         raise SystemExit(f"{exc}. The verdicts this renders live in the state "
                          "authority, so there is nothing to render without it.")
 
+    # Only a live render to the production file has a validation queue behind it; a
+    # sandbox render must never name production records for retirement.
+    manifest_applies = (args.mode == "live"
+                        and Path(args.out).resolve() == DEFAULT_OUT.resolve())
+    previous, baseline = ({}, "none")
+    if manifest_applies:
+        previous, baseline = previous_shipped(args.out,
+                                              args.retired_baseline or ["HEAD"])
     report = render(client, mode=args.mode,
                     current_generation_only=args.current_generation_only,
                     admitted=admitted,
-                    include_unconfirmed_search=args.include_unconfirmed_search)
+                    include_unconfirmed_search=args.include_unconfirmed_search,
+                    shipped_before=frozenset(
+                        work for row in previous.values()
+                        if (work := _work_number(row.get("oa_work_id_r"))) is not None))
     print(f"generation {extract_generation()}  mode {args.mode}")
     print(f"  {report['works']:,} work(s) → {report['rows']:,} row(s)")
     for ending, count in sorted(report["endings"].items()):
@@ -828,6 +894,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(f"  rows from a superseded generation: "
               f"{report['superseded_generation']:,}  (carried forward; "
               "--current-generation-only drops them)")
+    # Printed at zero too, like the other drops.
+    print(f"  rows dropped as a second work with the same pair_id: "
+          f"{len(report['duplicate_pairs']):,}")
+    for dropped, kept in report["duplicate_pairs"]:
+        print(f"    {dropped.get('pair_id', '')}  dropped {dropped.get('oa_work_id_r', '')}"
+              f"  kept {kept.get('oa_work_id_r', '')}")
 
     # Between what would be rendered and what is done with it, so every path prints it
     # once — the render, the --check diff and the write alike.
@@ -839,14 +911,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             print(f"      {entry}")
         print()
 
-    # Only a live render to the production file has a validation queue behind it; a
-    # sandbox render must never name production records for retirement.
-    manifest_applies = (args.mode == "live"
-                        and Path(args.out).resolve() == DEFAULT_OUT.resolve())
     retired: list[dict] = []
     if manifest_applies:
-        previous, baseline = previous_shipped(args.out,
-                                              args.retired_baseline or ["HEAD"])
         retired, held = retirements(previous, report, baseline=baseline,
                                     release=release_id,
                                     generation=extract_generation())
