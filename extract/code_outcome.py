@@ -47,7 +47,7 @@ from typing import Optional
 
 from shared.config import LLM_CACHE_DIR, OUTCOME_EFFORT, OUTCOME_MODEL, log
 from shared import token_counter
-from shared.cache import content_key, read_cache, write_cache
+from shared.cache import content_key, read_cache, read_cache_migrating, write_cache
 from shared.llm_client import cache_model_id, call_model
 from shared.prompts import (
     build_outcome_prompt, build_repro_outcome_prompt, prompt_version,
@@ -360,14 +360,20 @@ def _outcome_result(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
 
     is_repro = str(record_type or "").strip().lower() == "reproduction"
     build = build_repro_outcome_prompt if is_repro else build_outcome_prompt
-    version = prompt_version(
-        "build_repro_outcome_prompt" if is_repro else "build_outcome_prompt")
+    builder_name = "build_repro_outcome_prompt" if is_repro else "build_outcome_prompt"
+    version = prompt_version(builder_name)
     parts = (record_type, title_r, abstract_snip,
              original_authors, original_year, original_title,
              original_evidence, intro_snip, fulltext_provenance, text_snip)
     model_id = cache_model_id(OUTCOME_MODEL, OUTCOME_EFFORT)
     key = content_key("outcome", doi_r, model_id, version, *parts)
-    cached = read_cache(LLM_CACHE_DIR, key)
+    from shared.prompts import _expanded_quote_sources, quote_source_legacy_version
+    old = quote_source_legacy_version(builder_name, _expanded_quote_sources(
+        discussion=text_snip, provenance=fulltext_provenance))
+    legacy = ([content_key("outcome", doi_r, model_id, old, *parts)] if old else [])
+    cached = read_cache_migrating(LLM_CACHE_DIR, key, legacy,
+                                 {"reason": "quote-source contract: identical rendered prompt",
+                                  "prompt_version": version})
     if cached is not None:
         cached.setdefault("outcome_reasoning", "")
         cached.setdefault("target_check", "")

@@ -4107,3 +4107,25 @@ class TestOneOriginalSpelledTwoWays:
             self._entry("10.1037/0022-3514.63.4.596"),
             self._entry("10.1037/0022-3514.63.4.597", title="Original B")])
         assert [c["rank"] for c in collapsed] == [1, 2]
+
+
+@pytest.mark.parametrize("provenance,expected_calls", [("discussion", 0), ("tail", 1)])
+def test_quote_source_edit_reuses_only_unchanged_outcome_cache(monkeypatch, tmp_path, provenance, expected_calls):
+    from shared import prompts
+    from shared.cache import write_cache
+    old = prompts._QUOTE_SOURCE_VERSION_PAIRS["build_outcome_prompt"][1]
+    model_id = code_outcome.cache_model_id(code_outcome.OUTCOME_MODEL, code_outcome.OUTCOME_EFFORT)
+    parts = ("replication", "T", "A", "", "", "", "", "", provenance, "Closing.")
+    legacy = content_key("outcome", "10.1/q", model_id, old, *parts)
+    write_cache(tmp_path, legacy, {"outcome": "successful", "sentinel": "old"})
+    monkeypatch.setattr(code_outcome, "LLM_CACHE_DIR", tmp_path)
+    calls = []
+    def fresh(prompt, doi):
+        calls.append(prompt)
+        return {"outcome": "successful", "confident": True, "record_type_check": "replication", "target_check": "this_original"}, "test-model"
+    monkeypatch.setattr(code_outcome, "_call_outcome_llm", fresh)
+    result, _ = code_outcome._outcome_result("10.1/q", "T", "A", "Closing.", fulltext_provenance=provenance)
+    assert len(calls) == expected_calls
+    assert (result.get("sentinel") == "old") == (expected_calls == 0)
+    if not expected_calls:
+        assert result["cache_migrated"]["from_key"] == legacy

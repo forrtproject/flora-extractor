@@ -179,9 +179,10 @@ EXTRACT_ADDED_COLS = [
                            #         the same way for both record types — the way flora.csv stores it.
     "outcome_phrase",      # str   — supporting quote from the paper
     "outcome_confidence",  # str   — high | medium | low
-    "out_quote_source",    # str   — title | abstract | introduction | discussion (or two
-                           #         joined by " | "). "fulltext" is the legacy value, written
-                           #         while one undifferentiated body block was sent.
+    "out_quote_source",    # str   — title | abstract | introduction | methods | results |
+                           #         discussion | fulltext (or two joined by " | ").
+                           #         fulltext means the document's section is unidentified;
+                           #         discussion includes Conclusion. Legacy rows stay as recorded.
     "outcome_reasoning",  # str   — one-sentence LLM note explaining the classification choice
 
     # Reproduction outcome axes — empty on a replication row. The 4x3 grid is stored
