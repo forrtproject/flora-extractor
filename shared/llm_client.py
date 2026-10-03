@@ -1122,7 +1122,14 @@ def resolve_targets_and_outcomes(doi_r:       str,
     model_id = cache_model_id(LINKING_MODEL, LINKING_EFFORT)
     key = content_key("targetoutcome", doi_r or study_r, version, model_id,
                       rung, record_type, identities, prompt)
-    cached = read_cache(LLM_CACHE_DIR, key)
+    from .prompts import _expanded_quote_sources, quote_source_legacy_version
+    old = quote_source_legacy_version(builder_name, _expanded_quote_sources(
+        full_body=full_body, discussion=discussion, provenance=discussion_provenance))
+    legacy = ([content_key("targetoutcome", doi_r or study_r, old, model_id,
+                           rung, record_type, identities, prompt)] if old else [])
+    cached = read_cache_migrating(LLM_CACHE_DIR, key, legacy,
+                                 {"reason": "quote-source contract: identical rendered prompt",
+                                  "prompt_version": version})
     if cached is not None:
         cached.setdefault("llm_source", "cache")
         cached.setdefault("llm_prompt", "")
@@ -2031,11 +2038,19 @@ def check_reference_pick(doi_r: str, study_r: str, abstract_r: str,
     prompt = build_pick_check_prompt(study_r, abstract_r, entries, evidence_quote)
     identities = "|".join(f"{e['key']}:{e.get('doi') or e.get('openalex_id') or ''}"
                           for e in entries)
+    version = prompt_version("build_pick_check_prompt")
     key = content_key("pickcheck", doi_r or study_r,
-                      prompt_version("build_pick_check_prompt"),
+                      version,
                       cache_model_id(PICK_CHECK_MODEL, PICK_CHECK_EFFORT),
                       identities, prompt)
-    answer = read_cache(LLM_CACHE_DIR, key)
+    from .prompts import quote_source_legacy_version
+    old = quote_source_legacy_version("build_pick_check_prompt", False)
+    legacy = ([content_key("pickcheck", doi_r or study_r, old,
+                           cache_model_id(PICK_CHECK_MODEL, PICK_CHECK_EFFORT),
+                           identities, prompt)] if old else [])
+    answer = read_cache_migrating(LLM_CACHE_DIR, key, legacy,
+                                 {"reason": "body renderer changed; checker prompt identical",
+                                  "prompt_version": version})
     if answer is None:
         result, _provider, llm_error = call_model(prompt, PICK_CHECK_MODEL,
                                                   reasoning_effort=PICK_CHECK_EFFORT,

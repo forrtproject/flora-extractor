@@ -791,15 +791,15 @@ def test_a_declared_generation_equivalence_is_keyed_by_the_current_generation():
             f"since it was declared — re-review the equivalence or delete it")
 
 
-def test_the_sibling_pick_prompt_preserves_all_prior_settled_extract_generations():
+def test_the_quote_source_edit_retains_all_prior_settled_extract_generations():
     """The 2026-09-23 target-prompt edit (sibling rule + `_2` key suffix), the blind
     pick check after it and the gpt-6-luna switch before it must not reopen works
     settled under any prior declaration: the llm_references population is reopened
     by name instead."""
     from filter.engine.tiers import _generation_current
 
-    assert extract_generation() == "25e2b6bb31821d84"
-    for previous in ("765e053cd24611e5", "474e80e4c32a6dfa", "7dbb1e92452d8333", "010cf32bb63351e1", "ca0706ef44827229",
+    assert extract_generation() == "619cc46f58c39395"
+    for previous in ("25e2b6bb31821d84", "765e053cd24611e5", "474e80e4c32a6dfa", "7dbb1e92452d8333", "010cf32bb63351e1", "ca0706ef44827229",
                      "061cb5ca8e1888b6", "243ae515c654b6e5",
                      "5b716d061bb336f5", "dd7572887420ef65"):
         assert _generation_current(tier_mod.TIER_EXTRACT, previous, [])
