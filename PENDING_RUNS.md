@@ -23,7 +23,11 @@ the command, pasteable from the project root, and what proves it worked.
 
 ## Open
 
-- [ ] **Finish the option-B campaign: nightly runs at 01:15 BST (after the midnight-UTC
+_(none)_
+
+## Done
+
+- [x] **DONE 2026-10-05** — last batch 2026-10-04 night; 3 open works remain (retries). Timer stopped; final render 9,608 rows. Original entry:  **Finish the option-B campaign: nightly runs at 01:15 BST (after the midnight-UTC
       OpenAlex reset), systemd user timers `flora-night-run-4.timer` (nightly from 2026-10-02; paused on 2026-10-01 because another project had OpenAlex priority), `scripts/night_run.sh
       2d767fe03199`.** First night (2026-09-25/26): screen 17,962 decided — proceed 11,514,
       discard 6,227, 221 incomplete (re-asked by the next run); extraction ran ~2,575 works
@@ -35,8 +39,6 @@ the command, pasteable from the project root, and what proves it worked.
       properties, the same two). The 2026-09-27 night grew past 14 GB of the box's 15 and
       thrashed it until a hard reboot; with the cap a runaway run is killed on its own,
       its claims lapse, and the next night resumes.
-
-## Done
 
 - [x] **DONE 2026-09-30** — rendered on release 2d767fe03199: extracted.csv 3,683 → 7,792 rows; 28 retirements appended (0.8% of the imported pairs). Later campaign nights need another render. Original entry:  **Re-render after the flora-validation import lands** (not before: every render moves
       the removal share the maintainer's one-off `EXTRACTOR_MAX_REMOVAL_PERCENT=17` was set
