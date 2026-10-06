@@ -1,0 +1,4 @@
+rule,available_works,marginal_works,previously_reviewed,previously_actionable,fresh_sample_n,fresh_actionable,fresh_clear,fresh_uncertain,fresh_no,fresh_prospective,fresh_actionable_rate,estimated_actionable_rate,estimate_low,estimate_high,census
+replication-claim-extend-prior,2267,2267,80,52,60,43,44,3,11,2,0.7166666666666667,0.7143140714600794,0.5943600472705302,0.8091128976284832,False
+replication-claim-cited-abstract,1628,1585,251,169,60,35,35,11,7,7,0.5833333333333334,0.5975814931650895,0.491488691822471,0.6952334929033375,False
+replication-claim-failure-prior,129,123,96,70,27,26,26,1,0,0,0.9629629629629629,0.7804878048780488,0.7804878048780488,0.7804878048780488,True

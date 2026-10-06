@@ -173,6 +173,12 @@ CORPUS = [
     _row(work="https://openalex.org/W30", doi="10.17605/OSF.IO/EF56G",
          title="Anchoring in context: Replication materials",
          abstract="Materials for our replication of the original anchoring study."),
+    # Abstract-only extension claim, without the title/first-person claims the
+    # existing live rules required. This also exercises the row/batch backend
+    # seam and evidence recovery for the new extension admission.
+    _row(work="https://openalex.org/W31", title="Judgement in a new context",
+         abstract="The present research replicates and extends previous findings "
+                  "about judgement in a separate population."),
     # doi-registry-twin (950, shadow): issue #210's example — a 1948 cosmic-ray
     # record filed under a JEAB 2010 replication's DOI, named by its record id
     _row(work="https://openalex.org/W21279159", doi="10.1901/jeab.2010.94-13",

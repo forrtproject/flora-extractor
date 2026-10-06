@@ -1,0 +1,45 @@
+{
+  "id": "replication-claim-extend-prior",
+  "description": "ABSTRACT-CLAIM EXPANSION: replicate-and-extend wording anywhere in title plus abstract, together with a reference to an original/previous/prior/earlier/published/seminal/classic study, finding, result, experiment, paper, effect or research. The prior-study phrase allows up to two intervening words. This brings the measured additional abstract-level claims into the two-voter screen without promoting all eight broad replication-claim-text arms. The original study may be named only by the screen/extractor; co-occurrence is a screening signal, not a semantic or completion verdict. Precedence 738: below replication-claim-title-broad (740) and curated-observatory (745), retaining their attribution; above replication-claim-cited-abstract (737), replication-claim-failure-prior (736) and replication-claim-general (735), so prior-study replicate-and-extend claims receive the highest attribution of the three new measured pools. Like the general rule it yields to the structural discards (935-960) and outranks the fallible not-a-study-type crosswalk (500). Repository DOI and replication-package/materials/data/code title exclusions are copied verbatim from the live general rule. The rule requires an abstract, names no vocabulary and only schedules screening. Measured over the f4225e6 live-bundle baseline; analysis/admission_rules_2026_10/README.md records the frozen population, marginal order, uncertainty and model labels.",
+  "match": {
+    "text_regex": "\\breplicat\\w*\\s+(?:and|&)\\s+exten\\w*\\b",
+    "all_of": [
+      {
+        "text_regex": "\\b(?:original|previous|prior|earlier|published|seminal|classic)\\s+(?:\\w+\\s+){0,2}(?:stud(?:y|ies)|findings?|results?|experiments?|papers?|effects?|research)\\b"
+      }
+    ],
+    "abstract_missing": false,
+    "none_of": [
+      {
+        "doi_prefix": [
+          "10.5281",
+          "10.6084",
+          "10.7910",
+          "10.3886",
+          "10.17632",
+          "10.15456",
+          "10.24433",
+          "10.5061"
+        ]
+      },
+      {
+        "title_regex": "\\breplication\\s+(?:package|data|files?|materials?|code)"
+      }
+    ]
+  },
+  "pile": "screen_expensive",
+  "vocabulary": null,
+  "precedence": 738,
+  "shadow": false,
+  "measured": [
+    {
+      "level": "llm:gpt-6.1-sol@medium",
+      "precision": 0.7143140714600794,
+      "n": 140,
+      "sample": "analysis/admission_rules_2026_10/screened_cases.csv, rule=replication-claim-extend-prior; 80 previously reviewed marginal works plus 60 uniformly sampled fresh works (seed 20261007) from the remaining marginal pool, read blind from title and abstract; see populations.csv and manifest.json.",
+      "date": "2026-10-06",
+      "owner": "flora-extractor",
+      "rationale": "2267 additional available works after preceding new rules, excluding existing live screening admissions, FLoRA doi_r, exported and validated-skip works. Fresh pilot: 43/60 clear with source-matched quotes and no obvious title/abstract mismatch. Previously reviewed members: 52/80 clear under the same policy. Precision field is a population-weighted estimate of model-judged actionable yield (0.714), not independently validated truth or the production two-voter proceed rate. Conditional fresh-sample Wilson interval, weighted with the observed previous members: 0.594-0.809; no bound on model-label error. Admission only; no automatic acceptance/discard and no screen-generation change."
+    }
+  ]
+}

@@ -37,6 +37,9 @@ EXPECTED = {
     "replication-claim-title-strong": ("screen_expensive", 750, None, False),
     "curated-observatory": ("screen_expensive", 745, None, False),
     "replication-claim-title-broad": ("screen_expensive", 740, None, False),
+    "replication-claim-extend-prior": ("screen_expensive", 738, None, False),
+    "replication-claim-cited-abstract": ("screen_expensive", 737, None, False),
+    "replication-claim-failure-prior": ("screen_expensive", 736, None, False),
     "replication-claim-general": ("screen_expensive", 735, None, False),
     "replication-claim-text": ("screen_expensive", 730, None, True),
     "replication-claim-residual": ("screen_expensive", 710, None, True),
@@ -46,11 +49,12 @@ EXPECTED = {
     "replication-probe": ("screen_cheap", 100, "replication", True),
 }
 
-# The replication-claim family, narrowest first: the same twelve arms asked for
-# with decreasing strength. Every tier routes to the same pile, so precedence
-# inside the family decides attribution rather than destination.
+# Claim rules in precedence order. The abstract expansion adds measured subsets
+# of the broad/shadow arms; precedence decides attribution within the family.
 _CLAIM_TIERS = ("replication-claim-cited-title", "replication-claim-title-strong",
-                "replication-claim-title-broad", "replication-claim-general",
+                "replication-claim-title-broad", "replication-claim-extend-prior",
+                "replication-claim-cited-abstract", "replication-claim-failure-prior",
+                "replication-claim-general",
                 "replication-claim-text", "replication-claim-residual")
 _ADMISSION = _CLAIM_TIERS
 _ABOVE_ADMISSION = ("not-a-paper-doi", "doi-registry-twin", "deposit-registrant",
@@ -98,7 +102,7 @@ def test_admission_sits_between_the_two_kinds_of_discard():
             assert precedence[rule] < precedence[admission], (rule, admission)
 
 
-def test_the_expensive_screen_has_exactly_three_routes():
+def test_the_expensive_screen_uses_the_declared_admission_routes():
     """The `replication-claim-*` tiers are the phrase route, ordered
     narrowest-claim-first. `osf-registration-completed` admits on a registration
     template rather than on anything the text says — which is why it outranks the
@@ -111,6 +115,9 @@ def test_the_expensive_screen_has_exactly_three_routes():
                          "replication-claim-title-strong",
                          "curated-observatory",
                          "replication-claim-title-broad",
+                         "replication-claim-extend-prior",
+                         "replication-claim-cited-abstract",
+                         "replication-claim-failure-prior",
                          "replication-claim-general",
                          "replication-claim-text", "replication-claim-residual"]
 
@@ -123,7 +130,9 @@ def test_the_live_claim_tiers_are_the_narrowest_prefix_of_the_family():
             if s.id in _CLAIM_TIERS and not s.shadow]
     assert live == list(_CLAIM_TIERS[:len(live)])
     assert live == ["replication-claim-cited-title", "replication-claim-title-strong",
-                    "replication-claim-title-broad", "replication-claim-general"]
+                    "replication-claim-title-broad", "replication-claim-extend-prior",
+                    "replication-claim-cited-abstract", "replication-claim-failure-prior",
+                    "replication-claim-general"]
 
 
 def test_a_duplicate_id_across_two_files_is_rejected(tmp_path):
