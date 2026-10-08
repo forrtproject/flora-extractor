@@ -18,10 +18,10 @@ Discovery, screening, and extraction belong here. Human validation, entry-sheet 
 
 Once maintainers have agreed the scope and evaluation, fork the repository, create a focused branch from the current `main`, and open the PR against `main`. The historical `dev` branch is stale. Follow [docs/setup.md](docs/setup.md) for environment setup, and read [CLAUDE.md](CLAUDE.md) for architecture, scientific contracts, and development instructions. [AGENTS.md](AGENTS.md) points all coding agents to the same instructions.
 
-Use the project virtual environment. Ordinary tests mock external APIs; live tests belong in `tests/live/` and require `TEST_LIVE_API=1`. Run affected tests while developing, then the ordinary full suite before pushing code:
+Use your project Python environment. Ordinary tests mock external APIs; live tests belong in `tests/live/`. The current guards enable live requests for any non-empty `TEST_LIVE_API` value, including `0`; leave it unset for ordinary tests. Use `TEST_LIVE_API=1` only for an explicitly agreed live evaluation. Run affected tests while developing, then the ordinary full suite before pushing code:
 
 ```bash
-.venv/bin/pytest -q
+env -u TEST_LIVE_API python -m pytest -q
 ```
 
 Documentation-only changes can be checked for accurate commands, local links, and consistency with the implementation without running a research campaign. Do not run screening/extraction tiers, change stored verdicts or shared datasets, or make paid/live API calls as a routine PR check. Agree any research evaluation, data access, and spending with maintainers first.
