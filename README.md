@@ -108,12 +108,9 @@ Abstract backfill: Europe PMC, Semantic Scholar, Crossref, Scopus.
 
 ## Contributing
 
-1. Branch from `origin/main` (`feature/search`, `feature/filter`, `feature/extract`, `feature/validate`)
-2. Test with sample data in `misc/`
-3. Open a PR with `--base main` when a feature is stable — don't wait until the end
-4. `main` is branch-protected; all merges require a PR review
+This is a research pipeline whose screening, linking, and extraction decisions affect the resulting scientific dataset. **We welcome issues with bug reports, evidence, and suggestions. Unsolicited pull requests are unlikely to be merged.** Please discuss a proposed change with maintainers before implementing it.
 
-(The `dev` branch is stale — do not base work on it.)
+See [CONTRIBUTING.md](CONTRIBUTING.md) for useful issue reports and the workflow for agreed changes, and follow the [FORRT Code of Conduct](https://forrt.org/coc/).
 
 ---
 
