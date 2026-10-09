@@ -834,13 +834,16 @@ report, a commit message or a decision is read off the artifact.
 ## Testing
 
 Mock all external APIs in regular tests (`unittest.mock.patch`); never make live calls
-in `pytest` runs. Live tests go in `tests/live/` behind `TEST_LIVE_API=1`. Each stage
+in ordinary `pytest` runs. Unset `TEST_LIVE_API` for ordinary checks: the current
+guards treat any non-empty value, including `0`, as enabling live requests. Live
+tests go in `tests/live/`; use `TEST_LIVE_API=1` only for an agreed live evaluation. Each stage
 has a schema test via `validate_csv_columns()`. Do not over-test: one test per seam,
 and delete tests when their code path dies.
 
-**Run targeted tests while iterating, the full suite once.** `.venv/bin/pytest -q`
-over `tests/` takes 100–440 s. During iteration run only the affected file or class
-(`.venv/bin/pytest tests/test_engine_147_rules.py -q`); run the full suite once
+**Run targeted tests while iterating, the full suite once.** In your project Python
+environment, use `env -u TEST_LIVE_API python -m pytest -q`.
+The full suite over `tests/` takes 100–440 s. During iteration run only the affected file or class
+(`env -u TEST_LIVE_API python -m pytest tests/test_engine_147_rules.py -q`); run the full suite once
 before pushing.
 
 ## Environment
