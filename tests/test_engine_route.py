@@ -248,6 +248,28 @@ def test_the_row_entry_point_is_the_batch_backend(specs, corpus):
         assert eval_spec_rows(spec, rows) == eval_spec_batch(spec, batch).to_pylist(), spec.id
 
 
+@pytest.mark.parametrize("spec_id,abstract,matches", [
+    # The surname is a case-sensitive group inside the engine's (?i), so a
+    # sample size is not a citation, while APA's comma before the year is.
+    ("replication-claim-cited-abstract",
+     "We replicated the anchoring effect with 2000 participants online.", False),
+    ("replication-claim-cited-abstract",
+     "We replicated the anchoring effect (Smith et al., 2009) online.", True),
+    ("replication-claim-cited-abstract",
+     "We replicated the decoy effect of Østergaard, 2015 in Denmark.", True),
+    ("replication-claim-cited-abstract",
+     "In this study we aim to replicate Goerlich and colleagues (2014).", True),
+    ("replication-claim-extend-prior",
+     "We replicate-and-extend the original study of anchoring.", True),
+])
+def test_abstract_claim_expansion_edges(specs, spec_id, abstract, matches):
+    spec = next(s for s in specs if s.id == spec_id)
+    rows = [_row(title="Anchoring in a new sample", abstract=abstract)]
+    assert eval_spec_rows(spec, rows) == [matches]
+    if matches:
+        assert match_evidence(spec, _batch(rows)) != [""]
+
+
 def test_evidence_is_recovered_for_matched_rows_and_never_decides_one(specs):
     """`match_evidence()` reports WHERE a matched row matched. Every row the
     backend claims gets a non-empty string, and no row it did not claim is asked."""

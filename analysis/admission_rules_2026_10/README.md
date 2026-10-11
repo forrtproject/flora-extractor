@@ -27,8 +27,9 @@ production screen proceed rate, and it is not independent human validation.
   abstract, plus an earlier-study/finding/result reference anywhere in that text.
 - `replication-claim-cited-abstract` (737): first-person or present-study replication
   verb in the abstract, followed within 120 characters and the same clause by
-  author-year-style text. The engine is case insensitive: this is proximity to a
-  reference-shaped string, not proof that a capitalized surname names the target.
+  author-year-style text. The surname is a case-sensitive `(?-i:...)` group inside
+  the engine's `(?i)`, so it must be capitalised; this is still proximity to a
+  reference-shaped string, not proof that the surname names the target.
 - `replication-claim-failure-prior` (736): first-person failed/unable/attempted to
   replicate in the abstract, plus the earlier-study/finding/result anchor.
 
@@ -97,3 +98,35 @@ Paid API pilot spend was **$0**. Headless Codex used the existing ChatGPT login.
 The labels are research evidence, not permanent production screen verdicts.
 Adding the specs runs no routing or screening campaign and spends no pipeline
 budget. The normal next route picks them up after the change lands.
+
+## Review changes after measurement (2026-10-11)
+
+Two regex fixes from review landed after the sampling above, so the `measured`
+precision in the two specs describes the earlier patterns:
+
+- `replication-claim-cited-abstract`: the engine prefixes every pattern with
+  `(?i)`, so `[A-Z]` matched any letter and "with 2000 participants" or "using
+  2010 protocols" passed as a citation, while APA's "(Smith et al., 2009)" and
+  "Smith, 2019" did not. The surname is now a scoped `(?-i:...)` group that must
+  start with a capital (ASCII or Latin-1), may be followed by "et al.", "and
+  colleagues" or a study noun ("Swanson's study (1986)"), and allows a comma before
+  the year. RE2 and Python `re` both honour the scoped flag, so the batch backend
+  and evidence recovery agree.
+- `replication-claim-extend-prior`: "replicate-and-extend" (hyphenated) now matches.
+
+Reach over the same 5,146,160-row pool and overlay, counting only works that no
+other live `screen_expensive` rule admits (no FLoRA/exported/validated exclusions,
+so these are larger than the marginal pools above):
+
+| Rule | Old pattern | New pattern | Gained | Lost |
+| --- | ---: | ---: | ---: | ---: |
+| replication-claim-cited-abstract | 1,809 | 1,927 | 492 | 374 |
+| replication-claim-extend-prior | 2,442 | 2,444 | 2 | 0 |
+
+A snippet-level read of 25 random gained and 25 random lost cited-abstract works
+found more clear replication claims among the gained ("replicates Liszka's (2009)
+study", "replicate Rubin's (1976) work"). The lost still include some: a year placed
+before or far from the name ("the 1978 Dermer and Pysczinski study", "done in 1974
+by Lloyd S. Etheredge") was only ever matched by accident. That read is not a
+precision estimate; the cited-abstract yield should be re-measured on the new
+pattern before it is relied on.
