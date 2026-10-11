@@ -249,10 +249,16 @@ def test_the_row_entry_point_is_the_batch_backend(specs, corpus):
 
 
 @pytest.mark.parametrize("spec_id,abstract,matches", [
-    # The surname is a case-sensitive group inside the engine's (?i), so a
-    # sample size is not a citation, while APA's comma before the year is.
+    # cited-abstract is the measured arm OR the case-sensitive citation arm.
+    # The measured arm still admits word-plus-number text, deliberately: it also
+    # keeps year-first claims. The citation arm adds APA commas and Latin-1 names.
     ("replication-claim-cited-abstract",
-     "We replicated the anchoring effect with 2000 participants online.", False),
+     "We replicated the anchoring effect with 2000 participants online.", True),
+    ("replication-claim-cited-abstract",
+     "We replicated the essential features of the 1978 Dermer and Pysczinski study.",
+     True),
+    ("replication-claim-cited-abstract",
+     "We replicated the anchoring effect in a new sample online.", False),
     ("replication-claim-cited-abstract",
      "We replicated the anchoring effect (Smith et al., 2009) online.", True),
     ("replication-claim-cited-abstract",

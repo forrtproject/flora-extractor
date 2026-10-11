@@ -27,9 +27,9 @@ production screen proceed rate, and it is not independent human validation.
   abstract, plus an earlier-study/finding/result reference anywhere in that text.
 - `replication-claim-cited-abstract` (737): first-person or present-study replication
   verb in the abstract, followed within 120 characters and the same clause by
-  author-year-style text. The surname is a case-sensitive `(?-i:...)` group inside
-  the engine's `(?i)`, so it must be capitalised; this is still proximity to a
-  reference-shaped string, not proof that the surname names the target.
+  author-year-style text, by either of two arms (see "Review changes" below). This
+  is proximity to a reference-shaped string, not proof that a surname names the
+  target.
 - `replication-claim-failure-prior` (736): first-person failed/unable/attempted to
   replicate in the abstract, plus the earlier-study/finding/result anchor.
 
@@ -101,32 +101,41 @@ budget. The normal next route picks them up after the change lands.
 
 ## Review changes after measurement (2026-10-11)
 
-Two regex fixes from review landed after the sampling above, so the `measured`
-precision in the two specs describes the earlier patterns:
+Two fixes from review landed after the sampling above. Both only ADD matches, so
+every work the measured patterns admitted is still admitted.
 
-- `replication-claim-cited-abstract`: the engine prefixes every pattern with
-  `(?i)`, so `[A-Z]` matched any letter and "with 2000 participants" or "using
-  2010 protocols" passed as a citation, while APA's "(Smith et al., 2009)" and
-  "Smith, 2019" did not. The surname is now a scoped `(?-i:...)` group that must
-  start with a capital (ASCII or Latin-1), may be followed by "et al.", "and
-  colleagues" or a study noun ("Swanson's study (1986)"), and allows a comma before
-  the year. RE2 and Python `re` both honour the scoped flag, so the batch backend
-  and evidence recovery agree.
+- `replication-claim-cited-abstract` is now `any_of` two arms:
+  1. **The measured arm**, byte-identical to the pattern sampled above. The engine
+     prefixes every pattern with `(?i)`, so its `[A-Z]` matches any word: it admits
+     word-plus-number noise ("with 2000 participants", "using 2010 protocols"), but
+     also real claims whose year comes before or far from the name ("the 1978
+     Dermer and Pysczinski study", "done in 1974 by Lloyd S. Etheredge"). It is kept
+     whole because dropping it lost both kinds together.
+  2. **The citation arm**, which catches what the measured arm missed: the surname
+     is a scoped `(?-i:...)` group that must start with a capital (ASCII or
+     Latin-1), may be followed by "et al.", "and colleagues" or a study noun
+     ("Swanson's study (1986)"), and allows a comma before the year, so APA's
+     "(Smith et al., 2009)" and "Smith, 2019" match. RE2 and Python `re` both
+     honour the scoped flag, so the batch backend and evidence recovery agree.
 - `replication-claim-extend-prior`: "replicate-and-extend" (hyphenated) now matches.
 
 Reach over the same 5,146,160-row pool and overlay, counting only works that no
 other live `screen_expensive` rule admits (no FLoRA/exported/validated exclusions,
 so these are larger than the marginal pools above):
 
-| Rule | Old pattern | New pattern | Gained | Lost |
+| Rule | Measured pattern | Now | Added | Lost |
 | --- | ---: | ---: | ---: | ---: |
-| replication-claim-cited-abstract | 1,809 | 1,927 | 492 | 374 |
+| replication-claim-cited-abstract | 1,809 | 2,301 | 492 | 0 |
 | replication-claim-extend-prior | 2,442 | 2,444 | 2 | 0 |
 
-A snippet-level read of 25 random gained and 25 random lost cited-abstract works
-found more clear replication claims among the gained ("replicates Liszka's (2009)
-study", "replicate Rubin's (1976) work"). The lost still include some: a year placed
-before or far from the name ("the 1978 Dermer and Pysczinski study", "done in 1974
-by Lloyd S. Etheredge") was only ever matched by accident. That read is not a
-precision estimate; the cited-abstract yield should be re-measured on the new
-pattern before it is relied on.
+A citation arm used ALONE would have reached 1,927 works: the 492 above, minus 374
+the measured arm admits. A snippet-level read of 25 random works from each side
+found more clear replication claims among the 492 ("replicates Liszka's (2009)
+study", "replicate Rubin's (1976) work") and about 7 of 25 real claims among the
+374, almost all year-first. That is why the union was chosen over either arm.
+
+The `measured` precision (0.598) still describes 1,809 of the 2,301 works, the
+whole measured population. The 492 added works are unmeasured; the snippet read
+suggests they are no worse, but it is not an estimate. Re-measure the cited-abstract
+yield over the union before relying on the figure. Add a dedicated year-first arm
+only if that estimate shows the measured arm's noise is worth removing.
