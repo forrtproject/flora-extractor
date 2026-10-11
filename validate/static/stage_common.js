@@ -130,7 +130,7 @@ async function renderPipelineMap(elId, { snapshot, poolTotals, hereIds, hereLabe
               "<code>pending</code> or a screening pile.",
         source: "routing store",
       }),
-      mapEdge("the screen", "two LLM voters; rules may only route or discard, " +
+      mapEdge("the screen", "an LLM voter and a decision voter; rules may only route or discard, " +
         "so this is the only step that can admit"),
       node("screened", {
         name: "Admitted for screening",

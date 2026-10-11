@@ -1258,22 +1258,34 @@ def test_a_verdict_from_another_generation_neither_settles_nor_blocks(
     assert drop == {11} and set(screen) == {11}
 
 
-def test_luna_screen_accepts_settled_mini_generation_without_reopening(monkeypatch):
-    current = tiers.screening_generation("screen_expensive")
-    monkeypatch.setattr(tiers, "SCREENING_MODEL_2", "gpt-5.4-mini")
-    old = tiers.screening_generation("screen_expensive")
-    assert old == "98bcab0eff366d1d"
+def _era_generation(monkeypatch, model_1: str, model_2: str) -> str:
+    """The expensive tier's generation under an earlier voter pair, both at "low"."""
+    for name, value in (("SCREENING_MODEL_1", model_1), ("SCREENING_MODEL_2", model_2),
+                        ("SCREENING_EFFORT_1", "low"), ("SCREENING_EFFORT_2", "low")):
+        monkeypatch.setattr(tiers, name, value)
+    generation = tiers.screening_generation("screen_expensive")
     monkeypatch.undo()
-    assert current == "3b93ecf06901e653"
+    return generation
 
-    votes = [{"work_id": 11, "verdict": "none", "model": m,
-              "confidence": "confident"}
-             for m in (tiers.SCREENING_MODEL_1, "gpt-5.4-mini")]
+
+@pytest.mark.parametrize("old_pair", [("deepseek/deepseek-v4-flash", "gpt-5.4-mini"),
+                                      ("deepseek/deepseek-v4-flash", "gpt-6-luna")])
+def test_current_screen_accepts_settled_earlier_generations_without_reopening(
+        monkeypatch, old_pair):
+    """The Luna + Perplexity generation keeps the settled DeepSeek + Luna screens and
+    the mini-era ones that generation accepted; any later change reopens them."""
+    old = _era_generation(monkeypatch, *old_pair)
+    assert old in ("98bcab0eff366d1d", "3b93ecf06901e653")
+    assert tiers.screening_generation("screen_expensive") == "eb560e1e840acd4b"
+
+    votes = [{"work_id": 11, "verdict": "none", "model": m, "confidence": "confident"}
+             for m in old_pair]
     client = _decided_client("screen_expensive", "live", votes, generation=old)
     assert tiers.decided_work_ids(client, "screen_expensive") == {11}
     assert handoff_mod.decisions(client)[0] == {11}
 
-    monkeypatch.setattr(tiers, "SCREENING_EFFORT_2", "high")
+    monkeypatch.setattr(tiers, "DECISION_DISCARD_BELOW", 0.5)
+    assert tiers.screening_generation("screen_expensive") != "eb560e1e840acd4b"
     assert tiers.decided_work_ids(client, "screen_expensive") == set()
 
 
@@ -1294,20 +1306,20 @@ def test_equivalent_screen_generations_do_not_combine_different_voters():
     assert tiers.decided_work_ids(client, "screen_expensive") == set()
     assert handoff_mod.decisions(client) == (set(), {})
 
-    # A complete Luna-era screen replaces an older settled mini-era answer.
+    # A complete current-generation screen replaces an older settled answer.
     client.verdicts.return_value = [
         {"claim_id": "old", "work_id": 11, "verdict": "none",
          "model": m, "confidence": "confident"}
-        for m in (tiers.SCREENING_MODEL_1, "gpt-5.4-mini")
+        for m in ("deepseek/deepseek-v4-flash", "gpt-5.4-mini")
     ] + [
         {"claim_id": "new", "work_id": 11, "verdict": "replication",
          "model": m, "confidence": "confident"}
-        for m in (tiers.SCREENING_MODEL_1, "gpt-6-luna")
+        for m in (tiers.SCREENING_MODEL_1, tiers.SCREENING_MODEL_2)
     ]
     decision = tiers.checkpoint_decisions(client, "screen_expensive")[11]
     assert decision["outcome"] == "proceed"
     assert {vote["model"] for vote in decision["votes"]} == {
-        tiers.SCREENING_MODEL_1, "gpt-6-luna"}
+        tiers.SCREENING_MODEL_1, tiers.SCREENING_MODEL_2}
 
 
 def test_a_validation_verdict_settles_the_sandbox_and_not_the_live_worklist():

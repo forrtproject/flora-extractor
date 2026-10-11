@@ -182,7 +182,8 @@ which is entry (a).
 ## (g) The cheap pre-screen trades a measured property for money (issue #130)
 
 `shared/prescreen.py` is off by default and should stay off until someone decides the
-trade deliberately. `screen_gate()` has a measured *zero* settled misses; a pre-screen
+trade deliberately. `screen_gate()` has a measured miss rate (2 of 1,456 positives for
+the Luna + Perplexity pair, `analysis/jev_eval_2026-10/REPORT_pplx.md`); a pre-screen
 discard is terminal — the row never reaches the validated screen, never reaches
 validation, never reaches a human — so nothing about the screen's property extends to
 the tier in front of it.

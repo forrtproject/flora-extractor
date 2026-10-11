@@ -93,16 +93,24 @@ def _screen() -> dict:
 
     Read from the constants the tier actually calls with, so a voter swap in
     `shared/config.py` moves this page too. The effort is shown beside each model
-    because it is part of the cache key and was load-bearing in evaluation — the
-    DeepSeek voter discarded 7 settled positives at effort "none".
+    because it is part of the cache key; a decision voter takes none. The decision
+    voter's three cut-offs are shown because they decide what its vote says.
     """
     from shared import config as C
+    from shared import llm_client as L
 
     record: dict[str, Any] = {
         "voters": [
-            {"slot": 1, "model": C.SCREENING_MODEL_1, "effort": C.SCREENING_EFFORT_1},
-            {"slot": 2, "model": C.SCREENING_MODEL_2, "effort": C.SCREENING_EFFORT_2},
+            {"slot": slot, "model": model, "effort": effort,
+             "kind": "decision" if model in C.DECISION_MODELS else "llm"}
+            for slot, model, effort in (
+                (1, C.SCREENING_MODEL_1, C.SCREENING_EFFORT_1),
+                (2, C.SCREENING_MODEL_2, C.SCREENING_EFFORT_2))
         ],
+        "decision": {"discard_below": L.DECISION_DISCARD_BELOW,
+                     "confident_at": L.DECISION_CONFIDENT_AT,
+                     "type_share": L.DECISION_TYPE_SHARE,
+                     "prompt_version": None},
         "cheap_voters": [
             {"slot": 1, "model": C.PRESCREEN_MODEL_1},
             {"slot": 2, "model": C.PRESCREEN_MODEL_2},
@@ -118,6 +126,11 @@ def _screen() -> dict:
             break
         except Exception:
             continue
+    try:
+        from shared.prompts import prompt_version
+        record["decision"]["prompt_version"] = prompt_version("build_screen_decision")
+    except Exception:                     # a panel state, never a 500
+        pass
     return record
 
 

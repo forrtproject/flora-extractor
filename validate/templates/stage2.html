@@ -196,8 +196,9 @@
 
     <section id="screen">
       <h2>The screen</h2>
-      <p>The only step that may admit a paper. Two models read the title and abstract
-      and each answer a fixed schema; a gate turns the two votes into one decision.</p>
+      <p>The only step that may admit a paper. Two models read the title and abstract —
+      an LLM that answers in text, and a decision model that answers the same rules with
+      probabilities — and a gate turns the two votes into one decision.</p>
       <div id="screen-body" class="loading">Reading the voter configuration…</div>
       <h3>The gate</h3>
       <p>Defined once, as <code>screen_gate()</code>. It is deliberately the most
@@ -254,8 +255,9 @@
       </div>
       <p>Verdicts are read <em>across releases</em>, deliberately: a verdict follows the
       work, and the release scopes the piles rather than the evidence. But only within
-      the current <strong>screening generation</strong> — the hash of the voter pair and
-      the classify prompt. Swap a voter or edit the prompt and the old answers stop
+      the current <strong>screening generation</strong> — the hash of the voter pair, the
+      classify prompt, and the decision voter's question and cut-offs. Swap a voter or
+      edit the prompt and the old answers stop
       counting, those works become claimable again, and they no longer steer the
       hand-off.</p>
     </section>

@@ -346,38 +346,64 @@ function renderScreen(d) {
   try {
     const s = d.screen || {};
     el.className = "";
+    const dc = s.decision || {};
     el.innerHTML = `<div class="scroll"><table class="doc">
-      <thead><tr><th>Voter</th><th>Model</th><th>Reasoning effort</th></tr></thead>
+      <thead><tr><th>Voter</th><th>Model</th><th>Kind</th><th>Reasoning effort</th></tr></thead>
       <tbody>${(s.voters || []).map((v) => `
         <tr><td class="num">${v.slot}</td>
             <td class="mono">${esc(v.model)}</td>
+            <td>${v.kind === "decision" ? "decision model (probabilities only)"
+                                        : "LLM (text answer)"}</td>
             <td class="mono">${esc(v.effort || "—")}</td></tr>`).join("")}
       </tbody></table></div>
-      <div class="note">The effort is part of the cache key and is load-bearing, not a
-      detail: at effort <code>none</code> the DeepSeek voter discarded 7 settled
-      positives. Two call sites may name the same model, so each passes its own value —
-      and the two settings never share a cache entry.</div>
+      <div class="note">The effort is part of the cache key: two call sites may name the
+      same model, so each passes its own value, and the two settings never share a
+      cache entry. A decision model takes no effort.</div>
       <div class="stats">
         <div class="stat"><span class="k">Classify prompt</span>
           <span class="v mono small">${esc(s.prompt_version || "—")}</span>
           <span class="s">edit it and every work becomes claimable again</span></div>
+        <div class="stat"><span class="k">Decision question</span>
+          <span class="v mono small">${esc(dc.prompt_version || "—")}</span>
+          <span class="s">the same rules, asked as a five-way choice</span></div>
         <div class="stat"><span class="k">Workers</span>
           <span class="v">${s.workers ?? "—"}</span>
           <span class="s">works judged in parallel per run</span></div>
       </div>
-      <p>Each voter answers the same fixed schema: a <code>classification</code>
-      (replication · reproduction · both · none · unclear), a boolean
-      <code>confident</code>, a multi-select <code>categories</code>, an
-      <code>evidence_quote</code> and its <code>reasoning</code>. The cache holds
-      <strong>one entry per vote</strong>, keyed on the prompt version and that voter's
-      model-at-effort — so swapping one voter re-buys exactly that voter's answers
-      while the other's stay cache hits.</p>`;
+      <p>The <strong>LLM voter</strong> answers a fixed schema: a
+      <code>classification</code> (replication · reproduction · both · none · unclear),
+      a boolean <code>confident</code>, a multi-select <code>categories</code>, an
+      <code>evidence_quote</code> and its <code>reasoning</code> — the text Stage 3 and
+      the validators read. The <strong>decision voter</strong> is asked the same rules
+      as a choice over the same five classes and returns a probability for each, and
+      no text. Its probabilities become a vote of the same shape:</p>
+      <div class="scroll"><table class="doc">
+        <thead><tr><th>P(replication + reproduction + both)</th><th>Vote</th></tr></thead>
+        <tbody>
+          <tr><td>below <b>${esc(dc.discard_below ?? "—")}</b></td>
+              <td><code>none</code></td></tr>
+          <tr><td>at least <b>${esc(dc.confident_at ?? "—")}</b></td>
+              <td><code>confident</code> — the pre-PDF title search opens only when both
+              voters qualify and are confident</td></tr>
+          <tr><td>one type holds at least <b>${esc(dc.type_share ?? "—")}</b> of it</td>
+              <td>that type (replication or reproduction); otherwise <code>unclear</code></td></tr>
+        </tbody></table></div>
+      <div class="note"><strong>Replication or reproduction.</strong> The LLM voter's
+      type stands, unless the decision voter names a different type — which it only does
+      at the share above — and then the decision voter's type wins. When the LLM voter
+      gives no type, the decision voter's stands. Stage 3's <code>record_type_check</code>
+      still corrects the type once it has read the methods.</div>
+      <p>The cache holds <strong>one entry per vote</strong>: the LLM's on the prompt
+      version and its model-at-effort, the decision voter's raw probabilities on the
+      decision question's version and its model — so swapping one voter re-buys
+      exactly that voter's answers, and moving a cut-off re-reads the cache.</p>`;
 
     gateEl.className = "";
     gateEl.innerHTML = `<div class="gaterules">
       <div class="gaterule drop"><span class="gk">discard</span>
-        <p>All votes say <code>none</code>, at any confidence. The work becomes
-        <code>not_a_replication</code>.</p></div>
+        <p>All votes say <code>none</code>, at any confidence — the LLM voter says
+        <code>none</code> and the decision voter's probability is under its cut-off. The
+        work becomes <code>not_a_replication</code>.</p></div>
       <div class="gaterule keep"><span class="gk">proceed</span>
         <p>Everything else — including a confident split, and a lone confident
         <code>none</code> against one other vote.</p></div>
@@ -517,11 +543,14 @@ renderCommands();
 trackSections();
 renderIssues("stage-2");
 renderPrompts("prompts-body",
-  ["build_classify_prompt", "build_prescreen_prompt"],
+  ["build_classify_prompt", "build_screen_decision", "build_prescreen_prompt"],
   {
-    build_classify_prompt: "The front-door screen. Both voters answer this same prompt " +
-      "and the same v3.2 schema; the gate reads their two answers. It is in the " +
-      "screening generation fingerprint, so editing it makes every work claimable again.",
+    build_classify_prompt: "The front-door screen's LLM voter answers this prompt and " +
+      "the v3.3 schema; the gate reads its answer beside the decision voter's. It is in " +
+      "the screening generation fingerprint, so editing it makes every work claimable again.",
+    build_screen_decision: "The decision voter's question: the same rules, asked as a " +
+      "five-way choice, with the rules' named exclusions spelled out in the 'none' " +
+      "class. Also in the screening generation fingerprint.",
     build_prescreen_prompt: "The cheap discard-only tier's one question. Dormant — all " +
       "three screen_cheap specs are shadow, so no live row reaches it.",
   });
