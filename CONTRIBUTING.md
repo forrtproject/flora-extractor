@@ -24,6 +24,8 @@ Use your project Python environment. Ordinary tests mock external APIs; live tes
 env -u TEST_LIVE_API python -m pytest -q
 ```
 
+In PowerShell, run `Remove-Item Env:TEST_LIVE_API -ErrorAction SilentlyContinue; python -m pytest -q` instead.
+
 Documentation-only changes can be checked for accurate commands, local links, and consistency with the implementation without running a research campaign. Do not run screening/extraction tiers, change stored verdicts or shared datasets, or make paid/live API calls as a routine PR check. Agree any research evaluation, data access, and spending with maintainers first.
 
 Keep evidence and provenance together, preserve stage boundaries and the single extraction-export writer, and explain any effect on dataset membership, identity, interpretation, or repeatability. Do not edit generated research outputs to make a test or example pass.

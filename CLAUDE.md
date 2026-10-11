@@ -840,11 +840,11 @@ tests go in `tests/live/`; use `TEST_LIVE_API=1` only for an agreed live evaluat
 has a schema test via `validate_csv_columns()`. Do not over-test: one test per seam,
 and delete tests when their code path dies.
 
-**Run targeted tests while iterating, the full suite once.** In your project Python
-environment, use `env -u TEST_LIVE_API python -m pytest -q`.
-The full suite over `tests/` takes 100–440 s. During iteration run only the affected file or class
-(`env -u TEST_LIVE_API python -m pytest tests/test_engine_147_rules.py -q`); run the full suite once
-before pushing.
+**Run targeted tests while iterating, the full suite once.**
+`env -u TEST_LIVE_API .venv/bin/python -m pytest -q` over `tests/` takes 100–440 s.
+During iteration run only the affected file or class
+(`env -u TEST_LIVE_API .venv/bin/python -m pytest tests/test_engine_spec.py -q`); run
+the full suite once before pushing.
 
 ## Environment
 
