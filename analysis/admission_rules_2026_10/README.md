@@ -6,16 +6,20 @@ roughly **more than 50% eligible candidates**, with preference for useful-sized
 additional pools. These rules buy normal two-voter screening; none automatically
 accepts a paper, assigns a vocabulary, or discards it.
 
-| Rule | Additional works | Fresh usable / read | Estimated usable yield |
+The following table describes the **original measured patterns**, before the citation
+syntax correction. It is historical evidence, not a precision estimate for the revised
+rule. The revised reach and candidate losses are reported below.
+
+| Original rule | Additional available works | Fresh usable / read | Estimated usable yield |
 | --- | ---: | ---: | ---: |
 | replication-claim-extend-prior | 2,267 | 43/60 | 71.4% |
 | replication-claim-cited-abstract | 1,585 | 35/60 | 59.8% |
 | replication-claim-failure-prior | 123 | 26/27 | 78.0% |
 
-The marginal union is **3,975 available OpenAlex works** beyond the pre-change
+The original marginal union was **3,975 available OpenAlex works** beyond the pre-change
 live bundle. Individual total reaches are 2,267 / 1,628 / 129; overlaps are removed
 in the extension → citation → failure order used for both attribution and sampling.
-The roughly 71% / 60% / 78% estimates imply about 2,663 model-clear candidates;
+The original roughly 71% / 60% / 78% estimates implied about 2,663 model-clear candidates;
 these are planning estimates, not final validated records. Precision here means
 model-judged clear completed replication/reproduction under project scope, with
 matched supporting quotes and no obvious metadata mismatch. It is not a measured
@@ -27,9 +31,10 @@ production screen proceed rate, and it is not independent human validation.
   abstract, plus an earlier-study/finding/result reference anywhere in that text.
 - `replication-claim-cited-abstract` (737): first-person or present-study replication
   verb in the abstract, followed within 120 characters and the same clause by
-  author-year-style text, by either of two arms (see "Review changes" below). This
-  is proximity to a reference-shaped string, not proof that a surname names the
-  target.
+  a capitalised name followed by a year, or a year followed by named authors.
+  Year-first references require either “by” before the name or a study noun
+  after the author names. This is bibliographic syntax, not proof that a capitalised
+  word is an author, that the author names the target, or that the study completed.
 - `replication-claim-failure-prior` (736): first-person failed/unable/attempted to
   replicate in the abstract, plus the earlier-study/finding/result anchor.
 
@@ -99,43 +104,98 @@ The labels are research evidence, not permanent production screen verdicts.
 Adding the specs runs no routing or screening campaign and spends no pipeline
 budget. The normal next route picks them up after the change lands.
 
-## Review changes after measurement (2026-10-11)
+## Citation correction after measurement (2026-10-12)
 
-Two fixes from review landed after the sampling above. Both only ADD matches, so
-every work the measured patterns admitted is still admitted.
+The original regex was case-insensitive throughout: `[A-Z]` matched any word, so
+“with 2000 participants” and “using 2010 protocols” looked like citations. A review
+revision kept that original arm OR a more explicit citation arm. That preserved the
+noise as well as real claims. The final rule removes the original arm.
 
-- `replication-claim-cited-abstract` is now `any_of` two arms:
-  1. **The measured arm**, byte-identical to the pattern sampled above. The engine
-     prefixes every pattern with `(?i)`, so its `[A-Z]` matches any word: it admits
-     word-plus-number noise ("with 2000 participants", "using 2010 protocols"), but
-     also real claims whose year comes before or far from the name ("the 1978
-     Dermer and Pysczinski study", "done in 1974 by Lloyd S. Etheredge"). It is kept
-     whole because dropping it lost both kinds together.
-  2. **The citation arm**, which catches what the measured arm missed: the surname
-     is a scoped `(?-i:...)` group that must start with a capital (ASCII or
-     Latin-1), may be followed by "et al.", "and colleagues" or a study noun
-     ("Swanson's study (1986)"), and allows a comma before the year, so APA's
-     "(Smith et al., 2009)" and "Smith, 2019" match. RE2 and Python `re` both
-     honour the scoped flag, so the batch backend and evidence recovery agree.
-- `replication-claim-extend-prior`: "replicate-and-extend" (hyphenated) now matches.
+Two positive bibliographic syntax families share the same first-person/present-study
+claim prefix and bounded clause context:
 
-Reach over the same 5,146,160-row pool and overlay, counting only works that no
-other live `screen_expensive` rule admits (no FLoRA/exported/validated exclusions,
-so these are larger than the marginal pools above):
+- **Author before year:** a capitalised ASCII/Latin-1 name at a whitespace or opening
+  parenthesis/bracket boundary, optional “et al.”, “and colleagues” or a study noun,
+  optional comma/parenthesis, then a 19xx/20xx year. Possessives are allowed within
+  the name spelling. The name is case-sensitive; years have a right boundary.
+  A whitespace/comma/open-parenthesis separator is required before the year.
+- **Year before author:** a year followed by “by” and a capitalised name, or by
+  capitalised names joined with “and”, “&” or “et al.” and an explicit study/paper/
+  work/findings/results/analysis/experiment noun. The “by” name must end at a
+  delimiter or end of text. Citation whitespace is horizontal: a citation cannot
+  continue onto another line.
 
-| Rule | Measured pattern | Now | Added | Lost |
-| --- | ---: | ---: | ---: | ---: |
-| replication-claim-cited-abstract | 1,809 | 2,301 | 492 | 0 |
-| replication-claim-extend-prior | 2,442 | 2,444 | 2 | 0 |
+These are syntax families, not exceptions for specific surnames, papers or work ids.
+Capitalised ordinary/proper nouns can still resemble author names; the screen decides
+what the paper means. The name alphabet does not cover every writing system. Bare
+survey dates, sample sizes and other word-plus-number strings are deliberately outside
+this citation rule. Some useful replication claims use those other forms, and this
+rule does not promise to recover every one. Existing admissions may independently
+reach them; otherwise they follow the baseline routing, often pending. The revised
+rule adds no discard predicate.
 
-A citation arm used ALONE would have reached 1,927 works: the 492 above, minus 374
-the measured arm admits. A snippet-level read of 25 random works from each side
-found more clear replication claims among the 492 ("replicates Liszka's (2009)
-study", "replicate Rubin's (1976) work") and about 7 of 25 real claims among the
-374, almost all year-first. That is why the union was chosen over either arm.
+The two positive families are one top-level regex so evidence recovery reports the
+matched phrase before the abstract-presence guard. Tests exercise RE2 through the
+actual engine and Python's span recovery, including accented names, possessives,
+year-first syntax, embedded capitalised substrings, larger numbers and clause boundaries.
+An independent subagent reviewed the syntax for overfitting and found no blocking issue.
 
-The `measured` precision (0.598) still describes 1,809 of the 2,301 works, the
-whole measured population. The 492 added works are unmeasured; the snippet read
-suggests they are no worse, but it is not an estimate. Re-measure the cited-abstract
-yield over the union before relying on the figure. Add a dedicated year-first arm
-only if that estimate shows the measured arm's noise is worth removing.
+`citation_review_patterns.json` freezes the three earlier comparators.
+`audit_citation.py` compares those and the revised live spec over the pool with its
+text overlay, without API calls, routing writes or a screening campaign:
+
+```bash
+.venv/bin/python -m analysis.admission_rules_2026_10.audit_citation
+```
+
+The resulting `citation_review_summary.json` records the pool/overlay/bundle hashes,
+reach and routing counts; `citation_review_cases.csv` preserves old-only matches and
+changes from the previous OR, with source text and any existing model labels. Flags
+ending in `_work` describe membership on any sibling row; the unsuffixed flags
+describe the displayed row itself. A representative row need not illustrate every
+whole-work match. The
+old-only set is defined before higher-priority discard and existing-record exclusions;
+the routing count separately respects precedence. Both exclude baseline-admitted works
+on any sibling row. Neither applies FLoRA/export/validation skip lists, so neither is
+the original available-work denominator.
+
+Final recount: **5,146,160 rows**, with the same pool and overlay hashes as
+the historical measurement; **28,095** baseline-admitted works.
+
+| Citation pattern | Reach beyond the baseline, before higher-priority discards and existing-record skips |
+| --- | ---: |
+| Original measured word-plus-year | 1,884 |
+| Previous broad OR | 2,404 |
+| Previous citation arm alone | 2,021 |
+| Final explicit citation syntax | 2,027 |
+
+This scope includes overlap with the new extension/failure rules. It is not the
+earlier 1,809/2,301 comparison scope or the original 1,585 available-work denominator.
+There are **383 old-only works** in this explicitly defined scope; the final
+year-first grammar retains **12**. Relative to the previous OR,
+**387 works are removed and 10 added**.
+
+After actual routing precedence and extension → citation → failure attribution,
+the three new rules add **4,217 routable works** before existing-record skips:
+2,325 extension, 1,767 citation after extension, and 125 failure
+after both. These are scheduling counts, not screening proceeds or extracted records.
+
+Of the 311 previously labelled citation cases, 291 still match;
+193 of the 204 previously model-clear/actionable cases are retained, and
+11 are lost. The losses include nameless temporal-survey claims and
+noncanonical author references that the narrower syntax does not parse. They are
+preserved in the changed-cases artifact; removing noise does not mean every removed
+record is out of scope. Extension and failure retain all their previously labelled
+cases. These selected-subset counts are not a fresh precision estimate.
+
+Validation: **2,020 passed, six optional live tests skipped**, with a dummy OSF token
+and blocked network; **139** focused engine/spec/snapshot tests passed. An independent
+subagent approved the final regex after 27 repository edge cases plus 19 independent
+formatting/boundary examples agreed across RE2 and Python. It also checked the audit's
+admission projection against actual routing on 52 synthetic rows, including textless
+ordinary/OSF records and stronger/weaker discards.
+
+The old 59.8% estimate applies only to the original **1,585-work marginal available
+population**. The revised rule has `measured: []`: no fresh precision estimate has been
+established, and retained labels are a selected subset rather than a new random sample.
+The extension rule's hyphen support remains; the failure rule and precedence are unchanged.

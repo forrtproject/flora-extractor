@@ -1,0 +1,50 @@
+{
+  "pool_rows": 5146160,
+  "pool_fingerprint": "d34c277e32e51a1ab967254c84bf3bf762eb3614cec9bdd991c53bfd12511e4b",
+  "overlay_hash": "afc3eeb75ad52d52e7d7473428a8901768345515c9c214b4a6f37cbcdab02d63",
+  "reviewed_bundle_hash": "747b7a94d056c65f0f3c94f7db04ab11b062be9cfe035a8431ecda1a6537a3df",
+  "baseline_admitted_works": 28095,
+  "reach_without_existing_record_skips": {
+    "measured_original": 1884,
+    "previous_union": 2404,
+    "citation_only": 2021,
+    "revised": 2027,
+    "replication-claim-extend-prior": 2721,
+    "replication-claim-failure-prior": 167
+  },
+  "routing_additions_without_existing_record_skips": {
+    "extension": 2325,
+    "citation_after_extension": 1767,
+    "failure_after_both": 125,
+    "union": 4217
+  },
+  "old_only": 383,
+  "old_only_retained": 12,
+  "removed_from_previous_union": 387,
+  "added_to_previous_union": 10,
+  "label_coverage": [
+    {
+      "rule": "replication-claim-extend-prior",
+      "labelled": 140,
+      "retained": 140,
+      "actionable": 95,
+      "actionable_retained": 95
+    },
+    {
+      "rule": "replication-claim-cited-abstract",
+      "labelled": 311,
+      "retained": 291,
+      "actionable": 204,
+      "actionable_retained": 193
+    },
+    {
+      "rule": "replication-claim-failure-prior",
+      "labelled": 123,
+      "retained": 123,
+      "actionable": 96,
+      "actionable_retained": 96
+    }
+  ],
+  "precision": null,
+  "precision_note": "Retained labels describe an already selected subset; no fresh precision estimate."
+}

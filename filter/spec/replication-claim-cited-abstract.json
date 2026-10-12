@@ -1,15 +1,8 @@
 {
   "id": "replication-claim-cited-abstract",
-  "description": "ABSTRACT-CLAIM EXPANSION: a we/this study/the present study subject, up to three intervening words, and replicate/replicated/replicates, followed within the same clause and at most 120 characters by an author-year-style reference. Two arms, either of which admits. (1) The MEASURED arm, unchanged from the sampling: a word, optional et al., optional parentheses and a 19xx/20xx year. The engine prefixes every pattern with (?i), so its [A-Z] matches any word and it also admits word-plus-number noise ('with 2000 participants'); it is kept because it also catches real claims whose year comes before or far from the name ('the 1978 Dermer and Pysczinski study'). (2) The CITATION arm: a surname in a scoped (?-i:...) group that restores case sensitivity (a capital, ASCII or Latin-1), optionally followed by et al., 'and colleagues' or a study noun ('Swanson's study (1986)'), then an optional comma, so APA's '(Smith et al., 2009)' and 'Smith, 2019' match; RE2 and Python re both honour the scoped flag. The union loses nothing the measured pattern admitted. Citation proximity does not establish the target, intent or completion: this is an admission to the two-voter screen, and the measured pool includes methods reuse and planned studies. Precedence 737: below replication-claim-extend-prior (738), title-broad (740), curated-observatory (745) and stronger title rules; above replication-claim-failure-prior (736) and general (735). This order follows the marginal measurement, extension first then cited claims. It yields to structural discards (935-960) and outranks the fallible type crosswalk (500). Repository DOI and replication-package/materials/data/code title exclusions are copied verbatim from the live general rule. The rule requires an abstract, names no vocabulary and only schedules screening. Measured over the f4225e6 live-bundle baseline; analysis/admission_rules_2026_10/README.md records the frozen population, marginal order, uncertainty and model labels.",
+  "description": "ABSTRACT-CLAIM EXPANSION: a we/this study/the present study subject, up to three intervening words, and replicate/replicated/replicates, followed within the same clause and at most 120 characters by an author-year-shaped reference. Two bibliographic syntax families: (1) a capitalised ASCII/Latin-1 name at a whitespace or opening-parenthesis/bracket boundary, optionally followed by et al., and colleagues or a study noun, an optional comma and optional parenthesis, then a 19xx/20xx year; (2) a year followed by 'by' and a capitalised name, or capitalised author names joined by and/&/et al. and an explicit study/paper/work/findings/results/analysis/experiment noun. The name itself is case-sensitive despite the engine's (?i) prefix; year boundaries prevent matching a prefix of a larger number. Citation separators are horizontal whitespace, commas or parentheses; the citation cannot cross a newline, and a year-first by-author name must end at a delimiter or end of text. Bare dates and arbitrary word-plus-number text do not admit a record. These are general citation shapes, not a semantic proof that a proper noun is an author, that a target is named, or that the study completed. No specific surname, paper or work-id exceptions. Precedence 737 remains below extension (738), title/curated admissions (740-760) and structural discards (935-960), and above failure-prior (736), general (735) and the fallible type crosswalk (500). Repository DOI and replication-package/materials/data/code title exclusions remain copied from general. Requires an abstract, assigns no vocabulary, only schedules the two-voter screen. Original evidence is historical: the revised pattern removes the noisy measured arm and its precision is not established by that arm's 59.8% estimate. See analysis/admission_rules_2026_10/README.md and citation_review_patterns.json.",
   "match": {
-    "any_of": [
-      {
-        "abstract_regex": "\\b(?:we|this\\s+study|the\\s+present\\s+study)\\s+(?:\\w+\\s+){0,3}replicat(?:e|ed|es)\\b[^.;\\n]{0,120}\\b[A-Z][a-zA-Z-]+(?:\\s+et\\s+al\\.?)?\\s*\\(?\\b(?:19|20)\\d{2}[a-z]?\\)?"
-      },
-      {
-        "abstract_regex": "\\b(?:we|this\\s+study|the\\s+present\\s+study)\\s+(?:\\w+\\s+){0,3}replicat(?:e|ed|es)\\b[^.;\\n]{0,120}(?-i:[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’-]+)(?:\\s+(?:et\\s+al\\.?|and\\s+colleagues|(?:original\\s+)?(?:study|studies|paper|work|findings?|experiments?)))?,?\\s*\\(?\\b(?:19|20)\\d{2}[a-z]?\\)?"
-      }
-    ],
+    "abstract_regex": "\\b(?:we|this\\s+study|the\\s+present\\s+study)\\s+(?:\\w+\\s+){0,3}replicat(?:e|ed|es)\\b[^.;\\n]{0,120}(?:[ \\t(\\[](?-i:[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’-]+)(?:[ \\t]+(?:et[ \\t]+al\\.?|and[ \\t]+colleagues|(?:original[ \\t]+)?(?:study|studies|paper|work|findings?|results?|analys(?:is|es)|experiments?)))?(?:[ \\t]*,[ \\t]*\\(?[ \\t]*|[ \\t]*\\([ \\t]*|[ \\t]+)\\b(?:19|20)\\d{2}[a-z]?\\b\\)?|\\b(?:19|20)\\d{2}[a-z]?\\b[ \\t]+(?:by[ \\t]+(?-i:[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’-]+)(?:[ \\t,.;)\\]]|$)|(?-i:[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’-]+)(?:[ \\t]+(?:and|&)[ \\t]+(?-i:[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’-]+)|[ \\t]+et[ \\t]+al\\.?){0,2}[ \\t]+(?:study|studies|paper|work|findings?|results?|analys(?:is|es)|experiments?)\\b))",
     "abstract_missing": false,
     "none_of": [
       {
@@ -33,15 +26,5 @@
   "vocabulary": null,
   "precedence": 737,
   "shadow": false,
-  "measured": [
-    {
-      "level": "llm:gpt-6.1-sol@medium",
-      "precision": 0.5975814931650895,
-      "n": 311,
-      "sample": "analysis/admission_rules_2026_10/screened_cases.csv, rule=replication-claim-cited-abstract; 251 previously reviewed marginal works plus 60 uniformly sampled fresh works (seed 20261007) from the remaining marginal pool, read blind from title and abstract; see populations.csv and manifest.json.",
-      "date": "2026-10-06",
-      "owner": "flora-extractor",
-      "rationale": "1585 additional available works after preceding new rules, excluding existing live screening admissions, FLoRA doi_r, exported and validated-skip works. Fresh pilot: 35/60 clear with source-matched quotes and no obvious title/abstract mismatch. Previously reviewed members: 169/251 clear under the same policy. Precision field is a population-weighted estimate of model-judged actionable yield (0.598), not independently validated truth or the production two-voter proceed rate. Conditional fresh-sample Wilson interval, weighted with the observed previous members: 0.491-0.695; no bound on model-label error. Admission only; no automatic acceptance/discard and no screen-generation change."
-    }
-  ]
+  "measured": []
 }
