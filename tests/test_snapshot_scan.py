@@ -475,11 +475,12 @@ _GATE_CASES = [
     ("A computational reproduction",
      "We re-ran the authors' code and reproduced the published results.",
      True, "pending"),
-    # both vocabularies in one row: the claim is in the abstract, so only the
-    # shadow tiers of the claim family reach it
+    # A first-person replication verb and nearby author-year citation now reach
+    # the live cited-abstract admission, even for a computational reproduction.
+    # The screen decides its vocabulary; the broad reproduction rule stays shadow.
     ("A computational reproduction",
      "We replicated the code of Smith (2019) and re-ran every analysis.",
-     True, "pending"),
+     True, "screen_expensive"),
     # the molecular sense: admitted by nothing, discarded by nothing
     ("Origins of DNA replication in yeast",
      "We map replication forks and origin firing across the genome.",

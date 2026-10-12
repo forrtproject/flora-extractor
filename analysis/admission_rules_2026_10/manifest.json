@@ -1,0 +1,20 @@
+{
+  "pool_rows": 5146160,
+  "live_bundle": "c6292310718bbc7fa7597e309a27ff9315278136711310ca61050e0fcbdec46c",
+  "baseline_admitted_works": 28095,
+  "candidate_rows": 16852,
+  "seed": 20261006,
+  "pool_fingerprint": "d34c277e32e51a1ab967254c84bf3bf762eb3614cec9bdd991c53bfd12511e4b",
+  "overlay_hash": "afc3eeb75ad52d52e7d7473428a8901768345515c9c214b4a6f37cbcdab02d63",
+  "flora_sha256": "0e17cc52ff58d4c209038d91c9dc76faf328a46ee51dfb61a11c39b30282753b",
+  "baseline_commit": "f4225e6",
+  "marginal_order": [
+    "replication-claim-extend-prior",
+    "replication-claim-cited-abstract",
+    "replication-claim-failure-prior"
+  ],
+  "available_union": 3975,
+  "sampling_seed": 20261007,
+  "screen_model": "gpt-6.1-sol@medium",
+  "paid_api_pilot_usd": 0
+}

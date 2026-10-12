@@ -1,0 +1,45 @@
+{
+  "id": "replication-claim-failure-prior",
+  "description": "ABSTRACT-CLAIM EXPANSION: we failed/were unable/attempted to replicate, allowing up to two words after we and an optional adverb before replicate, together with an original/previous/prior/earlier/published/seminal/classic study/finding/result/experiment/paper/effect/research reference. This promotes a measured first-person subset of the residual fail/attempt arm, not the whole replication-claim-residual family. Keep attempted: removing it did not make the pool more precise, because completed failure language can also describe incidental comparisons or earlier projects. Completion and specific checking intent remain questions for the LLM screen and extraction. Precedence 736: below extension (738), cited-abstract (737), title/curated rules and structural discards (935-960), above general (735) and the fallible not-a-study-type crosswalk (500). It therefore governs the small additional pool none of those stronger claims reaches. Repository DOI and replication-package/materials/data/code title exclusions are copied verbatim from the live general rule. The rule requires an abstract, names no vocabulary and only schedules screening. Measured over the f4225e6 live-bundle baseline; analysis/admission_rules_2026_10/README.md records the frozen population, marginal order, uncertainty and model labels.",
+  "match": {
+    "abstract_regex": "\\bwe\\s+(?:\\w+\\s+){0,2}(?:failed|were\\s+unable|attempted)\\s+to\\s+(?:\\w+ly\\s+)?replicate\\b",
+    "all_of": [
+      {
+        "text_regex": "\\b(?:original|previous|prior|earlier|published|seminal|classic)\\s+(?:\\w+\\s+){0,2}(?:stud(?:y|ies)|findings?|results?|experiments?|papers?|effects?|research)\\b"
+      }
+    ],
+    "abstract_missing": false,
+    "none_of": [
+      {
+        "doi_prefix": [
+          "10.5281",
+          "10.6084",
+          "10.7910",
+          "10.3886",
+          "10.17632",
+          "10.15456",
+          "10.24433",
+          "10.5061"
+        ]
+      },
+      {
+        "title_regex": "\\breplication\\s+(?:package|data|files?|materials?|code)"
+      }
+    ]
+  },
+  "pile": "screen_expensive",
+  "vocabulary": null,
+  "precedence": 736,
+  "shadow": false,
+  "measured": [
+    {
+      "level": "llm:gpt-6.1-sol@medium",
+      "precision": 0.7804878048780488,
+      "n": 123,
+      "sample": "analysis/admission_rules_2026_10/screened_cases.csv, rule=replication-claim-failure-prior; 96 previously reviewed marginal works plus 27 uniformly sampled fresh works (seed 20261007) from the remaining marginal pool, read blind from title and abstract; see populations.csv and manifest.json.",
+      "date": "2026-10-06",
+      "owner": "flora-extractor",
+      "rationale": "123 additional available works after preceding new rules, excluding existing live screening admissions, FLoRA doi_r, exported and validated-skip works. Fresh pilot: 26/27 clear with source-matched quotes and no obvious title/abstract mismatch. Previously reviewed members: 70/96 clear under the same policy. Precision field is a population-weighted estimate of model-judged actionable yield (0.780), not independently validated truth or the production two-voter proceed rate. Every marginal work was read: a census of this frozen pool. Admission only; no automatic acceptance/discard and no screen-generation change."
+    }
+  ]
+}
