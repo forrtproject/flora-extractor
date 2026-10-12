@@ -301,12 +301,10 @@ def _two_votes(monkeypatch, tmp_path, v1, v2):
 @pytest.mark.parametrize("v1,v2,expected", [
     (_v("replication"),  _v("replication"),  "replication"),
     (_v("reproduction"), _v("reproduction"), "reproduction"),
-    # A later voter naming a DIFFERENT type overrides voter 1 ("both" counts as
-    # replication) — in production the decision voter, which names a type only at a
-    # >= 70% share…
-    (_v("replication"),  _v("reproduction"), "reproduction"),
-    (_v("reproduction"), _v("replication"),  "replication"),
-    (_v("both"),         _v("reproduction"), "reproduction"),
+    # Two LLMs retain their historical first-qualifying-voter rule.
+    (_v("replication"),  _v("reproduction"), "replication"),
+    (_v("reproduction"), _v("replication"),  "reproduction"),
+    (_v("both"),         _v("reproduction"), "replication"),
     (_v("both"),         _v("replication"),  "replication"),
     # …and to voter 2's when voter 1 gave no qualifying answer.
     (_v("none", True),   _v("reproduction", True), "reproduction"),
@@ -952,6 +950,67 @@ def test_decision_probabilities_become_a_vote(answer, classification, confident)
     vote = llm._decision_vote(answer)
     assert (vote["classification"], vote["confident"]) == (classification, confident)
     assert vote["evidence"] == "" and vote["reasoning"].startswith("P(qualifies)=")
+
+
+@pytest.mark.parametrize("luna,answer,expected", [
+    ("replication", _probs(0.1, 0.85), "reproduction"),
+    ("reproduction", _probs(0.8, 0.15), "replication"),
+    ("both", _probs(0.1, 0.85), "reproduction"),
+    ("replication", _probs(0.3, 0.25, both=0.05), "replication"),
+    ("none", _probs(0.1, 0.85), "reproduction"),
+    ("unclear", _probs(0.3, 0.25, both=0.05), ""),
+])
+def test_only_a_qualifying_decision_voter_overrides_the_llm_type(luna, answer, expected):
+    answer = dict(answer, model=llm.SCREENING_MODEL_2)
+    votes = [dict(_v(luna), model=llm.SCREENING_MODEL_1), llm._decision_vote(answer)]
+    assert llm._screen_record_type(votes) == expected
+
+
+@pytest.mark.parametrize("list_form", [False, True])
+def test_decision_response_accepts_both_probability_shapes(monkeypatch, list_form):
+    probs = _probs(0.8, 0.15)["probs"]
+    payload = ([{"value": k, "probability": v} for k, v in probs.items()]
+               if list_form else probs)
+    response = MagicMock(status_code=200)
+    response.json.return_value = {"answers": {"screen": {"probabilities": payload}}}
+    session = MagicMock()
+    session.post.return_value = response
+    monkeypatch.setattr(llm._decision_sessions, "s", session, raising=False)
+    answer = llm._decide_once("Title", "Abstract", llm.SCREENING_MODEL_2)
+    assert answer["probs"] == probs and session.post.call_count == 1
+
+
+@pytest.mark.parametrize("payload", [
+    [], {"answers": ["bad"]}, {"answers": {"screen": ["bad"]}},
+    {"usage": ["bad"]},
+    {"answers": {"screen": {"probabilities": ["bad"] * 5}}},
+    {"answers": {"screen": {"probabilities": [
+        {"value": "replication", "probability": 0.2}] * 5}}},
+    *[{"answers": {"screen": {"probabilities": {**_probs(0.0)["probs"], **changes}}}}
+      for changes in ({"replication": -0.2, "none": 1.2},
+                      {"replication": float("nan")},
+                      {"replication": float("inf")},
+                      {"replication": True}, {"replication": "0.0"},
+                      {"replication": None}, {"none": 0.5})],
+    {"answers": {"screen": {"probabilities": {"none": 1.0}}}},
+])
+def test_invalid_decision_responses_retry_without_caching(monkeypatch, tmp_path, payload):
+    monkeypatch.setattr(llm, "LLM_CACHE_DIR", tmp_path)
+    response = MagicMock(status_code=200)
+    response.json.return_value = payload
+    session = MagicMock()
+    session.post.return_value = response
+    monkeypatch.setattr(llm._decision_sessions, "s", session, raising=False)
+    args = ("10.1/x", "Title", "Abstract", "prompt", llm.SCREENING_MODEL_2, "")
+    assert llm._screen_vote(*args, buy=True) is None
+    assert session.post.call_count == 3
+    assert list(tmp_path.glob("*.json")) == []
+
+    # A malformed answer never checkpoints the work: a later valid answer is bought.
+    response.json.return_value = {"answers": {"screen": {"probabilities": _probs(0.8)["probs"]}}}
+    assert llm._screen_vote(*args, buy=True)["classification"] == "replication"
+    assert session.post.call_count == 4
+    assert len(list(tmp_path.glob("*.json"))) == 1
 
 
 def test_a_failed_decision_vote_is_an_incomplete_screen_and_not_cached(monkeypatch, tmp_path):

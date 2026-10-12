@@ -283,13 +283,15 @@ Perplexity pair lost 2 positives and discarded 75% of hard negatives, against 8 
 On a pass, the screen's `record_type` becomes `type` and overwrites `paper_type`
 (`filter_method = "screen"`); with no qualifying vote at all, Stage 2's values are
 kept and `type` stays empty. **Replication vs reproduction** (`_screen_record_type()`):
-voter 1's (Luna's) type stands, unless a later voter names a DIFFERENT type, which
+voter 1's (Luna's) type stands, unless the decision voter names a DIFFERENT type, which
 then wins; when Luna gives no type, the later voter's stands; `both` → replication.
 Because Perplexity names a type only at a ≥ 70% share, this is "Luna, overridden by
 Perplexity when it is at least 70% sure" — 98.0% against the validators' type on 645
 positives, Luna alone 96.8% (38 of 43 reproductions found instead of 33). The rule
 reads classifications only, because a stored verdict row keeps nothing else. Stage 3's
 `record_type_check` still corrects the type once a document is read.
+Retained two-LLM screens keep their historical voter order and the first qualifying
+voter's type; the override applies only to decision-model votes.
 `screen_categories` (union of both voters; the decision voter contributes none) is
 written on every screened row. **The classify cache is one entry per VOTE**
 (`classifyvote_*`, keyed on the prompt version, that voter's `model@effort` and the

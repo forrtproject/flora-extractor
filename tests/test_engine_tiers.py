@@ -1284,6 +1284,15 @@ def test_current_screen_accepts_settled_earlier_generations_without_reopening(
     assert tiers.decided_work_ids(client, "screen_expensive") == {11}
     assert handoff_mod.decisions(client)[0] == {11}
 
+    # Retaining the result retains its historical type, even when the database
+    # returns voter 2 first. Today's Perplexity override must not reinterpret it.
+    split = [{"work_id": 11, "verdict": label, "model": model,
+              "confidence": "confident"}
+             for model, label in zip(old_pair, ("replication", "reproduction"))]
+    split_client = _decided_client("screen_expensive", "live", list(reversed(split)), generation=old)
+    assert tiers.decided_work_ids(split_client, "screen_expensive") == {11}
+    assert handoff_mod.decisions(split_client)[1][11]["record_type"] == "replication"
+
     monkeypatch.setattr(tiers, "DECISION_DISCARD_BELOW", 0.5)
     assert tiers.screening_generation("screen_expensive") != "eb560e1e840acd4b"
     assert tiers.decided_work_ids(client, "screen_expensive") == set()
@@ -1544,6 +1553,24 @@ def test_a_cheap_tier_whose_voters_failed_decided_nothing(con, pool):
     assert tiers.decided_work_ids(kept, "screen_cheap") == {21}
 
 
+@pytest.mark.parametrize("pair", tiers.SCREENING_LEGACY_VOTER_PAIRS)
+@pytest.mark.parametrize("first,second,expected", [
+    ("replication", "reproduction", "replication"),
+    ("reproduction", "replication", "reproduction"),
+    ("both", "reproduction", "replication"),
+])
+def test_legacy_screen_type_keeps_historical_order_after_a_retry(pair, first, second, expected):
+    rows = [
+        {"model": pair[0], "verdict": "none", "created_at": "2026-08-01"},
+        {"model": pair[1], "verdict": second, "created_at": "2026-08-02"},
+        {"model": pair[0], "verdict": first, "created_at": "2026-08-03"},
+    ]
+    for unordered in (rows, list(reversed(rows))):
+        decision = tiers._expensive_decision(unordered)
+        assert decision["record_type"] == expected
+        assert [v["model"] for v in decision["votes"]] == list(pair)
+
+
 def test_one_voter_answering_twice_is_never_a_second_vote(con, pool):
     """The retry hole: pooling rows across claims is what makes an incomplete
     screen claimable again, but a re-run re-asks BOTH voters and the one that
@@ -1568,7 +1595,7 @@ def test_one_voter_answering_twice_is_never_a_second_vote(con, pool):
     assert handoff_mod.decisions(retried) == (set(), {})
 
     # The later answer is the one kept, and it stays in voter 1's call-order slot,
-    # so the record type still breaks a split on the FIRST qualifying voter.
+    # so deduplication preserves the pair's call order for the type decision.
     rebuilt = tiers._votes_from_rows([
         {"work_id": 11, "verdict": "reproduction", "model": voter1,
          "confidence": "confident", "created_at": "2026-08-01T10:00:00Z"},

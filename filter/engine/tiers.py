@@ -91,6 +91,7 @@ from shared.config import (DECISION_MODELS, ENGINE_CACHE_DIR, ENGINE_TIER_HF_UPL
                            ENGINE_TIER_WORKERS, FLORA_HF_COMMIT_BATCH,
                            FLORA_POOL_REPO, PRESCREEN_MODEL_1, PRESCREEN_MODEL_2,
                            SCREENING_EFFORT_1, SCREENING_EFFORT_2,
+                           SCREENING_LEGACY_VOTER_PAIRS,
                            SCREENING_MODEL_1, SCREENING_MODEL_2, SNAPSHOT_POOL_DIR)
 from shared.cache import content_key
 from shared.llm_client import (DECISION_CONFIDENT_AT, DECISION_DISCARD_BELOW,
@@ -1282,12 +1283,10 @@ def _votes_from_rows(rows: list[dict]) -> list[dict]:
     counts, is `_answer_rows()`'s question — the deduplication has to happen
     BEFORE the sort, or a retried voter 1 would occupy both call-order slots.
 
-    The surviving rows are then re-sorted into CALL order by their model, because
-    `_screen_record_type()` breaks a replication/reproduction split by taking the
-    first qualifying voter and the database returns rows in id order, which is
-    not the order they were asked in. The sort is by voter identity, not by time,
-    so keeping a voter's LATEST answer does not move it out of its slot: voter 1
-    re-answered on the second attempt is still voter 1, and still breaks the split.
+    The surviving rows are re-sorted into their pair's CALL order by model. Retained
+    two-LLM pairs keep their historical order and first-qualifier type rule; today's
+    decision voter overrides by identity. Database id order is not call order, and
+    keeping a voter's LATEST answer must not move it out of its original slot.
     An unattributed row sorts last, behind both named voters.
 
     **A vote with no recorded model is UNATTRIBUTED, not attributed to nothing.**
@@ -1301,7 +1300,13 @@ def _votes_from_rows(rows: list[dict]) -> list[dict]:
     screen whose answer we hold.
     """
     order = [m for _, m, _, _ in screen_voters()]
-    ordered = sorted(_answer_rows(rows),
+    answers = _answer_rows(rows)
+    named = {r["model"] for r in answers
+             if r.get("model") and r["model"] not in _NON_MODEL_MARKERS}
+    if not named & DECISION_MODELS:
+        order = next((list(pair) for pair in SCREENING_LEGACY_VOTER_PAIRS
+                      if pair[0] in named and named <= set(pair)), order)
+    ordered = sorted(answers,
                      key=lambda r: (order.index(r["model"])
                                     if r.get("model") in order else len(order)))
     return [{"classification": str(r.get("verdict", "")),

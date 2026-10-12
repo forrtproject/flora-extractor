@@ -17,6 +17,7 @@ Public API:
 """
 import base64
 import json
+import math
 import re
 import threading
 import time
@@ -1590,20 +1591,35 @@ def _decide_once(study_r: str, abstract_r: str, model: str) -> "dict | None":
                 last = f"HTTP {r.status_code}: {r.text[:200]}"
                 continue
             data = r.json()
+            if not isinstance(data, dict):
+                raise ValueError("decision response is not an object")
             usage = data.get("usage") or {}
+            if not isinstance(usage, dict):
+                raise ValueError("decision usage is not an object")
             _record_tokens("openrouter", model, int(usage.get("input_tokens") or 0),
                            int(usage.get("output_tokens") or 0),
                            usd=float(usage.get("cost") or 0))
-            probs = ((data.get("answers") or {}).get("screen") or {}).get("probabilities")
+            answers = data.get("answers")
+            if not isinstance(answers, dict) or not isinstance(answers.get("screen"), dict):
+                raise ValueError("decision response has no screen answer object")
+            probs = answers["screen"].get("probabilities")
             if isinstance(probs, list):  # the endpoint has answered in both shapes
+                if len(probs) != len(SCREEN_CLASSIFICATIONS) or not all(
+                        isinstance(p, dict) and isinstance(p.get("value"), str)
+                        for p in probs):
+                    raise ValueError("invalid decision probability list")
                 probs = {p.get("value"): p.get("probability") for p in probs}
             if (not isinstance(probs, dict) or set(probs) != set(SCREEN_CLASSIFICATIONS)
-                    or abs(sum(float(v) for v in probs.values()) - 1) > 0.03):
-                last = f"not a distribution over the screen classes: {probs!r}"[:200]
-                continue
-            return {"probs": {k: float(v) for k, v in probs.items()},
+                    or any(isinstance(v, bool) or not isinstance(v, (int, float))
+                           for v in probs.values())):
+                raise ValueError("decision probabilities must name all five classes with numbers")
+            probs = {k: float(v) for k, v in probs.items()}
+            if (any(not math.isfinite(v) or not 0 <= v <= 1 for v in probs.values())
+                    or abs(sum(probs.values()) - 1) > 0.03):
+                raise ValueError("decision probabilities are not a distribution")
+            return {"probs": probs,
                     "model": model, "served_by": str(data.get("model") or "")}
-        except (requests.RequestException, ValueError, TypeError) as e:
+        except (requests.RequestException, ValueError, TypeError, OverflowError) as e:
             last = f"{type(e).__name__}: {e}"[:200]
     log.warning("Decision vote failed after 3 attempts (model=%s): %s", model, last)
     return None
@@ -1677,21 +1693,21 @@ def _screen_record_type(votes: list[dict]) -> str:
     and replication outcome vocabulary applies to it; the raw classifications stay
     visible in the votes.
 
-    Voter 1's (Luna's) type stands, unless a LATER voter names a different type, which
-    then wins. Today the later voter is the decision model, and it names a type only
+    Voter 1's (Luna's) type stands, unless the DECISION voter names a different type,
+    which then wins. The decision model names a type only
     when at least DECISION_TYPE_SHARE of its qualifying probability backs it — so this
     is "Luna, overridden by Perplexity when it is at least 70% sure". Measured against
     the validators' type on 645 positives: 98.0%, Luna alone 96.8%, and 38 of 43
     reproductions found instead of 33. When Luna gives no type, the later voter's
     stands. Read from the classifications alone because that is all a stored verdict
-    row keeps (filter/engine/tiers.py, _votes_from_rows).
+    row keeps (filter/engine/tiers.py, _votes_from_rows). Retained two-LLM pairs keep
+    their first qualifying voter's type; the override requires decision-model identity.
     """
-    quals = [("replication" if v["classification"] == "both" else v["classification"])
-             for v in votes if v["classification"] in SCREEN_QUALIFYING]
+    quals = [v for v in votes if v["classification"] in SCREEN_QUALIFYING]
     if not quals:
         return ""
-    # quals is in the order screen_voters() lists the voters.
-    return next((q for q in quals[1:] if q != quals[0]), quals[0])
+    chosen = next((v for v in quals if v.get("model") in DECISION_MODELS), quals[0])
+    return "replication" if chosen["classification"] == "both" else chosen["classification"]
 
 
 def _screen_categories(votes: list[dict]) -> list[str]:

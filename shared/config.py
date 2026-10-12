@@ -233,6 +233,13 @@ SCREENING_MODEL_2 = "perplexity/pplx-decider-v1.1-27b-20261006"
 # Models that answer through OpenRouter's /api/alpha/decisions (probabilities, no
 # text, output free) rather than chat completions.
 DECISION_MODELS = frozenset({SCREENING_MODEL_2})
+# Retained two-LLM screens used the first qualifying voter to settle their type.
+# Preserve their call order when rebuilding votes under today's configuration.
+SCREENING_LEGACY_VOTER_PAIRS = (
+    ("deepseek/deepseek-v4-flash", "gpt-6-luna"),
+    ("deepseek/deepseek-v4-flash", "gpt-5.4-mini"),
+    ("gemini-3.5-flash-lite", "gpt-5.4-mini"),
+)
 
 # Linking (resolve_targets_and_outcomes) — WHICH original does this paper re-test? One
 # model for all three rungs: the abstract, the reference list and the full text ask
