@@ -135,7 +135,8 @@ def _gemini_usage(body: dict) -> tuple[int, int]:
 
     Output is the total minus the prompt rather than candidatesTokenCount: thinking
     tokens are billed as output and are only in the total. A response without
-    usageMetadata yields (0, 0), which records nothing.
+    usageMetadata yields (0, 0). The caller records missing usage as an unpriced
+    marker, which refuses an enabled dollar cap without inventing token counts.
     """
     u     = body.get("usageMetadata") or {}
     n_in  = int(u.get("promptTokenCount", 0) or 0)

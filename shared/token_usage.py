@@ -6,7 +6,7 @@ Two jobs, one file on disk (cache/token_usage.json):
   * **Recording.** Every provider call that reports usage is written down per day,
     per provider, per model, with input and output tokens kept apart — they are
     priced differently, so a single total cannot answer what a run cost. A provider
-    that reports no usage contributes nothing rather than an estimate.
+    that reports no usage contributes an unpriced marker, never invented tokens.
   * **The legacy OpenAI token cap.** call_openai checks the day's OpenAI total against
     OPENAI_DAILY_TOKEN_BUDGET before it spends, and raises TokenBudgetExhausted
     instead of calling. An optional LLM_DAILY_USD_BUDGET additionally caps all
@@ -15,8 +15,9 @@ Two jobs, one file on disk (cache/token_usage.json):
 
 Shape:  {"2026-08-01": {"openai": {"gpt-5.4-mini":
          {"in": 1200, "out": 340, "cached_in": 900, "cache_write_in": 0}}}}
-`unpriced_calls` marks OpenRouter calls whose billed cost was absent, so an enabled
-dollar cap cannot silently omit them even when other calls did report dollars.
+`unpriced_calls` marks missing usage for every provider and missing billed cost
+for OpenRouter. An enabled dollar cap refuses these records rather than silently
+omitting them, even when other calls did report tokens or dollars.
 The cache fields, and `usd` (the billed cost, which only OpenRouter reports), are
 omitted when the provider did not report a positive value;
 older records only have in/out. Cached and written tokens are subsets of in, not
@@ -106,7 +107,9 @@ def record(provider: str, model: str,
            usage_missing: bool = False) -> None:
     """Add one call's reported usage to the day's record. *usd* is what the
     provider says it billed, where it says so (OpenRouter); it is summed as
-    `usd` and left out when unreported, never estimated."""
+    `usd` and left out when unreported, never estimated. Missing usage is persisted
+    as an unpriced marker for all providers; OpenRouter missing billing is also
+    marked, independently of whether token counts were supplied."""
     if input_tokens <= 0 and output_tokens <= 0 and usd <= 0 and not usage_missing and provider != "openrouter":
         return                    # the provider reported nothing; do not invent it
     day = day or _today()
