@@ -2,6 +2,7 @@
 config.py — Centralised configuration for the disambiguation pipeline.
 """
 import os
+import math
 import logging
 import sys
 from pathlib import Path
@@ -432,6 +433,8 @@ OPENAI_DAILY_TOKEN_BUDGET = int(os.getenv("OPENAI_DAILY_TOKEN_BUDGET", "9500000"
 # UTC. Uses billed OpenRouter dollars and conservative list-price estimates for
 # direct providers; see token_usage. 0 preserves the legacy token-only policy.
 LLM_DAILY_USD_BUDGET = float(os.getenv("LLM_DAILY_USD_BUDGET", "0"))
+if not math.isfinite(LLM_DAILY_USD_BUDGET) or LLM_DAILY_USD_BUDGET < 0:
+    raise ValueError("LLM_DAILY_USD_BUDGET must be finite and non-negative (0 disables it)")
 
 # ── Rate limits (seconds between calls) ──────────────────────────────────────
 OPENALEX_RATE_SEC  = float(os.getenv("OPENALEX_RATE_SEC", "0.3"))

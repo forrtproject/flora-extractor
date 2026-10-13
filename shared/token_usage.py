@@ -32,6 +32,7 @@ not persisted; this is the record that survives the process.
 from __future__ import annotations
 
 import json
+import math
 import os
 import threading
 from datetime import datetime, timezone
@@ -101,11 +102,12 @@ def _write_all(state: dict) -> None:
 def record(provider: str, model: str,
            input_tokens: int, output_tokens: int, day: str = "",
            *, cached_input_tokens: int = 0,
-           cache_write_input_tokens: int = 0, usd: float = 0.0) -> None:
+           cache_write_input_tokens: int = 0, usd: float = 0.0,
+           usage_missing: bool = False) -> None:
     """Add one call's reported usage to the day's record. *usd* is what the
     provider says it billed, where it says so (OpenRouter); it is summed as
     `usd` and left out when unreported, never estimated."""
-    if input_tokens <= 0 and output_tokens <= 0:
+    if input_tokens <= 0 and output_tokens <= 0 and usd <= 0 and not usage_missing and provider != "openrouter":
         return                    # the provider reported nothing; do not invent it
     day = day or _today()
     USAGE_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -113,8 +115,16 @@ def record(provider: str, model: str,
     # each replay the other's starting state and spend disappears from the record.
     with _record_lock, csv_lock(USAGE_STATE_PATH):
         state  = _read_all()
-        bucket = state.setdefault(day, {}).setdefault(provider, {}).setdefault(
-            model or "unknown", {"in": 0, "out": 0})
+        models = state.setdefault(day, {}).setdefault(provider, {})
+        model = model or "unknown"
+        if model not in models:
+            models[model] = {"in": 0, "out": 0}
+            if provider == "openrouter":
+                models[model]["billing_complete"] = True
+        bucket = models[model]
+        # Never certify old aggregate history by adding one new billed call.
+        if provider == "openrouter" and "billing_complete" not in bucket:
+            bucket["billing_complete"] = False
         bucket["in"]  += max(input_tokens, 0)
         bucket["out"] += max(output_tokens, 0)
         if cached_input_tokens > 0:
@@ -124,7 +134,7 @@ def record(provider: str, model: str,
                                         + cache_write_input_tokens)
         if usd > 0:
             bucket["usd"] = round(bucket.get("usd", 0.0) + usd, 9)
-        elif provider == "openrouter":
+        if usage_missing or (provider == "openrouter" and usd <= 0):
             bucket["unpriced_calls"] = bucket.get("unpriced_calls", 0) + 1
         _write_all(state)
 
@@ -173,12 +183,27 @@ def spent_usd(day: str = "") -> float:
     an unpriced model as free. Cache counters are subsets, never extra input.
     """
     total = 0.0
-    for provider, models in _read_all(strict=True).get(day or _today(), {}).items():
+    records = _read_all(strict=True).get(day or _today(), {})
+    if not isinstance(records, dict):
+        raise TokenBudgetExhausted("Cannot enforce LLM_DAILY_USD_BUDGET: invalid usage record")
+    for provider, models in records.items():
+        if not isinstance(models, dict):
+            raise TokenBudgetExhausted("Cannot enforce LLM_DAILY_USD_BUDGET: invalid usage record")
         for model, tokens in models.items():
+            if not isinstance(tokens, dict) or any(
+                not isinstance(tokens.get(key, 0), (int, float))
+                or isinstance(tokens.get(key, 0), bool)
+                or not math.isfinite(tokens.get(key, 0)) or tokens.get(key, 0) < 0
+                for key in ("in", "out", "cached_in", "cache_write_in", "usd", "unpriced_calls")
+            ):
+                raise TokenBudgetExhausted("Cannot enforce LLM_DAILY_USD_BUDGET: invalid usage record")
+            if tokens.get("unpriced_calls"):
+                raise TokenBudgetExhausted(
+                    f"Cannot enforce LLM_DAILY_USD_BUDGET: no billed cost or usage for {model}")
             if provider == "openrouter":
-                if "usd" not in tokens or tokens.get("unpriced_calls"):
+                if "usd" not in tokens or tokens.get("billing_complete") is not True:
                     raise TokenBudgetExhausted(
-                        f"Cannot enforce LLM_DAILY_USD_BUDGET: no billed cost for {model}")
+                        f"Cannot enforce LLM_DAILY_USD_BUDGET: no billed cost or unknown billing completeness for {model}")
                 total += tokens["usd"]
                 continue
             rates = _BUDGET_PRICES.get((provider, model))

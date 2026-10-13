@@ -118,7 +118,8 @@ def _record_tokens(provider: str, model: str, n_in: int, n_out: int,
     token_counter.record(provider, n_in + n_out)
     token_usage.record(provider, model, n_in, n_out, usd=usd,
                        cached_input_tokens=cached_in,
-                       cache_write_input_tokens=cache_write_in)
+                       cache_write_input_tokens=cache_write_in,
+                       usage_missing=provider != "openrouter" and not (n_in or n_out))
 
 
 def _reported_cache_tokens(details: object) -> tuple[int, int]:
@@ -259,6 +260,7 @@ def _gemini_post(url: str, payload: dict, key_idx: int, base_timeout: int):
         log.warning("Gemini rejected service_tier=flex on key %d — retrying at standard tier",
                     key_idx + 1)
         payload.pop("service_tier", None)
+        token_usage.check_usd_budget()
         r = requests.post(url, json=payload, timeout=base_timeout)
     return r
 
@@ -363,11 +365,16 @@ def _gemini_call(payload: dict, model: str, timeout: int,
                 n_in, n_out = _gemini_usage(body)
                 cached = int((body.get("usageMetadata") or {}).get(
                     "cachedContentTokenCount", 0) or 0)
-                _record_tokens("gemini", model, n_in, n_out, cached)
+                if not (n_in or n_out):
+                    token_usage.record("gemini", model, 0, 0, usage_missing=True)
+                else:
+                    _record_tokens("gemini", model, n_in, n_out, cached)
                 if key_idx > 0:
                     log.info("Gemini %s succeeded on %s", what, key_label)
                 return body, ""
 
+            except token_usage.TokenBudgetExhausted:
+                raise
             except Exception as e:
                 last_error = f"exception on {key_label} attempt {attempt+1}: {e}"
                 log.warning("Gemini %s failed on %s (attempt %d/3): %s",
@@ -642,6 +649,8 @@ def call_openai(prompt: str, model: str,
                                cached, written)
                 log.debug("OpenAI usage: +%d tokens (day total: %d)",
                           response.usage.total_tokens, token_usage.spent("openai"))
+            else:
+                token_usage.record("openai", model, 0, 0, usage_missing=True)
             if response.choices[0].finish_reason == "length":
                 log.warning("OpenAI response hit the %d-token cap and was cut off — "
                             "the truncated JSON will fail to parse (model=%s)",
@@ -928,6 +937,8 @@ def call_openrouter(prompt: str, model: str,
                                response.usage.prompt_tokens,
                                response.usage.completion_tokens,
                                cached, written, _reported_cost(response.usage))
+            else:
+                token_usage.record("openrouter", use_model, 0, 0, usage_missing=True)
             if response.choices[0].finish_reason == "length":
                 log.warning("OpenRouter response hit the %d-token cap and was cut off — "
                             "the truncated JSON will fail to parse (model=%s)",
