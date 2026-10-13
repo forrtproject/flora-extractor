@@ -17,6 +17,7 @@ from shared import token_usage as tu
 @pytest.fixture(autouse=True)
 def _state_in_tmp(tmp_path, monkeypatch):
     monkeypatch.setattr(tu, "USAGE_STATE_PATH", tmp_path / "token_usage.json")
+    monkeypatch.setattr(tu, "LLM_DAILY_USD_BUDGET", 0)
 
 
 def _call_openai(monkeypatch, prompt_tokens=100, completion_tokens=20,
@@ -184,3 +185,71 @@ def test_a_reported_cost_is_summed_and_an_unreported_one_is_absent(tmp_path, mon
     day = tu.usage("2026-09-25")
     assert day["openrouter"]["a/b"]["usd"] == pytest.approx(0.0003)
     assert "usd" not in day["openai"]["m"]
+
+
+def test_usd_budget_sums_billed_cost_and_disjoint_cache_tokens():
+    tu.record("openai", "gpt-6-luna", 1_000_000, 1_000_000,
+              day="2026-10-13", cached_input_tokens=400_000,
+              cache_write_input_tokens=200_000)
+    tu.record("gemini", "gemini-3.1-flash-lite", 1_000_000, 100_000,
+              day="2026-10-13", cached_input_tokens=200_000)
+    tu.record("openrouter", "deepseek/deepseek-v4-flash", 9_000_000, 9_000_000,
+              day="2026-10-13", usd=0.30)
+    # OpenAI .888 + Gemini .355 + OpenRouter .30; no token-derived OR bill.
+    assert tu.spent_usd("2026-10-13") == pytest.approx(1.543)
+
+
+def test_dollar_cap_resets_by_utc_day_and_does_not_depend_on_token_cap(monkeypatch):
+    monkeypatch.setattr(tu, "LLM_DAILY_USD_BUDGET", 5)
+    monkeypatch.setattr(tu, "OPENAI_DAILY_TOKEN_BUDGET", 0)
+    tu.record("openrouter", "a/b", 1, 1, day="2026-10-13", usd=5)
+    with pytest.raises(tu.TokenBudgetExhausted, match="LLM_DAILY_USD_BUDGET"):
+        tu.check_openai_budget("2026-10-13")
+    tu.check_openai_budget("2026-10-14")
+
+
+@pytest.mark.parametrize("provider,model", [("openai", "unknown"), ("openrouter", "a/b")])
+def test_unpriced_usage_refuses_instead_of_counting_as_free(monkeypatch, provider, model):
+    monkeypatch.setattr(tu, "LLM_DAILY_USD_BUDGET", 5)
+    tu.record(provider, model, 100, 100)
+    with pytest.raises(tu.TokenBudgetExhausted, match="Cannot enforce"):
+        tu.check_usd_budget()
+
+
+def test_missing_billing_after_a_billed_openrouter_call_refuses(monkeypatch):
+    monkeypatch.setattr(tu, "LLM_DAILY_USD_BUDGET", 5)
+    tu.record("openrouter", "a/b", 100, 10, usd=0.1)
+    tu.record("openrouter", "a/b", 100, 10)
+    with pytest.raises(tu.TokenBudgetExhausted, match="no billed cost"):
+        tu.check_usd_budget()
+
+
+@pytest.mark.parametrize("contents", ['broken json', '[]'])
+def test_invalid_usage_record_does_not_reset_dollar_spend(monkeypatch, contents):
+    monkeypatch.setattr(tu, "LLM_DAILY_USD_BUDGET", 5)
+    tu.USAGE_STATE_PATH.write_text(contents)
+    with pytest.raises(tu.TokenBudgetExhausted, match="usage record"):
+        tu.check_usd_budget()
+
+
+@pytest.mark.parametrize("provider", ["openai", "gemini", "openrouter", "pdf", "images"])
+def test_dollar_cap_blocks_each_provider_before_network(monkeypatch, provider):
+    monkeypatch.setattr(tu, "LLM_DAILY_USD_BUDGET", 5)
+    tu.record("openrouter", "a/b", 100, 100, usd=5)
+    monkeypatch.setattr(llm, "OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr(llm, "OPENROUTER_API_KEY", "sk-test")
+    monkeypatch.setattr(llm, "GEMINI_API_KEYS", ["k"])
+    with patch("openai.OpenAI") as client, patch.object(llm.requests, "post") as post:
+        with pytest.raises(tu.TokenBudgetExhausted):
+            if provider == "openai":
+                llm.call_openai("prompt", "gpt-6-luna")
+            elif provider == "gemini":
+                llm.call_gemini("prompt", "gemini-3.1-flash-lite")
+            elif provider == "openrouter":
+                llm.call_openrouter("prompt", "deepseek/deepseek-v4-flash")
+            elif provider == "pdf":
+                llm.call_gemini_with_pdf("prompt", b"pdf")
+            else:
+                llm.call_gemini_with_images("prompt", [])
+        client.assert_not_called()
+        post.assert_not_called()

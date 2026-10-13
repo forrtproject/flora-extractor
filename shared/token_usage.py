@@ -1,5 +1,5 @@
 """
-token_usage.py — what every LLM call cost, and the one provider that is capped.
+token_usage.py — persisted LLM usage and daily token/dollar-equivalent ceilings.
 
 Two jobs, one file on disk (cache/token_usage.json):
 
@@ -7,13 +7,16 @@ Two jobs, one file on disk (cache/token_usage.json):
     per provider, per model, with input and output tokens kept apart — they are
     priced differently, so a single total cannot answer what a run cost. A provider
     that reports no usage contributes nothing rather than an estimate.
-  * **The OpenAI daily cap.** OpenAI is the metered spend here, so it is the only
-    provider with a ceiling. call_openai checks the day's OpenAI total against
+  * **The legacy OpenAI token cap.** call_openai checks the day's OpenAI total against
     OPENAI_DAILY_TOKEN_BUDGET before it spends, and raises TokenBudgetExhausted
-    instead of calling. Gemini and OpenRouter are recorded but never capped.
+    instead of calling. An optional LLM_DAILY_USD_BUDGET additionally caps all
+    three providers using conservative direct-provider rates and billed OpenRouter
+    dollars, including the usage already recorded before it was enabled.
 
 Shape:  {"2026-08-01": {"openai": {"gpt-5.4-mini":
          {"in": 1200, "out": 340, "cached_in": 900, "cache_write_in": 0}}}}
+`unpriced_calls` marks OpenRouter calls whose billed cost was absent, so an enabled
+dollar cap cannot silently omit them even when other calls did report dollars.
 The cache fields, and `usd` (the billed cost, which only OpenRouter reports), are
 omitted when the provider did not report a positive value;
 older records only have in/out. Cached and written tokens are subsets of in, not
@@ -33,7 +36,7 @@ import os
 import threading
 from datetime import datetime, timezone
 
-from .config import CACHE_DIR, OPENAI_DAILY_TOKEN_BUDGET, log
+from .config import CACHE_DIR, LLM_DAILY_USD_BUDGET, OPENAI_DAILY_TOKEN_BUDGET, log
 from .utils import csv_lock
 
 USAGE_STATE_PATH = CACHE_DIR / "token_usage.json"
@@ -44,9 +47,20 @@ USAGE_STATE_PATH = CACHE_DIR / "token_usage.json"
 # about two threads of one process, which is what this guards.
 _record_lock = threading.Lock()
 
+# USD per million tokens: input, cached input, cache write, output. Budget
+# accounting deliberately assumes standard tier, and Luna's LONG-context rate:
+# old aggregate records cannot recover individual requests' tier/context length.
+# Thus Flex, short prompts and free Gemini calls never undercut the ceiling.
+# Verified 2026-10-13 against developers.openai.com/api/docs/pricing and
+# ai.google.dev/gemini-api/docs/pricing. OpenRouter is billed, never reconstructed.
+_BUDGET_PRICES = {
+    ("openai", "gpt-6-luna"): (0.20, 0.02, 0.25, 0.75),
+    ("gemini", "gemini-3.1-flash-lite"): (0.25, 0.025, 0.25, 1.50),
+}
+
 
 class TokenBudgetExhausted(RuntimeError):
-    """The day's OpenAI token budget is spent, so no further OpenAI call may be made.
+    """A daily token/dollar budget is spent or its cost cannot be established.
 
     Raised before the call rather than after it, and never caught as a per-row
     api_error: a row that failed for lack of budget has not been examined, and
@@ -61,13 +75,17 @@ def _today() -> str:
     return datetime.now(timezone.utc).date().isoformat()
 
 
-def _read_all() -> dict:
+def _read_all(*, strict: bool = False) -> dict:
     if not USAGE_STATE_PATH.exists():
         return {}
     try:
         state = json.loads(USAGE_STATE_PATH.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError) as exc:
+        if strict:
+            raise TokenBudgetExhausted("Cannot enforce LLM_DAILY_USD_BUDGET: unreadable usage record") from exc
         return {}
+    if strict and not isinstance(state, dict):
+        raise TokenBudgetExhausted("Cannot enforce LLM_DAILY_USD_BUDGET: invalid usage record")
     return state if isinstance(state, dict) else {}
 
 
@@ -106,6 +124,8 @@ def record(provider: str, model: str,
                                         + cache_write_input_tokens)
         if usd > 0:
             bucket["usd"] = round(bucket.get("usd", 0.0) + usd, 9)
+        elif provider == "openrouter":
+            bucket["unpriced_calls"] = bucket.get("unpriced_calls", 0) + 1
         _write_all(state)
 
 
@@ -130,6 +150,7 @@ def spent(provider: str, day: str = "") -> int:
 
 def check_openai_budget(day: str = "") -> None:
     """Raise TokenBudgetExhausted if the day's OpenAI budget is already spent."""
+    check_usd_budget(day)
     if OPENAI_DAILY_TOKEN_BUDGET <= 0:
         return
     day   = day or _today()
@@ -143,3 +164,49 @@ def check_openai_budget(day: str = "") -> None:
         f"{OPENAI_DAILY_TOKEN_BUDGET:,} tokens spent on {day}. Set "
         f"OPENAI_DAILY_TOKEN_BUDGET in .env to raise it (0 disables the cap), or "
         f"continue tomorrow.")
+
+
+def spent_usd(day: str = "") -> float:
+    """Billed OpenRouter dollars plus conservative direct-provider equivalents.
+
+    Missing prices/billing refuse an enabled budget instead of silently treating
+    an unpriced model as free. Cache counters are subsets, never extra input.
+    """
+    total = 0.0
+    for provider, models in _read_all(strict=True).get(day or _today(), {}).items():
+        for model, tokens in models.items():
+            if provider == "openrouter":
+                if "usd" not in tokens or tokens.get("unpriced_calls"):
+                    raise TokenBudgetExhausted(
+                        f"Cannot enforce LLM_DAILY_USD_BUDGET: no billed cost for {model}")
+                total += tokens["usd"]
+                continue
+            rates = _BUDGET_PRICES.get((provider, model))
+            if rates is None:
+                raise TokenBudgetExhausted(
+                    f"Cannot enforce LLM_DAILY_USD_BUDGET: no price for {provider}/{model}")
+            n_in = max(tokens.get("in", 0), 0)
+            cached = min(max(tokens.get("cached_in", 0), 0), n_in)
+            written = min(max(tokens.get("cache_write_in", 0), 0), n_in - cached)
+            total += ((n_in - cached - written) * rates[0]
+                      + cached * rates[1] + written * rates[2]
+                      + max(tokens.get("out", 0), 0) * rates[3]) / 1_000_000
+    return total
+
+
+def check_usd_budget(day: str = "") -> None:
+    """Stop buying calls at the dollar ceiling; in-flight calls may finish.
+
+    Like the token ceiling, this is a pre-call check, not a reservation. The
+    maximum overshoot is the calls already in flight across the worker pools.
+    """
+    if LLM_DAILY_USD_BUDGET <= 0:
+        return
+    day = day or _today()
+    total = spent_usd(day)
+    if total >= LLM_DAILY_USD_BUDGET:
+        raise TokenBudgetExhausted(
+            f"Daily LLM dollar budget exhausted: ${total:.4f} of "
+            f"${LLM_DAILY_USD_BUDGET:.2f} on {day} "
+            "(billed OpenRouter + conservative direct-provider estimates). "
+            "Set LLM_DAILY_USD_BUDGET in .env to raise it, or continue tomorrow.")

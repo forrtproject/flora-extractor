@@ -64,6 +64,7 @@ def _token_usage_state_in_tmp(tmp_path_factory, monkeypatch):
     would both corrupt the usage history and eat the day's real OpenAI ceiling a few
     tokens at a time.
     """
+    monkeypatch.setattr(_token_usage, "LLM_DAILY_USD_BUDGET", 0)
     monkeypatch.setattr(
         _token_usage, "USAGE_STATE_PATH",
         tmp_path_factory.mktemp("token_usage") / "token_usage.json")

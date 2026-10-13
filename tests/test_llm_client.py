@@ -739,8 +739,9 @@ def test_openai_flex_timeout_is_not_a_refusal(monkeypatch):
 
 
 def test_openai_flex_fallback_records_one_call_of_usage(monkeypatch):
-    # The refused flex request was never served: exactly one usage record and one
-    # budget check may result from the pair.
+    # The refused flex request was never served: one usage record. Budget is
+    # checked at entry and before both transports, since other workers may spend
+    # while a flex refusal is being waited out.
     _openai_flex_env(monkeypatch)
     recorded: list = []
     checks: list = []
@@ -768,7 +769,7 @@ def test_openai_flex_fallback_records_one_call_of_usage(monkeypatch):
 
     assert len(calls) == 2
     assert recorded == [("openai", "m", 100, 20, 0, 0)]
-    assert len(checks) == 1
+    assert len(checks) == 3
 
 
 def test_openai_standard_fallback_failure_enters_the_retry_loop(monkeypatch):
