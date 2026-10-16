@@ -3,6 +3,7 @@ import gzip
 import json
 from unittest.mock import Mock
 from pathlib import Path
+from typing import BinaryIO
 
 from pytest import MonkeyPatch
 
@@ -152,3 +153,23 @@ def test_non_openalex_gzip_files_remain_opaque(tmp_path: Path) -> None:
     local = tmp_path / 'local'
     cache_sync._unpack(cache_sync.Part('openalex_xml', local, '*', 0), archive, set())
     assert (local / 'document.json.gz').read_bytes() == raw
+
+
+def test_sync_pull_preserves_entry_created_during_unpack(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    """A producer finishing during decompression must keep its local answer."""
+    source = tmp_path / 'source'
+    source.mkdir()
+    (source / 'answer.json').write_text('{"remote": true}')
+    archive = tmp_path / 'remote.tar.gz'
+    cache_sync.pack_shard([source / 'answer.json'], archive)
+    local = tmp_path / 'local'
+    copy = cache_sync.shutil.copyfileobj
+
+    def finish_local_write(src: BinaryIO, dest: BinaryIO) -> None:
+        copy(src, dest)
+        compressed(local / 'answer.json', {'local': True})
+
+    monkeypatch.setattr(cache_sync.shutil, 'copyfileobj', finish_local_write)
+    cache_sync._unpack(cache_sync.Part('openalex', local, '*.json', 1), archive, set())
+    assert cache.read_cache(local, 'answer') == {'local': True}
+    assert not list(local.glob('*.tmp'))

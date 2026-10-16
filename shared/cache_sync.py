@@ -217,7 +217,7 @@ def _git_commit() -> str:
 
 
 def _entry_name(path: Path, compressed_json: bool = False) -> str:
-    """The remote format and shard key remain plain JSON on every machine."""
+    """OpenAlex keeps its plain JSON remote names; other parts remain opaque."""
     return (path.name[:-3] if compressed_json and path.name.endswith(".json.gz")
             else path.name)
 
@@ -751,7 +751,12 @@ def _unpack(part: Part, shard: Path, unreliable: set[str]) -> None:
                 with (gzip.open(tmp, "wb", compresslevel=6) if compressed
                       else open(tmp, "wb")) as out:
                     shutil.copyfileobj(handle, out)
-                os.replace(tmp, dest)
+                # A local producer may finish while this entry is being unpacked.
+                # Publishing a pull is additive even across that race.
+                try:
+                    os.link(tmp, dest)
+                except FileExistsError:
+                    pass
             finally:
                 tmp.unlink(missing_ok=True)
 
