@@ -18,11 +18,13 @@ from .config import OA_CACHE_DIR
 
 
 def _signature(path: Path) -> tuple[int, int, int]:
+    """Detect replacement or modification before removing a source entry."""
     stat = path.stat()
     return stat.st_ino, stat.st_size, stat.st_mtime_ns
 
 
 def _digest(handle: BinaryIO) -> str:
+    """Hash a stream in bounded chunks, including gzip CRC verification at EOF."""
     digest = hashlib.sha256()
     for chunk in iter(lambda: handle.read(1 << 20), b''):
         digest.update(chunk)
@@ -70,6 +72,7 @@ def compress_entry(source: Path) -> tuple[int, int]:
 
 
 def main() -> None:
+    """Count entries by default, or migrate with a bounded worker queue."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--workers', type=int, choices=range(1, 5), default=2)
