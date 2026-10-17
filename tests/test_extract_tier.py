@@ -792,10 +792,9 @@ def test_a_declared_generation_equivalence_is_keyed_by_the_current_generation():
 
 
 def test_the_quote_source_edit_retains_all_prior_settled_extract_generations():
-    """The 2026-09-23 target-prompt edit (sibling rule + `_2` key suffix), the blind
-    pick check after it and the gpt-6-luna switch before it must not reopen works
-    settled under any prior declaration: the llm_references population is reopened
-    by name instead."""
+    """The 2026-10-02 quote-attribution edit must not reopen works settled under any
+    prior declaration. It claims no answer equivalence: only confirmed attribution
+    errors are reopened, by name, after the paired pilot."""
     from filter.engine.tiers import _generation_current
 
     assert extract_generation() == "619cc46f58c39395"

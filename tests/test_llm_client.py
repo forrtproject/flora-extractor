@@ -2341,12 +2341,17 @@ class TestCheckReferencePick:
         assert list(tmp_path.glob("*.json")) == []
 
 
-@pytest.mark.parametrize("full_body,expected_calls", [("", 0), ("Results: The effect replicated.", 1)])
-def test_quote_source_edit_reuses_only_unchanged_target_prompt_cache(monkeypatch, tmp_path, full_body, expected_calls):
+@pytest.mark.parametrize("evidence,expected_calls", [
+    ({}, 0),
+    ({"full_body": "Results: The effect replicated."}, 1),
+    # The fallback excerpt: its old DISCUSSION label cannot be translated unread.
+    ({"discussion": "The effect replicated.", "discussion_provenance": "fallback"}, 1),
+])
+def test_quote_source_edit_reuses_only_unchanged_target_prompt_cache(monkeypatch, tmp_path, evidence, expected_calls):
     from shared import prompts
     from shared.cache import content_key, write_cache
     entries, _ = llm.assign_target_keys(_CAND, [])
-    prompt = prompts.build_target_outcome_prompt("T", "A", entries, full_body=full_body)
+    prompt = prompts.build_target_outcome_prompt("T", "A", entries, **evidence)
     identities = "|".join(f"{e['key']}:{e.get('doi') or e.get('openalex_id') or ''}" for e in entries)
     old = prompts._QUOTE_SOURCE_VERSION_PAIRS["build_target_outcome_prompt"][1]
     model_id = llm.cache_model_id(llm.LINKING_MODEL, llm.LINKING_EFFORT)
@@ -2358,7 +2363,7 @@ def test_quote_source_edit_reuses_only_unchanged_target_prompt_cache(monkeypatch
         calls.append(prompt)
         return dict(_DECLINE), "openai", ""
     monkeypatch.setattr(llm, "call_model", fresh)
-    result = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", _CAND, [], rung="fulltext", full_body=full_body)
+    result = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", _CAND, [], rung="fulltext", **evidence)
     assert len(calls) == expected_calls
     assert (result.get("sentinel") == "old") == (expected_calls == 0)
 
