@@ -74,6 +74,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from shared import abstract_store
+from shared.cache import cache_exists
 from shared.config import (
     ABSTRACT_DB_PATH,
     CACHE_DIR,
@@ -215,25 +216,39 @@ def _git_commit() -> str:
         return ""
 
 
+def _entry_name(path: Path, compressed_json: bool = False) -> str:
+    """OpenAlex keeps its plain JSON remote names; other parts remain opaque."""
+    return (path.name[:-3] if compressed_json and path.name.endswith(".json.gz")
+            else path.name)
+
+
 def _shards_of(part: Part) -> dict[str, list[Path]]:
     """``{shard: [file, …]}`` for everything currently in *part*'s directory."""
     shards: dict[str, list[Path]] = {}
     if part.sqlite or not part.directory.exists():
         return shards
-    for path in part.directory.glob(part.pattern):
+    paths = list(part.directory.glob(part.pattern))
+    if part.name == "openalex":
+        paths += [p for p in part.directory.glob("*.json.gz")
+                  if not p.with_suffix("").exists()]
+    for path in paths:
         # retry_*.json are per-machine acquisition-delay records, not answers:
         # another machine's failed probe must not suppress this one's.
         if path.name.startswith("retry_"):
             continue
         if path.is_file() and not path.name.endswith(".tmp"):
-            shards.setdefault(part.shard_of(path.name), []).append(path)
+            shards.setdefault(part.shard_of(_entry_name(path, part.name == "openalex")), []).append(path)
     for files in shards.values():
         files.sort()
     return shards
 
 
-def pack_shard(files: Iterable[Path], dest: Path) -> str:
+def pack_shard(files: Iterable[Path], dest: Path, *,
+               compressed_json: bool = False) -> str:
     """Write a deterministic ``.tar.gz`` of *files*, by basename, to *dest*.
+
+    Only the OpenAlex part passes *compressed_json*: its local gzip entries are
+    plain JSON in the shared archive. Other parts retain their exact names/bytes.
 
     Returns the shard's digest (`_file_digest`). Deterministic — sorted members,
     every timestamp and owner zeroed, no file name in the gzip header — because the
@@ -252,10 +267,15 @@ def pack_shard(files: Iterable[Path], dest: Path) -> str:
             gzip.GzipFile(filename="", fileobj=out, mode="wb", compresslevel=6,
                           mtime=0) as gz, \
             tarfile.open(fileobj=gz, mode="w") as tar:
-        for path in sorted(files, key=lambda p: p.name):
-            with open(path, "rb") as handle:
-                info = tarfile.TarInfo(name=path.name)
-                info.size = os.fstat(handle.fileno()).st_size
+        for path in sorted(files, key=lambda p: _entry_name(p, compressed_json)):
+            compressed = compressed_json and path.name.endswith(".json.gz")
+            with (gzip.open(path, "rb") if compressed else open(path, "rb")) as handle:
+                info = tarfile.TarInfo(name=_entry_name(path, compressed_json))
+                if compressed:
+                    info.size = handle.seek(0, os.SEEK_END)
+                    handle.seek(0)
+                else:
+                    info.size = os.fstat(handle.fileno()).st_size
                 info.mtime = 0
                 info.uid = info.gid = 0
                 info.uname = info.gname = ""
@@ -484,7 +504,7 @@ def _push_with_spool(spool: Path, api, hf, repo_id: str, token: str,
         files = changed = 0
         for shard, paths in sorted(shards.items()):
             packed = spool / f"{part.name}-{shard}.tar.gz"
-            digest = pack_shard(paths, packed)
+            digest = pack_shard(paths, packed, compressed_json=part.name == "openalex")
             hashes.setdefault(part.name, {})[shard] = digest
             files += len(paths)
             if (known.get(part.name) or {}).get(shard) != digest:
@@ -497,7 +517,7 @@ def _push_with_spool(spool: Path, api, hf, repo_id: str, token: str,
                 # what the manifest would have said.
                 if not force and not dry_run and not manifest_unreadable:
                     missing = _remote_only_entries(hf, repo_id, token, remote,
-                                                   {p.name for p in paths}, spool)
+                                                   {_entry_name(p, part.name == "openalex") for p in paths}, spool)
                     if missing:
                         losses[remote] = missing
                 changed += 1
@@ -718,13 +738,27 @@ def _unpack(part: Part, shard: Path, unreliable: set[str]) -> None:
                             member.name, part.name)
                 continue
             target = part.directory / name
-            if target.exists():
+            exists = cache_exists(target) if part.name == "openalex" else target.exists()
+            if exists:
                 continue
             handle = tar.extractfile(member)
             if handle is None:
                 continue
-            with open(target, "wb") as out:
-                shutil.copyfileobj(handle, out)
+            compressed = part.name == "openalex" and target.suffix == ".json"
+            dest = target.with_suffix(".json.gz") if compressed else target
+            tmp = dest.with_name(f"{dest.name}.{os.getpid()}.tmp")
+            try:
+                with (gzip.open(tmp, "wb", compresslevel=6) if compressed
+                      else open(tmp, "wb")) as out:
+                    shutil.copyfileobj(handle, out)
+                # A local producer may finish while this entry is being unpacked.
+                # Publishing a pull is additive even across that race.
+                try:
+                    os.link(tmp, dest)
+                except FileExistsError:
+                    pass
+            finally:
+                tmp.unlink(missing_ok=True)
 
 
 def push_abstracts(api, hf, repo_id: str, known: dict, dry_run: bool) -> bool:

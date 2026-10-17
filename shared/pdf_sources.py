@@ -79,7 +79,7 @@ from .config import (
 
 from .openalex_keys import (current_index, headers as oa_headers,
                             is_budget_refusal, rotate_key)
-from .cache import write_json
+from .cache import cache_exists, read_json, write_json
 from .disambiguation import token_coverage
 from .rate_limit import throttle
 from .utils import clean_doi, cache_key
@@ -223,7 +223,7 @@ def _read_retry_log(path: Path) -> dict:
     """
     try:
         if path.exists():
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = read_json(path)
             if isinstance(data, dict):
                 return {str(k): str(v) for k, v in data.items()}
     except Exception as e:
@@ -317,7 +317,7 @@ def _read_provenance(doi: str) -> dict:
     try:
         path = _provenance_path(doi)
         if path.exists():
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = read_json(path)
             if isinstance(data, dict):
                 return {"source": str(data.get("source") or ""),
                         "url": str(data.get("url") or ""),
@@ -424,9 +424,8 @@ def _fetch_unpaywall_data(doi: str) -> Optional[dict]:
         return None
 
     cf = OA_CACHE_DIR / f"unpaywall_{cache_key(doi)}.json"
-    if cf.exists():
-        with cf.open(encoding="utf-8") as fh:
-            data = json.load(fh)
+    if cache_exists(cf):
+        data = read_json(cf)
         return None if data.get("__none__") else data
 
     throttle("unpaywall", UNPAYWALL_RATE_SEC)
@@ -498,9 +497,8 @@ def get_semanticscholar_pdf_url(doi: str) -> Optional[str]:
         return None
 
     cf = OA_CACHE_DIR / f"ss_{cache_key(doi)}.json"
-    if cf.exists():
-        with cf.open(encoding="utf-8") as fh:
-            data = json.load(fh)
+    if cache_exists(cf):
+        data = read_json(cf)
     else:
         throttle("semanticscholar", _SEMANTICSCHOLAR_RATE_SEC)
 
@@ -538,9 +536,8 @@ def get_core_pdf_url(doi: str) -> Optional[str]:
         return None
 
     cf = OA_CACHE_DIR / f"core3_{cache_key(doi)}.json"
-    if cf.exists():
-        with cf.open(encoding="utf-8") as fh:
-            data = json.load(fh)
+    if cache_exists(cf):
+        data = read_json(cf)
     else:
         throttle("core", _CORE_RATE_SEC)
         try:
@@ -589,9 +586,8 @@ def get_europepmc_pmcid(doi: str) -> Optional[str]:
         return None
 
     cf = OA_CACHE_DIR / f"epmc_{cache_key(doi)}.json"
-    if cf.exists():
-        with cf.open(encoding="utf-8") as fh:
-            data = json.load(fh)
+    if cache_exists(cf):
+        data = read_json(cf)
     else:
         throttle("europepmc", _EUROPEPMC_RATE_SEC)
         try:
@@ -675,9 +671,9 @@ def get_europepmc_fulltext(pmc_id: str) -> "dict | None":
         return None
 
     cache_file = OA_XML_CACHE_DIR / f"epmc_xml_{cache_key(pmc_id)}.json"
-    if cache_file.exists():
+    if cache_exists(cache_file):
         try:
-            cached = json.loads(cache_file.read_text(encoding="utf-8"))
+            cached = read_json(cache_file)
         except Exception:
             cached = None
         if cached is not None:
@@ -857,9 +853,9 @@ def get_osf_registration(guid: str) -> "dict | None":
     if not guid:
         return None
     cf = OA_CACHE_DIR / f"osfreg_{cache_key(guid)}.json"
-    if cf.exists():
+    if cache_exists(cf):
         try:
-            cached = json.loads(cf.read_text(encoding="utf-8"))
+            cached = read_json(cf)
         except Exception:
             cached = None
         if cached is not None:
@@ -1188,9 +1184,9 @@ def list_osf_files(guid: str) -> list[dict]:
     if not guid:
         return []
     cf = OA_CACHE_DIR / f"osffiles_{cache_key(guid)}.json"
-    if cf.exists():
+    if cache_exists(cf):
         try:
-            cached = json.loads(cf.read_text(encoding="utf-8"))
+            cached = read_json(cf)
         except Exception:
             cached = None
         # An entry with no fetched_at, or with a file that carries no "modified"
@@ -1391,9 +1387,9 @@ def get_html_document(url: str) -> "dict | None":
     if not url:
         return None
     cf = OA_CACHE_DIR / f"htmldoc_{cache_key(url)}.json"
-    if cf.exists():
+    if cache_exists(cf):
         try:
-            cached = json.loads(cf.read_text(encoding="utf-8"))
+            cached = read_json(cf)
         except Exception:
             cached = None
         if cached is not None:
@@ -1509,9 +1505,8 @@ def get_openalex_locations(doi: str) -> list[dict]:
     # carry no locations, so reading them would answer a wider question with a
     # narrower cached answer. They are left on disk unread — the refetch is free.
     cf = OA_CACHE_DIR / f"oaloc_{cache_key(doi)}.json"
-    if cf.exists():
-        with cf.open(encoding="utf-8") as fh:
-            data = json.load(fh)
+    if cache_exists(cf):
+        data = read_json(cf)
         if data.get("__none__"):
             return []
     else:
@@ -1578,9 +1573,8 @@ def _datacite_attributes(doi: str) -> dict:
         return {}
 
     cf = OA_CACHE_DIR / f"datacite_{cache_key(doi)}.json"
-    if cf.exists():
-        with cf.open(encoding="utf-8") as fh:
-            data = json.load(fh)
+    if cache_exists(cf):
+        data = read_json(cf)
         if data.get("__none__"):
             return {}
     else:
@@ -1670,9 +1664,8 @@ def get_zenodo_pdf_urls(doi: str) -> list[str]:
     if not m:
         return []
     cf = OA_CACHE_DIR / f"zenodo_{m.group(1)}.json"
-    if cf.exists():
-        with cf.open(encoding="utf-8") as fh:
-            data = json.load(fh)
+    if cache_exists(cf):
+        data = read_json(cf)
     else:
         throttle("zenodo", _ZENODO_RATE_SEC)
         try:
@@ -1720,7 +1713,7 @@ def pmc_oa_pdf_url(pmc_id: str) -> str:
     # A found version is permanent. An absence expires after PDF_RETRY_AFTER_DAYS: the
     # bucket gains articles later, e.g. an author manuscript released after its embargo.
     cf = OA_CACHE_DIR / f"pmcoa_{pmc_id}.json"
-    cached = json.loads(cf.read_text(encoding="utf-8")) if cf.exists() else None
+    cached = read_json(cf) if cache_exists(cf) else None
     if cached and (cached.get("version") or _retry_suppressed(
             {"miss": str(cached.get("fetched_at") or "")}, "miss", PDF_RETRY_AFTER_DAYS)):
         version = cached.get("version") or ""
@@ -1797,9 +1790,9 @@ def _crossref_get(url: str, params: dict, cache_file: Path,
     found" with 200 and an empty items list, so a 404 there is the service
     misbehaving. Caching that would disable the title search for the title forever.
     """
-    if cache_file.exists():
+    if cache_exists(cache_file):
         try:
-            data = json.loads(cache_file.read_text(encoding="utf-8"))
+            data = read_json(cache_file)
         except Exception:
             data = None
         if isinstance(data, dict):
@@ -2101,9 +2094,9 @@ def get_openalex_fulltext(openalex_id: str) -> "dict | None":
 
     key        = cache_key(oa_id)
     cache_file = OA_XML_CACHE_DIR / f"oa_xml_{key}.json"
-    if cache_file.exists():
+    if cache_exists(cache_file):
         try:
-            cached = json.loads(cache_file.read_text(encoding="utf-8"))
+            cached = read_json(cache_file)
         except Exception:
             cached = None
         if cached is not None:
@@ -2310,9 +2303,8 @@ def _scholar_search(query: str) -> dict:
     """
     provider = "serper" if SERPER_API_KEYS else "serpapi"
     cf = OA_CACHE_DIR / f"scholar_{provider}_{cache_key(query)}.json"
-    if cf.exists():
-        with cf.open(encoding="utf-8") as fh:
-            return json.load(fh)
+    if cache_exists(cf):
+        return read_json(cf)
     for api_key in (SERPER_API_KEYS or SERPAPI_KEYS):
         try:
             if provider == "serper":
