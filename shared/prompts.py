@@ -245,8 +245,7 @@ Outcome fields on each target object:
   complete consecutive sentences: the shortest passage that makes the verdict
   self-contained to someone who has not read the paper. Where the verdict genuinely
   needs two, join them with " | " and list both sources in the same order.
-- "out_quote_source": where that passage was copied from — "title", "abstract",
-  "introduction" or "discussion" (or two of them joined by " | ", matching the
+- "out_quote_source": where that passage was copied from — {quote_source_choices} (or two of them joined by " | ", matching the
   quote), or "" when there is no quote. Name only a section you were given.
 - "outcome_confident": true or false — whether you would stake the verdict on the
   evidence as written.
@@ -283,8 +282,7 @@ axes, each with its own quote and its own quote source:
 - "outcome_computation": one of "computationally reproducible", "computational
   issues", "technical failure", "not checked", "cannot_be_determined"
 - "outcome_computational_quote": the verbatim passage proving that verdict, or ""
-- "out_quote_computational_source": "title", "abstract", "introduction" or
-  "discussion" (or two joined by " | ", matching the quote), or ""
+- "out_quote_computational_source": {quote_source_choices} (or two joined by " | ", matching the quote), or ""
 - "outcome_robustness": one of "robust", "robustness challenges", "not checked",
   "cannot_be_determined"
 - "outcome_robustness_quote": the verbatim passage proving that verdict, or ""
@@ -452,7 +450,48 @@ OUTCOME_TEXT_CHARS = 7600
 
 def _discussion_block(discussion: str, provenance: str) -> str:
     label = PROVENANCE_LABEL.get(provenance, "the closing sections of the paper")
-    return f"DISCUSSION / CONCLUSION (from {label}):\n{discussion}"
+    heading = ("DISCUSSION / CONCLUSION" if provenance in ("", "discussion")
+               else "DOCUMENT EXCERPT")
+    return f"{heading} (from {label}):\n{discussion}"
+
+
+def _expanded_quote_sources(full_body: str = "", methods: str = "",
+                            discussion: str = "", provenance: str = "") -> bool:
+    return bool(full_body or methods or
+                (discussion and provenance not in ("", "discussion")))
+
+
+_QUOTE_SOURCE_CHOICES = ('"title", "abstract", "introduction", "methods", '
+                         '"results", "discussion" or "fulltext"')
+_QUOTE_SOURCE_RULE = """
+Attribute each outcome quote to its actual section in the supplied study document.
+Use "methods" or "results" only for a passage identified by a Methods or Results
+heading (including a clearly equivalent heading). Use "discussion" for Discussion
+or Conclusion. An excerpt's wrapper describes how it was selected, not its section:
+closing pages, fallback sections and registration forms are not automatically
+Discussion. Use "fulltext" when the passage is in the supplied document but its
+section cannot be identified; do not guess. Never attribute a quote to a reference
+entry or the metadata of an original study. These are attribution rules only: retain
+the outcome criteria above and do not infer findings from a Methods plan.
+""".strip()
+
+
+# Only calls with the ORIGINAL rendered text may read an earlier response. Calls
+# receiving a full body, Methods, or an unsectioned excerpt must buy a new answer:
+# their old quote labels cannot be translated without reading the document.
+_QUOTE_SOURCE_VERSION_PAIRS = {
+    "build_target_outcome_prompt": ("066c4d469ee9", "e2c602f14d34"),
+    "build_repro_target_outcome_prompt": ("5dde78a90af0", "117f2c544a69"),
+    "build_outcome_prompt": ("31fa7a89fb9a", "556e48911415"),
+    "build_repro_outcome_prompt": ("30703029542e", "c6bb106a7307"),
+    # The checker shares a body renderer but never sends a body. Its text is exact.
+    "build_pick_check_prompt": ("d39f84c32048", "8018b9d701fb"),
+}
+
+
+def quote_source_legacy_version(name: str, expanded: bool) -> str:
+    after, before = _QUOTE_SOURCE_VERSION_PAIRS.get(name, ("", ""))
+    return before if not expanded and prompt_version(name) == after else ""
 
 
 def _paper_blocks(study_r:      str,
@@ -531,9 +570,15 @@ def build_target_outcome_prompt(study_r:      str,
     the whole document (*full_body*) has not seen them.
     """
     rtc = _TARGET_RTC_FIELD if (discussion or full_body) else ""
+    expanded = _expanded_quote_sources(full_body, methods, discussion,
+                                       discussion_provenance)
+    sources = (_QUOTE_SOURCE_CHOICES if expanded else
+               '"title", "abstract",\n  "introduction" or "discussion"')
     return (EVIDENCE_POLICY + _TARGET_TASK + "\n\n" + _TARGET_RESPONSE_HEAD
-            + _fill(_TARGET_OUTCOME_FIELDS, {"record_type_check_field": rtc})
+            + _fill(_TARGET_OUTCOME_FIELDS, {"record_type_check_field": rtc,
+                                           "quote_source_choices": sources})
             + "\n\n" + _OUTCOME_RULES
+            + ("\n\n" + _QUOTE_SOURCE_RULE if expanded else "")
             + "\n\n" + _MULTI_TARGET_SCOPE + "\n\nPAPER\n\n"
             + "\n\n".join(_paper_blocks(study_r, abstract_r, entries, pdf_abstract,
                                         intro, methods, discussion,
@@ -557,9 +602,15 @@ def build_repro_target_outcome_prompt(study_r:      str,
     the model for the combined `outcome` string.
     """
     rtc = _TARGET_RTC_FIELD if (discussion or full_body) else ""
+    expanded = _expanded_quote_sources(full_body, methods, discussion,
+                                       discussion_provenance)
+    sources = (_QUOTE_SOURCE_CHOICES if expanded else
+               '"title", "abstract", "introduction" or\n  "discussion"')
     return (EVIDENCE_POLICY + _TARGET_TASK + "\n\n" + _TARGET_RESPONSE_HEAD
-            + _fill(_REPRO_TARGET_OUTCOME_FIELDS, {"record_type_check_field": rtc})
+            + _fill(_REPRO_TARGET_OUTCOME_FIELDS, {"record_type_check_field": rtc,
+                                                 "quote_source_choices": sources})
             + "\n\n" + _REPRO_AXIS_RULES
+            + ("\n\n" + _QUOTE_SOURCE_RULE if expanded else "")
             + "\n\n" + _MULTI_TARGET_SCOPE + "\n\nPAPER\n\n"
             + "\n\n".join(_paper_blocks(study_r, abstract_r, entries, pdf_abstract,
                                         intro, methods, discussion,
@@ -794,7 +845,7 @@ Field meanings:
   to someone who has not read the paper. If the only evidence is the title, quote the title.
   A passage from one section is usually enough; where the verdict genuinely needs two, join
   them with " | " and list both sources in the same order.
-- "out_quote_source" — "title", "abstract", "introduction" or "discussion" (or two of them
+- "out_quote_source" — {quote_source_choices} (or two of them
   joined by " | ", matching the quote), or "" when there is no quote. Name only a section you
   were given.
 - "confident" — whether you would stake the verdict on the evidence as written. Answer true
@@ -1025,7 +1076,7 @@ Use these field names, and match every categorical value exactly as listed.
 Each axis carries its own quote, and the two quotes are usually different sentences. Quote 1-4
 complete consecutive sentences per axis: the shortest verbatim passage that makes that verdict
 self-contained to someone who has not read the paper. Copy word for word from the evidence
-supplied. A source is "title", "abstract", "introduction" or "discussion" — name only a section
+supplied. A source is {quote_source_choices} — name only a section
 you were given; where a verdict genuinely needs two
 passages, join them with " | " and list both sources in the same order. Use "" for both the
 quote and its source when no supplied passage supports that axis verdict. A "not checked"
@@ -1586,22 +1637,24 @@ def build_outcome_prompt(title_r: str, abstract_snip: str,
     all — an empty block would offer a quote source the model never saw.
     """
     has_text = bool(text_snip or intro_snip)
+    expanded = _expanded_quote_sources(discussion=text_snip,
+                                       provenance=text_provenance)
     return _fill(_OUTCOME_TEMPLATE, {
         "evidence_line": _EVIDENCE_FULLTEXT if has_text else _EVIDENCE_ABSTRACT,
         "field_count": "seven" if has_text else "five",
         "check_fields": _OUTCOME_CHECK_FIELDS if has_text else "",
         "check_meanings": _OUTCOME_CHECK_MEANING if has_text else "",
-        "outcome_rules": _OUTCOME_RULES,
+        "outcome_rules": _OUTCOME_RULES + ("\n\n" + _QUOTE_SOURCE_RULE if expanded else ""),
+        "quote_source_choices": (_QUOTE_SOURCE_CHOICES if expanded else
+                                 '"title", "abstract", "introduction" or "discussion"'),
         "original_block": _original_block(
             "AN EARLIER STAGE OF THE PIPELINE LINKED THIS PAPER TO:",
             original_authors, original_year, original_title, original_evidence),
         "title_r": title_r or "(not available)",
         "abstract_r": abstract_snip or "(not available)",
         "intro_block": _text_block("INTRODUCTION:", intro_snip),
-        "fulltext_block": _text_block(
-            f"DISCUSSION / CONCLUSION (from "
-            f"{PROVENANCE_LABEL.get(text_provenance, 'the closing sections of the paper')}):",
-            text_snip),
+        "fulltext_block": (_discussion_block(text_snip, text_provenance) + "\n\n"
+                           if str(text_snip or "").strip() else ""),
     })
 
 
@@ -1616,21 +1669,23 @@ def build_repro_outcome_prompt(title_r: str, abstract_snip: str,
     The pass is selected exactly as in build_outcome_prompt.
     """
     has_text = bool(text_snip or intro_snip)
+    expanded = _expanded_quote_sources(discussion=text_snip,
+                                       provenance=text_provenance)
     return _fill(_REPRO_OUTCOME_TEMPLATE, {
         "evidence_line": _EVIDENCE_FULLTEXT if has_text else _EVIDENCE_ABSTRACT,
         "field_count": "ten" if has_text else "eight",
         "check_fields": _REPRO_CHECK_FIELDS if has_text else "",
-        "axis_rules": _REPRO_AXIS_RULES,
+        "axis_rules": _REPRO_AXIS_RULES + ("\n\n" + _QUOTE_SOURCE_RULE if expanded else ""),
+        "quote_source_choices": (_QUOTE_SOURCE_CHOICES if expanded else
+                                 '"title", "abstract", "introduction" or "discussion"'),
         "original_block": _original_block(
             "AN EARLIER STAGE OF THE PIPELINE LINKED THIS PAPER TO:",
             original_authors, original_year, original_title, original_evidence),
         "title_r": title_r or "(not available)",
         "abstract_r": abstract_snip or "(not available)",
         "intro_block": _text_block("INTRODUCTION:", intro_snip),
-        "fulltext_block": _text_block(
-            f"DISCUSSION / CONCLUSION (from "
-            f"{PROVENANCE_LABEL.get(text_provenance, 'the closing sections of the paper')}):",
-            text_snip),
+        "fulltext_block": (_discussion_block(text_snip, text_provenance) + "\n\n"
+                           if str(text_snip or "").strip() else ""),
     })
 
 
@@ -1746,9 +1801,7 @@ def _canonical_source(fn: FunctionType) -> str:
 _FROZEN_VERSIONS: dict[str, tuple[str, str]] = {
     "build_classify_prompt": ("9bdd4fb8f91f", "fde7296fafad"),
     "build_keyed_confirm_prompt": ("7afb003df03c", "abc811d2859b"),
-    "build_outcome_prompt": ("ad7b2bc26e1f", "556e48911415"),
     "build_prescreen_prompt": ("c8776b9eb527", "df5f7aefb41c"),
-    "build_repro_outcome_prompt": ("b5d30374a700", "c6bb106a7307"),
     "build_search_confirm_prompt": ("18e6f01de567", "e5e72b9e54fd"),
     "build_study_status_prompt": ("dface4c1af3c", "47b62a0f3465"),
 }
