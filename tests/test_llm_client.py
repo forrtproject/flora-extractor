@@ -198,7 +198,7 @@ def test_the_voter_id_decides_which_provider_is_called(monkeypatch, voter_id, pr
         AssertionError(f"a {provider} voter id must not reach {other}")))
 
     assert [v[0] for v in llm.screen_voters()] == ["gemini", provider]
-    assert llm._classify_once("p", voter_id, llm.SCREENING_EFFORT_2)["provider"] == provider
+    assert llm._classify_once("p", voter_id, "low")["provider"] == provider
     assert seen["model"] == voter_id
     if provider == "openai":
         assert seen["reasoning_effort"] == "low"
@@ -301,10 +301,11 @@ def _two_votes(monkeypatch, tmp_path, v1, v2):
 @pytest.mark.parametrize("v1,v2,expected", [
     (_v("replication"),  _v("replication"),  "replication"),
     (_v("reproduction"), _v("reproduction"), "reproduction"),
-    # A split or a "both" falls back to voter 1's qualifying answer…
+    # Two LLMs retain their historical first-qualifying-voter rule.
     (_v("replication"),  _v("reproduction"), "replication"),
     (_v("reproduction"), _v("replication"),  "reproduction"),
     (_v("both"),         _v("reproduction"), "replication"),
+    (_v("both"),         _v("replication"),  "replication"),
     # …and to voter 2's when voter 1 gave no qualifying answer.
     (_v("none", True),   _v("reproduction", True), "reproduction"),
     (_v("unclear", False), _v("replication", True), "replication"),
@@ -920,12 +921,117 @@ def test_a_gemini_voter_is_sent_its_effort_rather_than_left_to_the_default(monke
 
 
 def test_the_production_voter_pair_and_efforts_are_pinned():
-    """The DeepSeek effort is load-bearing: at "none" it discarded 7 settled
-    positives in the 2026-08-13 evaluation; at "low" it matched the incumbent."""
-    assert llm.SCREENING_MODEL_1 == "deepseek/deepseek-v4-flash"
-    assert llm.SCREENING_MODEL_2 == "gpt-6-luna"
-    assert (llm.SCREENING_EFFORT_1, llm.SCREENING_EFFORT_2) == ("low", "low")
-    assert [p for p, _m, _e, _eff in llm.screen_voters()] == ["openrouter", "openai"]
+    """The 2026-10 pair (analysis/jev_eval_2026-10/REPORT_pplx.md): Luna in text at
+    "low", and the dated Perplexity decision model, which takes no effort."""
+    assert llm.SCREENING_MODEL_1 == "gpt-6-luna"
+    assert llm.SCREENING_MODEL_2 == "perplexity/pplx-decider-v1.1-27b-20261006"
+    assert llm.SCREENING_MODEL_2 in llm.DECISION_MODELS
+    assert (llm.SCREENING_EFFORT_1, llm.SCREENING_EFFORT_2) == ("low", "")
+    assert [p for p, _m, _e, _eff in llm.screen_voters()] == ["openai", "openrouter"]
+    assert (llm.DECISION_DISCARD_BELOW, llm.DECISION_CONFIDENT_AT,
+            llm.DECISION_TYPE_SHARE) == (0.4, 0.9, 0.7)
+
+
+def _probs(rep: float, repro: float = 0.0, both: float = 0.0, unclear: float = 0.0) -> dict:
+    return {"probs": {"replication": rep, "reproduction": repro, "both": both,
+                      "none": 1 - rep - repro - both - unclear, "unclear": unclear},
+            "model": "perplexity/x"}
+
+
+@pytest.mark.parametrize("answer,classification,confident", [
+    (_probs(0.30, 0.05), "none", False),                 # P(qualifies) 0.35 < 0.4
+    (_probs(0.05),       "none", True),                  # ≤ 0.1: confidently none
+    (_probs(0.50),       "replication", False),          # qualifies, type share 1.0
+    (_probs(0.80, 0.15), "replication", True),           # 0.95 ≥ 0.9, share 0.84
+    (_probs(0.10, 0.85), "reproduction", True),          # reproduction share 0.89
+    (_probs(0.30, 0.25, both=0.05), "unclear", False),   # qualifies, share 0.6 < 0.7
+])
+def test_decision_probabilities_become_a_vote(answer, classification, confident):
+    """The three cut-offs: discard below 0.4, confident at 0.9, a type at a 0.7 share."""
+    vote = llm._decision_vote(answer)
+    assert (vote["classification"], vote["confident"]) == (classification, confident)
+    assert vote["evidence"] == "" and vote["reasoning"].startswith("P(qualifies)=")
+
+
+@pytest.mark.parametrize("luna,answer,expected", [
+    ("replication", _probs(0.1, 0.85), "reproduction"),
+    ("reproduction", _probs(0.8, 0.15), "replication"),
+    ("both", _probs(0.1, 0.85), "reproduction"),
+    ("replication", _probs(0.3, 0.25, both=0.05), "replication"),
+    ("none", _probs(0.1, 0.85), "reproduction"),
+    ("unclear", _probs(0.3, 0.25, both=0.05), ""),
+])
+def test_only_a_qualifying_decision_voter_overrides_the_llm_type(luna, answer, expected):
+    answer = dict(answer, model=llm.SCREENING_MODEL_2)
+    votes = [dict(_v(luna), model=llm.SCREENING_MODEL_1), llm._decision_vote(answer)]
+    assert llm._screen_record_type(votes) == expected
+
+
+@pytest.mark.parametrize("list_form", [False, True])
+def test_decision_response_accepts_both_probability_shapes(monkeypatch, list_form):
+    probs = _probs(0.8, 0.15)["probs"]
+    payload = ([{"value": k, "probability": v} for k, v in probs.items()]
+               if list_form else probs)
+    response = MagicMock(status_code=200)
+    response.json.return_value = {"answers": {"screen": {"probabilities": payload}}}
+    session = MagicMock()
+    session.post.return_value = response
+    monkeypatch.setattr(llm._decision_sessions, "s", session, raising=False)
+    answer = llm._decide_once("Title", "Abstract", llm.SCREENING_MODEL_2)
+    assert answer["probs"] == probs and session.post.call_count == 1
+
+
+@pytest.mark.parametrize("payload", [
+    [], {"answers": ["bad"]}, {"answers": {"screen": ["bad"]}},
+    {"usage": ["bad"]},
+    {"answers": {"screen": {"probabilities": ["bad"] * 5}}},
+    {"answers": {"screen": {"probabilities": [
+        {"value": "replication", "probability": 0.2}] * 5}}},
+    *[{"answers": {"screen": {"probabilities": {**_probs(0.0)["probs"], **changes}}}}
+      for changes in ({"replication": -0.2, "none": 1.2},
+                      {"replication": float("nan")},
+                      {"replication": float("inf")},
+                      {"replication": True}, {"replication": "0.0"},
+                      {"replication": None}, {"none": 0.5})],
+    {"answers": {"screen": {"probabilities": {"none": 1.0}}}},
+])
+def test_invalid_decision_responses_retry_without_caching(monkeypatch, tmp_path, payload):
+    monkeypatch.setattr(llm, "LLM_CACHE_DIR", tmp_path)
+    response = MagicMock(status_code=200)
+    response.json.return_value = payload
+    session = MagicMock()
+    session.post.return_value = response
+    monkeypatch.setattr(llm._decision_sessions, "s", session, raising=False)
+    args = ("10.1/x", "Title", "Abstract", "prompt", llm.SCREENING_MODEL_2, "")
+    assert llm._screen_vote(*args, buy=True) is None
+    assert session.post.call_count == 3
+    assert list(tmp_path.glob("*.json")) == []
+
+    # A malformed answer never checkpoints the work: a later valid answer is bought.
+    response.json.return_value = {"answers": {"screen": {"probabilities": _probs(0.8)["probs"]}}}
+    assert llm._screen_vote(*args, buy=True)["classification"] == "replication"
+    assert session.post.call_count == 4
+    assert len(list(tmp_path.glob("*.json"))) == 1
+
+
+def test_a_failed_decision_vote_is_an_incomplete_screen_and_not_cached(monkeypatch, tmp_path):
+    """A decision-model failure is a missing vote — never a "none" — and is not
+    cached, so the re-run buys it; a later answer is cached as raw probabilities."""
+    monkeypatch.setattr(llm, "LLM_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(llm, "SCREENING_MODEL_1", "gpt-6-luna")
+    monkeypatch.setattr(llm, "SCREENING_MODEL_2", "perplexity/x")
+    monkeypatch.setattr(llm, "DECISION_MODELS", frozenset({"perplexity/x"}))
+    monkeypatch.setattr(llm, "call_openai", lambda p, model=None, **kw: (_v("none"), None))
+    monkeypatch.setattr(llm, "_decide_once", lambda t, a, m: None)
+    first = llm.classify_replication("10.1/x", "Title", "Abstract")
+    assert first["screen_verdict"] == "" and first["resolution_method"] == "llm_refscreen_partial"
+
+    monkeypatch.setattr(llm, "_decide_once", lambda t, a, m: _probs(0.2))
+    second = llm.classify_replication("10.1/x", "Title", "Abstract")
+    assert second["screen_verdict"] == "discard"
+    monkeypatch.setattr(llm, "_decide_once", lambda t, a, m: (_ for _ in ()).throw(
+        AssertionError("a cached decision answer must not be re-bought")))
+    assert llm.cached_classification("10.1/x", "Title", "Abstract")["screen_verdict"] == "discard"
 
 
 # ── Joint-era classify entries are split, not re-bought ──────────────────────

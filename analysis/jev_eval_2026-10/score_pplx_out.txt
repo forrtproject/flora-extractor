@@ -1,0 +1,75 @@
+pplx_p7: 2186 calls, 485 in tok/call, $0.0097 per 1k
+
+| gate (discard only if ALL say none) | positives lost | hard neg discarded | curated neg discarded |
+|---|---|---|---|
+| ds4 | 16 (1.1%) | 286/344 (83%) | 355/386 (92%) |
+| luna | 17 (1.2%) | 269/344 (78%) | 339/386 (88%) |
+| ds4 + luna | 8 (0.5%) | 262/344 (76%) | 329/386 (85%) |
+| jev<0.3 | 3 (0.2%) | 199/344 (58%) | 100/386 (26%) |
+| jev<0.5 | 5 (0.3%) | 245/344 (71%) | 183/386 (47%) |
+| jev<0.7 | 13 (0.9%) | 278/344 (81%) | 268/386 (69%) |
+| pplx_p7<0.3 | 10 (0.7%) | 282/344 (82%) | 292/386 (76%) |
+| pplx_p7<0.5 | 18 (1.2%) | 299/344 (87%) | 330/386 (85%) |
+| pplx_p7<0.7 | 33 (2.3%) | 308/344 (90%) | 354/386 (92%) |
+| jev<0.5 + luna | 1 (0.1%) | 215/344 (62%) | 179/386 (46%) |
+| jev<0.7 + luna | 3 (0.2%) | 238/344 (69%) | 255/386 (66%) |
+| jev<0.8 + luna | 5 (0.3%) | 248/344 (72%) | 297/386 (77%) |
+| pplx_p7<0.5 + luna | 6 (0.4%) | 253/344 (74%) | 307/386 (80%) |
+| pplx_p7<0.7 + luna | 9 (0.6%) | 260/344 (76%) | 320/386 (83%) |
+| pplx_p7<0.8 + luna | 10 (0.7%) | 264/344 (77%) | 328/386 (85%) |
+| jev<0.5 + ds4 | 1 (0.1%) | 225/344 (65%) | 181/386 (47%) |
+| jev<0.7 + ds4 | 5 (0.3%) | 253/344 (74%) | 263/386 (68%) |
+| pplx_p7<0.5 + ds4 | 8 (0.5%) | 269/344 (78%) | 317/386 (82%) |
+| pplx_p7<0.7 + ds4 | 11 (0.8%) | 277/344 (81%) | 333/386 (86%) |
+| ds4 + luna + jev<0.5 | 1 (0.1%) | 213/344 (62%) | 179/386 (46%) |
+| ds4 + luna + jev<0.7 | 2 (0.1%) | 236/344 (69%) | 253/386 (66%) |
+| ds4 + luna + jev<0.8 | 3 (0.2%) | 246/344 (72%) | 292/386 (76%) |
+| ds4 + luna + pplx_p7<0.5 | 4 (0.3%) | 251/344 (73%) | 302/386 (78%) |
+| ds4 + luna + pplx_p7<0.7 | 6 (0.4%) | 257/344 (75%) | 312/386 (81%) |
+| ds4 + luna + pplx_p7<0.8 | 6 (0.4%) | 260/344 (76%) | 319/386 (83%) |
+| pplx_full<0.3 + luna | 2 (0.1%) | 254/344 (74%) | 298/386 (77%) |
+| pplx_full<0.5 + luna | 4 (0.3%) | 261/344 (76%) | 317/386 (82%) |
+
+sweep, Luna + X (cascade = Luna on every work, X only when Luna says none):
+| luna + pplx_p7<0.1 | 1 (0.1%) | 206/344 (60%) | 214/386 (55%) | X on every work $0.080/1k, cascade $0.073/1k
+| luna + pplx_p7<0.2 | 4 (0.3%) | 232/344 (67%) | 265/386 (69%) | X on every work $0.080/1k, cascade $0.073/1k
+| luna + pplx_p7<0.3 | 4 (0.3%) | 245/344 (71%) | 281/386 (73%) | X on every work $0.080/1k, cascade $0.073/1k
+| luna + pplx_p7<0.4 | 6 (0.4%) | 249/344 (72%) | 295/386 (76%) | X on every work $0.080/1k, cascade $0.073/1k
+| luna + pplx_p7<0.5 | 6 (0.4%) | 253/344 (74%) | 307/386 (80%) | X on every work $0.080/1k, cascade $0.073/1k
+| luna + pplx_p7<0.6 | 7 (0.5%) | 259/344 (75%) | 314/386 (81%) | X on every work $0.080/1k, cascade $0.073/1k
+| luna + pplx_p7<0.7 | 9 (0.6%) | 260/344 (76%) | 320/386 (83%) | X on every work $0.080/1k, cascade $0.073/1k
+| luna + pplx_p7<0.8 | 10 (0.7%) | 264/344 (77%) | 328/386 (85%) | X on every work $0.080/1k, cascade $0.073/1k
+| luna + pplx_p7<0.9 | 12 (0.8%) | 266/344 (77%) | 335/386 (87%) | X on every work $0.080/1k, cascade $0.073/1k
+| luna + pplx_full<0.1 | 2 (0.1%) | 207/344 (60%) | 246/386 (64%) | X on every work $0.112/1k, cascade $0.082/1k
+| luna + pplx_full<0.2 | 2 (0.1%) | 238/344 (69%) | 285/386 (74%) | X on every work $0.112/1k, cascade $0.082/1k
+| luna + pplx_full<0.3 | 2 (0.1%) | 254/344 (74%) | 298/386 (77%) | X on every work $0.112/1k, cascade $0.082/1k
+| luna + pplx_full<0.4 | 2 (0.1%) | 258/344 (75%) | 309/386 (80%) | X on every work $0.112/1k, cascade $0.082/1k
+| luna + pplx_full<0.5 | 4 (0.3%) | 261/344 (76%) | 317/386 (82%) | X on every work $0.112/1k, cascade $0.082/1k
+| luna + pplx_full<0.6 | 4 (0.3%) | 262/344 (76%) | 324/386 (84%) | X on every work $0.112/1k, cascade $0.082/1k
+| luna + pplx_full<0.7 | 8 (0.5%) | 264/344 (77%) | 330/386 (85%) | X on every work $0.112/1k, cascade $0.082/1k
+| luna + pplx_full<0.8 | 13 (0.9%) | 268/344 (78%) | 337/386 (87%) | X on every work $0.112/1k, cascade $0.082/1k
+| luna + pplx_full<0.9 | 16 (1.1%) | 268/344 (78%) | 339/386 (88%) | X on every work $0.112/1k, cascade $0.082/1k
+
+jev: AUC vs hard 0.970, vs curated 0.986
+pplx_p7: AUC vs hard 0.975, vs curated 0.993
+pplx_full: AUC vs hard 0.984, vs curated 0.997
+
+positives BOTH ds4 and luna discard: 8
+  SB0050 jev=0.85 pplx_p7=0.15 pplx_full=0.69  An Adaptation and Extension of the Attitudes Toward Seeking Professional Psychol
+  SB0309 jev=0.87 pplx_p7=0.64 pplx_full=0.74  An analysis of the value of token reinforcement using a multiple‐schedule assess
+  SB0319 jev=0.10 pplx_p7=0.04 pplx_full=0.07  Principals’ leadership behaviour: values-based, contingent or both?
+  SB0437 jev=0.92 pplx_p7=0.59 pplx_full=0.67  Outcome sequences and illusion of control – part II: the effect on post-loss spe
+  SB0505 jev=0.85 pplx_p7=0.95 pplx_full=0.79  Biodiversity Soup II: A bulk‐sample metabarcoding pipeline emphasizing error red
+  F005 jev=0.78 pplx_p7=0.37 pplx_full=0.48  Morphological effects in word identification: tracking the developmental traject
+  goldpos_flora:GP685 jev=0.56 pplx_p7=0.15 pplx_full=0.06  EEG Beta Power but Not Background Music Predicts the Recall Scores in a Foreign-
+  goldpos_repro:GR065 jev=0.96 pplx_p7=0.88 pplx_full=0.62  Party Platforms, Mandates, and Government Spending
+positives pplx_p7<0.5 discards: 18; ds4 also none 8, luna also none 6
+positives pplx_full<0.5 discards: 8; ds4 also none 5, luna also none 4
+
+title-search gate (step 4.6) — works allowed the shortcut:
+pos n=1456 today=1363 | luna sure & pplx_p7>=0.9: 1351 | luna sure & pplx_p7>=0.95: 1286 | luna sure & pplx_p7>=0.99: 993 | luna sure & pplx_full>=0.9: 1379 | luna sure & pplx_full>=0.95: 1322 | luna sure & pplx_full>=0.99: 1120
+hard n=344 today=46 | luna sure & pplx_p7>=0.9: 16 | luna sure & pplx_p7>=0.95: 12 | luna sure & pplx_p7>=0.99: 8 | luna sure & pplx_full>=0.9: 20 | luna sure & pplx_full>=0.95: 11 | luna sure & pplx_full>=0.99: 6
+easy n=386 today=13 | luna sure & pplx_p7>=0.9: 2 | luna sure & pplx_p7>=0.95: 0 | luna sure & pplx_p7>=0.99: 0 | luna sure & pplx_full>=0.9: 6 | luna sure & pplx_full>=0.95: 0 | luna sure & pplx_full>=0.99: 0
+
+record type, positives where ds4 and luna both give replication/reproduction:
+  ds4/luna type splits: 24; pplx_full sides with luna on 13, with ds4 on 11

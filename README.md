@@ -68,11 +68,14 @@ See [docs/setup.md](docs/setup.md) for full setup instructions.
 ```
 RESEARCHER_EMAIL=you@example.com   # for OpenAlex/Crossref API politeness
 GEMINI_API_KEY=...                 # primary LLM (free at aistudio.google.com)
-OPENAI_API_KEY=...                 # Stage 2's second screen voter (default SCREENING_MODEL_2) and Stage 3's linking/outcome models
+OPENAI_API_KEY=...                 # Stage 2's first screen voter (default SCREENING_MODEL_1, gpt-6-luna) and Stage 3's linking/outcome models
+OPENROUTER_API_KEY=...             # Stage 2's second screen voter (the Perplexity decision model) and Stage 3's pick check
 ```
 
-`OPENROUTER_API_KEY` is needed only when a model id contains a `/` (e.g. a
-`SCREENING_MODEL_2` or the optional pre-screen voters routed through OpenRouter).
+The screen pairs an LLM (`gpt-6-luna`, which answers in text) with a decision model
+(Perplexity Decider v1.1 on OpenRouter, which answers with probabilities); a paper is
+discarded only when both say no. Replication vs reproduction is Luna's call unless
+Perplexity is at least 70% sure of the other type.
 Optional: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `GROBID_URL`.
 
 `.env.example` is the authoritative list of every variable and its default — copy it

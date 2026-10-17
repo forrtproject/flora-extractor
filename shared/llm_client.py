@@ -17,6 +17,7 @@ Public API:
 """
 import base64
 import json
+import math
 import re
 import threading
 import time
@@ -42,6 +43,7 @@ from .config import (
     OPENAI_USE_FLEX,
     OPENROUTER_API_KEY,
     OPENROUTER_RATE_SEC,
+    DECISION_MODELS,
     OUTCOME_EFFORT,
     OUTCOME_MODEL,
     PDF_PARSE_EFFORT,
@@ -64,6 +66,7 @@ from .prompts import (
     build_keyed_confirm_prompt,
     build_pick_check_prompt,
     build_repro_target_outcome_prompt,
+    build_screen_decision,
     build_search_confirm_prompt,
     build_study_status_prompt,
     build_target_outcome_prompt,
@@ -1478,11 +1481,12 @@ def _clean_study_numbers(value) -> str:
 # loses a genuine replication. Disagreement is not an error — it routes the row to
 # full text, which is what we would have done anyway.
 
-# Q1's two voters, in call order. Both are required: with one provider the screen
+# Q1's two voters, in call order. Both are required: with one voter the screen
 # cannot tell agreement from a lone opinion, so run_extract refuses to start.
-# Voter 2 is GPT-6 Luna on OpenAI direct. The earlier gpt-5.4-mini pair was
-# evaluated on the v3.2 gate sweep; those results do not establish Luna's recall.
-# A model id containing "/" routes to OpenRouter through provider_for().
+# Voter 1 is GPT-6 Luna on OpenAI direct, answering in text; voter 2 is a decision
+# model (DECISION_MODELS) answering the same rules with probabilities, which
+# _decision_vote() turns into the same vote shape — see shared/config.py for the
+# measurement. A model id containing "/" routes to OpenRouter through provider_for().
 SCREEN_CLASSIFICATIONS = ("replication", "reproduction", "both", "none", "unclear")
 SCREEN_QUALIFYING      = ("replication", "reproduction", "both")
 
@@ -1565,6 +1569,131 @@ def _classify_once(prompt: str, model: str, effort: str) -> "dict | None":
     return vote
 
 
+# The decision voter's probabilities become a vote with three cut-offs, measured on
+# 2,186 labelled works (analysis/jev_eval_2026-10/REPORT_pplx.md). P(qualifies) is
+# P(replication) + P(reproduction) + P(both); "unclear" does not count toward it.
+#   below DISCARD_BELOW  → "none", so the gate discards only if Luna also says none.
+#     0.4 is the highest cut-off that still lost only 2 of 1,456 positives (0.5: 4).
+#   at or above CONFIDENT_AT → "confident", which opens the pre-PDF title search
+#     together with a confident Luna (link_original.py). Luna confident + P ≥ 0.9
+#     allowed 1,379 positives and 20 hard negatives; Luna + DeepSeek allowed 1,363 / 46.
+#   a type share at or above TYPE_SHARE → that type, which overrides Luna's type
+#     (_screen_record_type); below it the vote says "unclear" — qualifying for the
+#     gate, silent about the type. Typing by Luna with this override: 98.0% against
+#     the validators' type on 645 positives; Luna alone 96.8% (it found 33 of 43
+#     reproductions, the override 38).
+# All three decide what a stored vote SAYS, so all three are in the screening
+# generation (filter/engine/tiers.py); the raw probabilities are what is cached, so
+# moving a cut-off re-reads the cache rather than re-buying it.
+DECISION_DISCARD_BELOW = 0.4
+DECISION_CONFIDENT_AT = 0.9
+DECISION_TYPE_SHARE = 0.7
+
+_DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"
+# One Session per thread: a fresh TLS context per call costs seconds of CPU on
+# Windows, and the screen runs on a worker pool.
+_decision_sessions = threading.local()
+
+
+def _decide_once(study_r: str, abstract_r: str, model: str) -> "dict | None":
+    """One decision-model answer: `{"probs", "model", "served_by"}`, or None.
+
+    Retried three times with 1/2/4 s back-off against the same model. Any failure —
+    an HTTP error, a 404 for a withdrawn id, an answer whose probabilities are not a
+    distribution over the five classes — returns None: a failed vote, which leaves
+    the screen incomplete and re-askable, never a "none".
+    """
+    body = {"model": model, **build_screen_decision(study_r, abstract_r)}
+    if not hasattr(_decision_sessions, "s"):
+        _decision_sessions.s = requests.Session()
+    last = ""
+    for attempt in range(3):
+        if attempt:
+            time.sleep(2 ** (attempt - 1))
+        _throttle("openrouter")
+        try:
+            r = _decision_sessions.s.post(
+                _DECISIONS_URL, json=body, timeout=90,
+                headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}"})
+            if r.status_code != 200:
+                last = f"HTTP {r.status_code}: {r.text[:200]}"
+                continue
+            data = r.json()
+            if not isinstance(data, dict):
+                raise ValueError("decision response is not an object")
+            usage = data.get("usage") or {}
+            if not isinstance(usage, dict):
+                raise ValueError("decision usage is not an object")
+            _record_tokens("openrouter", model, int(usage.get("input_tokens") or 0),
+                           int(usage.get("output_tokens") or 0),
+                           usd=float(usage.get("cost") or 0))
+            answers = data.get("answers")
+            if not isinstance(answers, dict) or not isinstance(answers.get("screen"), dict):
+                raise ValueError("decision response has no screen answer object")
+            probs = answers["screen"].get("probabilities")
+            if isinstance(probs, list):  # the endpoint has answered in both shapes
+                if len(probs) != len(SCREEN_CLASSIFICATIONS) or not all(
+                        isinstance(p, dict) and isinstance(p.get("value"), str)
+                        for p in probs):
+                    raise ValueError("invalid decision probability list")
+                probs = {p.get("value"): p.get("probability") for p in probs}
+            if (not isinstance(probs, dict) or set(probs) != set(SCREEN_CLASSIFICATIONS)
+                    or any(isinstance(v, bool) or not isinstance(v, (int, float))
+                           for v in probs.values())):
+                raise ValueError("decision probabilities must name all five classes with numbers")
+            probs = {k: float(v) for k, v in probs.items()}
+            if (any(not math.isfinite(v) or not 0 <= v <= 1 for v in probs.values())
+                    or abs(sum(probs.values()) - 1) > 0.03):
+                raise ValueError("decision probabilities are not a distribution")
+            return {"probs": probs,
+                    "model": model, "served_by": str(data.get("model") or "")}
+        except (requests.RequestException, ValueError, TypeError, OverflowError) as e:
+            last = f"{type(e).__name__}: {e}"[:200]
+    log.warning("Decision vote failed after 3 attempts (model=%s): %s", model, last)
+    return None
+
+
+def _decision_vote(answer: dict) -> dict:
+    """A cached decision answer as a screen vote, through the three cut-offs above.
+
+    The vote has the LLM vote's shape, so the gate, the stored verdict rows and Stage 3
+    read it unchanged. It has no quote; its `reasoning` carries the probabilities,
+    which is what a reviewer of the row can check.
+    """
+    p = answer["probs"]
+    rep = p["replication"] + p["both"]
+    qualify = rep + p["reproduction"]
+    share_type, share = (("reproduction", p["reproduction"] / qualify)
+                         if qualify and p["reproduction"] > rep
+                         else ("replication", rep / qualify if qualify else 0.0))
+    if qualify < DECISION_DISCARD_BELOW:
+        classification = "none"
+    elif share >= DECISION_TYPE_SHARE:
+        classification = share_type
+    else:
+        classification = "unclear"
+    confident = (qualify >= DECISION_CONFIDENT_AT if classification != "none"
+                 else qualify <= 1 - DECISION_CONFIDENT_AT)
+    return {
+        "classification": classification,
+        "confident":      confident,
+        "categories":     [],
+        "evidence":       "",
+        "reasoning":      f"P(qualifies)={qualify:.2f}; " + ", ".join(
+            f"{k} {p[k]:.2f}" for k in SCREEN_CLASSIFICATIONS),
+        "provider":       "openrouter",
+        "model":          answer["model"],
+        "served_by":      answer.get("served_by", ""),
+    }
+
+
+def _decision_key(doi_r: str, study_r: str, abstract_r: str, model: str) -> str:
+    """A decision answer's cache key: the question version, the model and the state."""
+    return content_key("classifydecide", doi_r or study_r,
+                       prompt_version("build_screen_decision"), model,
+                       build_screen_decision(study_r, abstract_r)["state"])
+
+
 def screen_gate(votes: list[dict]) -> "str | None":
     """G-unanimous: a paper is discarded only when every voter says "none".
 
@@ -1588,19 +1717,25 @@ def screen_gate(votes: list[dict]) -> "str | None":
 
 def _screen_record_type(votes: list[dict]) -> str:
     """The paper type the screen settled on, for the `type` column and the outcome
-    vocabulary. Both voters agreeing on a qualifying label wins; a "both" answer or
-    a replication-vs-reproduction split falls back to the first qualifying voter in
-    call order. "both" maps to "replication" because such a paper collects new data,
+    vocabulary. "both" maps to "replication" because such a paper collects new data,
     and replication outcome vocabulary applies to it; the raw classifications stay
     visible in the votes.
+
+    Voter 1's (Luna's) type stands, unless the DECISION voter names a different type,
+    which then wins. The decision model names a type only
+    when at least DECISION_TYPE_SHARE of its qualifying probability backs it — so this
+    is "Luna, overridden by Perplexity when it is at least 70% sure". Measured against
+    the validators' type on 645 positives: 98.0%, Luna alone 96.8%, and 38 of 43
+    reproductions found instead of 33. When Luna gives no type, the later voter's
+    stands. Read from the classifications alone because that is all a stored verdict
+    row keeps (filter/engine/tiers.py, _votes_from_rows). Retained two-LLM pairs keep
+    their first qualifying voter's type; the override requires decision-model identity.
     """
-    quals = [v["classification"] for v in votes if v["classification"] in SCREEN_QUALIFYING]
+    quals = [v for v in votes if v["classification"] in SCREEN_QUALIFYING]
     if not quals:
         return ""
-    # Agreement and the fallback pick the same element: quals is in the order
-    # screen_voters() lists the voters, so quals[0] is voter 1's answer whenever
-    # voter 1 gave a qualifying one.
-    return "replication" if quals[0] == "both" else quals[0]
+    chosen = next((v for v in quals if v.get("model") in DECISION_MODELS), quals[0])
+    return "replication" if chosen["classification"] == "both" else chosen["classification"]
 
 
 def _screen_categories(votes: list[dict]) -> list[str]:
@@ -1804,11 +1939,37 @@ def cached_classification(doi_r: str, study_r: str, abstract_r: str) -> "dict | 
     """
     voters = screen_voters()
     cls_prompt = build_classify_prompt(study_r, abstract_r)
-    votes = [v for v in (_cached_vote(doi_r, study_r, cls_prompt, m, eff)
+    votes = [v for v in (_screen_vote(doi_r, study_r, abstract_r, cls_prompt, m, eff,
+                                      buy=False)
                          for _p, m, _e, eff in voters) if v]
     if len(votes) < 2:
         return None
     return _screen_result_from_votes(cls_prompt, voters, votes)
+
+
+def _screen_vote(doi_r: str, study_r: str, abstract_r: str, cls_prompt: str,
+                 model: str, effort: str, buy: bool) -> "dict | None":
+    """One voter's vote: cached if on disk, else bought when *buy*, else None.
+
+    A fresh answer is cached the moment it parses; a failed one is not — a transient
+    provider failure must never freeze into a permanent non-answer. A decision
+    model's cache holds its raw probabilities, and the vote is derived on every read.
+    """
+    if model in DECISION_MODELS:
+        key = _decision_key(doi_r, study_r, abstract_r, model)
+        answer = read_cache(LLM_CACHE_DIR, key)
+        if not (isinstance(answer, dict) and answer.get("probs")):
+            answer = _decide_once(study_r, abstract_r, model) if buy else None
+            if answer is not None:
+                write_cache(LLM_CACHE_DIR, key, answer)
+        return _decision_vote(answer) if answer else None
+    vote = _cached_vote(doi_r, study_r, cls_prompt, model, effort)
+    if vote is None and buy:
+        vote = _classify_once(cls_prompt, model, effort)
+        if vote is not None:
+            write_cache(LLM_CACHE_DIR, _vote_key(doi_r, study_r, cls_prompt, model, effort),
+                        vote)
+    return vote
 
 
 def classify_replication(doi_r: str, study_r: str, abstract_r: str) -> dict:
@@ -1837,21 +1998,11 @@ def classify_replication(doi_r: str, study_r: str, abstract_r: str) -> dict:
     voters     = screen_voters()
     cls_prompt = build_classify_prompt(study_r, abstract_r)
 
-    # One cached answer per VOTE. A fresh vote is cached the moment it parses; a
-    # failed one is not — a transient provider failure must never freeze into a
-    # permanent non-answer, so an incomplete screen stays re-runnable while its
+    # One cached answer per VOTE, so an incomplete screen stays re-runnable while its
     # successful votes are already paid for and kept.
-    votes = []
-    for _p, m, _e, eff in voters:
-        vote = _cached_vote(doi_r, study_r, cls_prompt, m, eff)
-        if vote is None:
-            vote = _classify_once(cls_prompt, m, eff)
-            if vote is not None:
-                write_cache(LLM_CACHE_DIR,
-                            _vote_key(doi_r, study_r, cls_prompt, m, eff), vote)
-        if vote is not None:
-            votes.append(vote)
-
+    votes = [v for v in (_screen_vote(doi_r, study_r, abstract_r, cls_prompt, m, eff,
+                                      buy=True)
+                         for _p, m, _e, eff in voters) if v is not None]
     return _screen_result_from_votes(cls_prompt, voters, votes)
 
 

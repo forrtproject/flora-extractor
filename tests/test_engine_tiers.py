@@ -1258,22 +1258,43 @@ def test_a_verdict_from_another_generation_neither_settles_nor_blocks(
     assert drop == {11} and set(screen) == {11}
 
 
-def test_luna_screen_accepts_settled_mini_generation_without_reopening(monkeypatch):
-    current = tiers.screening_generation("screen_expensive")
-    monkeypatch.setattr(tiers, "SCREENING_MODEL_2", "gpt-5.4-mini")
-    old = tiers.screening_generation("screen_expensive")
-    assert old == "98bcab0eff366d1d"
+def _era_generation(monkeypatch, model_1: str, model_2: str) -> str:
+    """The expensive tier's generation under an earlier voter pair, both at "low"."""
+    for name, value in (("SCREENING_MODEL_1", model_1), ("SCREENING_MODEL_2", model_2),
+                        ("SCREENING_EFFORT_1", "low"), ("SCREENING_EFFORT_2", "low")):
+        monkeypatch.setattr(tiers, name, value)
+    generation = tiers.screening_generation("screen_expensive")
     monkeypatch.undo()
-    assert current == "3b93ecf06901e653"
+    return generation
 
-    votes = [{"work_id": 11, "verdict": "none", "model": m,
-              "confidence": "confident"}
-             for m in (tiers.SCREENING_MODEL_1, "gpt-5.4-mini")]
+
+@pytest.mark.parametrize("old_pair", [("deepseek/deepseek-v4-flash", "gpt-5.4-mini"),
+                                      ("deepseek/deepseek-v4-flash", "gpt-6-luna")])
+def test_current_screen_accepts_settled_earlier_generations_without_reopening(
+        monkeypatch, old_pair):
+    """The Luna + Perplexity generation keeps the settled DeepSeek + Luna screens and
+    the mini-era ones that generation accepted; any later change reopens them."""
+    old = _era_generation(monkeypatch, *old_pair)
+    assert old in ("98bcab0eff366d1d", "3b93ecf06901e653")
+    assert tiers.screening_generation("screen_expensive") == "eb560e1e840acd4b"
+
+    votes = [{"work_id": 11, "verdict": "none", "model": m, "confidence": "confident"}
+             for m in old_pair]
     client = _decided_client("screen_expensive", "live", votes, generation=old)
     assert tiers.decided_work_ids(client, "screen_expensive") == {11}
     assert handoff_mod.decisions(client)[0] == {11}
 
-    monkeypatch.setattr(tiers, "SCREENING_EFFORT_2", "high")
+    # Retaining the result retains its historical type, even when the database
+    # returns voter 2 first. Today's Perplexity override must not reinterpret it.
+    split = [{"work_id": 11, "verdict": label, "model": model,
+              "confidence": "confident"}
+             for model, label in zip(old_pair, ("replication", "reproduction"))]
+    split_client = _decided_client("screen_expensive", "live", list(reversed(split)), generation=old)
+    assert tiers.decided_work_ids(split_client, "screen_expensive") == {11}
+    assert handoff_mod.decisions(split_client)[1][11]["record_type"] == "replication"
+
+    monkeypatch.setattr(tiers, "DECISION_DISCARD_BELOW", 0.5)
+    assert tiers.screening_generation("screen_expensive") != "eb560e1e840acd4b"
     assert tiers.decided_work_ids(client, "screen_expensive") == set()
 
 
@@ -1294,20 +1315,20 @@ def test_equivalent_screen_generations_do_not_combine_different_voters():
     assert tiers.decided_work_ids(client, "screen_expensive") == set()
     assert handoff_mod.decisions(client) == (set(), {})
 
-    # A complete Luna-era screen replaces an older settled mini-era answer.
+    # A complete current-generation screen replaces an older settled answer.
     client.verdicts.return_value = [
         {"claim_id": "old", "work_id": 11, "verdict": "none",
          "model": m, "confidence": "confident"}
-        for m in (tiers.SCREENING_MODEL_1, "gpt-5.4-mini")
+        for m in ("deepseek/deepseek-v4-flash", "gpt-5.4-mini")
     ] + [
         {"claim_id": "new", "work_id": 11, "verdict": "replication",
          "model": m, "confidence": "confident"}
-        for m in (tiers.SCREENING_MODEL_1, "gpt-6-luna")
+        for m in (tiers.SCREENING_MODEL_1, tiers.SCREENING_MODEL_2)
     ]
     decision = tiers.checkpoint_decisions(client, "screen_expensive")[11]
     assert decision["outcome"] == "proceed"
     assert {vote["model"] for vote in decision["votes"]} == {
-        tiers.SCREENING_MODEL_1, "gpt-6-luna"}
+        tiers.SCREENING_MODEL_1, tiers.SCREENING_MODEL_2}
 
 
 def test_a_validation_verdict_settles_the_sandbox_and_not_the_live_worklist():
@@ -1532,6 +1553,24 @@ def test_a_cheap_tier_whose_voters_failed_decided_nothing(con, pool):
     assert tiers.decided_work_ids(kept, "screen_cheap") == {21}
 
 
+@pytest.mark.parametrize("pair", tiers.SCREENING_LEGACY_VOTER_PAIRS)
+@pytest.mark.parametrize("first,second,expected", [
+    ("replication", "reproduction", "replication"),
+    ("reproduction", "replication", "reproduction"),
+    ("both", "reproduction", "replication"),
+])
+def test_legacy_screen_type_keeps_historical_order_after_a_retry(pair, first, second, expected):
+    rows = [
+        {"model": pair[0], "verdict": "none", "created_at": "2026-08-01"},
+        {"model": pair[1], "verdict": second, "created_at": "2026-08-02"},
+        {"model": pair[0], "verdict": first, "created_at": "2026-08-03"},
+    ]
+    for unordered in (rows, list(reversed(rows))):
+        decision = tiers._expensive_decision(unordered)
+        assert decision["record_type"] == expected
+        assert [v["model"] for v in decision["votes"]] == list(pair)
+
+
 def test_one_voter_answering_twice_is_never_a_second_vote(con, pool):
     """The retry hole: pooling rows across claims is what makes an incomplete
     screen claimable again, but a re-run re-asks BOTH voters and the one that
@@ -1556,7 +1595,7 @@ def test_one_voter_answering_twice_is_never_a_second_vote(con, pool):
     assert handoff_mod.decisions(retried) == (set(), {})
 
     # The later answer is the one kept, and it stays in voter 1's call-order slot,
-    # so the record type still breaks a split on the FIRST qualifying voter.
+    # so deduplication preserves the pair's call order for the type decision.
     rebuilt = tiers._votes_from_rows([
         {"work_id": 11, "verdict": "reproduction", "model": voter1,
          "confidence": "confident", "created_at": "2026-08-01T10:00:00Z"},

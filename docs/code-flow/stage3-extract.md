@@ -117,35 +117,39 @@ verdict is missing is written `target_pending`, and the tier's worklist does not
 a work no live current-generation verdict admitted. What the two voters do, below, is
 unchanged — only where.
 
-Two providers vote on the validated schema, at prompt version **v3.3** (v3.2 plus the
-partial-overlap rule; evaluated copy `analysis/screening_eval/prompt_v33.txt`, evidence
-`analysis/screening_eval/report_v33.md`) — `classification` ∈
-{`replication`, `reproduction`, `both`, `none`, `unclear`}, boolean `confident`, an
-array of `categories` from an 11-value enum, `evidence_quote`, `reasoning`:
+Two voters of different kinds answer, from the title and abstract, whether the paper
+is a replication or reproduction (evidence for the pair and its cut-offs:
+`analysis/jev_eval_2026-10/REPORT_pplx.md`):
 
-| Voter | Provider | Model |
-| ----- | -------- | ----- |
-| 1 | Gemini | `SCREENING_MODEL_1` |
-| 2 | OpenAI, or OpenRouter when the id contains `/` | `SCREENING_MODEL_2` (default `gpt-5.4-mini`) |
+| Voter | Kind | Provider | Model | Answers |
+| ----- | ---- | -------- | ----- | ------- |
+| 1 | LLM | OpenAI | `SCREENING_MODEL_1` (default `gpt-6-luna`, effort `low`) | the v3.3 schema in text: `classification` ∈ {`replication`, `reproduction`, `both`, `none`, `unclear`}, boolean `confident`, `categories` (11-value enum), `evidence_quote`, `reasoning` |
+| 2 | decision model | OpenRouter `POST /api/alpha/decisions` | `SCREENING_MODEL_2` (default `perplexity/pplx-decider-v1.1-27b-20261006`) | the same rules as a `choice` over the same five classes (`build_screen_decision()`), one probability per class, no text |
+
+Prompt version **v3.3** (v3.2 plus the partial-overlap rule; evaluated copy
+`analysis/screening_eval/prompt_v33.txt`, evidence `analysis/screening_eval/report_v33.md`).
+The decision voter's probabilities become a vote of the LLM's shape
+(`_decision_vote()`): P(qualifies) = P(replication + reproduction + both) below **0.4**
+→ `none`; at least **0.9** → `confident`; a type holding at least **0.7** of it → that
+type, else `unclear`. Its quote is empty and its `reasoning` carries the probabilities.
 
 Which key each voter needs follows its model id through `provider_for()`, not a
-hardcoded pair: with today's defaults it is `GEMINI_API_KEY` for voter 1 and whichever
-of `OPENAI_API_KEY` / `OPENROUTER_API_KEY` voter 2 needs. A Stage 3 run calls neither
-voter and needs neither key. Voter 2 sits
-outside the Google lineage on purpose: its errors overlap little with voter 1's.
+hardcoded pair: with today's defaults it is `OPENAI_API_KEY` for voter 1 and
+`OPENROUTER_API_KEY` for voter 2. A Stage 3 run calls neither voter and needs neither
+key for the screen.
 
-**The gate is `screen_gate()`** — G-softqual from the v3.2 sweep, defined once and
-called from both the front door and the batch-tools path in `link_original.py`. It
-discards when every vote is `none` at any confidence, or when one voter said `none`
-confidently and every other vote is a qualifying-or-`unclear` answer with
-`confident: false`. Everything else proceeds: a confident `none` against a confident
-qualifying answer is a real split, and it goes down the ladder rather than terminating.
+**The gate is `screen_gate()`** — G-unanimous, defined once. It discards only when
+every vote is `none`, at any confidence: Luna says `none` AND Perplexity's
+P(qualifies) is below 0.4. Everything else proceeds, including a confident split.
 There is no `screen_disagreement` outcome any more.
 
-The screen also sets `record_type` (both voters agreeing on a qualifying label wins; a
-`both` answer or a split falls back to the FIRST QUALIFYING voter's — not voter 1's,
-since a non-qualifying voter 1 is skipped — and `both` maps to `replication`) and
-`screen_categories` (the union of both voters' categories, `|`-joined in enum order).
+The screen also sets `record_type` (`_screen_record_type()`): voter 1's (Luna's) type
+stands, unless the decision voter names a different type — which it does only at a
+≥ 70% share — and then the decision voter's type wins; when Luna gives no type, the
+decision voter's stands; `both` maps to `replication`. Measured against the
+validators' type on 645 positives this is 98.0% (Luna alone 96.8%). The screen also
+sets `screen_categories` (the union of the voters' categories — the decision voter
+gives none — `|`-joined in enum order).
 
 A screen that did not get both votes is an API failure, not a verdict: it is returned
 uncached (`llm_refscreen_partial` with one vote, `llm_refscreen_failed` with none) so a
@@ -282,7 +286,8 @@ into `RESOLVED_LINK_METHODS` alongside `llm_author_year_search`: the row is
 outcome-coded and imported, at `link_confidence` `low`, and no set-aside bucket
 claims it. The historical ~50% precision belonged to the pre-pooling resolver, which
 took the first title hit unadjudicated. Rung 4.6 is additionally gated on both voters
-having called the paper a replication at high confidence.
+having called the paper a replication at high confidence — for the decision voter,
+P(qualifies) ≥ 0.9.
 
 If no PDF and no OpenAlex XML can be acquired, the row is written `target_pending`
 rather than sent to the LLM with nothing to read — that is exactly how a confident,

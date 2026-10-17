@@ -21,7 +21,8 @@ Edit `.env` and fill in at minimum:
 ```bash
 RESEARCHER_EMAIL=you@example.com   # for OpenAlex / Crossref politeness headers
 GEMINI_API_KEY=...                 # from https://aistudio.google.com
-OPENAI_API_KEY=...                 # Stage 2's second screen voter (default SCREENING_MODEL_2) and Stage 3's linking/outcome models
+OPENAI_API_KEY=...                 # Stage 2's first screen voter (default SCREENING_MODEL_1, gpt-6-luna) and Stage 3's linking/outcome models
+OPENROUTER_API_KEY=...             # Stage 2's second screen voter (the decision model SCREENING_MODEL_2) and Stage 3's pick check
 ```
 
 **Nothing is validated up front any more.** The key each call needs follows its model
@@ -162,8 +163,8 @@ See `.env.example` for the full list with descriptions. Key variables:
 | `RESEARCHER_EMAIL` | Yes | Politeness header for APIs |
 | `GEMINI_API_KEY` | Yes | Primary LLM |
 | `GEMINI_API_KEY_2..N` | No | Key rotation for higher quota |
-| `OPENAI_API_KEY` | Stages 2 and 3 | Second voter of Stage 2's front-door screen with the default `SCREENING_MODEL_2`; also Stage 3's `LINKING_MODEL` and `OUTCOME_MODEL`, which codes every outcome |
-| `OPENROUTER_API_KEY` | No | Only reached by a model id that names it: the pre-screen's two voters, and `SCREENING_MODEL_2` when it contains a `/` |
+| `OPENAI_API_KEY` | Stages 2 and 3 | First voter of Stage 2's front-door screen with the default `SCREENING_MODEL_1` (`gpt-6-luna`); also Stage 3's `LINKING_MODEL` and `OUTCOME_MODEL`, which codes every outcome |
+| `OPENROUTER_API_KEY` | Stages 2 and 3 | Second voter of Stage 2's front-door screen (the decision model `SCREENING_MODEL_2`, through OpenRouter's decisions endpoint), Stage 3's `PICK_CHECK_MODEL`, and the dormant pre-screen's two voters |
 | `SUPABASE_URL` | No | Validation monitoring tab |
 | `SUPABASE_SERVICE_KEY` | No | Validation monitoring tab |
 | `GROBID_URL` | No | PDF reference extraction. **Code default is the public server `https://kermitt2-grobid.hf.space`**; `.env.example` sets `http://localhost:8070`. See the GROBID section above |

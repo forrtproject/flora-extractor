@@ -210,22 +210,37 @@ PRESCREEN_MODEL_1 = "qwen/qwen3-30b-a3b-instruct-2507"
 PRESCREEN_MODEL_2 = "mistralai/mistral-small-24b-instruct-2501"
 
 # The front-door screen (classify_replication) — is this a replication at all? Two
-# independent voters on the validated v3.2 schema. An id containing "/" is routed to
-# OpenRouter, a leading "gemini" to Google, anything else to OpenAI direct.
+# independent voters of different kinds: an LLM that answers the v3.3 schema in text
+# (classification, confidence, categories, quote, reasoning), and a decision model
+# that answers the same rules with probabilities only (shared/prompts.py,
+# build_screen_decision). An id containing "/" is routed to OpenRouter, a leading
+# "gemini" to Google, anything else to OpenAI direct; an id in DECISION_MODELS goes to
+# OpenRouter's decisions endpoint instead of chat completions.
 #
-# Voter 1 was gemini-3.5-flash-lite at "minimal" until 2026-08-13 (v3.2 gate sweep:
-# 89% hard-negative discard, zero settled misses; the v3.3 re-runs of that pair span
-# 0-1 misses at 84.3-88.6%). DeepSeek at reasoning effort "low" measured at parity on
-# the same 390 cases against the same cached gpt-5.4-mini votes — 1 settled miss,
-# 88.4% — at roughly half the price (analysis/screening_eval/cheap_voter_2026-08.md).
-# The same model at effort "none" missed 7 settled positives: the thinking is what
-# buys the confident-recall calibration the gate needs from this slot, so the effort
-# is part of the evaluated configuration, not a tunable.
-SCREENING_MODEL_1 = "deepseek/deepseek-v4-flash"
-# The earlier two-voter gate evaluation used gpt-5.4-mini in this slot. The Luna
-# generation accepts settled mini-era screens through the explicit equivalence in
-# filter/engine/tiers.py; newly screened works use Luna. That pair needs measurement.
-SCREENING_MODEL_2 = "gpt-6-luna"
+# Measured 2026-10 on 2,186 labelled works (1,456 positives, 344 hard negatives, 386
+# curated negatives; analysis/jev_eval_2026-10/REPORT_pplx.md): the previous
+# deepseek-v4-flash + gpt-6-luna pair lost 8 positives and discarded 76% / 85%;
+# gpt-6-luna + this decision model loses 2 and discards 75% / 81%, for $0.11 instead
+# of $0.16 per 1,000 works. DeepSeek v4.1 lost 10 at five times v4's price; Jev 1.13
+# separated worse than Perplexity at 2–5× the price.
+#
+# Luna is voter 1 because it is the voter whose text Stage 3 and the validators read,
+# and whose type stands unless the decision voter overrides it (_screen_record_type).
+SCREENING_MODEL_1 = "gpt-6-luna"
+# Pinned to the dated id: the undated v1 id this model's predecessor was benchmarked
+# under returned 404 within days. A 404 is a failed vote — an incomplete screen that
+# the next run re-asks — never a discard.
+SCREENING_MODEL_2 = "perplexity/pplx-decider-v1.1-27b-20261006"
+# Models that answer through OpenRouter's /api/alpha/decisions (probabilities, no
+# text, output free) rather than chat completions.
+DECISION_MODELS = frozenset({SCREENING_MODEL_2})
+# Retained two-LLM screens used the first qualifying voter to settle their type.
+# Preserve their call order when rebuilding votes under today's configuration.
+SCREENING_LEGACY_VOTER_PAIRS = (
+    ("deepseek/deepseek-v4-flash", "gpt-6-luna"),
+    ("deepseek/deepseek-v4-flash", "gpt-5.4-mini"),
+    ("gemini-3.5-flash-lite", "gpt-5.4-mini"),
+)
 
 # Linking (resolve_targets_and_outcomes) — WHICH original does this paper re-test? One
 # model for all three rungs: the abstract, the reference list and the full text ask
@@ -293,15 +308,13 @@ LINKING_EFFORT = "medium"
 # commit.
 #
 # One per voter, not one for the pair: these pin the configuration the screen was
-# EVALUATED at, and the two voters were evaluated at different rungs. Voter 1
-# (DeepSeek, whose thinking is ON by default at "high") was evaluated at "low" —
-# and at "none" it discarded 7 settled positives, so the effort is load-bearing.
-# Naming it explicitly rather than trusting a provider default is the point: a
-# changed default could silently move the voter with no change to the cache key —
-# every entry would keep claiming to be the evaluated configuration. Voter 2 was
-# evaluated at "low".
+# EVALUATED at. Naming the effort explicitly rather than trusting a provider default
+# is the point: a changed default could silently move the voter with no change to the
+# cache key — every entry would keep claiming to be the evaluated configuration.
+# Voter 1 (Luna) was evaluated at "low". Voter 2 is a decision model, which takes no
+# effort at all, so its slot is empty.
 SCREENING_EFFORT_1 = "low"
-SCREENING_EFFORT_2 = "low"
+SCREENING_EFFORT_2 = ""
 
 # How hard OUTCOME_MODEL is asked to think (extract/code_outcome.py, both passes).
 # Every outcome row on disk was coded at medium, and the value reaches the outcome
@@ -311,8 +324,8 @@ SCREENING_EFFORT_2 = "low"
 OUTCOME_EFFORT = "medium"
 
 # OpenRouter (OpenAI-compatible API at openrouter.ai). Reached only by a model id
-# that names it (a "/"): today SCREENING_MODEL_1, PICK_CHECK_MODEL and the dormant
-# pre-screen's two models. Which host serves each call: _openrouter_routing() in
+# that names it (a "/"): today SCREENING_MODEL_2 (through the decisions endpoint),
+# PICK_CHECK_MODEL and the dormant pre-screen's two models. Which host serves each call: _openrouter_routing() in
 # shared/llm_client.py.
 OPENROUTER_API_KEY    = os.getenv("OPENROUTER_API_KEY",    "")
 
