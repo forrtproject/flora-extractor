@@ -207,6 +207,20 @@ def parse_parts(spec: Optional[str]) -> list[Part]:
     return chosen
 
 
+def linked_parts(parts: list[Part]) -> list[Part]:
+    """The parts whose directory is a symlink — on the maintainer's box, a
+    `cloud-data-link` into the R2 mount (`cache/pdfs` since 2026-10-22).
+
+    A push globs the whole directory and reads every file into its shards, which
+    through the mount is one remote HEAD per file plus a download of every byte
+    (`ls -l` over the 16,667 PDFs did not finish in 45 minutes). The data is
+    already off this disk, so that machine should leave the part to one that
+    holds it locally. An ordinary directory is never a link, so nobody else
+    meets this.
+    """
+    return [p for p in parts if not p.sqlite and p.directory.is_symlink()]
+
+
 def _git_commit() -> str:
     """The checkout the push was made from, for the manifest. Never fatal."""
     try:
@@ -855,9 +869,27 @@ def main() -> None:
                              "remote holds entries it does not, dropping them.")
     parser.add_argument("--dry-run", action="store_true",
                         help="Report what would transfer, transfer nothing.")
+    parser.add_argument("--allow-linked-parts", action="store_true",
+                        help="--push: read parts whose directory is a symlink (e.g. "
+                             "into a network mount) anyway.")
     args = parser.parse_args()
 
     parts = parse_parts(args.parts)
+
+    linked = linked_parts(parts) if args.push and not args.allow_linked_parts else []
+    if linked:
+        names = [p.name for p in linked]
+        rest = [p.name for p in parts if p not in linked]
+        parser.exit(2, (
+            f"Refusing to push {', '.join(names)}: "
+            + "; ".join(f"{p.directory} -> {p.directory.resolve()}" for p in linked)
+            + ".\nA symlinked cache part lives on remote storage here (a "
+            "`cloud-data-link` into the R2 mount), and a push reads EVERY file in it: "
+            "one remote request per file plus a download of the whole directory.\n"
+            + (f"Push the rest:  .venv/bin/python -m shared.cache_sync --push --parts "
+               f"{','.join(rest)}\n" if rest else "")
+            + "Push the linked part from a machine that holds it locally — or pass "
+            "--allow-linked-parts to read it through the link anyway.\n"))
 
     if args.push:
         n = push_cache(parts, repo=args.repo, dry_run=args.dry_run, force=args.force)
