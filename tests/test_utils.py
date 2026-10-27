@@ -125,6 +125,7 @@ class TestNonArticleDoi:
         ("10.7554/elife.88762.1.sa0", "peer_review_object"),
         ("10.24072/pci.rr.100998.ar1", "peer_review_object"),
         ("10.24072/pci.rr.100314.rev12", "peer_review_object"),
+        ("10.24072/pci.rr.100998", "peer_review_object"),
         ("10.7554/elife.42256.021", "peer_review_object"),
         ("10.1111/ejn.15166/v2/response1", "peer_review_object"),
         ("10.3410/f.1090454.543956", "faculty_opinions_record"),
@@ -136,7 +137,7 @@ class TestNonArticleDoi:
     @pytest.mark.parametrize("doi", [
         "10.7554/elife.63751",        # the eLife article itself
         "10.7554/elife.88762.2",      # a reviewed-preprint version
-        "10.24072/pci.rr.100998",     # PCI RR recommendation: FLoRA's curated doi_r
+        "10.24072/pcjournal.123",     # Peer Community Journal: an article
         "10.3410/b.1-7",              # F1000 Biology Reports, an article series
     ])
     def test_the_papers_those_records_describe_survive(self, doi):

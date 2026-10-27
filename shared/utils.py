@@ -110,9 +110,12 @@ _NON_ARTICLE_DOI_RE = re.compile(r"/reviews/|/decisions/", re.IGNORECASE)
 #     where a reviewed-preprint version number is one digit.
 #   - Peer reviews and author responses registered under the article's DOI with a
 #     version path (10.1111/ejn.15166/v2/response1, …/v2/review1).
-#   - PCI Registered Reports review, decision and author-response suffixes
-#     (`.rev12`, `.d1`, `.ar1`). The bare `10.24072/pci.rr.NNNNNN` recommendation is
-#     NOT matched: FLoRA's curated sheet records it as a replication's doi_r.
+#   - PCI Registered Reports records: the bare `10.24072/pci.rr.NNNNNN` is the
+#     recommendation (Crossref names the recommender as author and links the paper
+#     through `is-review-of`), and `.rev12`, `.d1`, `.ar1` are the reviews, decision
+#     letters and author responses. FLoRA's curated sheet carries 8 of them as doi_r;
+#     those are errors there, not a convention. Peer Community Journal articles are
+#     `10.24072/pcjournal.`, which this does not match.
 #   - Faculty Opinions (ex-F1000Prime) recommendations, `10.3410/f.`; the same
 #     registrant's `b.`/`m.` report series are articles.
 #   - A Wiley journal-issue DOI (`10.1002/pam.2013.32.issue-3`).
@@ -120,7 +123,7 @@ _NON_ARTICLE_RECORD_RES = (
     (re.compile(r"^10\.7554/elife\.\d+(?:\.\d+)?\.sa\d+$"), "peer_review_object"),
     (re.compile(r"^10\.7554/elife\.\d+\.\d{3}$"), "peer_review_object"),
     (re.compile(r"/v\d+/(?:review|response|decision)\d+$"), "peer_review_object"),
-    (re.compile(r"^10\.24072/pci\.[a-z]+\.\d+\.(?:rev|d|ar)\d+$"), "peer_review_object"),
+    (re.compile(r"^10\.24072/pci\.[a-z]+\.\d+(?:\.(?:rev|d|ar)\d+)?$"), "peer_review_object"),
     (re.compile(r"^10\.3410/f\."), "faculty_opinions_record"),
     (re.compile(r"\.issue-[^/.]+$"), "journal_issue_record"),
 )

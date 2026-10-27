@@ -596,8 +596,8 @@ OUTCOME_DESCENT = True
 #      mismatch (2026-09-25)
 #      reopen: --redo 16766644,22047302,22986889,23811235,31908667,37892775,4400060759
 #  32  a record ABOUT a paper is not the paper: non_article_doi() names eLife and
-#      PCI RR review objects, `/vN/reviewN|responseN` peer reviews, Faculty Opinions
-#      recommendations and journal-issue DOIs, so the title-search and author-year
+#      PCI RR recommendations and review objects, `/vN/reviewN|responseN` peer
+#      reviews, Faculty Opinions recommendations and journal-issue DOIs, so the title-search and author-year
 #      pools drop them; and doi verification no longer passes a DOI whose registry
 #      title is a correction/retraction notice, decision letter or author response
 #      (or whose DOI is one of those records) merely because the notice repeats the
