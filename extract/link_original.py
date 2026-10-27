@@ -595,7 +595,17 @@ OUTCOME_DESCENT = True
 #      abstract_r blank, and says so in link_evidence; never asked without a
 #      mismatch (2026-09-25)
 #      reopen: --redo 16766644,22047302,22986889,23811235,31908667,37892775,4400060759
-EXTRACT_LADDER_VERSION: int = 31
+#  32  a record ABOUT a paper is not the paper: non_article_doi() names eLife and
+#      PCI RR review objects, `/vN/reviewN|responseN` peer reviews, Faculty Opinions
+#      recommendations and journal-issue DOIs, so the title-search and author-year
+#      pools drop them; and doi verification no longer passes a DOI whose registry
+#      title is a correction/retraction notice, decision letter or author response
+#      (or whose DOI is one of those records) merely because the notice repeats the
+#      original's title — it re-resolves, and a notice is never a correction target.
+#      Classes from the Metascience Observatory's DOI audit; in our output, 14 works
+#      linked to such a record, all llm_title_search but one (2026-10-27)
+#      reopen: --redo 2055766296,2911411325,4212792994,4220947390,4225910309,4283783155,4361272113,4387293767,4388904550,4388904615,4391787029,4391898252,4399984952,6962756304
+EXTRACT_LADDER_VERSION: int = 32
 
 
 # Columns to pass through from the input row (no renaming). Only columns
