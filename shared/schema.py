@@ -147,7 +147,8 @@ EXTRACT_ADDED_COLS = [
     "pdf_source",          # str   — acquisition tier that supplied the document
                            #         (row_url | related_doi | arxiv | osf | zenodo |
                            #          openalex_oa | datacite | unpaywall_pdf |
-                           #          crossref_link | semanticscholar | core | europepmc |
+                           #          wiley_tdm | crossref_link | semanticscholar |
+                           #          core | europepmc |
                            #          pmc_oa | related_version | crossref_search |
                            #          landing_* | scholar (serpapi on older rows) |
                            #          playwright | osf_files | openalex_xml | epmc_xml |

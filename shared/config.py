@@ -164,6 +164,11 @@ CORE_API_KEY = os.getenv("CORE_API_KEY", "").strip()
 # its key.
 SPRINGER_META_API_KEY = os.getenv("SPRINGER_META_API_KEY", "").strip()
 SPRINGER_OA_API_KEY = os.getenv("SPRINGER_OA_API_KEY", "").strip()
+# Wiley text-and-data-mining client token (free, from a personal Wiley Online
+# Library account) — backs the acquisition waterfall's `wiley_tdm` tier, skipped
+# without it. Open-access articles answer from anywhere; subscription ones only
+# from a subscribing institution's network.
+WILEY_TDM_TOKEN = os.getenv("WILEY_TDM_TOKEN", "").strip()
 # An institutional token grants Scopus entitlement off the subscribing network;
 # without it Elsevier entitlement is IP-bound (campus network / VPN).
 ELSEVIER_INSTTOKEN = os.getenv("ELSEVIER_INSTTOKEN", "").strip()
