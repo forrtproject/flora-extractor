@@ -286,11 +286,12 @@ evidence in [`filter/spec/rule_ideas.md`](../filter/spec/rule_ideas.md).
 
 | spec | pile | prec. | shadow | content |
 | --- | --- | --- | --- | --- |
-| `not-a-paper-doi` | discard | 960 | | `/reviews/`\|`/decisions/` paths · terminal `.suppl` |
+| `not-a-paper-doi` | discard | 960 | | `/reviews/`\|`/decisions/` paths · terminal `.suppl` · PCI review objects: the recommendation (`10.24072/pci.<community>.N`) and its `.revN`/`.dN`/`.arN` suffixes |
 | `deposit-registrant` | discard | 958 | | 11 deposit-only registrants. Figshare proper (10.6084) is not among them — D1 took it off the prefix list, and it has its own title-gated rule below |
 | `figshare-attachment` | discard | 956 | | figshare (10.6084) DOIs whose title marks the object as an attachment to a paper rather than the paper |
 | `not-a-paper-title` | discard | 955 | | the start-anchored genre-plus-parent title pattern |
 | `doi-registry-twin` | discard | 950 | | issue #210: 30 named OpenAlex records (`work_id_in`) filed under a DOI whose registry record names a different paper; derived by `analysis/stage2_rules_2026-09/doi_twins_audit.py --spec`, live since 2026-09-25; a regenerated list is a new claim and is re-read before it ships |
+| `peer-review-record` | discard | 942 | | `type = peer-review` — referee reports, assessments, decision letters; the reviewed paper is in the pool as its own work |
 | `not-a-report-type` | discard | 940 | | `type ∈ {component, database, dataset, software, supplementary-materials}` — not a report of a study |
 | `osf-registration-completed` | screen_expensive | 936 | | admission on the OSF registration TEMPLATE (registrant 10.17605) |
 | `osf-registration-protocol` | discard | 935 | | the discard twin: an OSF registration whose template marks it a protocol, not a completed study |
@@ -300,7 +301,7 @@ evidence in [`filter/spec/rule_ideas.md`](../filter/spec/rule_ideas.md).
 | `replication-claim-general` | screen_expensive | 735 | | the rule-book route for what `curated-observatory` admits: three abstract claim arms, two title shapes, and `we replicated`/`replication study` only beside an original/prior-study mention (`analysis/stage2_rules_2026-09/REPORT.md`); minus data-repository records — a Zenodo/figshare/Dataverse/ICPSR/Mendeley Data/ZBW JDA/Code Ocean/Dryad DOI, or a title naming a replication package/data/files/materials/code. Live since 2026-09-25 as option B−repo (`analysis/recall_options_2026-09/REPORT.md`: 64% screen proceed, n=104) |
 | `replication-claim-text` | screen_expensive | 730 | ✓ | the 8 strong claim arms anywhere in title+abstract |
 | `replication-claim-residual` | screen_expensive | 710 | ✓ | the 4 measured-weak arms: fail/attempt · aim/set out · success* · the negation matrix |
-| `not-a-study-type` | discard | 500 | | `type ∈ {grant, libguides, paratext, peer-review, standard}` — a crosswalk that can be wrong about a real paper |
+| `not-a-study-type` | discard | 500 | | `type ∈ {grant, libguides, paratext, standard}` — a crosswalk that can be wrong about a real paper |
 | `replication-signal` | screen_cheap | 300 | ✓ | multilingual title stems · English title stem · concept ids · bare `replication of` |
 | `reproduction-signal` | screen_cheap | 262 | ✓ | the reproduction-anchored patterns, carried over unchanged pending #155 |
 | `replication-probe` | screen_cheap | 100 | ✓ | unmeasured candidate vocabularies (revisiting, reconsidered, independent test, many-analyst …) |
