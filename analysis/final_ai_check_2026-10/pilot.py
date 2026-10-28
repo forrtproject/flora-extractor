@@ -18,13 +18,14 @@ from __future__ import annotations
 import argparse
 import collections
 import json
+import re
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from pathlib import Path
 
 import pandas as pd
 
-from final_check import (SourceIndex, build_prompt, compare,  # noqa: E402
+from final_check import (SourceIndex, build_prompt, compare_work,  # noqa: E402
                          document_text, recode)
 from shared.utils import clean_doi
 
@@ -63,14 +64,23 @@ def human_truth() -> pd.DataFrame:
             truth = {f: vote(f"{f}_check") for f in ("type", "original", "outcome")}
         corrected = {q[f] for q in qs for f in ("corrected_type", "corrected_outcome",
                                                 "corrected_doi_o") if q[f]}
+        named = {_doi_in(x) for x in [rec["final_doi_o"] or ""]
+                 + [q["corrected_doi_o"] or "" for q in qs]} - {"", clean_doi(rec["doi_o"] or "")}
         rows.append({"rid": rid, "doi_r": clean_doi(rec["doi_r"] or ""),
                      "doi_o": clean_doi(rec["doi_o"] or ""), "sb_outcome": rec["outcome"],
                      "status": rec["validation_status"],
                      "truth_type": truth["type"], "truth_original": truth["original"],
                      "truth_outcome": truth["outcome"],
                      "final_outcome": rec["final_outcome"] or "",
-                     "human_corrections": " | ".join(sorted(corrected))})
+                     "human_corrections": " | ".join(sorted(corrected)),
+                     "human_named_dois": " ".join(sorted(named))})
     return pd.DataFrame(rows).merge(tf[["rid", "lm", "fulltext"]], on="rid")
+
+
+def _doi_in(text: str) -> str:
+    """The DOI inside a validator's entry, which may be a doi.org or psycnet URL."""
+    m = re.search(r"10\.\d{4,9}/\S+", text or "")
+    return clean_doi(m.group(0)) if m else ""
 
 
 @lru_cache(maxsize=1)
@@ -95,8 +105,20 @@ def join_rows(truth: pd.DataFrame) -> pd.DataFrame:
         if m.empty:
             continue
         same = m[m.outcome == t.sb_outcome]
-        joined.append({**(same if len(same) else m).iloc[0].to_dict(), **t.to_dict(),
-                       "shipped_outcome_now": (same if len(same) else m).iloc[0].outcome})
+        row = {**(same if len(same) else m).iloc[0].to_dict(), **t.to_dict(),
+               "truth_original_raw": t.truth_original}
+        # The unit is the replication-original PAIR. A validator shown one row of a
+        # multi-original work cannot see its siblings, and "corrects" the original to
+        # one the pipeline already shipped as another row: that pair exists and is not
+        # an error of this row. The outcome judgment made alongside it was about the
+        # other original, so it is not scored against this row either.
+        siblings = {r["_o"] for r in work_rows(row)} - {t.doi_o}
+        named = set(t.human_named_dois.split())
+        if t.truth_original in ("incorrect", "split") and named and named <= siblings:
+            row["truth_original"] = "sibling"
+            if t.truth_outcome != "correct":
+                row["truth_outcome"] = "unscored"
+        joined.append(row)
     return pd.DataFrame(joined)
 
 
@@ -108,7 +130,9 @@ def select(df: pd.DataFrame) -> pd.DataFrame:
                               == "correct").all(axis=1))
     picks = [
         df[df.truth_type == "incorrect"].head(2),                         # rejected / wrong type
-        df[(df.truth_original == "incorrect") & (df.truth_type == "correct")].head(4),
+        # The raw human verdict, before sibling reassignments are recognised, so the
+        # sample stays the one the pilot was drawn as.
+        df[(df.truth_original_raw == "incorrect") & (df.truth_type == "correct")].head(4),
         df[(df.truth_outcome == "incorrect") & (df.final_outcome != "")].head(2),
         df[(df.truth_outcome == "incorrect") & (df.final_outcome == "")].head(1),
         df[df.all_right & (df.lm == "llm_title_search") & (df.fulltext == True)].head(2),
@@ -119,15 +143,16 @@ def select(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def run_one(row: dict) -> dict:
+    """Recode the work once and return this row's result within the work comparison."""
     text, method, texts = document_text(row)
-    prompt = build_prompt(row, text)
-    rec = recode(prompt)
+    rec = recode(build_prompt(row, text))
     sources = [SourceIndex(f"{row.get('title_r', '')}\n{row.get('abstract_r', '')}")]
     sources += [SourceIndex(t) for t in texts.values()]
+    mine = next(r for r in compare_work(work_rows(row), rec["coding"], sources)
+                if r["pair_id"] == row["pair_id"])
     return {"rid": row["rid"], "fulltext_sent": method, "fulltext_chars": len(text),
             "seconds": rec["seconds"], "input_tokens": rec["input_tokens"],
-            "output_tokens": rec["output_tokens"],
-            **compare(row, rec["coding"], sources, work_rows(row))}
+            "output_tokens": rec["output_tokens"], **mine}
 
 
 def main() -> None:
@@ -140,16 +165,22 @@ def main() -> None:
     print(f"{len(pilot)} pilot rows")
     with ThreadPoolExecutor(args.workers) as pool:
         results = list(pool.map(run_one, [r.to_dict() for _, r in pilot.iterrows()]))
-    keep = ["rid", "doi_r", "openalex_id_r", "url_r", "title_r", "n_originals", "link_method", "pdf_source", "type", "doi_o",
+    keep = ["rid", "pair_id", "doi_r", "openalex_id_r", "url_r", "title_r", "n_originals",
+            "link_method", "pdf_source", "type", "doi_o",
             "authors_o", "year_o", "title_o", "outcome", "outcome_computation",
             "outcome_robustness", "outcome_phrase", "out_quote_source", "status",
             "truth_type", "truth_original", "truth_outcome", "final_outcome",
-            "human_corrections"]
-    out = pilot[keep].merge(pd.DataFrame(results), on="rid")
+            "human_corrections", "human_named_dois"]
+    out = pilot[keep].merge(pd.DataFrame(results).drop(columns="pair_id"), on="rid")
+    truth = out[["truth_type", "truth_original", "truth_outcome"]]
+    out["human_verdict"] = "undetermined"
+    out.loc[(truth == "incorrect").any(axis=1), "human_verdict"] = "error"
+    out.loc[(truth["truth_type"] == "correct") & truth["truth_original"].isin(["correct", "sibling"])
+            & (truth["truth_outcome"] == "correct"), "human_verdict"] = "correct"
     out.to_csv(OUT / "pilot_results.csv", index=False)
     show = ["link_method", "type", "blind_type", "truth_type", "original_grade",
             "truth_original", "outcome", "blind_outcome", "outcome_grade", "truth_outcome",
-            "quote_verdict", "all_agree", "seconds"]
+            "quote_verdict", "work_n_shipped", "work_n_blind", "released", "human_verdict"]
     with pd.option_context("display.width", 250, "display.max_columns", 30):
         print(out[show].to_string())
 

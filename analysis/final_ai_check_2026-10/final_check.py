@@ -471,65 +471,84 @@ def quote_check(q_pipe: str, q_blind: str, sources: list[SourceIndex]) -> dict:
     return res
 
 
-def target_set(work_rows: list[dict], targets: list[dict]) -> dict:
-    """Does every original on each side, for this WORK, match one on the other side?
+def pair_originals(work_rows: list[dict], targets: list[dict]) -> list[tuple]:
+    """One-to-one pairs of (row index, target index, grade, title Jaccard).
 
-    A row can agree with one blind target while the two codings read the paper as
-    re-testing different sets of originals; that is where multi-target papers go
-    wrong (wrong sibling, outcomes scoped to the wrong set), so the release rule needs
-    the sets to agree as well as the row.
+    The FLoRA unit is the replication-original PAIR, so each shipped row may claim at
+    most one blind target and each target at most one row. Pairs are taken greedily,
+    strongest grade first (then the higher title Jaccard), and only from the grades
+    that count as agreement; a row left over has no counterpart on the blind side.
     """
-    agree = [[original_grade(r, t)[0] in ORIGINAL_AGREES for t in targets]
-             for r in work_rows]
-    pipe_hit = sum(any(row) for row in agree)
-    blind_hit = sum(any(col) for col in zip(*agree)) if agree else 0
-    return {"pipe_n_originals": len(work_rows), "pipe_matched": pipe_hit,
-            "blind_matched": blind_hit,
-            "set_agrees": pipe_hit == len(work_rows) and blind_hit == len(targets)}
+    cands = sorted(((i, j, *original_grade(r, t)) for i, r in enumerate(work_rows)
+                    for j, t in enumerate(targets)),
+                   key=lambda c: (_GRADE_RANK.index(c[2]), -c[3]))
+    pairs, rows_used, targets_used = [], set(), set()
+    for i, j, grade, jac in cands:
+        if grade in ORIGINAL_AGREES and i not in rows_used and j not in targets_used:
+            pairs.append((i, j, grade, jac))
+            rows_used.add(i)
+            targets_used.add(j)
+    return pairs
 
 
-def compare(row: dict, coding: dict, sources: list[SourceIndex],
-            work_rows: list[dict] | None = None) -> dict:
-    """Field-by-field agreement between one pipeline row and the blind coding.
+def _quotes(row: dict, target: dict) -> tuple[str, str]:
+    if row.get("type") == "reproduction":
+        keys = ("outcome_computational_quote", "outcome_robustness_quote")
+        return (" | ".join(filter(None, (row.get(k, "") for k in keys))),
+                " | ".join(filter(None, (target.get(k, "") for k in keys))))
+    return row.get("outcome_phrase", ""), target.get("outcome_quote", "")
 
-    *work_rows* are all of the pipeline's rows for the same work (default: this row).
+
+def compare_work(work_rows: list[dict], coding: dict,
+                 sources: list[SourceIndex]) -> list[dict]:
+    """Agreement for every shipped row of one work, keyed by pair_id.
+
+    Each row is compared with the blind target it is paired with
+    (`pair_originals`). The release rule holds the whole work when the two sides do
+    not pair off completely, whichever side has the extra original: a different count
+    of originals is the clearest sign that one side misread the paper, and it is
+    where outcomes get scoped to the wrong set of originals.
     """
     targets = coding.get("targets") or []
-    out = {"blind_type": coding.get("record_type"),
-           "blind_status": coding.get("study_status"),
-           "blind_n_targets": len(targets),
-           # A plan reports nothing to validate, so a blind "prospective" disagrees
-           # with a shipped replication whatever the type says.
-           "type_agrees": (coding.get("record_type") == row.get("type")
-                           and coding.get("study_status") != "prospective")}
-    graded = sorted(((original_grade(row, t), t) for t in targets),
-                    key=lambda g: (_GRADE_RANK.index(g[0][0]), -g[0][1]))
-    if not graded:
-        out.update(original_grade="no_target", original_agrees=False,
-                   outcome_grade="no_target", outcome_agrees=False)
-        return out
-    (grade, jac), t = graded[0]
-    out.update(original_grade=grade, title_jaccard=round(jac, 2),
-               original_agrees=grade in ORIGINAL_AGREES,
-               blind_original=f"{t.get('authors', '')} ({t.get('year', '')}) "
-                              f"{t.get('title', '')[:80]} {t.get('doi', '')}".strip(),
-               blind_outcome=(t.get("outcome") or
-                              f"{t.get('outcome_computation', '')}, "
-                              f"{t.get('outcome_robustness', '')}"),
-               blind_confident=t.get("outcome_confident"))
-    og = outcome_grade(row, t)
-    out.update(outcome_grade=og, outcome_agrees=og == "exact",
-               outcome_agrees_soft=og in ("exact", "soft"))
-    if row.get("type") == "reproduction":
-        q_pipe = " | ".join(filter(None, [row.get("outcome_computational_quote", ""),
-                                          row.get("outcome_robustness_quote", "")]))
-        q_blind = " | ".join(filter(None, [t.get("outcome_computational_quote", ""),
-                                           t.get("outcome_robustness_quote", "")]))
-    else:
-        q_pipe, q_blind = row.get("outcome_phrase", ""), t.get("outcome_quote", "")
-    out["blind_quote"] = q_blind
-    out.update({f"quote_{k}": v for k, v in quote_check(q_pipe, q_blind, sources).items()})
-    out.update(target_set(work_rows or [row], targets))
-    out["all_agree"] = bool(out["type_agrees"] and out["original_agrees"]
-                            and out["outcome_agrees"] and out["set_agrees"])
+    pairs = {i: (j, grade, jac) for i, j, grade, jac in pair_originals(work_rows, targets)}
+    extra_rows = len(work_rows) - len(pairs)
+    extra_targets = len(targets) - len(pairs)
+    # A plan reports nothing to validate, so a blind "prospective" disagrees with a
+    # shipped replication whatever the type says.
+    status_ok = coding.get("study_status") != "prospective"
+    work = {"blind_type": coding.get("record_type"),
+            "blind_status": coding.get("study_status"),
+            "work_n_shipped": len(work_rows), "work_n_blind": len(targets),
+            "work_extra_shipped": extra_rows, "work_extra_blind": extra_targets,
+            "work_pairs_off": extra_rows == 0 and extra_targets == 0}
+    out = []
+    for i, row in enumerate(work_rows):
+        res = {"pair_id": row.get("pair_id"), **work,
+               "type_agrees": status_ok and coding.get("record_type") == row.get("type")}
+        if i not in pairs:
+            best = max((original_grade(row, t) for t in targets),
+                       key=lambda g: (-_GRADE_RANK.index(g[0]), g[1]),
+                       default=("no_target", 0.0))
+            res.update(original_grade=f"unpaired:{best[0]}", original_agrees=False,
+                       outcome_grade="unpaired", outcome_agrees=False,
+                       quote_verdict="unpaired", released=False)
+            out.append(res)
+            continue
+        j, grade, jac = pairs[i]
+        t = targets[j]
+        og = outcome_grade(row, t)
+        q_pipe, q_blind = _quotes(row, t)
+        res.update(original_grade=grade, title_jaccard=round(jac, 2), original_agrees=True,
+                   blind_original=f"{t.get('authors', '')} ({t.get('year', '')}) "
+                                  f"{t.get('title', '')[:80]} {t.get('doi', '')}".strip(),
+                   blind_outcome=(t.get("outcome") or
+                                  f"{t.get('outcome_computation', '')}, "
+                                  f"{t.get('outcome_robustness', '')}"),
+                   blind_confident=t.get("outcome_confident"),
+                   outcome_grade=og, outcome_agrees=og == "exact",
+                   outcome_agrees_soft=og in ("exact", "soft"), blind_quote=q_blind)
+        res.update({f"quote_{k}": v for k, v in quote_check(q_pipe, q_blind, sources).items()})
+        res["released"] = bool(res["type_agrees"] and res["outcome_agrees"]
+                               and work["work_pairs_off"])
+        out.append(res)
     return out
