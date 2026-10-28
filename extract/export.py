@@ -539,11 +539,6 @@ RETIRED_COLS = ["retired_at", "baseline", "release", "generation", "reason", "de
 RETIRE_REASONS = ("superseded", "set_aside", "unresolved", "not_admitted",
                   "screen_discarded", "screen_deferred", "in_flora", "unexplained")
 
-# The validation sync refuses a snapshot that removes more than this share of the
-# previous one's resolved pair ids (`EXTRACTOR_MAX_REMOVAL_PERCENT` in flora-validation
-# `sync_csv.py`, default 10). Mirrored here only to warn before the commit.
-VALIDATION_SYNC_MAX_REMOVAL_PERCENT = 10.0
-
 
 def shipped(row: dict) -> bool:
     """Would `csv_to_db.py` import this row — the same test as its `resolved_mask`.
@@ -955,11 +950,6 @@ def main(argv: Optional[list[str]] = None) -> int:
         if held:
             print(f"    (+{held:,} on the already-in-validation skip list — not "
                   "retirements, not written)")
-        # A union baseline (a backfill) is not what the sync compares against.
-        if "," not in baseline and share > VALIDATION_SYNC_MAX_REMOVAL_PERCENT:
-            print(f"  ⚠ over the validation sync's {VALIDATION_SYNC_MAX_REMOVAL_PERCENT:g}% "
-                  "removal guard — its nightly import will refuse this file until the "
-                  "retirements are reviewed (docs/retiring-superseded-records.md)")
 
     if args.check:
         diff = check(report, args.out)

@@ -25,9 +25,10 @@ about 1,570 works re-extracted with a fixed prompt, many getting a different `do
   `need_review` and a note is added. Anything else is inserted as a new record with
   three queue slots.
 - **Nightly maintenance** (`extractor_maintenance.py`). `sync_csv.py` downloads
-  `data/extracted.csv` **from GitHub `main`**, refuses a snapshot that removes more
-  than 10% of the previous one's resolved `pair_id`s (`EXTRACTOR_MAX_REMOVAL_PERCENT`),
-  imports it and promotes it to `extracted_latest.csv`. Then `find_orphans.py` writes a
+  `data/extracted.csv` **from GitHub `main`**, counts the resolved `pair_id`s it
+  adds and drops against the previous import (information only: the old 10% removal
+  limit, `EXTRACTOR_MAX_REMOVAL_PERCENT`, was removed in flora-validation on
+  2026-10-01, because nothing is deleted by absence), imports it and promotes it to `extracted_latest.csv`. Then `find_orphans.py` writes a
   read-only report. `cleanup_orphans.py --apply` is a separate manual stage. It HARD
   deletes every record whose `pair_id` the current CSV lacks, unless the record is
   `rejected`/`validated`, has a submitted judgement, or has a `validated` row. It
@@ -102,7 +103,7 @@ original_rank, doi_o, title_o, link_method, superseded_by, doi_o_now`
 | `unresolved` | in `extracted.csv` but no longer importable | |
 | `not_admitted` | the routing release dropped the work | the release |
 | `screen_discarded` | the current screen discards it | |
-| `screen_deferred` | the screen proceeded it, but its rules' strict admission gate holds it back (`filter/spec/CONVENTIONS.md`, "Admission gates"); relaxing the gate ships it again | |
+| `screen_deferred` | the screen proceeded it, but its rules' strict admission gate holds it back (`filter/spec/CONVENTIONS.md`, "Admission gates"); relaxing the gate ships it again. Never a work a person has judged in validation (`data/human_judged.csv`) | |
 | `in_flora` | its DOI is now in FLoRA | |
 | `unexplained` | no current verdict speaks for the work | held on the validation side |
 
@@ -201,13 +202,12 @@ This matches the independent orphan count exactly (119 = 113 + 5 + 1).
    byte-identical today (`--check`: 0 differences).
 2. The redo itself, as handover step 3 describes: sandbox pilot, then live.
 3. `.venv/bin/python -m extract.export --release <id> --check` prints the retirement
-   counts by reason, the removal share against `HEAD`, and a warning above 10%.
+   counts by reason and the removal share against `HEAD`.
 4. `.venv/bin/python -m extract.export --release <id>` writes the CSV and appends the
    manifest. **Review the manifest.** Any `unexplained`? Are the `superseded` successors
    plausible? Commit `extracted.csv` and `retired_pairs.csv` together and push.
-5. **Import first.** Use the nightly sync, or an admin sync with
-   `EXTRACTOR_MAX_REMOVAL_PERCENT` raised for that one run if the guard trips. Importing
-   first lets the re-key correct same-rank originals in place.
+5. **Import first.** Use the nightly sync or an admin sync; a large removal no longer
+   stops it. Importing first lets the re-key correct same-rank originals in place.
 6. On the validation host: `csv_to_db.py --retire <manifest> --input
    data/extracted_latest.csv --retire-report plan.csv`, the dry run. **Lukas approves
    the plan.**
@@ -228,9 +228,8 @@ instead of re-keying, and touched records are only flagged either way.
 3. **Wire `--retire` into maintenance?** Today it is a manual CLI. The sync could fetch
    `data/retired_pairs.csv` alongside the CSV, bind it to the same sha256, and make
    `find_orphans` report the plan nightly.
-4. **Should the removal guard discount explained removals?** A `pair_id` the manifest
-   names as `superseded` (and re-keyed) is not a loss. As written, a large redo trips
-   the guard and needs a manual override.
+4. ~~Should the removal guard discount explained removals?~~ Moot: flora-validation
+   removed the guard on 2026-10-01.
 5. **Flagged records.** Should a retired-upstream record that is in progress be pulled
    from serving, or only noted? Should a validated one whose original the extractor now
    says was wrong reopen for review? The validated record may reflect a validator's

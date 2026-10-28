@@ -298,7 +298,9 @@ from them, so everything below the front door is unchanged.
 `screen_strict()` — every vote qualifying AND confident. A work is held strict only
 when every live screen-pile rule it matched is strict (the most lenient wins). A strict
 miss is DEFERRED, not discarded: not offered to the extract tier, not rendered, and
-released with no new call when the gate is relaxed. The gate is left out of the
+released with no new call when the gate is relaxed. A work a person has judged in
+validation (`data/human_judged.csv`, `analysis/build_human_judged.py`) is never
+deferred. The gate is left out of the
 release id and the screening generation; it is applied to the stored votes by
 `admission_gates()` / `deferred_works()` in `filter/engine/handoff.py`. Policy and the
 per-rule assignments: `filter/spec/CONVENTIONS.md`, "Admission gates".

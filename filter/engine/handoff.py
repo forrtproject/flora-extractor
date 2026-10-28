@@ -55,7 +55,8 @@ always has; `strict` admits only a proceed whose every vote qualifies AND is con
 screen-pile rule it matched is strict — the most lenient matching rule wins
 (`admission_gates()`), because a rule's measured base rate is over every work it
 matches, overlaps included, while precedence only decides which rule's name the
-routing row carries. A deferred work is not exported, not offered to Stage 3 and not
+routing row carries. A work a person has judged in validation is exempt
+(`human_judged_work_ids()`). A deferred work is not exported, not offered to Stage 3 and not
 rendered; nothing is written about it, so relaxing its rule's gate releases it with
 no new screening call. The gate is read from the specs on disk at handoff time and is
 deliberately not part of the release id (`spec.UNROUTED_KEYS`): it moves no row
@@ -73,6 +74,7 @@ move, and its manifest is rewritten with it. When an immutable copy is wanted,
 `export` is still the command for it.
 """
 
+import csv
 import datetime
 import hashlib
 import json
@@ -84,6 +86,7 @@ from filter.engine.export import (SPEC_DIR, UNCHECKED, check_release_binding,
                                   iter_export_rows, load_conventions,
                                   write_rows_tmp)
 from filter.engine.spec import LENIENT, SCREEN_PILES, STRICT, FilterSpec, load_specs
+from shared.config import DATA_DIR
 from shared.schema import ENGINE_EXPORTED_COLS
 
 # The order Stage 3 meets the piles in.
@@ -256,17 +259,37 @@ def admission_gates(con, release_id: str, specs: list[FilterSpec]) -> dict[int, 
             for work, matched in rows}
 
 
-def deferred_works(screen: dict[int, dict], gates: dict[int, str]) -> set[int]:
+# Works a person has judged in validation (`analysis/build_human_judged.py`).
+HUMAN_JUDGED_CSV = DATA_DIR / "human_judged.csv"
+
+
+def human_judged_work_ids(path: Path = HUMAN_JUDGED_CSV) -> set[int]:
+    """The work ids in *path*; an absent file exempts nothing."""
+    if not Path(path).exists():
+        return set()
+    with Path(path).open(encoding="utf-8-sig", newline="") as handle:
+        return {int(row["work_id"]) for row in csv.DictReader(handle)
+                if str(row.get("work_id") or "").strip()}
+
+
+def deferred_works(screen: dict[int, dict], gates: dict[int, str],
+                   exempt: Optional[set[int]] = None) -> set[int]:
     """The works the screen PROCEEDED that their admission gate holds back.
 
     *screen* is `decisions()`'s mapping, *gates* `admission_gates()`'s. A work with
     no gate — outside this release's screen piles — is not this function's to hold.
+
+    A work a person has already judged in validation is never deferred: the
+    judgment outranks two screen votes, and deferring it would retire the record the
+    judgment sits on. *exempt* None reads `human_judged_work_ids()`.
     """
     from filter.engine.tiers import PROCEED
     from shared.llm_client import screen_strict
 
+    exempt = human_judged_work_ids() if exempt is None else exempt
     return {work for work, decision in screen.items()
             if decision["outcome"] == PROCEED and gates.get(work) == STRICT
+            and work not in exempt
             and not screen_strict(decision.get("votes") or [])}
 
 

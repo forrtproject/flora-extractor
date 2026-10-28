@@ -73,13 +73,20 @@ ships ~26% real replications, the strict one ~60% (assuming the screen's pass ra
 carry over to each rung, which is unmeasured). On the validation tables (2026-10-28,
 release 61f07fd07f19), at least one validator judged 8% of validated screen proceeds
 that pass the strict test not to be replications (38 of 504) and 25% of those that fail
-it (13 of 53) — 41% of the misses the assignment below defers (12 of 29), 4% of the
-misses the lenient rules keep (1 of 24). Evidence: `analysis/rule_gate_2026-10/REPORT.md`.
+it (13 of 53): 41% of the misses that only strict rules below matched (12 of 29),
+4% of the misses a lenient rule also matched (1 of 24). Evidence: `analysis/rule_gate_2026-10/REPORT.md`.
 
 **A strict miss is DEFERRED, never discarded.** The work is not exported, not offered
 to the extract tier, not rendered by `extract.export`. Nothing is written about it:
 the votes it was judged on are stored, so relaxing the rule's gate (or a future change
 to `screen_strict()`) releases it with no new screening call.
+
+**A work a person has judged in validation is never deferred.** The judgment is
+stronger evidence than two screen votes, and deferring the work would retire the
+record it sits on. The list is a committed snapshot, `data/human_judged.csv`, built by
+`.venv/bin/python -m analysis.build_human_judged --apply`; refresh and commit it before
+a live `extract.export` whose deferrals matter. A record judged after the snapshot is
+still safe: flora-validation's `--retire` flags, never removes, a touched record.
 
 **The most lenient matching rule wins.** A work matched by several live screen-pile
 rules is held to the strict gate only when all of them are strict. A rule's base rate

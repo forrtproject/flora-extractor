@@ -976,6 +976,23 @@ def test_a_strict_admission_gate_defers_a_proceed_unless_a_lenient_rule_matched(
     assert (released["rows"], released["deferred_by_admission_gate"]) == (1, 0)
 
 
+def test_a_work_a_person_has_judged_is_never_deferred(tmp_path):
+    """The validation judgment outranks two screen votes, and deferring the work
+    would retire the record the judgment sits on."""
+    unsure = [{"classification": "replication", "confident": True},
+              {"classification": "replication", "confident": False}]
+    screen = {7: {"outcome": "proceed", "votes": unsure},
+              8: {"outcome": "proceed", "votes": unsure}}
+    judged = tmp_path / "human_judged.csv"
+    judged.write_text("work_id,record_id,validation_status\n7,r-7,validated\n",
+                      encoding="utf-8-sig")
+    exempt = handoff_mod.human_judged_work_ids(judged)
+    assert exempt == {7}
+    gates = {7: "strict", 8: "strict"}
+    assert handoff_mod.deferred_works(screen, gates, exempt) == {8}
+    assert handoff_mod.human_judged_work_ids(tmp_path / "absent.csv") == set()
+
+
 def test_the_screen_verdict_travels_to_stage_three_intact(con, pool, tmp_path,
                                                           monkeypatch):
     """The move: the screen runs here, so what it decided has to reach Stage 3 on

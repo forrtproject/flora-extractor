@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from filter.engine.handoff import human_judged_work_ids
 from filter.engine.spec import LENIENT, SCREEN_PILES, load_specs
 from shared.llm_client import screen_strict
 
@@ -57,9 +58,13 @@ def main() -> None:
     df["gate"] = df.matched.map(gate)
     df["gate_winner"] = df.rule_id.map(lambda r: gate([r]))
     proceed = df.outcome == "proceed"
-    df["deferred"] = proceed & (df.gate == "strict") & ~df.strict.fillna(False)
+    exempt = df.work_id.isin(human_judged_work_ids())
+    df["deferred"] = (proceed & (df.gate == "strict") & ~df.strict.fillna(False)
+                      & ~exempt)
     df["deferred_winner"] = (proceed & (df.gate_winner == "strict")
-                             & ~df.strict.fillna(False))
+                             & ~df.strict.fillna(False) & ~exempt)
+    df["exempted"] = (proceed & (df.gate == "strict") & ~df.strict.fillna(False)
+                      & exempt)
 
     lines = ["| rule | gate | routed (winner) | proceed | strict among proceeds | "
              "Stage 3 shipped / not_a_rep / no_orig / prospective | validated proceeds: n, "
@@ -85,6 +90,7 @@ def main() -> None:
         "release_id": json.loads((OUT / "manifest.json").read_text())["release_id"],
         "screen_pile_works": len(df), "proceeds": int(proceed.sum()),
         "deferred": int(df.deferred.sum()),
+        "exempted_human_judged": int(df.exempted.sum()),
         "deferred_if_winner_gate": int(df.deferred_winner.sum()),
         "deferred_already_ended": d.file.value_counts().to_dict(),
         "deferred_never_extracted": int(d.file.isna().sum()),

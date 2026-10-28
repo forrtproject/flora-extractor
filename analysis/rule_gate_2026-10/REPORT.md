@@ -2,12 +2,14 @@
 
 Four live screening rules keep the lenient gate. The other five, together with every
 shadow screening rule, are strict. On release `61f07fd07f19`, this assignment
-**defers 3,368 of the 24,170 works the screen proceeds (14%)**. 873 of these currently
-ship in `extracted.csv`.
+**defers 3,339 of the 24,170 works the screen proceeds (14%)**. 857 of these currently
+ship in `extracted.csv`. 29 more would be deferred but are exempt, because a person
+has already judged them in validation.
 
-The gate does its job on the evidence available. Validators marked 41% of the
-validated works it defers as not replications (12 of 29). Among the strict misses
-that lenient rules keep, the rate is 4% (1 of 24).
+The gate does its job on the evidence available. Among validated strict misses,
+validators marked 41% as not replications when only strict rules matched them
+(12 of 29, the works now exempt). When a lenient rule also matched, the rate was 4%
+(1 of 24).
 
 ## What the strict gate reads
 
@@ -30,11 +32,11 @@ a rule is strict. The base-rate sources are the specs' `measured` entries and
 | `replication-claim-title-strong` | lenient | 94.1% (Sonnet, n = 237) | 2,115 | 79% | 0 |
 | `replication-claim-failure-prior` | lenient | 78.0% (census, gpt-6.1-sol) | 299 | 93% | 0 |
 | `replication-claim-extend-prior` | lenient | 71.4%, CI 59–81% (gpt-6.1-sol, n = 140) | 2,518 | 89% | 0 |
-| `replication-claim-cited-abstract` | strict | 59.8% (gpt-6.1-sol, n = 311) | 2,087 | 93% | 151 |
-| `replication-claim-general` | strict | ~50% clear (human, 9 of 18 proceeds) | 11,190 | 80% | 2,206 |
-| `replication-claim-title-broad` | strict | unmeasured as a rule (arms 5–90%) | 2,594 | 72% | 724 |
-| `curated-observatory` | strict | unmeasured | 1,646 | 89% | 170 |
-| `osf-registration-completed` | strict | heuristic only | 502 | 70% | 117 |
+| `replication-claim-cited-abstract` | strict | 59.8% (gpt-6.1-sol, n = 311) | 2,087 | 93% | 150 |
+| `replication-claim-general` | strict | ~50% clear (human, 9 of 18 proceeds) | 11,190 | 80% | 2,196 |
+| `replication-claim-title-broad` | strict | unmeasured as a rule (arms 5–90%) | 2,594 | 72% | 711 |
+| `curated-observatory` | strict | unmeasured | 1,646 | 89% | 167 |
+| `osf-registration-completed` | strict | heuristic only | 502 | 70% | 115 |
 
 Rows are attributed to the rule that won routing. A work's gate is the most lenient
 of all the live screening rules it matched. Proceeds and deferrals come from the
@@ -65,7 +67,7 @@ it (13 of 53).
 
 - **The most lenient matching rule wins.** A rule's base rate is measured over every
   work it matches, overlaps included. Precedence only names the routing winner.
-  Using the winner's gate instead would defer 3,413 works rather than 3,368.
+  Using the winner's gate instead would defer 3,384 works rather than 3,339.
 - **The gate is outside the release id.** `bundle_hash()` drops `admission`
   (`UNROUTED_KEYS`). The gate moves no row between piles, and the verdicts it reads
   already apply across releases. Including it would turn every gate change into a
@@ -76,7 +78,7 @@ it (13 of 53).
 
 | ending | works |
 | --- | --: |
-| `extracted.csv` (ships today) | 873 |
+| `extracted.csv` (ships today) | 857 |
 | `target_pending` | 1,524 |
 | `no_original_found` | 377 |
 | `prospective_registration` | 154 |
@@ -85,12 +87,13 @@ it (13 of 53).
 | `unidentified_original` | 70 |
 | `not_a_replication` | 42 |
 | other | 3 |
-| never extracted | 76 |
+| never extracted | 63 |
 
-992 of the deferred works have a record in the validation `unvalidated` table:
-963 unvalidated, 29 with a human type judgment. Of those 29, 12 were judged not a
-replication and 17 a replication. The next live `extract.export --release` would
-retire the 873 shipped works as `screen_deferred`.
+Before the exemption, 992 deferred works had a record in the validation `unvalidated`
+table: 963 unvalidated and 29 with a human type judgment (12 judged not a replication,
+17 a replication). Those 29 are now exempt (`data/human_judged.csv`, 791 works, built
+by `analysis/build_human_judged.py`). The next live `extract.export --release` would
+retire the 857 shipped deferred works as `screen_deferred`.
 
 ## Limits
 
