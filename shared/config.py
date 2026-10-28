@@ -158,9 +158,12 @@ ELSEVIER_API_KEY = os.getenv("ELSEVIER_API_KEY", "")
 # CORE (core.ac.uk) API v3 key — the CORE acquisition tier is skipped without one,
 # because the v3 search answers anonymous callers with 429.
 CORE_API_KEY = os.getenv("CORE_API_KEY", "").strip()
-# Springer Nature Meta API key (free, https://dev.springernature.com/) — the abstract
-# backfill's `springer` source is skipped without it.
+# Springer Nature API keys (free, https://dev.springernature.com/) — one per product.
+# The Meta API key backs the abstract backfill's `springer` source, the Open Access
+# API key the acquisition waterfall's `springer_oa_xml` tier; each is skipped without
+# its key.
 SPRINGER_META_API_KEY = os.getenv("SPRINGER_META_API_KEY", "").strip()
+SPRINGER_OA_API_KEY = os.getenv("SPRINGER_OA_API_KEY", "").strip()
 # An institutional token grants Scopus entitlement off the subscribing network;
 # without it Elsevier entitlement is IP-bound (campus network / VPN).
 ELSEVIER_INSTTOKEN = os.getenv("ELSEVIER_INSTTOKEN", "").strip()

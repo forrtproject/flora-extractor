@@ -11,6 +11,8 @@ Acquisition order (the tier numbers acquire_pdf's comments use):
   1.  arXiv                              (DOI pattern, no API)
   2.  OSF preprint direct download       (DOI pattern, no API)
   2b. Zenodo record files, via its API   (10.5281/zenodo.* only)
+  2c. Springer Nature Open Access API JATS full text (Springer Nature DOIs only;
+      needs SPRINGER_OA_API_KEY, skipped without)
   3.  OpenAlex locations[] — every copy it knows of, files then landing pages
   3b. DataCite — the registrant's own metadata, for the DOIs Unpaywall never indexed
   4.  Unpaywall — all direct PDF URLs
@@ -30,11 +32,13 @@ Acquisition order (the tier numbers acquire_pdf's comments use):
   10. Playwright headless Chromium       (skipped when no browser build is installed)
   11. The row's own page, as HTML
 
-Four sources hand back a sections dict instead of a file, and each carries the
+Five sources hand back a sections dict instead of a file, and each carries the
 content check that says whether what came back is a document rather than a record of
 one (_STRUCTURED_SOURCES): Tier 0 OpenAlex GROBID XML and Tier 0b the OSF
 registration form, both above the download tiers because a hit there IS the document;
-Tier 7's Europe PMC JATS full text, which is tried before that tier's rendered PDF;
+Tier 2c's Springer Nature JATS, above the first tier that would download a Springer
+Nature PDF; Tier 7's Europe PMC JATS full text, which is tried before that tier's
+rendered PDF;
 and Tier 11, the row's own page as HTML, at the very bottom because it is the weakest
 evidence and the one result that has to be argued for rather than downloaded. A tier that comes
 back empty is timestamped and not re-probed for PDF_RETRY_AFTER_DAYS; so is a single
@@ -74,7 +78,8 @@ import requests
 
 from .config import (
     CORE_API_KEY, CROSSREF_RATE_SEC, OA_CACHE_DIR, OA_XML_CACHE_DIR, OPENALEX_API_KEYS,
-    OSF_TOKEN, PDF_CACHE_DIR, RESEARCHER_EMAIL, SERPAPI_KEYS, SERPER_API_KEYS, log,
+    OSF_TOKEN, PDF_CACHE_DIR, RESEARCHER_EMAIL, SERPAPI_KEYS, SERPER_API_KEYS,
+    SPRINGER_OA_API_KEY, log,
 )
 
 from .openalex_keys import (current_index, headers as oa_headers,
@@ -82,7 +87,7 @@ from .openalex_keys import (current_index, headers as oa_headers,
 from .cache import write_json
 from .disambiguation import token_coverage
 from .rate_limit import throttle
-from .utils import clean_doi, cache_key
+from .utils import clean_doi, cache_key, is_springer_nature_doi
 
 # Seconds between calls to each source the waterfall asks. These APIs are free and
 # keyless and ask only for a mailto; the intervals are politeness, not quotas, and
@@ -100,6 +105,7 @@ _DATACITE_RATE_SEC        = 0.5
 _ZENODO_RATE_SEC          = 0.5
 _PMC_OA_RATE_SEC          = 0.2
 _HTML_RATE_SEC           = 0.5
+_SPRINGER_OA_RATE_SEC     = 1.0     # basic plan: 100 requests/min, 500 a day
 
 # The key is optional: without it you get the polite pool (mailto= parameter);
 # with it you get higher rate limits and access to content.openalex.org bulk
@@ -194,7 +200,8 @@ _MIN_TITLE_EVIDENCE_CHARS = 200
 # Sources that hand back a sections dict instead of a file. They are documents in
 # every sense the pipeline cares about, so the retry log is cleared for them exactly
 # as it is for a downloaded PDF.
-_STRUCTURED_SOURCES = {"openalex_xml", "epmc_xml", "osf_registration", "html_landing"}
+_STRUCTURED_SOURCES = {"openalex_xml", "epmc_xml", "springer_oa_xml",
+                       "osf_registration", "html_landing"}
 
 
 class DocumentSourceUnavailable(Exception):
@@ -723,6 +730,118 @@ def get_europepmc_fulltext(pmc_id: str) -> "dict | None":
         log.debug("Europe PMC XML cache write failed: %s", e)
 
     log.info("Europe PMC XML acquired for %s (%d refs)", pmc_id,
+             len(sections.get("references", [])))
+    return document
+
+
+# ── Springer Nature Open Access API ───────────────────────────────────────────
+
+_SPRINGER_OA_JATS = "https://api.springernature.com/openaccess/jats"
+
+# Set once the API has refused this process's key (401/403) or its daily quota
+# (429): every later call would be refused the same way, and none of them may be
+# recorded as the DOI's answer. A new process asks again, which is when a key added
+# or a quota renewed takes effect.
+_springer_oa_refused = False
+
+
+def springer_oa_xml_has_content(document: "dict | None") -> bool:
+    """True when a parsed Springer Nature JATS result carries the paper.
+
+    The same test as `epmc_xml_has_content`, for the same reason: it is the same
+    markup, and JATS front matter carries the abstract, so an abstract alone is a
+    record of the paper rather than the paper.
+    """
+    return epmc_xml_has_content(document)
+
+
+def _springer_oa_cache_file(doi: str) -> Path:
+    return OA_XML_CACHE_DIR / f"springer_oa_xml_{cache_key(doi)}.json"
+
+
+def get_springer_oa_fulltext(doi: str) -> "dict | None":
+    """*doi*'s JATS full text from the Springer Nature Open Access API, or None.
+
+    The API covers Springer Nature's open-access articles (BMC, SpringerOpen, the OA
+    Nature and Springer journals) and answers 404 "No data was found" for anything
+    else — an answer about the DOI, so the caller records the tier as empty. A DOI
+    off Springer Nature's registrants is not asked at all, and None is returned
+    without a call.
+
+    No answer raises DocumentSourceUnavailable and is never recorded: a 5xx or a dead
+    connection, and a refusal — 401/403 (the key) or 429 (the basic plan's 500
+    requests a day) — after which the tier is off for the rest of the process.
+
+    Returns {"source": "springer_oa_xml", "sections": {...}, "xml_url": str}. A
+    result that fails `springer_oa_xml_has_content()` is None and is never cached.
+    """
+    global _springer_oa_refused
+    doi = clean_doi(doi)
+    if not doi or not is_springer_nature_doi(doi):
+        return None
+
+    cache_file = _springer_oa_cache_file(doi)
+    if cache_file.exists():
+        try:
+            cached = json.loads(cache_file.read_text(encoding="utf-8"))
+        except Exception:
+            cached = None
+        if cached is not None:
+            if springer_oa_xml_has_content(cached):
+                return cached
+            log.warning("Springer OA XML cache for %s is content-free — "
+                        "ignoring it and re-fetching", doi)
+
+    if not SPRINGER_OA_API_KEY:
+        raise DocumentSourceUnavailable("SPRINGER_OA_API_KEY not set")
+    if _springer_oa_refused:
+        raise DocumentSourceUnavailable("Springer OA API refused this run earlier")
+
+    throttle("springer_oa", _SPRINGER_OA_RATE_SEC)
+    try:
+        r = requests.get(_SPRINGER_OA_JATS, timeout=60,
+                         params={"q": f"doi:{doi}", "api_key": SPRINGER_OA_API_KEY},
+                         headers={"User-Agent": f"flora-extractor ({RESEARCHER_EMAIL})"})
+    except Exception as e:
+        # The key rides in the query string, which a connection error quotes.
+        raise DocumentSourceUnavailable(
+            f"Springer OA fetch failed for {doi}: "
+            f"{str(e).replace(SPRINGER_OA_API_KEY, '<redacted>')}") from None
+    if r.status_code in (401, 403, 429):
+        _springer_oa_refused = True
+        log.warning("Springer OA API refused the request (HTTP %d) — the tier is off "
+                    "for the rest of this run; check SPRINGER_OA_API_KEY or the daily "
+                    "quota.", r.status_code)
+        raise DocumentSourceUnavailable(f"Springer OA {doi} → HTTP {r.status_code}")
+    if r.status_code >= 500:
+        raise DocumentSourceUnavailable(f"Springer OA {doi} → HTTP {r.status_code}")
+    if r.status_code != 200:
+        log.debug("Springer OA %s → HTTP %s", doi, r.status_code)
+        return None
+
+    try:
+        from .grobid import parse_jats_sections
+        sections = parse_jats_sections(r.content.decode("utf-8", errors="replace"))
+    except Exception as e:
+        log.debug("Springer OA XML parse failed for %s: %s", doi, e)
+        return None
+
+    # The URL without the key, so the stored document and pdf_url never carry it.
+    document = {"source": "springer_oa_xml", "sections": sections,
+                "xml_url": f"{_SPRINGER_OA_JATS}?q=doi:{doi}"}
+    if not springer_oa_xml_has_content(document):
+        log.info("Springer OA served XML for %s with no body and no references — "
+                 "treating it as no document", doi)
+        return None
+
+    try:
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        cache_file.write_text(json.dumps(document, ensure_ascii=False),
+                              encoding="utf-8")
+    except Exception as e:
+        log.debug("Springer OA XML cache write failed: %s", e)
+
+    log.info("Springer OA XML acquired for %s (%d refs)", doi,
              len(sections.get("references", [])))
     return document
 
@@ -3188,6 +3307,31 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
             if not any(_try(url, "zenodo") for url in zenodo_urls[:_ZENODO_MAX_DOWNLOADS]):
                 if not _only_transient("zenodo"):
                     _failed("zenodo")
+
+    # Tier 2c — Springer Nature's own JATS, for its open-access articles. Above Tier 3
+    # because from there down every tier a Springer Nature DOI reaches is a PDF
+    # download — from link.springer.com and nature.com, which serve scripted clients
+    # bot checks often enough — and then a parse, while this is the publisher's
+    # labelled sections with nothing to download or title-check. Below everything
+    # above it because those are free, cached, or (arXiv, OSF, Zenodo) cannot match a
+    # Springer Nature DOI at all; and a call here spends the basic plan's 500
+    # requests a day, so it is made only for Springer Nature's registrants. No key is
+    # a SKIP, not a failure, like CORE's.
+    if (not dl["success"] and SPRINGER_OA_API_KEY and is_springer_nature_doi(doi_r)
+            and not _held("springer_oa")):
+        try:
+            springer_xml = get_springer_oa_fulltext(doi_r)
+        except DocumentSourceUnavailable as exc:
+            # Never recorded: a source that did not answer has said nothing.
+            log.info("  [%s] Springer OA unavailable: %s", doi_r, exc)
+        else:
+            if springer_xml is not None:
+                log.info("  [%s] Springer OA XML acquired (source=springer_oa_xml) — "
+                         "skipping the download tiers below", doi_r)
+                oa_xml  = springer_xml
+                pdf_src = "springer_oa_xml"
+                return _result()
+            _failed("springer_oa")
 
     # Tier 3 — every copy OpenAlex knows of, not only best_oa_location's one URL.
     # Landing pages included: two of the 88 measured location URLs answered with a

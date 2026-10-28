@@ -2370,6 +2370,28 @@ class TestEuropePmcXmlIsFoundFromTheRow:
         assert cached["openalex_xml"]["source"] == "epmc_xml"
 
 
+class TestSpringerOaXmlIsFoundFromTheRow:
+    """A Springer Nature JATS document is filed under the row's DOI; a re-parse that
+    could not find it would code the row from its abstract."""
+
+    _link = TestParseCacheOnlyAfterTheDocument._link
+
+    def test_the_springer_document_is_read_and_a_shell_is_not(self, tmp_path,
+                                                              monkeypatch):
+        monkeypatch.setattr(run_extract, "PDF_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(run_extract, "OA_XML_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(run_extract, "OA_CACHE_DIR", tmp_path)
+        from shared.utils import cache_key
+        for doi, raw in (("10.1186/body", "We replicated it."), ("10.1186/shell", "")):
+            (tmp_path / f"springer_oa_xml_{cache_key(doi)}.json").write_text(
+                json.dumps({"source": "springer_oa_xml", "xml_url": "u",
+                            "sections": {"abstract": "a", "raw_text": raw}}),
+                encoding="utf-8")
+        doc = run_extract._cached_structured_document("10.1186/body")
+        assert doc["source"] == "springer_oa_xml"
+        assert not run_extract._has_document("10.1186/shell", self._link())
+
+
 class TestParseCacheIdentity:
     """Two rows without a DOI must not share one parse cache entry.
 

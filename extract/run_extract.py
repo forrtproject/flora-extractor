@@ -46,6 +46,7 @@ from shared.openalex_client import (
     _TitleSearchUnavailable, _search_crossref_by_title, _search_openalex_by_title,
 )
 from shared.pdf_sources import (cached_pdf, epmc_xml_has_content,
+                                springer_oa_xml_has_content,
                                 openalex_xml_has_content,
                                 verified_cached_document)
 from shared.pdf_parsing import (
@@ -701,14 +702,37 @@ def _cached_epmc_xml(doi_r: str) -> "dict | None":
     return cached if epmc_xml_has_content(cached) else None
 
 
+def _cached_springer_oa_xml(doi_r: str) -> "dict | None":
+    """The cached Springer Nature JATS document for *doi_r*, or None.
+
+    `get_springer_oa_fulltext()` files it under `springer_oa_xml_<key(doi)>` in
+    OA_XML_CACHE_DIR, and reading it back needs no lookup. The content test is the
+    acquisition tier's, for the reason `_cached_oa_xml` states.
+    """
+    doi = clean_doi(doi_r)
+    if not doi:
+        return None
+    doc_file = OA_XML_CACHE_DIR / f"springer_oa_xml_{cache_key(doi)}.json"
+    if not doc_file.exists():
+        return None
+    try:
+        with doc_file.open(encoding="utf-8") as fh:
+            cached = json.load(fh)
+    except Exception:
+        return None
+    return cached if springer_oa_xml_has_content(cached) else None
+
+
 def _cached_structured_document(doi_r: str, openalex_id: str = "") -> "dict | None":
     """The cached structured document for this row, from any source that has one.
 
-    Both readers answer with the sections dict `parse_all(oa_xml=…)` takes, and the
-    order is the acquisition waterfall's: OpenAlex XML sits above Europe PMC, so a
-    row that has both is read the way it was acquired.
+    Every reader answers with the sections dict `parse_all(oa_xml=…)` takes, and the
+    order is the acquisition waterfall's: OpenAlex XML, then Springer Nature (Tier
+    2c), then Europe PMC (Tier 7), so a row that has several is read the way it was
+    acquired.
     """
-    return _cached_oa_xml(openalex_id) or _cached_epmc_xml(doi_r)
+    return (_cached_oa_xml(openalex_id) or _cached_springer_oa_xml(doi_r)
+            or _cached_epmc_xml(doi_r))
 
 
 def _has_document(doi_r: str, link: dict, openalex_id: str = "") -> bool:

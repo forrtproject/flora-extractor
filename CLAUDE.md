@@ -161,7 +161,7 @@ Never change a column name without updating `schema.py` and notifying all teams.
   is a contradiction.
 
   **A document need not be a PDF, but every source has a content check that
-  a record page fails.** Four sources hand back a sections dict instead of a file
+  a record page fails.** Five sources hand back a sections dict instead of a file
   (`_STRUCTURED_SOURCES` in `shared/pdf_sources.py`), and each is paired with the
   test that says whether what came back is a document:
 
@@ -169,6 +169,7 @@ Never change a column name without updating `schema.py` and notifying all teams.
   | ------------ | ---------- | ---------------------- |
   | `openalex_xml` | OpenAlex GROBID XML | `openalex_xml_has_content()` — any section text or any reference |
   | `epmc_xml` | Europe PMC JATS full text (`parse_jats_sections()` in `shared/grobid.py`) | `epmc_xml_has_content()` — any section text or any reference |
+  | `springer_oa_xml` | Springer Nature Open Access API JATS full text, asked only for Springer Nature DOIs (`SPRINGER_NATURE_PREFIXES` in `shared/utils.py`; needs `SPRINGER_OA_API_KEY`) | `springer_oa_xml_has_content()` — the `epmc_xml` test, same markup |
   | `osf_registration` | The OSF registration form, from the API | `osf_registration_has_content()` — ≥ 1,000 chars of description + form fields |
   | `html_landing` | The row's own page, parsed with lxml | `html_document_has_content()` — ≥ 10,000 chars BEYOND the abstract, or a ≥ 2,000-char reference block |
 
