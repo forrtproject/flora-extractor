@@ -3238,6 +3238,7 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
                 log.info("  [%s] OSF registration acquired (source=osf_registration)",
                          doi_r or url_r)
                 oa_xml  = registration
+                pdf_url = _OSF_REGISTRATION_API.format(guid=osf_guid)
                 pdf_src = "osf_registration"
                 return _result()
             _failed("osf_registration")

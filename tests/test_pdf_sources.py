@@ -1065,6 +1065,7 @@ def test_osf_files_falls_through_to_the_registration_form_when_no_file_qualifies
             p.stop()
 
     assert out["pdf_source"] == "osf_registration"
+    assert out["pdf_url"] == "https://api.osf.io/v2/registrations/abc12/"
     assert out["openalex_xml"] is registration
     reg.assert_called_once()
     dl.assert_not_called()      # the one candidate was ranked out, not downloaded
