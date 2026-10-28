@@ -533,10 +533,17 @@ def test_springer_batch_records_text_and_misses_and_flattens_structure(monkeypat
     assert fa._read_abstract_cache("springer:10.1007/c") == "__none__"
 
 
-def test_a_failed_springer_batch_records_nothing(monkeypatch):
-    """A persistent 5xx is transient: nothing is checkpointed, so a rerun asks again."""
+@pytest.mark.parametrize("status_code, payload", [
+    (503, {}),
+    # A 200 without the result envelope establishes no miss.
+    (200, {}),
+    (200, {"error": "Service temporarily unavailable"}),
+])
+def test_a_failed_springer_batch_records_nothing(monkeypatch, status_code, payload):
+    """A persistent 5xx or an envelope-less answer is transient: nothing is
+    checkpointed, so a rerun asks again."""
     monkeypatch.setattr(fa._SESSION, "get",
-                        lambda url, **kw: DummyResponse({}, status_code=503))
+                        lambda url, **kw: DummyResponse(payload, status_code=status_code))
     fa._run_batch_phase("Springer", "springer", ["10.1007/a"], 20, 0,
                         lambda b: fa._fetch_springer_batch(b, "KEY"), set())
     assert fa._load_checkpoint() == set()

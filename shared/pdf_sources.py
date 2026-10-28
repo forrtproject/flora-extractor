@@ -815,12 +815,19 @@ def get_springer_oa_fulltext(doi: str) -> "dict | None":
         log.debug("Springer OA %s → HTTP %s", doi, r.status_code)
         return None
 
+    # A body that is not XML — a gateway's HTML error page, a cut-off transfer — is
+    # no answer about the DOI. parse_jats_sections swallows a parse error into empty
+    # sections, which would read as a content-free document and be recorded as the
+    # tier's miss, so the envelope is checked first.
+    text = r.content.decode("utf-8", errors="replace")
     try:
-        from .grobid import parse_jats_sections
-        sections = parse_jats_sections(r.content.decode("utf-8", errors="replace"))
+        from lxml import etree
+        etree.fromstring(text.encode("utf-8"))
     except Exception as e:
-        log.debug("Springer OA XML parse failed for %s: %s", doi, e)
-        return None
+        raise DocumentSourceUnavailable(
+            f"Springer OA {doi} → unreadable XML ({type(e).__name__})") from None
+    from .grobid import parse_jats_sections
+    sections = parse_jats_sections(text)
 
     # The URL without the key, so the stored document and pdf_url never carry it.
     document = {"source": "springer_oa_xml", "sections": sections,
@@ -3090,7 +3097,10 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
             elif failures:
                 _write_retry_log(retry_path, {**retries, **failures})
         return {
-            "pdf_url"       : pdf_url,
+            # A structured source has no file, but it was fetched from somewhere, and
+            # pdf_url is blank only when pdf_source is.
+            "pdf_url"       : pdf_url or (str((oa_xml or {}).get("xml_url") or "")
+                                          if pdf_src in _STRUCTURED_SOURCES else ""),
             "pdf_source"    : pdf_src if dl["success"] else (pdf_src or "none"),
             "pdf_name"      : pdf_name,
             "pdf_path"      : str(dl["path"]) if dl.get("path") else None,

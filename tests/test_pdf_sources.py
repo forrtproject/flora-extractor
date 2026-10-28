@@ -1980,6 +1980,11 @@ def test_a_springer_refusal_is_an_outage_that_ends_the_tier_for_the_run(_springe
     open access"."""
     with patch.object(ps.requests, "get", return_value=_Resp(404)):
         assert ps.get_springer_oa_fulltext("10.1007/paywalled") is None
+    # A body that is not XML (a gateway page, a cut-off transfer) is no answer either.
+    with patch.object(ps.requests, "get",
+                      return_value=_Resp(200, b"<html><body>Bad gateway")):
+        with pytest.raises(ps.DocumentSourceUnavailable):
+            ps.get_springer_oa_fulltext("10.1186/cut")
     with patch.object(ps.requests, "get", return_value=_Resp(401)):
         with pytest.raises(ps.DocumentSourceUnavailable):
             ps.get_springer_oa_fulltext("10.1186/a")
@@ -2009,6 +2014,7 @@ def test_the_springer_oa_xml_ends_the_waterfall_above_the_downloads():
                         "references": [{"title": "r"}]}}
     out, started, dl = _acquire_springer("10.1186/s13024-018-0267-3", doc)
     assert out["pdf_source"] == "springer_oa_xml"
+    assert out["pdf_url"] == "u"                 # blank only when pdf_source is
     assert out["openalex_xml"] == doc
     dl.assert_not_called()
     started["get_openalex_locations"].assert_not_called()

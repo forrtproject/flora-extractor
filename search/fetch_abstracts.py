@@ -626,9 +626,18 @@ def _fetch_springer_batch(dois: list[str], api_key: str):
                     resp.status_code, resp.text[:200])
         return None
 
-    payload = resp.json()
-    records = payload.get("records") or []
-    total = sum(int((r or {}).get("total") or 0) for r in (payload.get("result") or []))
+    # Only a complete envelope establishes a miss: an error object or `{}` carries
+    # no records either, and read as an answer it would checkpoint the whole batch.
+    try:
+        payload = resp.json()
+        records = payload["records"]
+        total = sum(int(r["total"]) for r in payload["result"])
+    except (ValueError, KeyError, TypeError) as exc:
+        log.warning("Springer Meta batch answered without a result envelope (batch "
+                    "not checkpointed): %s — %s", type(exc).__name__, resp.text[:200])
+        return None
+    if not isinstance(records, list):
+        return None
     if total > len(records):
         log.warning("Springer Meta batch returned %d of %d matches (page truncated; "
                     "batch not checkpointed).", len(records), total)
