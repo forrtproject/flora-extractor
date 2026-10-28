@@ -47,6 +47,21 @@ writes its own default name (`HANDOFF_UNSCREENED_CSV`) for that reason: the two
 files have the same columns, so only the name distinguishes a screened handoff
 from one whose verdicts are blank.
 
+**A proceed can still be DEFERRED, by the rule that routed the work.** Every
+screen-pile spec carries an `admission` gate (`filter/spec/CONVENTIONS.md`,
+"Admission gates"). `lenient` admits on `screen_gate()`'s proceed, as the screen
+always has; `strict` admits only a proceed whose every vote qualifies AND is confident
+(`screen_strict()`). A work is held to the strict gate only when EVERY live
+screen-pile rule it matched is strict — the most lenient matching rule wins
+(`admission_gates()`), because a rule's measured base rate is over every work it
+matches, overlaps included, while precedence only decides which rule's name the
+routing row carries. A work a person has judged in validation is exempt
+(`human_judged_work_ids()`). A deferred work is not exported, not offered to Stage 3 and not
+rendered; nothing is written about it, so relaxing its rule's gate releases it with
+no new screening call. The gate is read from the specs on disk at handoff time and is
+deliberately not part of the release id (`spec.UNROUTED_KEYS`): it moves no row
+between piles, and the verdicts it reads are already applied across releases.
+
 Absence is accounted for either way: the manifest's `dropped_by_tier_verdict`
 and `skipped_unscreened` are different facts about the same missing row, and
 together with `rows` they cover every work the piles contain.
@@ -59,6 +74,7 @@ move, and its manifest is rewritten with it. When an immutable copy is wanted,
 `export` is still the command for it.
 """
 
+import csv
 import datetime
 import hashlib
 import json
@@ -69,7 +85,8 @@ from typing import Optional
 from filter.engine.export import (SPEC_DIR, UNCHECKED, check_release_binding,
                                   iter_export_rows, load_conventions,
                                   write_rows_tmp)
-from filter.engine.spec import FilterSpec
+from filter.engine.spec import LENIENT, SCREEN_PILES, STRICT, FilterSpec, load_specs
+from shared.config import DATA_DIR
 from shared.schema import ENGINE_EXPORTED_COLS
 
 # The order Stage 3 meets the piles in.
@@ -112,7 +129,7 @@ def write_handoff(con, pool_dir: Path, out_csv: Path, release_id: str, *,
     say different things. A set (empty included) means SCREENED-ONLY: a pile row
     outside it was never judged, so it is left out and counted as
     `skipped_unscreened`. `None` means AS-ROUTED: every pile row travels except
-    the ones a verdict discarded — which is the only thing a caller with no
+    the ones a verdict discarded or a strict admission gate deferred — which is the only thing a caller with no
     Supabase can ask for, and the one mode in which a row can reach Stage 3 with
     its `SCREEN_COLS` blank.
 
@@ -127,9 +144,12 @@ def write_handoff(con, pool_dir: Path, out_csv: Path, release_id: str, *,
     drop = drop or set()
     screen = screen or {}
     conventions = conventions or load_conventions()
+    specs = specs if specs is not None else load_specs(spec_dir)
+    deferred = deferred_works(screen, admission_gates(con, release_id, specs))
 
     by_pile: dict[str, list[dict]] = {pile: [] for pile in HANDOFF_PILES}
     dropped = 0
+    held = 0
     unscreened = 0
     retyped = 0
     for pile, work, row in iter_export_rows(
@@ -139,6 +159,9 @@ def write_handoff(con, pool_dir: Path, out_csv: Path, release_id: str, *,
             overlay_dir=overlay_dir):
         if work in drop:
             dropped += 1
+            continue
+        if work in deferred:
+            held += 1
             continue
         if decided is not None and work not in decided:
             unscreened += 1
@@ -160,6 +183,10 @@ def write_handoff(con, pool_dir: Path, out_csv: Path, release_id: str, *,
         "rows": len(rows),
         "rows_per_pile": {pile: len(by_pile[pile]) for pile in HANDOFF_PILES},
         "dropped_by_tier_verdict": dropped,
+        "deferred_by_admission_gate": held,
+        # Not in the release id (spec.UNROUTED_KEYS), so the file names it itself.
+        "admission": {s.id: s.admission for s in specs
+                      if s.admission and not s.shadow},
         "skipped_unscreened": unscreened,
         "screened_only": decided is not None,
         "typed_by_tier_verdict": retyped,
@@ -213,6 +240,57 @@ def screen_columns(row: dict, decision: dict) -> dict:
         "screen_evidence": format_screen_evidence(votes),
         "screen_reasoning": str(detail.get("llm_reasoning") or ""),
     }
+
+
+def admission_gates(con, release_id: str, specs: list[FilterSpec]) -> dict[int, str]:
+    """`work id → LENIENT | STRICT` for every work *release_id* routed to a screen pile.
+
+    LENIENT when any live screen-pile rule the work matched is lenient — the most
+    lenient matching rule wins (module docstring). `matched_rules` holds every live
+    rule that matched, whatever pile it routes to, so the rules are filtered to the
+    screen piles here. A matched id the bundle no longer holds has no gate to offer
+    and counts as strict: an unknown rule is unmeasured evidence.
+    """
+    lenient = {s.id for s in specs if s.pile in SCREEN_PILES and s.admission == LENIENT}
+    rows = con.execute(
+        "SELECT work_id, matched_rules FROM routing WHERE release_id = ? AND pile IN ?",
+        [release_id, list(SCREEN_PILES)]).fetchall()
+    return {int(work): LENIENT if lenient.intersection(matched or ()) else STRICT
+            for work, matched in rows}
+
+
+# Works a person has judged in validation (`analysis/build_human_judged.py`).
+HUMAN_JUDGED_CSV = DATA_DIR / "human_judged.csv"
+
+
+def human_judged_work_ids(path: Path = HUMAN_JUDGED_CSV) -> set[int]:
+    """The work ids in *path*; an absent file exempts nothing."""
+    if not Path(path).exists():
+        return set()
+    with Path(path).open(encoding="utf-8-sig", newline="") as handle:
+        return {int(row["work_id"]) for row in csv.DictReader(handle)
+                if str(row.get("work_id") or "").strip()}
+
+
+def deferred_works(screen: dict[int, dict], gates: dict[int, str],
+                   exempt: Optional[set[int]] = None) -> set[int]:
+    """The works the screen PROCEEDED that their admission gate holds back.
+
+    *screen* is `decisions()`'s mapping, *gates* `admission_gates()`'s. A work with
+    no gate — outside this release's screen piles — is not this function's to hold.
+
+    A work a person has already judged in validation is never deferred: the
+    judgment outranks two screen votes, and deferring it would retire the record the
+    judgment sits on. *exempt* None reads `human_judged_work_ids()`.
+    """
+    from filter.engine.tiers import PROCEED
+    from shared.llm_client import screen_strict
+
+    exempt = human_judged_work_ids() if exempt is None else exempt
+    return {work for work, decision in screen.items()
+            if decision["outcome"] == PROCEED and gates.get(work) == STRICT
+            and work not in exempt
+            and not screen_strict(decision.get("votes") or [])}
 
 
 def decisions(client) -> tuple[set[int], dict[int, dict]]:

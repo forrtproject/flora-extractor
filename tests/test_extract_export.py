@@ -436,6 +436,21 @@ def test_a_work_the_current_screen_discards_is_dropped_and_counted(monkeypatch):
     assert [r["pair_id"] for r in report["main"]] == [_SINGLE["pair_id"]]
 
 
+def test_a_proceed_its_admission_gate_defers_is_dropped_and_counted(monkeypatch):
+    """The worklist never offers a deferred work either, so an extraction bought
+    before its rule turned strict would otherwise keep shipping."""
+    unsure = [{"classification": "replication", "confident": True},
+              {"classification": "replication", "confident": False}]
+    monkeypatch.setattr(export_mod, "decisions", lambda client: (set(), {
+        41: {"outcome": "proceed", "votes": unsure},
+        42: {"outcome": "proceed", "votes": unsure}}))
+    report = export_mod.render(
+        _client([_verdict(41, row_id="v-in"), _verdict(42, row_id="v-out")]),
+        admitted={41, 42}, gates={41: "lenient", 42: "strict"})
+    assert report["works"] == 1 and report["screen_deferred"] == 1
+    assert report["dropped"][42]["reason"] == "screen_deferred"
+
+
 def test_without_a_release_every_stored_verdict_still_renders():
     """The default is unchanged: the export answers "what has this pipeline
     concluded", and that question does not consult the rule book."""
@@ -446,24 +461,31 @@ def test_without_a_release_every_stored_verdict_still_renders():
 
 def test_only_the_admitted_piles_of_the_named_release_come_back(tmp_path):
     """The pile vocabulary, read off a real store: `discard` and `pending` spend
-    nothing and admit nothing, and another release's rows are another question."""
+    nothing and admit nothing, and another release's rows are another question.
+
+    The gates come back for the screen piles only, and the most lenient rule a work
+    matched decides its gate: work 1 matched a lenient title rule as well as the
+    strict general one."""
     from filter.engine.store import open_store
 
+    lenient, strict = "replication-claim-title-strong", "replication-claim-general"
     con = open_store(tmp_path / "engine.duckdb")
-    for work, pile, release in [(1, "screen_expensive", "rel-aaaa0000"),
-                                (2, "needs_human", "rel-aaaa0000"),
-                                (3, "screen_cheap", "rel-aaaa0000"),
-                                (4, "discard", "rel-aaaa0000"),
-                                (5, "pending", "rel-aaaa0000"),
-                                (6, "screen_expensive", "rel-bbbb1111")]:
-        con.execute("INSERT INTO routing VALUES (?, ?, '', '', 0, [], '', ?)",
-                    [work, pile, release])
+    for work, pile, matched, release in [
+            (1, "screen_expensive", [lenient, strict], "rel-aaaa0000"),
+            (2, "needs_human", [], "rel-aaaa0000"),
+            (3, "screen_cheap", [strict], "rel-aaaa0000"),
+            (4, "discard", [], "rel-aaaa0000"),
+            (5, "pending", [], "rel-aaaa0000"),
+            (6, "screen_expensive", [lenient], "rel-bbbb1111")]:
+        con.execute("INSERT INTO routing VALUES (?, ?, '', '', 0, ?, '', ?)",
+                    [work, pile, matched, release])
     con.close()
 
-    release_id, admitted = export_mod.admitted_work_ids(
+    release_id, admitted, gates = export_mod.admitted_work_ids(
         "rel-aaaa", store_path=tmp_path / "engine.duckdb")
     assert release_id == "rel-aaaa0000"
     assert admitted == {1, 2, 3}
+    assert gates == {1: "lenient", 3: "strict"}
 
 
 # ---------------------------------------------------------------------------
@@ -730,8 +752,8 @@ def test_a_store_with_several_releases_refuses_rather_than_choosing(tmp_path,
     assert "--all-releases" in str(exc.value)
 
     # Named, it answers: the refusal is about ambiguity, not about the store.
-    release_id, admitted = export_mod.admitted_work_ids("aaa", store_path=store)
-    assert (release_id, admitted) == ("aaa", {1})
+    release_id, admitted, gates = export_mod.admitted_work_ids("aaa", store_path=store)
+    assert (release_id, admitted, gates) == ("aaa", {1}, {1: "strict"})
 
 
 def test_a_row_on_the_skip_list_is_suppressed_at_render(monkeypatch):

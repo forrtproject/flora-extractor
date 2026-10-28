@@ -43,6 +43,20 @@ POLICY_FILES = ("conventions.json",)
 PILES = ("discard", "screen_expensive", "screen_cheap", "needs_human")
 VOCABULARIES = ("replication", "reproduction")
 
+# The admission gate a screen-pile rule asks of the front-door screen's PROCEED
+# (`filter/spec/CONVENTIONS.md`, "Admission gates"). Required on every spec routing
+# into a screen pile, shadow included, so promoting a rule cannot leave it unset;
+# meaningless anywhere else, so refused there.
+LENIENT, STRICT = "lenient", "strict"
+ADMISSIONS = (LENIENT, STRICT)
+SCREEN_PILES = ("screen_expensive", "screen_cheap")
+
+# Spec keys left out of `bundle_hash()`, so editing one mints no routing release.
+# `admission` moves no row between piles: it is applied to the screen's stored votes
+# where the verdicts are applied (`filter/engine/handoff.py`), and those are read
+# across releases already.
+UNROUTED_KEYS = frozenset({"admission"})
+
 # Evidence levels that may discard a row on their own. `heuristic` is
 # deliberately absent: it records a guess, and a guess may not discard
 # autonomously (see CONVENTIONS.md) — a heuristic-only discard must be shadow.
@@ -50,7 +64,8 @@ VOCABULARIES = ("replication", "reproduction")
 AUTONOMOUS_LEVELS = ("human", "downstream", "trusted")
 
 _SPEC_KEYS = frozenset({"id", "description", "match", "domain", "pile",
-                        "vocabulary", "precedence", "shadow", "measured"})
+                        "vocabulary", "precedence", "shadow", "measured",
+                        "admission"})
 _MATCH_KEYS = frozenset({"doi_prefix", "doi_in", "work_id_in", "doi_regex", "title_regex",
                          "abstract_regex", "text_regex", "url_regex", "fields",
                          "abstract_missing", "any_of", "all_of", "none_of"})
@@ -129,6 +144,8 @@ class FilterSpec:
     vocabulary: Optional[str] = None
     shadow: bool = False
     measured: tuple[dict, ...] = field(default_factory=tuple)
+    # LENIENT or STRICT on a screen-pile spec, None elsewhere.
+    admission: Optional[str] = None
     # The population the rule claims to govern, when it declares one. Optional,
     # diagnostic, and it never gates the match — see `_validate_domain()`.
     domain: Optional[MatchBlock] = None
@@ -146,6 +163,7 @@ class FilterSpec:
             vocabulary=raw.get("vocabulary"),
             shadow=bool(raw.get("shadow", False)),
             measured=tuple(raw.get("measured") or ()),
+            admission=raw.get("admission"),
         )
 
 
@@ -333,6 +351,14 @@ def validate_spec(raw: dict) -> list[str]:
         errors.append(f"{label}.vocabulary: must be null/replication/reproduction, "
                       f"got {vocabulary!r}")
 
+    admission = raw.get("admission")
+    if pile in SCREEN_PILES and admission not in ADMISSIONS:
+        errors.append(f"{label}.admission: a screen-pile spec needs "
+                      f"{'/'.join(ADMISSIONS)}, got {admission!r}")
+    elif pile not in SCREEN_PILES and admission is not None:
+        errors.append(f"{label}.admission: only a screen-pile spec has an admission "
+                      f"gate, got {admission!r} on pile {pile!r}")
+
     shadow = raw.get("shadow", False)
     if not isinstance(shadow, bool):
         errors.append(f"{label}.shadow: must be a boolean, got {shadow!r}")
@@ -420,7 +446,7 @@ def load_specs(spec_dir: Path) -> list[FilterSpec]:
     return sorted(specs, key=lambda s: (-s.precedence, s.id))
 
 
-def canonical_json_digest(path: Path) -> bytes:
+def canonical_json_digest(path: Path, drop_keys: frozenset = frozenset()) -> bytes:
     """sha256 of *path*'s JSON content, canonically re-serialised.
 
     The one place a bundle input is turned into bytes to hash: `bundle_hash()`
@@ -433,6 +459,8 @@ def canonical_json_digest(path: Path) -> bytes:
     An absent file digests as empty, so a bundle directory in a test is still
     hashable. A file that is not valid JSON is an error naming the file: the
     hash cannot describe content it could not read.
+
+    *drop_keys* are top-level keys left out of the digest (`UNROUTED_KEYS`).
     """
     if not path.exists():
         return hashlib.sha256(b"").digest()
@@ -440,6 +468,8 @@ def canonical_json_digest(path: Path) -> bytes:
         obj = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise ValueError(f"{path.name}: invalid JSON, cannot hash it: {exc}") from exc
+    if drop_keys and isinstance(obj, dict):
+        obj = {k: v for k, v in obj.items() if k not in drop_keys}
     payload = json.dumps(obj, sort_keys=True, separators=(",", ":"),
                          ensure_ascii=False)
     return hashlib.sha256(payload.encode("utf-8")).digest()
@@ -451,12 +481,15 @@ def bundle_hash(spec_dir: Path) -> str:
     Files are hashed in name order, so the result does not depend on the order
     the directory lists them. Covers the spec files AND `POLICY_FILES`: the
     bundle is everything that decides what a row is routed to and what that pile
-    is then called.
+    is then called. A spec's `UNROUTED_KEYS` are not: they decide nothing about
+    routing, and a bundle that differs only in them is the same routing.
     """
     digest = hashlib.sha256()
-    for path in _spec_files(spec_dir) + sorted(
+    specs = _spec_files(spec_dir)
+    for path in specs + sorted(
             (spec_dir / name for name in POLICY_FILES), key=lambda p: p.name):
         digest.update(path.name.encode("utf-8"))
         digest.update(b"\0")
-        digest.update(canonical_json_digest(path))
+        digest.update(canonical_json_digest(
+            path, UNROUTED_KEYS if path in specs else frozenset()))
     return digest.hexdigest()

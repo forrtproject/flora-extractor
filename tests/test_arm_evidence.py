@@ -182,7 +182,7 @@ def test_an_arm_that_reads_no_text_is_scored_over_the_whole_pool(env):
     spec = FilterSpec.from_dict({
         "id": "listed", "description": "an allow-list arm",
         "match": {"doi_in": ["10.1/a", "10.1/b", "10.1/c", "10.1/e"]},
-        "pile": "screen_expensive", "precedence": 970})
+        "pile": "screen_expensive", "admission": "strict", "precedence": 970})
     report = run([Arm(id="arm01", label="doi_in", spec=spec)], **env)
 
     assert report["arms"][0]["pool"] == 4

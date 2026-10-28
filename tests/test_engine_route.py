@@ -338,7 +338,7 @@ def test_doi_in_is_an_allow_list_normalised_on_both_sides():
     spec = FilterSpec.from_dict({
         "id": "curated", "description": "an allow-list",
         "match": {"doi_in": ["https://doi.org/10.1037/ABC123", "10.1234/x"]},
-        "pile": "screen_expensive", "precedence": 970})
+        "pile": "screen_expensive", "admission": "strict", "precedence": 970})
     assert spec.match.doi_in == ("10.1037/abc123", "10.1234/x")
     rows = [_row(doi="10.1037/abc123"), _row(doi="HTTPS://DOI.ORG/10.1037/abc123"),
             _row(doi="10.1037/abc1234"), _row(doi=None)]
@@ -462,7 +462,7 @@ def test_a_year_that_arrives_as_a_string_is_read_as_a_year(specs):
     spec = FilterSpec.from_dict({
         "id": "year-example", "description": "a year filter over string years",
         "match": {"fields": {"publication_year": [2018]}},
-        "pile": "screen_cheap", "precedence": 250})
+        "pile": "screen_cheap", "admission": "strict", "precedence": 250})
     assert eval_spec_rows(spec, [_row(title="t", abstract="a", year="2018"),
                                  _row(title="t", abstract="a", year="2020")]) \
         == [True, False]

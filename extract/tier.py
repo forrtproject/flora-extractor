@@ -93,7 +93,8 @@ from filter.engine.claims import (ClaimLeaseLost, ClaimsClient, ClaimsError,
 from filter.engine.export import (ALIASES_FILENAME, SPEC_DIR, StaleBundleError,
                                   check_release_binding, iter_export_rows,
                                   load_conventions)
-from filter.engine.handoff import HANDOFF_PILES, screen_columns, decisions
+from filter.engine.handoff import (HANDOFF_PILES, admission_gates, decisions,
+                                   deferred_works, screen_columns)
 from filter.engine.release import read_release
 from filter.engine.spec import load_specs
 from filter.engine.store import (DEFAULT_STORE_PATH, StoreUnavailable, open_store,
@@ -1010,7 +1011,8 @@ def extract_works(con, client: Optional[ClaimsClient], pool_dir: Path,
                   record: Optional[dict] = None,
                   data_dir: Path = DATA_DIR,
                   redo: Optional[Iterable[int]] = None,
-                  attempted: Optional[Iterable[int]] = None) -> list[ExtractWork]:
+                  attempted: Optional[Iterable[int]] = None,
+                  counts: Optional[dict] = None) -> list[ExtractWork]:
     """Works this tier should extract next, each carrying its whole handoff row.
 
     The subtraction, in the order the cost of asking rises:
@@ -1019,6 +1021,9 @@ def extract_works(con, client: Optional[ClaimsClient], pool_dir: Path,
          admits (`handoff.decisions()`), minus the ones it discarded. The screen's
          answer is the admission — routing says "this deserves an LLM's attention",
          only the validated pair says "this reaches Stage 3";
+      1b. minus the proceeds a strict admission gate DEFERS (`handoff.deferred_works()`)
+         — held whatever *redo* says, like a discard, because the screen's answer
+         has not admitted them;
       2. minus works this tier has already SETTLED in the current generation;
       3. minus works held by another runner's unexpired extract claim;
       4. minus the two skip lists Stage 3 has always honoured — already in published
@@ -1039,6 +1044,9 @@ def extract_works(con, client: Optional[ClaimsClient], pool_dir: Path,
     never ends. Observed 2026-08-07: a 100-work sandbox run judged the same 51
     unsettled works eight times in twenty minutes before it was killed. A re-run is
     how those works get another chance; the same run is not.
+
+    *counts*, when given, receives `deferred`: how many works the admission gates
+    held back, for the dry run to print. Absent with no client: nothing was checked.
     """
     check_release_binding(spec_dir, release_id,
                           (record or {}).get("bundle_hash"),
@@ -1049,18 +1057,22 @@ def extract_works(con, client: Optional[ClaimsClient], pool_dir: Path,
     reopen = {int(w) for w in (redo or ())}
     done = {int(w) for w in (attempted or ())}
 
+    specs = load_specs(spec_dir)
     drop: set[int] = set()
     screen: dict[int, dict] = {}
     held: set[int] = set()
+    deferred: set[int] = set()
     if client is not None:
         drop, screen = decisions(client)
+        deferred = deferred_works(screen, admission_gates(con, release_id, specs))
         held = (client.claimed_work_ids(release_id, TIER_EXTRACT)
                 | (settled_work_ids(client, mode) - reopen))
+    if counts is not None and client is not None:
+        counts["deferred"] = len(deferred)
 
     flora = _flora_skip_dois(data_dir)
     validated_ids, validated_dois = _load_validated_skip(data_dir / VALIDATED_SKIP_NAME)
     conventions = load_conventions()
-    specs = load_specs(spec_dir)
 
     works: list[ExtractWork] = []
     for pile, work, row in iter_export_rows(
@@ -1068,7 +1080,7 @@ def extract_works(con, client: Optional[ClaimsClient], pool_dir: Path,
             specs=specs, aliases=aliases, spec_dir=spec_dir, overlay_dir=overlay_dir):
         if wanted is not None and work not in wanted:
             continue
-        if work in drop or work in held or work in done:
+        if work in drop or work in deferred or work in held or work in done:
             continue
         decision = screen.get(work)
         if client is not None and not decision:
@@ -1338,10 +1350,16 @@ def run_extract_tier(con, client: Optional[ClaimsClient], release_id: str, *,
     *allow_extra_works* says otherwise. `None` means no population was named; an
     empty set means one was named and matched nothing.
     """
+    counts: dict = {}
     works = extract_works(con, client, pool_dir, release_id, only=only, limit=limit,
                           mode=mode, spec_dir=spec_dir, overlay_dir=overlay_dir,
-                          aliases=aliases, record=record, redo=redo)
+                          aliases=aliases, record=record, redo=redo, counts=counts)
     if not run:
+        if "deferred" in counts:
+            # Release-wide, before --only/--limit: what the gates hold back overall.
+            print(f"proceeds deferred by a strict admission gate: "
+                  f"{counts['deferred']:,}  (not offered; relax the rule's "
+                  "`admission` to release them, no screening call needed)")
         print(render_estimate(estimate(works)))
         return {"tier": TIER_EXTRACT, "mode": mode, "dry_run": True,
                 "estimate": estimate(works), "batches": 0, "decided": 0,
@@ -1351,8 +1369,10 @@ def run_extract_tier(con, client: Optional[ClaimsClient], release_id: str, *,
         raise SystemExit("the extract tier claims before it spends, so --run needs a "
                          "state authority: set SUPABASE_URL and SUPABASE_SERVICE_KEY.")
     if not works:
-        raise SystemExit("nothing to extract: every admitted work is already settled, "
-                         "claimed or skipped.")
+        held = (f" ({counts['deferred']:,} proceed(s) are deferred by a strict "
+                "admission gate)" if counts.get("deferred") else "")
+        raise SystemExit(f"nothing to extract{held}: every admitted work is already "
+                         "settled, claimed or skipped.")
     if redo is not None and only is None and not allow_extra_works:
         _refuse_unnamed_works({int(w) for w in redo}, works)
 

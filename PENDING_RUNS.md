@@ -23,7 +23,16 @@ the command, pasteable from the project root, and what proves it worked.
 
 ## Open
 
-_(none)_
+- [ ] **Render the admission gate (PR #229) into `data/extracted.csv`.** First merge the
+      flora-validation change that adds `screen_deferred` to `RETIRE_REASONS`
+      (`csv_to_db.py`): until then its retire step refuses the whole manifest. Then
+      refresh the exemption list, check, render, and commit the three files together:
+      `.venv/bin/python -m analysis.build_human_judged --apply`, then
+      `.venv/bin/python -m extract.export --release <newest> --check`, then without
+      `--check`; commit `data/human_judged.csv`, `data/extracted.csv` (+ set-asides) and
+      `data/retired_pairs.csv`, push. Expect ~850 `screen_deferred` retirements (857 on
+      release 61f07fd07f19). Done when the next nightly run shows `retire_superseded`
+      SUCCESS.
 
 ## Done
 

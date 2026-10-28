@@ -69,12 +69,15 @@ def _valid_spec(**overrides) -> dict:
         "id": "example",
         "description": "why this rule exists",
         "match": {"text_regex": r"\bexample\b"},
-        "pile": "screen_cheap",
+        "pile": "screen_cheap", "admission": "strict",
         "vocabulary": None,
         "precedence": 250,
         "shadow": False,
         "measured": [],
     }
+    if overrides.get("pile", spec["pile"]) not in ("screen_expensive", "screen_cheap") \
+            and "admission" not in overrides:
+        spec.pop("admission")
     spec.update(overrides)
     return spec
 
@@ -296,6 +299,21 @@ def test_reformatting_a_spec_does_not_mint_a_new_bundle_hash(tmp_path):
     (second / "a.json").write_text(
         pretty.replace(r"re[- ]?analys", r"re[- ]?analyz"))
     assert bundle_hash(first) != bundle_hash(second)
+
+
+def test_a_screen_rule_names_its_admission_gate_and_the_gate_mints_no_release(tmp_path):
+    """Required on a screen pile, refused elsewhere — and left out of the bundle
+    hash, because it moves no row between piles: relaxing a gate must not orphan the
+    release whose verdicts it is applied to."""
+    assert any(".admission" in e for e in validate_spec(_valid_spec(admission=None)))
+    assert any(".admission" in e for e in validate_spec(_valid_spec(admission="loose")))
+    assert any(".admission" in e for e in validate_spec(
+        {**_valid_spec(pile="needs_human"), "admission": "strict"}))
+
+    (tmp_path / "a.json").write_text(json.dumps(_valid_spec(admission="strict")))
+    before = bundle_hash(tmp_path)
+    (tmp_path / "a.json").write_text(json.dumps(_valid_spec(admission="lenient")))
+    assert bundle_hash(tmp_path) == before
 
 
 def test_alias_release_is_canonical_over_json_too(tmp_path):

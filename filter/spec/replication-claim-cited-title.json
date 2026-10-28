@@ -49,6 +49,7 @@
     ]
   },
   "pile": "screen_expensive",
+  "admission": "lenient",
   "vocabulary": null,
   "precedence": 760,
   "shadow": false,

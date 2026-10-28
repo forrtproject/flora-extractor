@@ -36,6 +36,7 @@
     ]
   },
   "pile": "screen_cheap",
+  "admission": "strict",
   "vocabulary": "reproduction",
   "precedence": 262,
   "shadow": true,
