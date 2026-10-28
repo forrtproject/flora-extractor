@@ -602,13 +602,24 @@ OUTCOME_DESCENT = True
 #      abstract_r blank, and says so in link_evidence; never asked without a
 #      mismatch (2026-09-25)
 #      reopen: --redo 16766644,22047302,22986889,23811235,31908667,37892775,4400060759
-#  32  three ways a named original was lost, from the 2026-10-27 Metascience
+#  32  a record ABOUT a paper is not the paper: non_article_doi() names eLife and
+#      PCI RR recommendations and review objects, `/vN/reviewN|responseN` peer
+#      reviews, Faculty Opinions recommendations and journal-issue DOIs, so the title-search and author-year
+#      pools drop them; and doi verification no longer passes a DOI whose registry
+#      title is a correction/retraction notice, decision letter or author response
+#      (or whose DOI is one of those records) merely because the notice repeats the
+#      original's title — it re-resolves, and a notice is never a correction target.
+#      Classes from the Metascience Observatory's DOI audit; in our output, 14 works
+#      linked to such a record, all llm_title_search but one (2026-10-27)
+#      reopen: --redo 2055766296,2911411325,4212792994,4220947390,4225910309,4283783155,4361272113,4387293767,4388904550,4388904615,4391787029,4391898252,4399984952,6962756304
+#  33  three ways a named original was lost, from the 2026-10-27 Metascience
 #      Observatory benchmark (analysis/mo_doi_benchmark). (1) The self-link guard
 #      decides by identity before title: the replication's DOI or work id always
 #      rejects, but a shared title rejects only a candidate with no identifier of its
 #      own, so Asch (1946) "Forming impressions of personality" survives its 2014
 #      replication of the same name; the title searches drop a same-title hit only when
-#      it is the replication or does not predate it (`is_replication_itself`). (2) The
+#      it is the replication, does not predate it, is a preprint, or shares an author
+#      with it (`is_replication_itself`). (2) The
 #      citation parser reads typographic apostrophes, APA reference lists, year letters
 #      ("Kogut and Ritov (2005a)") and the first surname of a list; the stop gate counts
 #      (surname, year as cited) and the candidate cache is keyed on the patterns. (3) A
@@ -618,7 +629,7 @@ OUTCOME_DESCENT = True
 #      (`lend_reference_dois`), and a phrase a title quotes is no longer searched as the
 #      whole title (2026-10-28)
 #      reopen: --redo-status target_pending,unidentified_original,no_original_found
-EXTRACT_LADDER_VERSION: int = 32
+EXTRACT_LADDER_VERSION: int = 33
 
 
 # Columns to pass through from the input row (no renaming). Only columns

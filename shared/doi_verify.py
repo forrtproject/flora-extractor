@@ -37,7 +37,7 @@ from shared.config import (
 from shared.disambiguation import jaccard_similarity
 from shared.openalex_client import _oa_get, author_matches
 from shared.utils import (author_surname, bare_work_id, cache_key, clean_doi,
-                          clean_search_query)
+                          clean_search_query, non_article_doi)
 
 # Tunable thresholds — starting points, not yet empirically validated.
 VERIFY_TITLE_JACCARD  = 0.5   # DOI metadata vs resolved title → "verified"
@@ -49,11 +49,41 @@ TITLE_ONLY_GAP        = 1.5   # ... and must dominate the second-best hit by thi
 _HEADERS      = {"User-Agent": f"FLoRAExtractor/1.0 (mailto:{RESEARCHER_EMAIL})"}
 _RETRY_DELAYS = [0, 1, 2, 4]  # initial attempt + 3 retries per CLAUDE.md
 
-# Correction notices embed the article title and score high on Jaccard, but
-# can never be the original study.
-_ERRATA_RE = re.compile(
-    r"^\s*(corrigendum|erratum|correction|retraction|expression\s+of\s+concern|"
-    r"publisher\s+correction)\b", re.IGNORECASE)
+# Notices and responses embed the article's title and score high on Jaccard, but
+# are never the study itself. The forms after the first line are the ones the
+# Metascience Observatory's database carried as original DOIs
+# (analysis/mo_observatory/observatory_doi_issues.csv): "Author Correction: X",
+# "X - ERRATUM", "X: Correction to Amodio et al. (2008)", "Notice of Retraction and
+# Replacement. …", "Faculty Opinions recommendation of X", "Author response: X",
+# "Response to Comment on X". "RETRACTED: X" is deliberately absent — that is the
+# retracted article itself, which a replication can target.
+_NOTICE_RE = re.compile(
+    r"^\s*(?:corrigendum|erratum|correction|retraction|expression\s+of\s+concern|"
+    r"publisher(?:'s|’s)?\s+(?:correction|note)|author\s+correction|"
+    r"notice\s+of\s+retraction|faculty\s+opinions\s+recommendation|"
+    r"author\s+response|decision\s+letter|response\s+to\s+comment|"
+    r"reply\s+to\s+comment)\b"
+    r"|[:.\"”]\s*(?:correction|corrigendum)\s+to\b"
+    r"|[-–:]\s*(?:erratum|corrigendum)\s*$",
+    re.IGNORECASE)
+
+
+# non_article_doi() reasons naming a record ABOUT a paper, which carries that paper's
+# title and so passes the title match. Only these are re-resolved at verification:
+# PsycEXTRA abstracts and data deposits are their own works, kept or dropped by the
+# ladder's own rules.
+_RECORDS_ABOUT_A_PAPER = frozenset({"peer_review_object", "faculty_opinions_record",
+                                    "journal_issue_record"})
+
+
+def _notice_for(record_title: str, title: str) -> bool:
+    """Whether *record_title* is a notice about a paper while *title* is not one.
+
+    Asymmetric on purpose: when the row's own title is a notice (a row that really
+    names "Correction to Gerber and Green (2000)…", which is a full article), the
+    record carrying that title is the right one.
+    """
+    return bool(_NOTICE_RE.search(record_title or "")) and not _NOTICE_RE.search(title or "")
 
 
 class _Unverifiable(dict):
@@ -272,6 +302,8 @@ def metadata_matches(meta: Optional[dict], title: str, author: str, year) -> boo
     title Jaccard + year window carries the decision."""
     if not meta or not meta.get("registered") or not (title or "").strip():
         return False
+    if _notice_for(meta.get("title", ""), title):
+        return False
     if jaccard_similarity(meta.get("title", ""), title) < VERIFY_TITLE_JACCARD:
         return False
     y_meta, y = meta.get("year"), _to_year(year)
@@ -398,6 +430,13 @@ def resolve_doi_by_metadata(title: str, author: str, year,
         validate=lambda entry: _legacy_resolution_still_accepted(entry, title, year,
                                                                  title_only_gap),
     )
+    if cached is not None and cached.get("found") and (
+            non_article_doi(cached.get("doi") or "")
+            or _notice_for(cached.get("title") or "", title)):
+        # Accepted before the notice/record filter below was widened; searched again
+        # so the filter decides. A cached miss stays a miss: filtering only removes
+        # hits, so it cannot turn an accepted hit into none.
+        cached = None
     if cached is not None:
         # Under the v2 key and later a `found: false` was written only when BOTH sources
         # answered, so it is a real absence.
@@ -443,7 +482,8 @@ def resolve_doi_by_metadata(title: str, author: str, year,
         )
 
     hits = [h for h in hits
-            if not _is_excluded(h["doi"]) and not _ERRATA_RE.match(h["title"])]
+            if not _is_excluded(h["doi"]) and not non_article_doi(h["doi"])
+            and not _notice_for(h["title"], title)]
     if exclude_title:
         # reject hits that look more like the replication than the original
         hits = [h for h in hits
@@ -548,7 +588,8 @@ def verify_and_correct(doi_o, title_o, author_o, year_o,
         if meta is None:
             return {"doi_o_verification": "api_error", "doi_o": doi,
                     "evidence_note": "DOI verification failed: CrossRef and OpenAlex unavailable"}
-        if metadata_matches(meta, title, author_o, year_o):
+        if (non_article_doi(doi) not in _RECORDS_ABOUT_A_PAPER
+                and metadata_matches(meta, title, author_o, year_o)):
             return {"doi_o_verification": "verified", "doi_o": doi, "evidence_note": ""}
 
         # The three search tiers, strictest first. `unverifiable` records whether any

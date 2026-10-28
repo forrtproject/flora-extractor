@@ -1,27 +1,35 @@
 # Setup Guide
 
+[Documentation index](README.md) · [Models and screening](models-and-screening.md)
+
 ## Prerequisites
 
 - Python 3.10+
 - pip
 - (Optional) Docker — for GROBID PDF reference extraction
-- A Google AI Studio account — for Gemini API access
+- API access to OpenRouter and OpenAI for screening and extraction; Google AI Studio
+  for the document reference-extraction fallback
+- Supabase service-role access for claims and verdicts; Hugging Face access to pull the pool
 
 ## Installation
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/forrtproject/flora-extractor.git
 cd flora-extractor
-pip install -r requirements.txt
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Edit `.env` and fill in at minimum:
+Edit `.env` for the stages you will run:
 
 ```bash
 RESEARCHER_EMAIL=you@example.com   # for OpenAlex / Crossref politeness headers
-GEMINI_API_KEY=...                 # from https://aistudio.google.com
-OPENAI_API_KEY=...                 # Stage 2's second screen voter (default SCREENING_MODEL_2) and Stage 3's linking/outcome models
+OPENROUTER_API_KEY=...            # Stage 2 voter 1; Stage 3 reference-list pick check
+OPENAI_API_KEY=...                # Stage 2 voter 2; Stage 3 linking and outcomes
+GEMINI_API_KEY=...                # document reference-extraction fallback
+SUPABASE_SERVICE_KEY=...          # claims and permanent verdicts for --run
+HF_TOKEN=...                      # access to the private survivor-pool dataset
 ```
 
 **Nothing is validated up front any more.** The key each call needs follows its model
@@ -46,15 +54,18 @@ docker run -t --rm -p 8070:8070 lfoppiano/grobid:0.8.0
 
 **Keep `GROBID_URL=http://localhost:8070` in your `.env`.** That line is set by
 `.env.example`, but it is *not* the code default: `shared/config.py` falls back to
-the **public** server `https://kermitt2-grobid.hf.space`. Deleting or blanking the
-env line therefore does not disable GROBID — it starts uploading every PDF the
-pipeline acquires to a third-party host. If you do not want that, either run the
-local container or point `GROBID_URL` somewhere unreachable so the pipeline logs a
-warning and falls back to abstract-only processing.
+the **public** server `https://kermitt2-grobid.hf.space` when the variable is absent.
+Deleting the line therefore does not disable GROBID: every PDF it is called on — those
+whose local parse found no references — is uploaded to a third-party host. Blanking
+it (`GROBID_URL=`) leaves no server to call, so each attempt logs a warning and the
+pipeline tries the other reference-extraction methods, as it does when the server is
+unreachable.
 
 ## Running the pipeline
 
-Run the stages in order. Stage 1 writes the survivor pool (parquet) and Stage 2
+Run the stages in order. Most collaborators first pull the existing pool with
+`.venv/bin/python -m search.pool_sync --pull` rather than scanning the snapshot.
+Stage 1 writes the survivor pool (parquet) and Stage 2
 routes it. Stage 3 reads no CSV: it builds its worklist in process from the routing
 store and the pool, and `extract.export` renders `data/extracted.csv` from the stored
 verdicts. Stage 4 reads that file.
@@ -62,31 +73,31 @@ verdicts. Stage 4 reads that file.
 ```bash
 # Stage 1 — scan the OpenAlex snapshot into the survivor pool (search only; it
 # applies no filters). --scan is required; the scan takes 13-21 hours over 725 GB,
-# so most collaborators pull the pool instead: python -m search.pool_sync --pull
-python -m search.run_search --scan
+# so most collaborators pull the pool instead: .venv/bin/python -m search.pool_sync --pull
+.venv/bin/python -m search.run_search --scan
 
 # Stage 2 — route the survivor pool and screen what the rules could not settle.
 # The routing store and the tier verdicts are the output; Stage 3 reads both.
-python -m filter.engine route
-python -m filter.engine screen --tier screen_expensive --run
+.venv/bin/python -m filter.engine route
+.venv/bin/python -m filter.engine screen --tier screen_expensive --run
 # `screen` is a dry run without --run, and --run needs SUPABASE_URL /
 # SUPABASE_SERVICE_KEY: the claim is what stops two runs paying for the same works.
 
 # Stage 3 — extract original study + outcome, then render the CSV
-python -m extract.tier --run    # dry run without --run; --run needs the same keys
+.venv/bin/python -m extract.tier --run    # dry run without --run; --run needs the same keys
 # The export renders the works the named release admits; with one release in the
 # store the id may be omitted, and a store holding several refuses without it.
-python -m extract.export --release <id>   # the verdicts → data/extracted.csv
+.venv/bin/python -m extract.export --release <id>   # the verdicts → data/extracted.csv
 
 # Stage 4 — monitoring web app
-python -m validate.app        # → http://localhost:5001
+.venv/bin/python -m validate.app        # → http://localhost:5001
 ```
 
 For a readable snapshot of what one release admitted — a record to review or share,
 which nothing in the pipeline reads back — write it to a file you name:
 
 ```bash
-python -m filter.engine export-csv --out data/screened-<id>.csv --release <id>
+.venv/bin/python -m filter.engine export-csv --out data/screened-<id>.csv --release <id>
 ```
 
 ## Seeding from existing data
@@ -95,7 +106,7 @@ If the shared-drive files are available, you can skip the stages that produced t
 
 | File | Description |
 |------|-------------|
-| the survivor pool (parquet) | Stage 1 output — pull it with `python -m search.pool_sync --pull` and run Stage 2 |
+| the survivor pool (parquet) | Stage 1 output — pull it with `.venv/bin/python -m search.pool_sync --pull` and run Stage 2 |
 | `data/extracted.csv` | Stage 3 output — load into web app for monitoring |
 | `data/FLoRA entry sheet - replication list.csv`, `data/flora.csv` | Rows already in FLoRA — the two files `shared/flora_skip.py` reads. The skip is unconditional: it applies in the extract tier's worklist and again in the export, with no flag to turn it on |
 
@@ -160,12 +171,12 @@ See `.env.example` for the full list with descriptions. Key variables:
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `RESEARCHER_EMAIL` | Yes | Politeness header for APIs |
-| `GEMINI_API_KEY` | Yes | Primary LLM |
-| `GEMINI_API_KEY_2..N` | No | Key rotation for higher quota |
+| `GEMINI_API_KEY` | Stage 3 fallback | Document reference extraction |
+| `GEMINI_API_KEY_2..N` | No | Key failover; keys in one project share quota |
 | `OPENAI_API_KEY` | Stages 2 and 3 | Second voter of Stage 2's front-door screen with the default `SCREENING_MODEL_2`; also Stage 3's `LINKING_MODEL` and `OUTCOME_MODEL`, which codes every outcome |
-| `OPENROUTER_API_KEY` | No | Only reached by a model id that names it: the pre-screen's two voters, and `SCREENING_MODEL_2` when it contains a `/` |
-| `SUPABASE_URL` | No | Validation monitoring tab |
-| `SUPABASE_SERVICE_KEY` | No | Validation monitoring tab |
+| `OPENROUTER_API_KEY` | Stages 2 and 3 | Screening voter 1 and reference-list pick check; dormant pre-screen if activated |
+| `SUPABASE_URL` | Tier runs / validation tab | Shared URL supplied by `.env.defaults` |
+| `SUPABASE_SERVICE_KEY` | Tier runs / validation tab | Claims, permanent verdicts and validation monitoring |
 | `GROBID_URL` | No | PDF reference extraction. **Code default is the public server `https://kermitt2-grobid.hf.space`**; `.env.example` sets `http://localhost:8070`. See the GROBID section above |
 | `GEMINI_USE_FLEX` / `GEMINI_FLEX_TIMEOUT` | No | 50% cheaper Gemini calls on paid keys, at the price of queueing |
 | `OPENAI_USE_FLEX` / `OPENAI_FLEX_TIMEOUT` / `OPENAI_FLEX_PATIENCE` | No | Same trade on OpenAI; a request flex will not serve falls back to standard tier, after up to `OPENAI_FLEX_PATIENCE` seconds of re-asking |
@@ -181,17 +192,16 @@ document calls build a Gemini request body that has no OpenAI-compatible equival
 
 ## Cache
 
-All API results are cached in `cache/` (gitignored). The cache persists across runs — delete specific files or the whole directory to force fresh fetches.
-
-```bash
-rm -rf cache/          # clear everything
-rm cache/parse/        # clear PDF parse cache only
-```
+API responses are cached under `cache/` (gitignored). Prompt, model, effort and
+input changes produce different LLM cache keys automatically; ordinary reruns reuse
+matching responses. See [models and screening](models-and-screening.md) for generation
+behaviour. Avoid clearing the whole cache: it also contains the survivor pool and
+local engine state, and refetching responses can incur costs.
 
 ## Development server
 
 ```bash
-python -m validate.app
+.venv/bin/python -m validate.app
 # → http://localhost:5001
 ```
 

@@ -1,7 +1,9 @@
 # Stage 3: Extract — Code Flow
 
-**Entry points:** `python -m extract.tier --run` (decide and record), then
-`python -m extract.export --release <id>` (render `data/extracted.csv`).
+**Entry points:** `.venv/bin/python -m extract.tier --run` (decide and record), then
+`.venv/bin/python -m extract.export --release <id>` (render `data/extracted.csv`).
+
+[Documentation index](../README.md) · [Models and screening](../models-and-screening.md)
 
 ## What it does
 
@@ -18,19 +20,18 @@ per-service reservation queue in `shared/rate_limit.py` bounds the request rate.
 row passes DOI verification and `oa_work_id_*` stamping inside the judge, once, so the
 answer is stored rather than recomputed per render.
 
-`python -m extract.export --release <id>` then renders the stored payloads into
+`.venv/bin/python -m extract.export --release <id>` then renders the stored payloads into
 `data/extracted.csv`, whole and sorted, partitioning set-aside rows on the way out.
 Only the works that release admits are rendered: a verdict outlives the routing that
 bought it, and `--all-releases` is the explicit ask for every stored verdict. It is that file's only
 writer; `extract/sanity_check.py` reports on it and moves nothing.
 
-The whole stage is organised around spending the cheap calls first. The classification
-screen discards before anything is spent on a row — 89% of the adjudicated hard
-negatives in the v3.2 gate sweep, with zero settled misses; there is no measured
-discard rate over a production pile, so do not quote one. The resolution ladder returns at the
-first rung that resolves, and the outcome LLM — the most expensive call, because it can
-escalate to 8,000 characters of full text — runs only on a row that already has a
-confirmed original.
+Stage 2 screens before Stage 3 spends on linking or outcome coding. Stage 3 uses
+GPT-6 Luna for both tasks. The LLM resolution rungs ask for targets and outcomes
+together; the ladder continues when an accepted target still has an unsettled
+outcome. A standalone outcome call handles links resolved by deterministic rules.
+See [models and screening](../models-and-screening.md) for the exact models,
+independent reference-list checker and evaluation limits.
 
 ## Per-row flow
 
@@ -78,7 +79,9 @@ adapter wrote more than one row, `single_original` otherwise).
 A row that the front door ends never pays for the ladder, PDF acquisition or outcome
 coding — but it is still a RESULT verdict, so the work is settled and is not offered
 again. Reopening one takes `--redo`, or a new extract generation (a changed prompt,
-model or ladder version), which reopens every work at once.
+model or effort), which reopens works unless an explicit generation equivalence preserves
+older verdicts. A ladder-version bump alone does not reopen works; name the affected
+population with `--redo` or `--redo-status`.
 
 ## The cheap discard-only tier (`shared/prescreen.py` + `filter/engine/tiers.py`)
 
@@ -117,44 +120,17 @@ verdict is missing is written `target_pending`, and the tier's worklist does not
 a work no live current-generation verdict admitted. What the two voters do, below, is
 unchanged — only where.
 
-Two providers vote on the validated schema, at prompt version **v3.3** (v3.2 plus the
-partial-overlap rule; evaluated copy `analysis/screening_eval/prompt_v33.txt`, evidence
-`analysis/screening_eval/report_v33.md`) — `classification` ∈
-{`replication`, `reproduction`, `both`, `none`, `unclear`}, boolean `confident`, an
-array of `categories` from an 11-value enum, `evidence_quote`, `reasoning`:
+The classifier and its decision rule are documented in
+[models and screening](../models-and-screening.md). It uses DeepSeek V4 Flash and
+GPT-6 Luna at low effort, with the **G-unanimous** gate: only two `none` votes
+discard. Other complete pairs proceed; incomplete pairs stay open for retry.
 
-| Voter | Provider | Model |
-| ----- | -------- | ----- |
-| 1 | Gemini | `SCREENING_MODEL_1` |
-| 2 | OpenAI, or OpenRouter when the id contains `/` | `SCREENING_MODEL_2` (default `gpt-5.4-mini`) |
-
-Which key each voter needs follows its model id through `provider_for()`, not a
-hardcoded pair: with today's defaults it is `GEMINI_API_KEY` for voter 1 and whichever
-of `OPENAI_API_KEY` / `OPENROUTER_API_KEY` voter 2 needs. A Stage 3 run calls neither
-voter and needs neither key. Voter 2 sits
-outside the Google lineage on purpose: its errors overlap little with voter 1's.
-
-**The gate is `screen_gate()`** — G-softqual from the v3.2 sweep, defined once and
-called from both the front door and the batch-tools path in `link_original.py`. It
-discards when every vote is `none` at any confidence, or when one voter said `none`
-confidently and every other vote is a qualifying-or-`unclear` answer with
-`confident: false`. Everything else proceeds: a confident `none` against a confident
-qualifying answer is a real split, and it goes down the ladder rather than terminating.
-There is no `screen_disagreement` outcome any more.
-
-The screen also sets `record_type` (both voters agreeing on a qualifying label wins; a
-`both` answer or a split falls back to the FIRST QUALIFYING voter's — not voter 1's,
-since a non-qualifying voter 1 is skipped — and `both` maps to `replication`) and
-`screen_categories` (the union of both voters' categories, `|`-joined in enum order).
-
-A screen that did not get both votes is an API failure, not a verdict: it is returned
-uncached (`llm_refscreen_partial` with one vote, `llm_refscreen_failed` with none) so a
-re-run can decide the row once the provider is back. Discarded rows carry each voter's
-label and confidence in `link_evidence` and both model names in `link_llm_model` — the
-verdict alone is not something a reviewer can act on.
-
-Cached at `cache/llm/classify_{key}.json`, keyed on the prompt version, **both** model
-names and the abstract itself.
+The screen sets `record_type` from the first qualifying vote (`both` maps to
+replication) and unions `screen_categories`. Each successful vote has its own
+`classifyvote_*` response cache entry, keyed on prompt version, model, effort and
+paper inputs. An incomplete screen never admits the work, but its successful vote
+remains cached. Stage 3 receives the stored verdict and per-vote provenance in
+`SCREEN_COLS` rather than calling either screening voter.
 
 ## The may-not-short-circuit gate (`link_original.may_stop_at_a_rule`)
 
@@ -392,10 +368,12 @@ wording, with nothing to bump by hand.
 
 | Cache | Contents |
 | ----- | -------- |
-| `cache/llm/classify_*.json` | front-door verdicts (complete screens only). Written by Stage 2's expensive tier; never read in Stage 3, and read by the handoff through `cached_classification()` for the category union and the voters' reasoning |
-| `cache/llm/reftarget_*.json` | reference-list target picks |
-| `cache/llm/llm_*.json` | abstract-level and full-text identification |
-| `cache/llm/outcome_*.json` | outcome verdicts, including escalations |
+| `cache/llm/classifyvote_*.json` | one front-door screening vote per entry, keyed on the prompt version, that voter's model at its effort, and the prompt; written by Stage 2's expensive tier as each vote parses. Never read in Stage 3; read by the handoff through `cached_classification()` for the category union and the voters' reasoning. Pair-keyed `classify_*` entries from before are split into votes on first read |
+| `cache/llm/targetoutcome_*.json` | the combined target-and-outcome answers of the abstract, reference-list and full-text rungs; the key names the rung and the record type. The older `llm_*` and `reftarget_*` entries stay on disk unread |
+| `cache/llm/authoryearpick_*.json` | the linking model's pick among the pooled title and author-year search candidates |
+| `cache/llm/outcome_*.json` | the standalone outcome coder's verdicts on rule-resolved links |
+| `cache/llm/pickcheck_*.json`, `keyedconfirm_*.json`, `searchconfirm_*.json` | the blind check of a reference-list pick, the keyed-record check, and the search-link grade |
+| `cache/llm/studystatus_*.json` | the title-only completed-or-prospective question for works with no abstract and no document |
 | `cache/parse/parse_*.json` | per-method parse results — read by the ladder before it parses, and by `_best_fulltext_from_cache` |
 | `cache/pdfs/pdfsrc_*.json` | per-DOI `{source, url}` — which tier really supplied the saved PDF, replayed by `acquire_pdf`'s up-front on-disk check |
 | `cache/pdfs/retry_*.json` | per-DOI `{tier: timestamp}` — which acquisition tiers came back empty and when. The same file shape keyed on `url:<URL>` holds back one URL the server answered 404/410 for |
@@ -403,10 +381,13 @@ wording, with nothing to bump by hand.
 
 Declines are cached; API failures are not.
 
-**Acquisition retry delays.** `data/target_pending.csv` is reopened by every run and
-almost none of its rows have a document, so each run used to re-pay the whole
-eleven-tier waterfall: uncached failed downloads, landing-page scrapes, a headless
-Chromium launch per row, and the metered OpenAlex content request. A tier that comes
+**Acquisition retry delays.** A `target_pending` work is extracted again only when
+something reopens it — a new extract generation, `--redo`, or `--redo-status
+target_pending`; otherwise its current-generation verdict rests (`_resting()` in
+`extract/tier.py`). Almost none of these works have a document, so each such re-run
+used to re-pay the whole eleven-tier waterfall: uncached failed downloads,
+landing-page scrapes, a headless Chromium launch per row, and the metered OpenAlex
+content request. A tier that comes
 back empty is now timestamped and not re-probed for `PDF_RETRY_AFTER_DAYS` (14, in
 `shared/pdf_sources.py`); the content-free XML answer gets the same delay
 (`OA_XML_RETRY_AFTER_DAYS`). This is a retry delay, never a verdict — the tier is asked
@@ -430,7 +411,7 @@ failed.
 
 Rows that do not belong in the resolved set are written to a set-aside CSV instead of
 `extracted.csv` — by the EXPORT, as it writes them, through `classify_row()` in
-`sanity_check`. `python -m extract.sanity_check` applies the same rules to the exported
+`sanity_check`. `.venv/bin/python -m extract.sanity_check` applies the same rules to the exported
 file and reports; it moves nothing. **First match wins**, in this order:
 
 | Bucket | Destination | Rule |
@@ -477,8 +458,8 @@ blank `doi_r` are reported and belong here; the right fix depends on diagnosis.
 worklist.
 
 ```bash
-python -m extract.tier --run --mode validation --limit 20
-python -m extract.export --release <id> --mode validation --out data/extracted-test.csv
+.venv/bin/python -m extract.tier --run --mode validation --limit 20
+.venv/bin/python -m extract.export --release <id> --mode validation --out data/extracted-test.csv
 ```
 
 There is no promotion step: re-running the work live is the promotion, and it is

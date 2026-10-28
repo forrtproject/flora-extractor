@@ -137,6 +137,34 @@ def bare_work_id(value: str) -> str:
 
 _NON_ARTICLE_DOI_RE = re.compile(r"/reviews/|/decisions/", re.IGNORECASE)
 
+# Records that describe a paper without being it, each minted with a DOI structure a
+# registrant uses for nothing else. Found among the Metascience Observatory's wrong
+# original DOIs (analysis/mo_observatory/observatory_doi_issues.csv) and present in
+# our own output: 5 doi_o in search_link_unconfirmed.csv, 2026-10-27.
+#   - eLife assessment / decision letter / author response: `<article>.sa0|1|2`, also
+#     on reviewed-preprint versions (10.7554/elife.88762.1.sa0); before 2019 the same
+#     objects, digests and figures were three-digit sub-DOIs (10.7554/elife.42256.021),
+#     where a reviewed-preprint version number is one digit.
+#   - Peer reviews and author responses registered under the article's DOI with a
+#     version path (10.1111/ejn.15166/v2/response1, …/v2/review1).
+#   - PCI Registered Reports records: the bare `10.24072/pci.rr.NNNNNN` is the
+#     recommendation (Crossref names the recommender as author and links the paper
+#     through `is-review-of`), and `.rev12`, `.d1`, `.ar1` are the reviews, decision
+#     letters and author responses. FLoRA's curated sheet carries 8 of them as doi_r;
+#     those are errors there, not a convention. Peer Community Journal articles are
+#     `10.24072/pcjournal.`, which this does not match.
+#   - Faculty Opinions (ex-F1000Prime) recommendations, `10.3410/f.`; the same
+#     registrant's `b.`/`m.` report series are articles.
+#   - A Wiley journal-issue DOI (`10.1002/pam.2013.32.issue-3`).
+_NON_ARTICLE_RECORD_RES = (
+    (re.compile(r"^10\.7554/elife\.\d+(?:\.\d+)?\.sa\d+$"), "peer_review_object"),
+    (re.compile(r"^10\.7554/elife\.\d+\.\d{3}$"), "peer_review_object"),
+    (re.compile(r"/v\d+/(?:review|response|decision)\d+$"), "peer_review_object"),
+    (re.compile(r"^10\.24072/pci\.[a-z]+\.\d+(?:\.(?:rev|d|ar)\d+)?$"), "peer_review_object"),
+    (re.compile(r"^10\.3410/f\."), "faculty_opinions_record"),
+    (re.compile(r"\.issue-[^/.]+$"), "journal_issue_record"),
+)
+
 # Prefixes belonging to data repositories that mint DOIs for deposits only — the
 # dataset that accompanies a paper, never the paper (issue #141). Each was confirmed
 # against DataCite: the prefix's registrant is a data repository and a sample of its
@@ -189,7 +217,9 @@ def non_article_doi(doi: str) -> str:
     figshare (10.6084) DOIs are data records / figures / posters; a "/reviews/" or
     "/decisions/" segment marks a peer-review or editorial object
     (e.g. 10.7287/peerj.10325v0.1/reviews/2). Neither is the replication itself, so
-    both are Stage-2 false positives (issue #17).
+    both are Stage-2 false positives (issue #17). eLife and PCI RR review objects,
+    Faculty Opinions recommendations and journal-issue DOIs are matched by their
+    registrants' own schemes (_NON_ARTICLE_RECORD_RES).
 
     A DOI on a data-repository prefix (_DATA_REPOSITORY_PREFIXES) is the deposit that
     accompanies a paper — "Replication Data for: …" — and carries the word replication
@@ -208,6 +238,9 @@ def non_article_doi(doi: str) -> str:
         return "data_repository_deposit"
     if _NON_ARTICLE_DOI_RE.search(doi):
         return "peer_review_object"
+    for pattern, reason in _NON_ARTICLE_RECORD_RES:
+        if pattern.search(doi):
+            return reason
     return ""
 
 
@@ -314,6 +347,7 @@ _NON_ARTICLE_TYPES = {
     "libguides": "library_guide",
     "grant": "grant_record",
     "standard": "standard_document",
+    "journal-issue": "journal_issue_record",
 }
 
 

@@ -30,6 +30,7 @@ EXPECTED = {
     "figshare-attachment": ("discard", 956, None, False),
     "not-a-paper-title": ("discard", 955, None, False),
     "not-a-paper-abstract": ("discard", 954, None, False),
+    "peer-review-record": ("discard", 942, None, False),
     "not-a-report-type": ("discard", 940, None, False),
     "osf-registration-completed": ("screen_expensive", 936, None, False),
     "osf-registration-protocol": ("discard", 935, None, False),
@@ -58,7 +59,8 @@ _CLAIM_TIERS = ("replication-claim-cited-title", "replication-claim-title-strong
                 "replication-claim-text", "replication-claim-residual")
 _ADMISSION = _CLAIM_TIERS
 _ABOVE_ADMISSION = ("not-a-paper-doi", "doi-registry-twin", "deposit-registrant",
-                    "not-a-paper-title", "not-a-paper-abstract", "not-a-report-type")
+                    "not-a-paper-title", "not-a-paper-abstract", "peer-review-record",
+                    "not-a-report-type")
 _BELOW_ADMISSION = ("not-a-study-type",)
 
 
@@ -92,8 +94,10 @@ def test_specs_are_returned_highest_precedence_first():
 
 def test_admission_sits_between_the_two_kinds_of_discard():
     """The definitional discards outrank admission; the metadata-crosswalk discard
-    does not, so a mistyped replication is screened rather than deleted. The whole
-    claim family shares that band, so the ordering holds for every tier."""
+    does not, so a mistyped replication is screened rather than deleted. The one
+    exception is `peer-review-record`: for that type the crosswalk was measured
+    rather than trusted (its `measured` entry), so it sits above. The whole claim
+    family shares that band, so the ordering holds for every tier."""
     precedence = {s.id: s.precedence for s in load_specs(SPEC_DIR)}
     for admission in _ADMISSION:
         for rule in _ABOVE_ADMISSION:

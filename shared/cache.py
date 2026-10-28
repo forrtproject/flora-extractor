@@ -18,6 +18,7 @@ Public API:
     clear_cache(cache_dir, key, suffixes=None) → list[str]
     clear_content_keys(cache_dir, prefix, doi, suffix=".json") → list[str]
 """
+import gzip
 import json
 import os
 import threading
@@ -27,14 +28,29 @@ from typing import Callable, Optional, Sequence
 from .utils import cache_key
 
 
+def cache_exists(path: Path) -> bool:
+    """Whether the logical JSON entry exists in either on-disk encoding."""
+    return path.exists() or (path.suffix == ".json" and
+                             path.with_suffix(".json.gz").exists())
+
+
+def read_json(path: Path) -> object:
+    """Read plain JSON or its gzip sibling; a plain entry wins during transition."""
+    try:
+        with path.open(encoding="utf-8") as handle:
+            return json.load(handle)
+    except FileNotFoundError:
+        if path.suffix != ".json":
+            raise
+        with gzip.open(path.with_suffix(".json.gz"), "rt", encoding="utf-8") as handle:
+            return json.load(handle)
+
+
 def read_cache(cache_dir: Path, key: str, suffix: str = ".json") -> Optional[dict]:
     """Return cached dict for *key*, or None if not cached."""
     path = cache_dir / f"{key}{suffix}"
-    if not path.exists():
-        return None
     try:
-        with path.open(encoding="utf-8") as fh:
-            return json.load(fh)
+        return read_json(path)
     except Exception:
         return None
 
@@ -89,12 +105,22 @@ def write_json(path: Path, data: object, indent: "int | None" = None) -> None:
     interleave into a file whose next read raises or misses. A miss re-pays for the
     call the cache existed to avoid; the raise ends a row as api_error.
     """
+    from .config import OA_CACHE_DIR
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    compressed = path.suffix == ".json" and path.parent == OA_CACHE_DIR
+    target = path.with_suffix(".json.gz") if compressed else path
+    tmp = target.with_name(f"{target.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     try:
-        with tmp.open("w", encoding="utf-8") as fh:
-            json.dump(data, fh, ensure_ascii=False, indent=indent)
-        os.replace(tmp, path)
+        if compressed:
+            with gzip.open(tmp, "wt", encoding="utf-8", compresslevel=6) as fh:
+                json.dump(data, fh, ensure_ascii=False, indent=indent)
+        else:
+            with tmp.open("w", encoding="utf-8") as fh:
+                json.dump(data, fh, ensure_ascii=False, indent=indent)
+        os.replace(tmp, target)
+        if compressed:
+            path.unlink(missing_ok=True)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
@@ -121,7 +147,10 @@ def clear_content_keys(cache_dir: Path, prefix: str, doi: str,
                        suffix: str = ".json") -> list[str]:
     """Delete every content-keyed entry for *doi* under *prefix*. Returns filenames."""
     deleted: list[str] = []
-    for path in cache_dir.glob(f"{prefix}_{cache_key(doi or '')}_*{suffix}"):
+    paths = list(cache_dir.glob(f"{prefix}_{cache_key(doi or '')}_*{suffix}"))
+    if suffix == ".json":
+        paths += cache_dir.glob(f"{prefix}_{cache_key(doi or '')}_*{suffix}.gz")
+    for path in paths:
         try:
             path.unlink()
             deleted.append(path.name)
@@ -138,6 +167,7 @@ def clear_cache(cache_dir: Path, key: str,
     """
     if suffixes is None:
         suffixes = [".json"]
+    suffixes = list(suffixes) + [s + ".gz" for s in suffixes if s == ".json"]
     deleted: list[str] = []
     for suffix in suffixes:
         path = cache_dir / f"{key}{suffix}"
