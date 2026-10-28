@@ -1167,14 +1167,15 @@ def _title_searched_entry(target: dict, doi_r: str, context: dict) -> "dict | No
     # with no title in it — "Ramscar et al. (2010)" — has nothing to search on, and
     # asking anyway costs two free-text queries at 10x a filter query each.
     if usable_title(cleaned) and not citation_without_title(named):
-        # The replication's own title, not "": `title_search_candidates` refuses a hit
-        # whose title is the replication's at Jaccard 0.9, and that check has never
-        # once run because this call has never supplied one. Holdout wrong-settle
+        # The replication's own title, year and work id, not "": `title_search_candidates`
+        # refuses a hit that is the replication itself (`is_replication_itself`), and
+        # that check never ran while this call supplied no title. Holdout wrong-settle
         # 2266446612 is exactly that class — a repository record titled all but
         # identically to the replication itself.
         hits, hits_unavailable = title_search_candidates(
             doi_r, named, str(context.get("title_r") or ""), cited_year,
-            "|".join(cited_surnames))
+            "|".join(cited_surnames), context.get("year_r"),
+            str(context.get("work_id_r") or ""))
         unavailable = unavailable or hits_unavailable
         asked.append(f"title:{strip_citation_prefix(named)[:50]!r}")
         pool.extend(hits)
@@ -1501,9 +1502,13 @@ def _guard_original_link(row: dict) -> dict:
 
     A validator needs a real original to compare against, so:
 
-    1. A paper is never its own original. Matching doi_r/doi_o, or an identical
-       title, means the linker looped back on itself — always rejected, however
-       confident the LLM was.
+    1. A paper is never its own original. A matching DOI or OpenAlex work id means
+       the linker looped back on itself — always rejected, however confident the LLM
+       was. An identical title is rejected only when the candidate has no DOI and no
+       work id of its own: replications reuse their original's title ("Forming
+       impressions of personality", Asch 1946 and its 2014 replication), so a
+       distinct identifier outranks the shared title, and only an identityless
+       same-title record is presumed to be the paper's own.
     2. doi_o empty but title_o present → actively try to recover the DOI via
        CrossRef then OpenAlex title search before giving up.
     3. Still no DOI, but the title is substantive and distinct → KEEP the row and
@@ -1554,16 +1559,23 @@ def _guard_original_link(row: dict) -> dict:
     work_id_r = bare_work_id(str(row.get("oa_work_id_r", "")
                                  or row.get("openalex_id_r", "") or ""))
 
+    # The identity the row ARRIVED with, compared from the first check on: two DOI
+    # strings can name one OpenAlex work, and a row whose record carries the
+    # replication's own work id is a self-link whatever its DOI says.
+    work_id_o_in = bare_work_id(str(row.get("oa_work_id_o", "") or ""))
+
     def _is_self(cand_doi: str, cand_work_id: str = "") -> str:
         if cand_doi and doi_r and cand_doi == doi_r:
             return "resolved original is the replication itself (same DOI)"
         if cand_work_id and work_id_r and cand_work_id == work_id_r:
             return "resolved original is the replication itself (same OpenAlex work)"
-        if title_o and title_r and _norm_title(title_o) == _norm_title(title_r):
-            return "resolved original has the same title as the replication"
+        if (not cand_doi and not cand_work_id and title_o and title_r
+                and _norm_title(title_o) == _norm_title(title_r)):
+            return ("resolved original has the same title as the replication and no "
+                    "DOI or work id to tell them apart")
         return ""
 
-    reason = _is_self(doi_o)
+    reason = _is_self(doi_o, work_id_o_in)
     if reason:
         return _reject(reason)
 
@@ -1584,6 +1596,15 @@ def _guard_original_link(row: dict) -> dict:
         except Exception as exc:
             meta = None
             log.debug("[%s] doi_o title-recovery failed: %s", doi_r, exc)
+        if meta and work_id_o_in and _is_self(
+                clean_doi(str(meta.get("doi", "") or "")),
+                bare_work_id(str(meta.get("openalex_id", "") or ""))):
+            # A same-title original with a work id of its own: searching its title
+            # finds the replication, which says nothing about the original. The
+            # row's own identity stands (step 3).
+            log.info("[%s] doi_o title-recovery found the replication itself — "
+                     "keeping the record's own work id %s", doi_r, work_id_o_in)
+            meta = None
         found = clean_doi(str((meta or {}).get("doi", "") or ""))
         # A recovered DOI is written with no model in the loop, so it gets the same
         # record-class check the pooled candidates get: a data/registration/PsycEXTRA
@@ -2020,7 +2041,8 @@ def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | Non
     # what it can have replicated.
     context  = {"title_r": str(row.get("title_r", "") or ""),
                 "abstract_r": str(row.get("abstract_r", "") or ""),
-                "year_r": row.get("year_r")}
+                "year_r": row.get("year_r"),
+                "work_id_r": str(row.get("openalex_id_r", "") or "")}
     recovered = link.get("_recovered_entry")
     resolved = ([(targets[0], recovered)] if recovered and len(targets) == 1
                 else [(t, _target_entry(t, doi_r, context)) for t in targets])
@@ -2294,7 +2316,8 @@ def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
         if cited:
             context = {"title_r": str(row.get("title_r", "") or ""),
                        "abstract_r": str(row.get("abstract_r", "") or ""),
-                       "year_r": row.get("year_r")}
+                       "year_r": row.get("year_r"),
+                       "work_id_r": str(row.get("openalex_id_r", "") or "")}
             probe = {"key": None, "match_certain": True, "record": None,
                      "study_numbers": "", "replication_study_numbers": "",
                      "target_as_named": cited[0]["raw"],
@@ -2340,7 +2363,8 @@ def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
             and not accepted_record.get("openalex_id")):
         context = {"title_r": str(row.get("title_r", "") or ""),
                    "abstract_r": str(row.get("abstract_r", "") or ""),
-                   "year_r": row.get("year_r")}
+                   "year_r": row.get("year_r"),
+                   "work_id_r": str(row.get("openalex_id_r", "") or "")}
         raw_title = str(accepted_record.get("title") or "")
         cleaned   = clean_citation_title(raw_title)
         title     = raw_title if citation_fragment(cleaned) else cleaned

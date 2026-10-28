@@ -1281,18 +1281,34 @@ class TestGuardOriginalLink:
              "pair_id": "p", "doi_o_verification": "verified", "ref_o": "x"}
         r.update(kw); return r
 
-    def test_self_link_by_doi_rejected(self):
-        out = run_extract._guard_original_link(self._row(doi_o="10.1/repl"))
-        assert out["link_method"] == "target_pending"
-        assert out["doi_o"] == ""
-
-    @pytest.mark.parametrize("title_o", [
-        "A Study of Things",
-        "  a study of THINGS.  ",   # case and punctuation must not hide a self-link
+    @pytest.mark.parametrize("fields, kept", [
+        # A distinct original that shares the replication's title (Asch 1946 and its
+        # 2014 replication): its own DOI tells them apart.
+        ({"doi_o": "10.2/orig", "title_o": "A Study of Things"}, True),
+        # ... or its own work id, even when searching its title finds the replication.
+        ({"doi_o": "", "title_o": "A Study of Things", "oa_work_id_o": "W2"}, True),
+        # Identity decides whatever the title says.
+        ({"doi_o": "10.1/repl"}, False),
+        ({"doi_o": "10.2/alias", "oa_work_id_o": "W1"}, False),
+        # Same title and nothing else to tell them apart: presumed the paper's own.
+        ({"doi_o": "", "title_o": "A Study of Things"}, False),
+        ({"doi_o": "", "title_o": "  a study of THINGS.  "}, False),
     ])
-    def test_self_link_by_title_rejected(self, title_o):
-        out = run_extract._guard_original_link(self._row(doi_o="", title_o=title_o))
-        assert out["link_method"] == "target_pending"
+    def test_self_link_is_decided_by_identity_before_title(self, fields, kept):
+        replication = {"doi": "10.1/repl", "openalex_id": "https://openalex.org/W1",
+                       "title": "A Study of Things"}
+        with patch("extract.run_extract._search_crossref_by_title",
+                   return_value=replication), \
+             patch("extract.run_extract._search_openalex_by_title", return_value=None):
+            out = run_extract._guard_original_link(
+                self._row(oa_work_id_r="W1", **fields))
+        if kept:
+            assert out["link_method"] == "llm_fulltext"
+            assert (out["doi_o"], out.get("oa_work_id_o", "")) == (
+                fields["doi_o"], fields.get("oa_work_id_o", ""))
+        else:
+            assert out["link_method"] == "target_pending"
+            assert out["doi_o"] == ""
 
     def test_demotion_clears_a_merged_outcome(self):
         """The multi-original path merges the outcome before the guard runs, so a

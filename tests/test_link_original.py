@@ -1721,3 +1721,23 @@ class TestReferencePickCheck:
             _run_gate(_GATE_TITLE, _TWO_PAIRS, _GATE_CANDS, screen=screen,
                       abstract_answer=_answer(), pdf_ok=False)
         assert "is the flagged record" not in caplog.text
+
+
+@pytest.mark.parametrize("hit, itself", [
+    # A distinct, earlier work that shares the replication's title is an original.
+    ({"doi": "10.1037/h0055756", "title": "Forming impressions of personality",
+      "year": 1946}, False),
+    # Identity: the replication's DOI or work id, whatever the title.
+    ({"doi": "10.1027/1864-9335/a000179", "title": "Something else", "year": 1946}, True),
+    ({"doi": "10.9/alias", "openalex_id": "https://openalex.org/W1",
+      "title": "Something else", "year": 1946}, True),
+    # Same title, not shown to predate it: a repository copy or preprint of the
+    # replication under another identifier.
+    ({"doi": "10.31234/osf.io/abcde", "title": "Forming impressions of personality",
+      "year": 2014}, True),
+    ({"doi": "10.9/undated", "title": "Forming impressions of personality"}, True),
+])
+def test_a_search_hit_is_the_replication_only_by_identity_or_an_undated_title(hit, itself):
+    assert link_original.is_replication_itself(
+        hit, "10.1027/1864-9335/a000179", "Forming Impressions of Personality",
+        "2014", "W1") is itself
