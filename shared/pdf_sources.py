@@ -2948,7 +2948,19 @@ def download_pdf(url: str, doi: str = "", min_bytes: int = _MIN_PDF_BYTES,
         if referer:
             headers = {**headers, "Referer": referer}
         try:
-            r = requests.get(url, headers=headers, timeout=60, stream=True)
+            r = requests.get(url, headers=headers, timeout=60, stream=True,
+                             allow_redirects=not auth_headers)
+            if auth_headers and r.is_redirect:
+                # requests forwards a custom header across hosts, and the Wiley API
+                # redirects to a separate download host; the credential is for the
+                # API alone, so the redirect is followed without it.
+                bare = {k: v for k, v in headers.items() if k not in auth_headers}
+                r = requests.get(urljoin(url, r.headers["Location"]), headers=bare,
+                                 timeout=60, stream=True)
+            if auth_headers and r.status_code in (401, 403):
+                # An API's refusal is an answer about entitlement, not an outage.
+                return {"success": False, "path": None, "source": "",
+                        "reason": f"http_{r.status_code}"}
             if r.status_code in _PERMANENT_HTTP_STATUS:
                 _write_retry_log(_url_failure_path(url),
                                  {f"http_{r.status_code}": _now_iso()})
@@ -3373,13 +3385,17 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
     # copy OpenAlex knows of is cheaper. Off a subscribing network a subscription
     # article answers 403 — measured 2026-10-28: four gold/hybrid articles served,
     # four subscription ones refused — and that is recorded like any miss, so the
-    # tier is asked again after the retry delay. No token is a SKIP, like CORE's.
+    # tier is asked again after the retry delay. A connection error or a 5xx is not
+    # recorded. No token is a SKIP, like CORE's. A wrong token cannot be told from a
+    # missing entitlement: Wiley serves open-access articles whatever the token, and
+    # refuses subscription ones with 403 either way.
     if (not dl["success"] and WILEY_TDM_TOKEN and is_wiley_doi(doi_r)
             and not _held("wiley_tdm")):
         throttle("wiley_tdm", _WILEY_TDM_RATE_SEC)
         if not _try(_WILEY_TDM_URL.format(doi=quote(doi_r, safe="")), "wiley_tdm",
                     auth_headers={"Wiley-TDM-Client-Token": WILEY_TDM_TOKEN}):
-            _failed("wiley_tdm")
+            if not _only_transient("wiley_tdm"):
+                _failed("wiley_tdm")
 
     # Tier 3b — DataCite, the registrant's own metadata. Every index above is
     # Crossref-shaped, so a repository DOI reaches this tier having been asked about

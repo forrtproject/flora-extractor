@@ -230,6 +230,7 @@ class _Resp:
     def __init__(self, status: int, body: bytes = b"", url: str = ""):
         self.status_code = status
         self.url = url
+        self.is_redirect = False
         self._body = body
         self.content = body
         self.text = body.decode("utf-8", errors="replace")
@@ -2033,7 +2034,7 @@ def test_a_springer_miss_is_held_and_other_dois_are_not_asked():
 
 # ── Wiley TDM ─────────────────────────────────────────────────────────────────
 
-def _acquire_wiley(doi: str, served: dict):
+def _acquire_wiley(doi: str, served: dict, token: str = "TOKEN"):
     patchers = _mock_all_tiers()
     started = {name: p.start() for name, p in patchers.items()}
     try:
@@ -2041,7 +2042,7 @@ def _acquire_wiley(doi: str, served: dict):
                           served if "api.wiley.com" in url else _NO_PDF) as dl, \
              patch.object(ps, "get_pdf_via_playwright", return_value=_NO_PLAYWRIGHT), \
              patch.object(ps, "throttle"), \
-             patch.object(ps, "WILEY_TDM_TOKEN", "TOKEN"):
+             patch.object(ps, "WILEY_TDM_TOKEN", token):
             out = ps.acquire_pdf(doi, _TITLE)
     finally:
         for p in patchers.values():
@@ -2074,6 +2075,32 @@ def test_an_authenticated_download_is_asked_once_with_its_credential(tmp_path, m
     with patch.object(ps.requests, "get", return_value=_Resp(200, b"<html>no</html>")) as get:
         out = ps.download_pdf("https://api.wiley.com/x", doi="10.1002/x",
                               auth_headers={"Wiley-TDM-Client-Token": "T"})
-    assert out["success"] is False
+    assert out["reason"] == "not_a_pdf"
     get.assert_called_once()
     assert get.call_args.kwargs["headers"]["Wiley-TDM-Client-Token"] == "T"
+
+
+def test_without_a_token_or_on_an_outage_the_wiley_tier_records_nothing():
+    doi = "10.1002/acp.3769"
+    _, dl = _acquire_wiley(doi, _NO_PDF, token="")
+    assert not any("api.wiley.com" in c.args[0] for c in dl.call_args_list)
+
+    outage = {"success": False, "path": None, "source": "",
+              "reason": "download_error: HTTP 503"}
+    _acquire_wiley(doi, outage)
+    assert "wiley_tdm" not in _retry_log(doi)
+
+
+def test_an_api_redirect_is_followed_without_the_credential(tmp_path, monkeypatch):
+    monkeypatch.setattr(ps, "PDF_CACHE_DIR", tmp_path)
+    hop = _Resp(302)
+    hop.is_redirect, hop.headers = True, {"Location": "https://alm.wiley.com/d/1"}
+    pdf = _Resp(200, b"%PDF-1.7 " + b"x" * 20_000)
+    with patch.object(ps.requests, "get", side_effect=[hop, pdf]) as get:
+        out = ps.download_pdf("https://api.wiley.com/x", doi="10.1002/x",
+                              auth_headers={"Wiley-TDM-Client-Token": "T"})
+    assert out["success"] is True
+    first, second = get.call_args_list
+    assert first.kwargs["headers"]["Wiley-TDM-Client-Token"] == "T"
+    assert second.args[0] == "https://alm.wiley.com/d/1"
+    assert "Wiley-TDM-Client-Token" not in second.kwargs["headers"]
