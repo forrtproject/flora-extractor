@@ -33,7 +33,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(ROOT))
 
-from shared.disambiguation import jaccard_similarity  # noqa: E402
+from shared.disambiguation import jaccard_similarity, token_coverage  # noqa: E402
 from shared.pdf_parsing import read_parse_cache, score_parse_result  # noqa: E402
 from shared.prompts import (  # noqa: E402
     EVIDENCE_POLICY, _MULTI_TARGET_SCOPE, _OUTCOME_RULES, _REPRO_AXIS_RULES,
@@ -262,16 +262,24 @@ def _year(y: str) -> str:
 def original_grade(row: dict, target: dict) -> tuple[str, float]:
     """How well one blind target matches the row's original, best grade first.
 
+    Title similarity is the larger of the Jaccard index and the share of the shorter
+    title's words found in the longer one, so a title cited with its subtitle on one
+    side and without it on the other still matches.
+
     doi            cleaned DOIs equal
-    title          title Jaccard >= 0.6 and the year or the first author agrees
-    author_year    first-author surname and year agree, titles absent or unlike
-    title_only     title Jaccard >= 0.6, but year and author both disagree
-    partial        title Jaccard 0.3-0.6 with the year or the author agreeing
+    title          title similarity >= 0.6 and the year or the first author agrees
+    author_year    first-author surname and year agree, and the blind coder gave no
+                   title or one at least 0.3 similar; two unlike titles by the same
+                   author in the same year are the sibling case, and do not agree
+    title_only     title similarity >= 0.6, but year and author both disagree
+    partial        title similarity 0.3-0.6 with the year or the author agreeing
     different      none of the above
     The first three count as agreement.
     """
     d_row, d_t = clean_doi(row.get("doi_o", "")), clean_doi(target.get("doi", ""))
-    jac = jaccard_similarity(row.get("title_o", ""), target.get("title", ""))
+    t_row, t_blind = row.get("title_o", ""), target.get("title", "")
+    shorter, longer = sorted((t_row, t_blind), key=lambda t: len(_tokens(t)))
+    jac = max(jaccard_similarity(t_row, t_blind), token_coverage(shorter, longer))
     sur = _surname(row.get("authors_o", ""))
     same_author = bool(sur) and sur == _surname(target.get("authors", ""))
     same_year = bool(_year(row.get("year_o"))) and _year(row.get("year_o")) == _year(target.get("year"))
@@ -279,7 +287,7 @@ def original_grade(row: dict, target: dict) -> tuple[str, float]:
         return "doi", jac
     if jac >= 0.6 and (same_year or same_author):
         return "title", jac
-    if same_author and same_year and (jac < 0.3 or not target.get("title")):
+    if same_author and same_year and (jac >= 0.3 or not t_blind):
         return "author_year", jac
     if jac >= 0.6:
         return "title_only", jac
@@ -504,8 +512,10 @@ def compare_work(work_rows: list[dict], coding: dict,
     """Agreement for every shipped row of one work, keyed by pair_id.
 
     Each row is compared with the blind target it is paired with
-    (`pair_originals`). The release rule holds the whole work when the two sides do
-    not pair off completely, whichever side has the extra original: a different count
+    (`pair_originals`). A row is released when its pair agrees on type and outcome,
+    the blind coder was confident of that outcome (an outcome it would not stake was,
+    in the pilot, the kind humans corrected), and the whole work pairs off: the rule
+    holds every row of a work whose two sides do not pair off completely, whichever side has the extra original: a different count
     of originals is the clearest sign that one side misread the paper, and it is
     where outcomes get scoped to the wrong set of originals.
     """
@@ -549,6 +559,7 @@ def compare_work(work_rows: list[dict], coding: dict,
                    outcome_agrees_soft=og in ("exact", "soft"), blind_quote=q_blind)
         res.update({f"quote_{k}": v for k, v in quote_check(q_pipe, q_blind, sources).items()})
         res["released"] = bool(res["type_agrees"] and res["outcome_agrees"]
+                               and t.get("outcome_confident") is True
                                and work["work_pairs_off"])
         out.append(res)
     return out

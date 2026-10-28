@@ -142,6 +142,26 @@ def select(df: pd.DataFrame) -> pd.DataFrame:
     return pd.concat(picks).drop_duplicates("rid")
 
 
+def select_batch2(df: pd.DataFrame, exclude: set[str], n: int = 10) -> pd.DataFrame:
+    """A second, random batch outside the first: half rows humans judged wrong, half
+    judged correct (after sibling reassignments), so it measures both catching errors
+    and wrongly holding correct rows."""
+    df = df[~df.rid.isin(exclude)].assign(human_verdict=_human_verdict)
+    return pd.concat([df[df.human_verdict == v].sample(min(n // 2, (df.human_verdict == v).sum()),
+                                                        random_state=2)
+                      for v in ("error", "correct")])
+
+
+def _human_verdict(df: pd.DataFrame) -> pd.Series:
+    """correct / error / undetermined per row, scored on the pair."""
+    truth = df[["truth_type", "truth_original", "truth_outcome"]]
+    out = pd.Series("undetermined", index=df.index)
+    out[(truth == "incorrect").any(axis=1)] = "error"
+    out[(truth["truth_type"] == "correct") & truth["truth_original"].isin(["correct", "sibling"])
+        & (truth["truth_outcome"] == "correct")] = "correct"
+    return out
+
+
 def run_one(row: dict) -> dict:
     """Recode the work once and return this row's result within the work comparison."""
     text, method, texts = document_text(row)
@@ -158,10 +178,13 @@ def run_one(row: dict) -> dict:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--batch", type=int, default=1, choices=(1, 2))
     args = ap.parse_args()
     joined = join_rows(human_truth())
     print(f"{len(joined)} validated records joined to extracted.csv")
     pilot = select(joined)
+    if args.batch == 2:
+        pilot = select_batch2(joined, set(pilot.rid))
     print(f"{len(pilot)} pilot rows")
     with ThreadPoolExecutor(args.workers) as pool:
         results = list(pool.map(run_one, [r.to_dict() for _, r in pilot.iterrows()]))
@@ -172,12 +195,9 @@ def main() -> None:
             "truth_type", "truth_original", "truth_outcome", "final_outcome",
             "human_corrections", "human_named_dois"]
     out = pilot[keep].merge(pd.DataFrame(results).drop(columns="pair_id"), on="rid")
-    truth = out[["truth_type", "truth_original", "truth_outcome"]]
-    out["human_verdict"] = "undetermined"
-    out.loc[(truth == "incorrect").any(axis=1), "human_verdict"] = "error"
-    out.loc[(truth["truth_type"] == "correct") & truth["truth_original"].isin(["correct", "sibling"])
-            & (truth["truth_outcome"] == "correct"), "human_verdict"] = "correct"
-    out.to_csv(OUT / "pilot_results.csv", index=False)
+    out["human_verdict"] = _human_verdict(out)
+    name = "pilot_results.csv" if args.batch == 1 else "pilot_results_batch2.csv"
+    out.to_csv(OUT / name, index=False)
     show = ["link_method", "type", "blind_type", "truth_type", "original_grade",
             "truth_original", "outcome", "blind_outcome", "outcome_grade", "truth_outcome",
             "quote_verdict", "work_n_shipped", "work_n_blind", "released", "human_verdict"]
