@@ -268,3 +268,61 @@ class TestCanonicalForm:
         stale = [name for name, (stable, _) in P._FROZEN_VERSIONS.items()
                  if P.prompt_version(name) != P._FROZEN_VERSIONS[name][1]]
         assert stale == [], f"dead _FROZEN_VERSIONS entries (prompt edited): {stale}"
+
+
+_UNCHANGED_QUOTE_SOURCE_RENDERS = {
+    "build_target_outcome_prompt:abstract": "2a0fd36153b97f2b4312bc3740d8e2800b9b65cb9af3356537f7b8d26a6522e6",
+    "build_target_outcome_prompt:discussion": "2e177d478acd8433adf243e1bccbfae12c8bc293d5c029a39811a5d0ff04af59",
+    "build_target_outcome_prompt:intro": "83271e25c5b645eb80ed27ff6d6218fc563d289d79cdb414cf7e0b7030ba4528",
+    "build_repro_target_outcome_prompt:abstract": "20ab0ad832744956964ad409b12edbd9f211297c414688067d1f056388ba6a52",
+    "build_repro_target_outcome_prompt:discussion": "1cee70dc836da065b2fba4ca615c23845ad9e54812420fa4478c10a12f9be293",
+    "build_repro_target_outcome_prompt:intro": "7ddeec2ca3a55f9cf827fc5eb7179fff947bea0d76554569052dc9397fdbd673",
+    "build_outcome_prompt:abstract": "ea14a246b285989ced7aa9dd9974cdd7f0d17e705de0dc3c4070eeec2d904184",
+    "build_outcome_prompt:discussion": "27b35b79a8a6753facb0778a686b886e8ec0aa75a0df72736e7b4dbedd334748",
+    "build_outcome_prompt:intro": "536d543760a80e2434b0eca267a76321e796a4245f49a0dcb36f194c42fad06d",
+    "build_repro_outcome_prompt:abstract": "0ebf40d84733ac0b9b09383db88e09c8b5d34cb93a56106eb32f9861e964312d",
+    "build_repro_outcome_prompt:discussion": "96afbc06d7e1006bbc672d2fed82ff4cc120176a27c7ba6c3301f3082b4cfadc",
+    "build_repro_outcome_prompt:intro": "e48f79315f185f93709998e94dea226d7802b9c51c1622656b1d2d87ccc85e99"
+}
+
+
+@pytest.mark.parametrize("key,digest", _UNCHANGED_QUOTE_SOURCE_RENDERS.items())
+def test_quote_source_edit_preserves_unaffected_prompts(key, digest):
+    import hashlib
+    name, variant = key.split(":")
+    combined = "target" in name
+    options = ({"abstract": {}, "intro": {"intro": "Opening."},
+                "discussion": {"discussion": "Closing.", "discussion_provenance": "discussion"}}
+               if combined else
+               {"abstract": {}, "intro": {"intro_snip": "Opening."},
+                "discussion": {"text_snip": "Closing.", "text_provenance": "discussion"}})
+    args = ("Study", "Abstract", []) if combined else ("Study", "Abstract")
+    rendered = getattr(prompts, name)(*args, **options[variant])
+    assert hashlib.sha256(rendered.encode()).hexdigest() == digest
+    assert prompts.quote_source_legacy_version(name, False)
+    assert not prompts.quote_source_legacy_version(name, True)
+
+
+@pytest.mark.parametrize("name", ["build_target_outcome_prompt", "build_repro_target_outcome_prompt"])
+def test_full_body_quotes_can_name_results_and_methods(name):
+    rendered = getattr(prompts, name)("Study", "Abstract", [], full_body="Results: The effect replicated.")
+    assert prompts._QUOTE_SOURCE_CHOICES in rendered
+    assert prompts._QUOTE_SOURCE_RULE in rendered
+
+
+@pytest.mark.parametrize("name", ["build_outcome_prompt", "build_repro_outcome_prompt"])
+@pytest.mark.parametrize("provenance", ["tail", "sections", "osf_registration"])
+def test_unsectioned_outcome_excerpt_does_not_claim_to_be_discussion(name, provenance):
+    rendered = getattr(prompts, name)("Study", "Abstract", text_snip="Excerpt", text_provenance=provenance)
+    assert "DOCUMENT EXCERPT (from " in rendered
+    assert "DISCUSSION / CONCLUSION (from " not in rendered
+    assert prompts._QUOTE_SOURCE_CHOICES in rendered
+
+
+def test_quote_source_cache_equivalence_expires_after_further_edits(monkeypatch):
+    for name, (after, before) in prompts._QUOTE_SOURCE_VERSION_PAIRS.items():
+        assert prompts.prompt_version(name) == after
+        assert prompts.quote_source_legacy_version(name, False) == before
+    monkeypatch.setattr(prompts, "_QUOTE_SOURCE_RULE", prompts._QUOTE_SOURCE_RULE + " Changed.")
+    prompts.prompt_version.cache_clear()
+    assert not prompts.quote_source_legacy_version("build_target_outcome_prompt", False)

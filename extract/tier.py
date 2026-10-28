@@ -378,7 +378,14 @@ _GENERATION_EQUIVALENCES: dict[str, tuple[str, ...]] = {
     # answer differently are the `llm_title_search` / `llm_author_year_search` picks
     # over such a list — reopened by `--redo` with ids (they have no status of their
     # own). `765e053cd24611e5` joins the flattened chain.
-    "25e2b6bb31821d84": ("765e053cd24611e5",
+    # 2026-10-02: expand quote attribution only on full-body/Methods/fallback
+    # evidence; title/abstract/Introduction/true Discussion prompts remain byte
+    # identical and read their old caches through version-pinned equivalences.
+    # Retain settled works while auditing that named body-evidence population.
+    # This is NOT a claim that affected quote labels, or all new model answers, are
+    # equivalent. Reopen only confirmed attribution errors after the paired pilot;
+    # full extraction is unnecessary for an otherwise correct quote/target/verdict.
+    "619cc46f58c39395": ("25e2b6bb31821d84", "765e053cd24611e5",
                          "474e80e4c32a6dfa", "7dbb1e92452d8333",
                          "010cf32bb63351e1", "ca0706ef44827229",
                          "061cb5ca8e1888b6",
