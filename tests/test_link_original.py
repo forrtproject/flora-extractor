@@ -1741,3 +1741,20 @@ def test_a_search_hit_is_the_replication_only_by_identity_or_an_undated_title(hi
     assert link_original.is_replication_itself(
         hit, "10.1027/1864-9335/a000179", "Forming Impressions of Personality",
         "2014", "W1") is itself
+
+
+@pytest.mark.parametrize("abstract, may_stop", [
+    # A methods citation beside a target only the current parser reads: two pairs, so
+    # the rule pick on the methods citation cannot end the row.
+    ("Using the procedure of Smith (2010), we replicated Karimi et al.\u2019s (2007) "
+     "finding.", False),
+    ("Using the procedure of Smith (2010), we replicated the effect reported by "
+     "Kachurik, S., Ruiz, J., & Staub, M. (2013).", False),
+    # Same authors, same year, two papers.
+    ("We replicated Kogut and Ritov (2005a) and Kogut and Ritov (2005b).", False),
+    # One paper cited twice, in full and as "et al.": one pair.
+    ("You, D\u00f6rnyei, and Csiz\u00e9r (2016) reported it; we replicate You et al. "
+     "(2016).", True),
+])
+def test_the_stop_gate_counts_every_citation_the_parser_reads(abstract, may_stop):
+    assert link_original.may_stop_at_a_rule("A study", abstract, 2020) is may_stop

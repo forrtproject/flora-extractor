@@ -1099,10 +1099,9 @@ _CITED_NAME_STOPWORDS = {"and", "the", "et", "al", "study", "studies", "experime
 def _cited_surnames(pattern: dict) -> list[str]:
     """Every author surname the citation named, most significant first.
 
-    `extract_author_year_patterns` reports ONE surname per match, and for a
-    multi-author citation that is a run-on of all of them ("kaufmann,weber,andhaisley")
-    or just the first ("jones" for "Jones and Macken (1995)"). Either way the other
-    names are thrown away, and they are what makes a shortlist usable: measured
+    `extract_author_year_patterns` reports ONE surname per match — the first ("jones"
+    for "Jones and Macken (1995)") — so the other names are thrown away, and they are
+    what makes a shortlist usable: measured
     2026-08-07, "jones 1995" matches 8,348 OpenAlex works and "jones AND macken 1995"
     matches 7, with the right paper third.
 

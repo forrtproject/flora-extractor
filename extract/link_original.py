@@ -183,8 +183,14 @@ def may_stop_at_a_rule(title_r: str, abstract_r: str, year_r: int) -> bool:
 
     Exactly one distinct author-year pair across title and abstract, and no stated
     study count. Anything else must reach a call that can enumerate targets.
+
+    The pair is the first surname and the year AS CITED, letter included: "Kogut and
+    Ritov (2005a)" and "(2005b)" are two papers, and counting them as one would let a
+    rule end the row on whichever of them it matched. Every citation the parser can
+    read counts, a methods citation included — that is what stops one: a paper citing
+    its procedure's source and its target is two pairs, and withheld.
     """
-    pairs = {(p["surname"], p["year"])
+    pairs = {(p["surname"], p["year_label"])
              for p in extract_author_year_patterns(title_r,    max_year=year_r)
                     + extract_author_year_patterns(abstract_r, max_year=year_r)}
     return len(pairs) == 1 and not _study_count_stated(title_r, abstract_r)
@@ -900,11 +906,10 @@ def _hit_carries_author(hit: dict, surname: str) -> bool:
     an EMPTY author list is rejected rather than waved through: a record with nobody
     on it cannot be the paper a citation names.
     """
-    # `extract_author_year_patterns` returns a multi-author citation as ONE run-on
-    # token — "Kaufmann, Weber, and Haisley (2013)" comes back as
-    # "kaufmann,weber,andhaisley" — so the value is split before it is matched, and
-    # ANY of its names carrying is enough. Matching the run-on string as a word cost
-    # a correct link on the first run of this guard.
+    # The value may name several authors — `_cited_surnames` joins every name of
+    # "Kaufmann, Weber, and Haisley (2013)" with "|" — so it is split before it is
+    # matched, and ANY of its names carrying is enough. Matching a run-on string as a
+    # word cost a correct link on the first run of this guard.
     names = [n for n in re.split(r"[^a-z]+", str(surname or "").lower())
              if len(n) > 2 and n != "and"]
     if not names:
