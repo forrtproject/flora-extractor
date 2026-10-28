@@ -7,7 +7,7 @@ for on top of it. The caches are what a collaborator CANNOT rederive:
 * `cache/llm` is money. Re-running it costs the provider bill again and, because
   the models are not deterministic, returns DIFFERENT verdicts — so a collaborator
   who re-buys them does not reproduce our grading, they produce their own.
-* the abstract store (`shared/abstract_store.py`) is six rate-limited sources over
+* the abstract store (`shared/abstract_store.py`) is seven rate-limited sources over
   ~500k identifiers, one of which (Scopus) needs an Elsevier entitlement not
   everyone has.
 * `parse` / `grobid` / `openalex_xml` are the full-text extractions, and

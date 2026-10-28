@@ -638,7 +638,9 @@ def _fetch_springer_batch(dois: list[str], api_key: str):
         log.warning("Springer Meta batch answered without a result envelope (batch "
                     "not checkpointed): %s — %s", type(exc).__name__, resp.text[:200])
         return None
-    if not isinstance(records, list):
+    if not isinstance(records, list) or not all(isinstance(r, dict) for r in records):
+        log.warning("Springer Meta batch answered with malformed records (batch not "
+                    "checkpointed) — %s", resp.text[:200])
         return None
     if total > len(records):
         log.warning("Springer Meta batch returned %d of %d matches (page truncated; "

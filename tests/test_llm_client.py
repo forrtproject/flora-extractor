@@ -1617,6 +1617,12 @@ def test_a_cached_answer_takes_the_reference_lines_doi_as_read_today(monkeypatch
     # A line that no longer yields a DOI withdraws it, and the identity falls back to
     # the metadata search a fresh call makes.
     bare = [{**refs[0], "raw_ref": "Smith, J. (2015). Original."}]
+    # An outage in that search decides nothing: the cached identity stands.
+    from shared.doi_verify import UNVERIFIABLE
+    monkeypatch.setattr("shared.doi_verify.resolve_doi_by_metadata",
+                        lambda *a, **k: UNVERIFIABLE)
+    out = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", [], bare, rung="reftarget")
+    assert out["resolved_doi_o"] == "10.9/stale"
     monkeypatch.setattr("shared.doi_verify.resolve_doi_by_metadata",
                         lambda *a, **k: {"doi": "10.5555/by-metadata"})
     out = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", [], bare, rung="reftarget")

@@ -1190,17 +1190,20 @@ def resolve_targets_and_outcomes(doi_r:       str,
             if (not lent and was_lent
                     and clean_doi(str(cached.get("resolved_doi_o") or "")) == was_lent):
                 # The line no longer yields the DOI this answer was resolved to: fall
-                # back as a fresh call does, to a metadata search.
-                from shared.doi_verify import resolve_doi_by_metadata
+                # back as a fresh call does, to a metadata search. A search no source
+                # answered decides nothing, and the cached identity stands this time.
+                from shared.doi_verify import UNVERIFIABLE, resolve_doi_by_metadata
                 hit = (resolve_doi_by_metadata(record["title"],
                                                record.get("first_author", ""),
                                                record.get("year"), exclude_doi=doi_r)
                        if record.get("title") else None)
-                found = clean_doi(str((hit or {}).get("doi") or ""))
-                cached["resolved_doi_o"] = found
-                cached["resolution_method"] = (
-                    f"llm_title_search_{cached.get('llm_source', '')}" if found
-                    else cached.get("target_stage") or cached.get("resolution_method"))
+                if hit is not UNVERIFIABLE:
+                    found = clean_doi(str((hit or {}).get("doi") or ""))
+                    cached["resolved_doi_o"] = found
+                    cached["resolution_method"] = (
+                        f"llm_title_search_{cached.get('llm_source', '')}" if found
+                        else cached.get("target_stage")
+                        or cached.get("resolution_method"))
             elif lent and (not cached.get("resolved_doi_o")
                          or only[0]["record"].get("doi_source") == "reference_line"
                          or str(cached.get("resolution_method") or "")
