@@ -1981,10 +1981,10 @@ def test_a_springer_refusal_is_an_outage_that_ends_the_tier_for_the_run(_springe
     with patch.object(ps.requests, "get", return_value=_Resp(404)):
         assert ps.get_springer_oa_fulltext("10.1007/paywalled") is None
     # A body that is not XML (a gateway page, a cut-off transfer) is no answer either.
-    with patch.object(ps.requests, "get",
-                      return_value=_Resp(200, b"<html><body>Bad gateway")):
-        with pytest.raises(ps.DocumentSourceUnavailable):
-            ps.get_springer_oa_fulltext("10.1186/cut")
+    for body in (b"<html><body>Bad gateway", b"<html><body>Bad gateway</body></html>"):
+        with patch.object(ps.requests, "get", return_value=_Resp(200, body)):
+            with pytest.raises(ps.DocumentSourceUnavailable):
+                ps.get_springer_oa_fulltext("10.1186/cut")
     with patch.object(ps.requests, "get", return_value=_Resp(401)):
         with pytest.raises(ps.DocumentSourceUnavailable):
             ps.get_springer_oa_fulltext("10.1186/a")

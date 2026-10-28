@@ -1178,12 +1178,30 @@ def resolve_targets_and_outcomes(doi_r:       str,
         # A reference line's DOI is lent after the answer, not shown to the model, so
         # an answer cached before the lending existed gets it here — and an accepted
         # link takes it in place of a title-search DOI, as a fresh call would.
-        lend_reference_dois(cached.get("targets"), key_map)
         only = cached.get("targets") or []
+        was_lent = (clean_doi(str(only[0]["record"].get("doi") or ""))
+                    if len(only) == 1 and (only[0].get("record") or {})
+                    .get("doi_source") == "reference_line" else "")
+        lend_reference_dois(cached.get("targets"), key_map)
         if cached.get("resolved") and len(only) == 1 and only[0].get("record") \
                 and only[0].get("match_certain"):
-            lent = clean_doi(str(only[0]["record"].get("doi") or ""))
-            if lent and (not cached.get("resolved_doi_o")
+            record = only[0]["record"]
+            lent = clean_doi(str(record.get("doi") or ""))
+            if (not lent and was_lent
+                    and clean_doi(str(cached.get("resolved_doi_o") or "")) == was_lent):
+                # The line no longer yields the DOI this answer was resolved to: fall
+                # back as a fresh call does, to a metadata search.
+                from shared.doi_verify import resolve_doi_by_metadata
+                hit = (resolve_doi_by_metadata(record["title"],
+                                               record.get("first_author", ""),
+                                               record.get("year"), exclude_doi=doi_r)
+                       if record.get("title") else None)
+                found = clean_doi(str((hit or {}).get("doi") or ""))
+                cached["resolved_doi_o"] = found
+                cached["resolution_method"] = (
+                    f"llm_title_search_{cached.get('llm_source', '')}" if found
+                    else cached.get("target_stage") or cached.get("resolution_method"))
+            elif lent and (not cached.get("resolved_doi_o")
                          or only[0]["record"].get("doi_source") == "reference_line"
                          or str(cached.get("resolution_method") or "")
                          .startswith("llm_title_search_")):

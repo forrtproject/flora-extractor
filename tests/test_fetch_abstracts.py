@@ -538,6 +538,7 @@ def test_springer_batch_records_text_and_misses_and_flattens_structure(monkeypat
     # A 200 without the result envelope establishes no miss.
     (200, {}),
     (200, {"error": "Service temporarily unavailable"}),
+    (200, {"records": [], "result": []}),
 ])
 def test_a_failed_springer_batch_records_nothing(monkeypatch, status_code, payload):
     """A persistent 5xx or an envelope-less answer is transient: nothing is

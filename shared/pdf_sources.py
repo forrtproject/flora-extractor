@@ -819,13 +819,18 @@ def get_springer_oa_fulltext(doi: str) -> "dict | None":
     # no answer about the DOI. parse_jats_sections swallows a parse error into empty
     # sections, which would read as a content-free document and be recorded as the
     # tier's miss, so the envelope is checked first.
+    # The API's own envelope is <response>; a well-formed page that is not one (an
+    # XHTML error page) would otherwise be read as article text.
     text = r.content.decode("utf-8", errors="replace")
     try:
         from lxml import etree
-        etree.fromstring(text.encode("utf-8"))
+        root_tag = etree.QName(etree.fromstring(text.encode("utf-8"))).localname
     except Exception as e:
         raise DocumentSourceUnavailable(
             f"Springer OA {doi} → unreadable XML ({type(e).__name__})") from None
+    if root_tag != "response":
+        raise DocumentSourceUnavailable(
+            f"Springer OA {doi} → unexpected <{root_tag}> envelope")
     from .grobid import parse_jats_sections
     sections = parse_jats_sections(text)
 

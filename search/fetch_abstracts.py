@@ -631,6 +631,8 @@ def _fetch_springer_batch(dois: list[str], api_key: str):
     try:
         payload = resp.json()
         records = payload["records"]
+        if not payload["result"]:
+            raise KeyError("result")
         total = sum(int(r["total"]) for r in payload["result"])
     except (ValueError, KeyError, TypeError) as exc:
         log.warning("Springer Meta batch answered without a result envelope (batch "
