@@ -269,16 +269,6 @@ has not yet been scored against that evaluation set):
   0 votes → `api_error`. An incomplete screen is never a verdict, but each vote that
   did answer is cached on its own key (see below), so the re-run buys only the gap.
 
-**A proceed is admitted by the RULE's gate.** Every screen-pile spec names
-`admission: lenient | strict`. `lenient` admits on the proceed; `strict` also needs
-`screen_strict()` — every vote qualifying AND confident. A work is held strict only
-when every live screen-pile rule it matched is strict (the most lenient wins). A strict
-miss is DEFERRED, not discarded: not offered to the extract tier, not rendered, and
-released with no new call when the gate is relaxed. The gate is left out of the
-release id and the screening generation; it is applied to the stored votes by
-`admission_gates()` / `deferred_works()` in `filter/engine/handoff.py`. Policy and the
-per-rule assignments: `filter/spec/CONVENTIONS.md`, "Admission gates".
-
 On a pass, the screen's `record_type` (both voters agreeing wins; splits fall back to
 the first qualifying voter; `both` → replication) becomes `type` and overwrites
 `paper_type` (`filter_method = "screen"`); with no qualifying vote at all, Stage 2's
@@ -302,6 +292,16 @@ classification and confidence because a summary of the gate is not enough — th
 `llm_title_search` rung is gated on both voters qualifying AND confident.
 `_screen_from_row()` in `run_extract.py` rebuilds the `classify_replication()` dict
 from them, so everything below the front door is unchanged.
+
+**A proceed is admitted by the RULE's gate.** Every screen-pile spec names
+`admission: lenient | strict`. `lenient` admits on the proceed; `strict` also needs
+`screen_strict()` — every vote qualifying AND confident. A work is held strict only
+when every live screen-pile rule it matched is strict (the most lenient wins). A strict
+miss is DEFERRED, not discarded: not offered to the extract tier, not rendered, and
+released with no new call when the gate is relaxed. The gate is left out of the
+release id and the screening generation; it is applied to the stored votes by
+`admission_gates()` / `deferred_works()` in `filter/engine/handoff.py`. Policy and the
+per-rule assignments: `filter/spec/CONVENTIONS.md`, "Admission gates".
 
 **Resolution ladder** (`run_for_doi()`, cheapest first, returns at first resolution):
 title-pattern match → rule-based citation/candidate match → abstract LLM over
