@@ -75,9 +75,10 @@ def _valid_spec(**overrides) -> dict:
         "shadow": False,
         "measured": [],
     }
-    spec.update(overrides)
-    if spec["pile"] not in ("screen_expensive", "screen_cheap"):
+    if overrides.get("pile", spec["pile"]) not in ("screen_expensive", "screen_cheap") \
+            and "admission" not in overrides:
         spec.pop("admission")
+    spec.update(overrides)
     return spec
 
 

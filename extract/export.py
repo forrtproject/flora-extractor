@@ -47,8 +47,9 @@ therefore drops every work the current screen discards (`decisions()` in
 Measured 2026-08-16, after the voter-pair change: 85 works. It drops the proceeds a
 strict admission gate defers too (`deferred_works()`), for the same reason: the
 worklist never offers them, so an earlier extraction would otherwise keep shipping.
-The gate is the release's routing read against the rule book on disk, so only a
-`--release` render applies it; `--all-releases` asks no routing question.
+The gate is the release's routing read against the rule book on disk, so every
+render that reads a release applies it (a named `--release`, or the store's only
+one); `--all-releases` asks no routing question and skips it.
 
 **Two generations, and why the older one still counts.** A verdict belongs to a
 generation — the ladder, the prompts and the models it was produced by

@@ -1369,8 +1369,10 @@ def run_extract_tier(con, client: Optional[ClaimsClient], release_id: str, *,
         raise SystemExit("the extract tier claims before it spends, so --run needs a "
                          "state authority: set SUPABASE_URL and SUPABASE_SERVICE_KEY.")
     if not works:
-        raise SystemExit("nothing to extract: every admitted work is already settled, "
-                         "claimed or skipped.")
+        held = (f" ({counts['deferred']:,} proceed(s) are deferred by a strict "
+                "admission gate)" if counts.get("deferred") else "")
+        raise SystemExit(f"nothing to extract{held}: every admitted work is already "
+                         "settled, claimed or skipped.")
     if redo is not None and only is None and not allow_extra_works:
         _refuse_unnamed_works({int(w) for w in redo}, works)
 

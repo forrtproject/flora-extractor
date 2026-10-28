@@ -21,6 +21,7 @@ import pandas as pd
 
 from filter.engine.claims import ClaimsClient
 from filter.engine.handoff import decisions
+from filter.engine.store import resolve_release
 from filter.engine.workids import load_aliases, resolve, work_id
 from shared import supabase_client
 
@@ -41,10 +42,11 @@ def main() -> None:
     OUT.mkdir(exist_ok=True)
 
     con = duckdb.connect(args.store, read_only=True)
-    release = args.release
+    # An unknown or ambiguous prefix is an error, never zero or mixed rows.
+    release = resolve_release(con, args.release)
     routing = con.execute(
         "SELECT work_id, pile, rule_id, matched_rules FROM routing "
-        "WHERE release_id LIKE ? || '%' AND pile IN ('screen_expensive', 'screen_cheap')",
+        "WHERE release_id = ? AND pile IN ('screen_expensive', 'screen_cheap')",
         [release]).df()
     routing["matched_rules"] = routing["matched_rules"].map(list).map(json.dumps)
     routing.to_parquet(OUT / "routing.parquet")
@@ -61,6 +63,7 @@ def main() -> None:
 
     aliases = load_aliases(Path("filter/spec/aliases.json"))
     endings = []
+    unreadable_ids = 0
     for name in ENDING_FILES:
         path = Path(args.data) / f"{name}.csv"
         if not path.exists():
@@ -70,6 +73,7 @@ def main() -> None:
                 try:
                     wid = resolve(work_id(str(row.get("openalex_id_r") or "")), aliases)
                 except ValueError:
+                    unreadable_ids += 1
                     continue
                 endings.append({"work_id": wid, "file": name,
                                 "outcome": row.get("outcome", ""),
@@ -79,8 +83,13 @@ def main() -> None:
     judged = []
     for rec in supabase_client._get("unvalidated", {
             "select": "oa_work_id_r,validator_1,validator_2"}):
-        slots = [v for v in (rec.get("validator_1"), rec.get("validator_2"))
-                 if isinstance(v, dict) and v.get("type_check") in ("correct", "incorrect")]
+        # Normalised as `shared/supabase_client._norm` does, so counts match the
+        # dashboard's.
+        slots = [{k: str(v.get(k) or "").strip().lower()
+                  for k in ("type_check", "corrected_type")}
+                 for v in (rec.get("validator_1"), rec.get("validator_2"))
+                 if isinstance(v, dict)]
+        slots = [v for v in slots if v["type_check"] in ("correct", "incorrect")]
         try:
             wid = resolve(work_id(str(rec.get("oa_work_id_r") or "")), aliases)
         except ValueError:
@@ -97,7 +106,8 @@ def main() -> None:
     (OUT / "manifest.json").write_text(json.dumps(
         {"release_id": release, "routing_rows": len(routing),
          "screen_decisions": len(screen), "screen_discards": len(drop),
-         "ending_rows": len(endings), "data_dir": str(args.data)}, indent=1))
+         "ending_rows": len(endings), "ending_rows_without_work_id": unreadable_ids,
+         "data_dir": str(args.data)}, indent=1))
     print(json.loads((OUT / "manifest.json").read_text()))
 
 

@@ -91,8 +91,9 @@ still safe: flora-validation's `--retire` flags, never removes, a touched record
 **The most lenient matching rule wins.** A work matched by several live screen-pile
 rules is held to the strict gate only when all of them are strict. A rule's base rate
 is measured over every work it matches, overlaps included, so a work a high-precision
-rule matched carries that rule's evidence whichever rule won precedence. Precedence
-decides only which rule's name the routing row carries; a rule outranking another is
+rule matched carries that rule's evidence whichever rule won precedence. For the gate,
+precedence matters only in naming the routing winner (it also sets the pile and the
+exported vocabulary, which the gate does not touch); a rule outranking another is
 not evidence that it is the better predictor, and the broad rules match supersets of
 the narrow ones, so "strictest wins" would discount exactly the matches the narrow
 rule was measured on.

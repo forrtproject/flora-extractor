@@ -251,8 +251,8 @@ Match semantics:
 - `admission` (`"lenient"` / `"strict"`) is required on a `screen_expensive` or
   `screen_cheap` spec, shadow included, and refused on any other pile. It is the
   gate the screen's PROCEED must pass before the work reaches Stage 3: `lenient`
-  is `screen_gate()`'s proceed, `strict` also needs `screen_strict()` — every vote
-  qualifying and confident. A work is held to `strict` only when every live
+  is `screen_gate()`'s proceed, `strict` also needs `screen_strict()` — at least two
+  votes, every one qualifying and confident. A work is held to `strict` only when every live
   screen-pile rule it matched is strict, and a strict miss is deferred, never
   discarded, and a work in `data/human_judged.csv` (judged in validation) never is. It is left out of `bundle_hash()`, so changing it mints no release.
   Policy and the current assignments: `filter/spec/CONVENTIONS.md`, "Admission

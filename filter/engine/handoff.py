@@ -129,7 +129,7 @@ def write_handoff(con, pool_dir: Path, out_csv: Path, release_id: str, *,
     say different things. A set (empty included) means SCREENED-ONLY: a pile row
     outside it was never judged, so it is left out and counted as
     `skipped_unscreened`. `None` means AS-ROUTED: every pile row travels except
-    the ones a verdict discarded — which is the only thing a caller with no
+    the ones a verdict discarded or a strict admission gate deferred — which is the only thing a caller with no
     Supabase can ask for, and the one mode in which a row can reach Stage 3 with
     its `SCREEN_COLS` blank.
 

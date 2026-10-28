@@ -11,6 +11,7 @@ across `extracted.csv` and the set-asides; the validator columns count works who
 validator marked the type incorrect with `not_validation` (any of the two slots).
 """
 
+import importlib
 import json
 from pathlib import Path
 
@@ -21,10 +22,9 @@ from filter.engine.spec import LENIENT, SCREEN_PILES, load_specs
 from shared.llm_client import screen_strict
 
 OUT = Path(__file__).parent / "out"
-ORDER = ["extracted", "not_a_replication", "no_original_found",
-         "prospective_registration", "no_evidence", "unidentified_original",
-         "keyed_link_disputed", "search_link_unconfirmed", "target_pending",
-         "api_error"]
+# `pull.ENDING_FILES` is written in precedence order: a work's ending is the first
+# file it appears in.
+ORDER = list(importlib.import_module("analysis.rule_gate_2026-10.pull").ENDING_FILES)
 
 
 def _pct(x: float) -> str:
@@ -42,7 +42,7 @@ def main() -> None:
     routing = pd.read_parquet(OUT / "routing.parquet")
     routing["matched"] = routing.matched_rules.map(json.loads)
     screen = pd.read_parquet(OUT / "screen.parquet")
-    screen["strict"] = screen.votes.map(lambda v: screen_strict(json.loads(v)))
+    screen["strict"] = screen.votes.map(lambda v: screen_strict(json.loads(v))).astype(bool)
     endings = pd.read_parquet(OUT / "endings.parquet")
     endings["rank"] = endings.file.map(ORDER.index)
     ending = endings.sort_values("rank").drop_duplicates("work_id")[["work_id", "file"]]
@@ -59,11 +59,11 @@ def main() -> None:
     df["gate_winner"] = df.rule_id.map(lambda r: gate([r]))
     proceed = df.outcome == "proceed"
     exempt = df.work_id.isin(human_judged_work_ids())
-    df["deferred"] = (proceed & (df.gate == "strict") & ~df.strict.fillna(False)
+    df["deferred"] = (proceed & (df.gate == "strict") & ~df.strict.fillna(False).astype(bool)
                       & ~exempt)
     df["deferred_winner"] = (proceed & (df.gate_winner == "strict")
-                             & ~df.strict.fillna(False) & ~exempt)
-    df["exempted"] = (proceed & (df.gate == "strict") & ~df.strict.fillna(False)
+                             & ~df.strict.fillna(False).astype(bool) & ~exempt)
+    df["exempted"] = (proceed & (df.gate == "strict") & ~df.strict.fillna(False).astype(bool)
                       & exempt)
 
     lines = ["| rule | gate | routed (winner) | proceed | strict among proceeds | "
@@ -77,7 +77,7 @@ def main() -> None:
         val = win[win.judged.notna() & (win.outcome == "proceed")]
         vs, vl = val[val.strict == True], val[val.strict == False]  # noqa: E712
         lines.append(
-            f"| `{rule}` | {specs[rule].admission} | {len(win):,} | {len(p):,} | "
+            f"| `{rule}` | {gate([rule])} | {len(win):,} | {len(p):,} | "
             f"{_pct(p.strict.mean())} | {_pct((ended.file == 'extracted').mean())} / "
             f"{_pct((ended.file == 'not_a_replication').mean())} / "
             f"{_pct((ended.file == 'no_original_found').mean())} / "
@@ -96,8 +96,8 @@ def main() -> None:
         "deferred_never_extracted": int(d.file.isna().sum()),
         "validated_deferred_n": int(d.judged.notna().sum()),
         "validated_deferred_not_a_rep": int(d.nar_any.fillna(False).sum()),
-        "validated_proceed_strict_pass": _nar(df[proceed & df.strict.fillna(False)]),
-        "validated_proceed_strict_fail": _nar(df[proceed & ~df.strict.fillna(False)]),
+        "validated_proceed_strict_pass": _nar(df[proceed & df.strict.fillna(False).astype(bool)]),
+        "validated_proceed_strict_fail": _nar(df[proceed & ~df.strict.fillna(False).astype(bool)]),
         "validated_admitted_n": int(df[proceed & ~df.deferred].judged.notna().sum()),
         "validated_admitted_not_a_rep": int(
             df[proceed & ~df.deferred].nar_any.fillna(False).sum()),
