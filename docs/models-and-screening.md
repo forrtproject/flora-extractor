@@ -82,12 +82,18 @@ See the [CLI reference](cli-reference.md) for release selection and other option
 
 ## Evaluation evidence and existing results
 
-**The current DeepSeek + GPT-6 Luna pair has not yet been scored against the
-screening evaluation set.** The earlier DeepSeek + `gpt-5.4-mini` pair measured one
-settled-positive miss and roughly 86–90% hard-negative discard across two runs.
-These were in-sample evaluations, and the gate was selected on the same cases.
-Those figures do not establish the accuracy of the Luna pair or its discard rate
-on the production pool. See the [DeepSeek voter evaluation](../analysis/screening_eval/cheap_voter_2026-08.md)
+**The current DeepSeek + GPT-6 Luna pair was scored in October 2026 on 2,186 labelled
+works** (1,456 positives, 344 hard negatives and 386 curated negatives, including most
+of the earlier screening-evaluation cases). It lost 8 positives and discarded 262 hard
+negatives (76%) and 329 curated negatives (85%). The report,
+[`analysis/jev_eval_2026-10/REPORT_pplx.md`](https://github.com/forrtproject/flora-extractor/blob/de7e4412b9217a12f16c3690ba1ed698635b4a0e/analysis/jev_eval_2026-10/REPORT_pplx.md),
+is on the branch of PR #219, which is not merged. The positives are previously
+identified replications (FLoRA entries, earlier evaluation cases and validated
+pipeline rows), and the curated negatives are earlier-pipeline labels rather than
+human judgements, so these figures do not estimate recall or the discard rate on the
+production pool. On the earlier 390-case set, the DeepSeek + `gpt-5.4-mini` pair
+measured one settled-positive miss and roughly 86–90% hard-negative discard across
+two in-sample runs; see the [DeepSeek voter evaluation](../analysis/screening_eval/cheap_voter_2026-08.md)
 and [v3.3 report](../analysis/screening_eval/report_v33.md).
 
 Existing results can contain older models. The screening generation explicitly
