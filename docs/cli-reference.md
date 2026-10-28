@@ -920,3 +920,26 @@ python -c "import shutil; shutil.rmtree('cache/llm', ignore_errors=True)"
 | `/api/dashboard/supabase-outcomes` | Outcome distribution from validated table |
 | `/api/dashboard/supabase-corrections` | Per-field correction frequency |
 | `/api/dashboard/supabase-drilldown` | Paginated incorrect-DOI table |
+
+
+## Compress the OpenAlex response cache
+
+The OpenAlex cache uses `.json.gz` entries. Readers accept existing `.json` files;
+new writes compress automatically. Logical keys and JSON payloads are unchanged.
+Cache sync publishes the same plain JSON archive members and shard names, so older
+collaborators can still pull them. Local pulls store OpenAlex entries compressed.
+Use `shared.cache.read_json()` and `cache_exists()` for path-based cache reads;
+reading a `.json` path directly does not find its gzip sibling.
+
+To reclaim space in an existing checkout, stop its cache-writing pipeline jobs and
+run from the project root:
+
+```bash
+.venv/bin/python -m shared.compress_cache                 # count only
+.venv/bin/python -m shared.compress_cache --apply --workers 2
+```
+
+The migration streams up to `--workers` files at once (one to four; two by default). Each gzip is decompressed and
+checked against the original SHA-256 before the unchanged plain source is removed.
+Existing gzip entries with different contents stop the migration. A restart skips
+completed files; plain and compressed entries may coexist throughout the run.

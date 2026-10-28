@@ -301,6 +301,28 @@ def test_parse_parts_names_the_known_parts():
         cs.parse_parts("nonsense")
 
 
+def test_a_push_refuses_a_part_symlinked_onto_remote_storage(
+        _isolated_cache, monkeypatch, capsys):
+    """Reading a mounted part costs a remote request per file; only a link triggers it."""
+    (_isolated_cache / "mounted").mkdir()
+    (_isolated_cache / "pdfs").symlink_to(_isolated_cache / "mounted")
+    monkeypatch.setattr(cs.PARTS["pdfs"], "directory", _isolated_cache / "pdfs")
+    monkeypatch.setattr(cs, "push_cache", lambda *a, **k: pytest.fail("pushed"))
+    monkeypatch.setattr("sys.argv", ["cache_sync", "--push", "--parts", "llm,pdfs"])
+    with pytest.raises(SystemExit) as exc:
+        cs.main()
+    assert exc.value.code == 2
+    assert "--push --parts llm\n" in capsys.readouterr().err
+    assert [p.name for p in cs.linked_parts(cs.parse_parts("llm,pdfs"))] == ["pdfs"]
+
+    # The suggested command is the same invocation minus the linked part.
+    monkeypatch.setattr("sys.argv", ["cache_sync", "--push", "--parts", "llm,pdfs",
+                                     "--repo", "me/other", "--force", "--dry-run"])
+    with pytest.raises(SystemExit):
+        cs.main()
+    assert "--push --parts llm --repo me/other --force --dry-run\n" in capsys.readouterr().err
+
+
 # ---------------------------------------------------------------------------
 # The abstract store is pushed WHOLE, so its guard needs a remote size it trusts
 # ---------------------------------------------------------------------------

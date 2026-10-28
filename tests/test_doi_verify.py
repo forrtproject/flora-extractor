@@ -182,6 +182,21 @@ class TestMetadataMatches:
         assert bool(metadata_matches(meta, TITLE, "Schindler", claimed_year)) is expected
 
 
+    @pytest.mark.parametrize("registry_title", [
+        f"Author Correction: {TITLE}",
+        f"{TITLE} - ERRATUM",
+        f"Faculty Opinions recommendation of {TITLE}",
+        f"Author response: {TITLE}",
+    ])
+    def test_a_notice_about_the_paper_is_not_the_paper(self, registry_title):
+        from shared.doi_verify import metadata_matches
+        meta = {"registered": True, "title": registry_title,
+                "first_author_surname": "Schindler", "year": 2019}
+        assert not metadata_matches(meta, TITLE, "Schindler", 2019)
+        # ...unless the row itself names the notice.
+        assert metadata_matches(meta, registry_title, "Schindler", 2019)
+
+
 CROSSREF_SEARCH = {
     "message": {"items": [{
         "DOI": "10.1111/psyp.13449",
@@ -209,6 +224,20 @@ class TestResolveDoiByMetadata:
             hit = resolve_doi_by_metadata("Emotion word processing in the brain", "Schindler", 2019)
         assert hit["doi"] == "10.1111/psyp.13449"
         assert hit["source"] == "crossref"
+
+    def test_a_correction_notice_hit_is_skipped_for_the_article(self):
+        from shared.doi_verify import resolve_doi_by_metadata
+        item = CROSSREF_SEARCH["message"]["items"][0]
+        notice = dict(item, DOI="10.1111/psyp.99999",
+                      title=["Correction: Emotion word processing in the brain"])
+        def fake_get(url, **kw):
+            if "crossref.org" in url:
+                return _resp(200, {"message": {"items": [notice, item]}})
+            return _resp(200, {"results": []})
+        with _patch_get(side_effect=fake_get):
+            hit = resolve_doi_by_metadata("Emotion word processing in the brain",
+                                          "Schindler", 2019)
+        assert hit["doi"] == "10.1111/psyp.13449"
 
     def test_low_similarity_rejected(self):
         from shared.doi_verify import resolve_doi_by_metadata
@@ -523,6 +552,20 @@ class TestVerifyAndCorrect:
         assert out["doi_o_verification"] == "corrected"
         assert out["doi_o"] == "10.1111/psyp.13449"
         assert "10.1016/j.biopsycho.2015.07.014" in out["evidence_note"]
+
+    def test_a_review_object_doi_is_replaced_by_its_article(self):
+        # eLife author response carries the article's title under its own DOI.
+        from shared import doi_verify as dv
+        meta = {"registered": True, "title": self.TITLE, "type": "",
+                "first_author_surname": "Schindler", "year": 2019, "source": "crossref"}
+        replacement = {"found": True, "doi": "10.7554/elife.63751", "title": self.TITLE,
+                       "year": 2019, "openalex_id": "", "source": "crossref"}
+        with patch.object(dv, "fetch_doi_metadata", return_value=meta), \
+             patch.object(dv, "resolve_doi_by_metadata", return_value=replacement):
+            out = dv.verify_and_correct("10.7554/elife.63751.sa2",
+                                        self.TITLE, self.AUTHOR, self.YEAR)
+        assert out["doi_o_verification"] == "corrected"
+        assert out["doi_o"] == "10.7554/elife.63751"
 
     def test_corrected_via_yearless_retry(self):
         # year_o was inherited from the wrong DOI (2015), the real original is

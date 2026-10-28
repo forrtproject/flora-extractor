@@ -36,7 +36,7 @@ import pandas as pd
 from shared.config import (
     OA_CACHE_DIR, OA_XML_CACHE_DIR, PARSE_CACHE_DIR, PDF_CACHE_DIR, log,
 )
-from shared.cache import write_json
+from shared.cache import cache_exists, read_json, write_json
 from shared.llm_client import _clean_study_numbers, provider_for
 from shared.token_usage import TokenBudgetExhausted
 from shared.openalex_client import OpenAlexQuotaExhausted
@@ -647,11 +647,10 @@ def _cached_oa_xml(openalex_id: str) -> "dict | None":
     if not oa_id.startswith("W"):
         oa_id = f"W{oa_id}"
     cache_file = OA_XML_CACHE_DIR / f"oa_xml_{cache_key(oa_id)}.json"
-    if not cache_file.exists():
+    if not cache_exists(cache_file):
         return None
     try:
-        with cache_file.open(encoding="utf-8") as fh:
-            cached = json.load(fh)
+        cached = read_json(cache_file)
     except Exception:
         return None
     return cached if openalex_xml_has_content(cached) else None
@@ -676,11 +675,10 @@ def _cached_epmc_xml(doi_r: str) -> "dict | None":
     if not doi:
         return None
     search_file = OA_CACHE_DIR / f"epmc_{cache_key(doi)}.json"
-    if not search_file.exists():
+    if not cache_exists(search_file):
         return None
     try:
-        with search_file.open(encoding="utf-8") as fh:
-            data = json.load(fh)
+        data = read_json(search_file)
         pmc_id = next(
             (str(item.get("pmcid", "") or "")
              for item in ((data.get("resultList") or {}).get("result") or [])
@@ -691,11 +689,10 @@ def _cached_epmc_xml(doi_r: str) -> "dict | None":
         return None
 
     doc_file = OA_XML_CACHE_DIR / f"epmc_xml_{cache_key(pmc_id)}.json"
-    if not doc_file.exists():
+    if not cache_exists(doc_file):
         return None
     try:
-        with doc_file.open(encoding="utf-8") as fh:
-            cached = json.load(fh)
+        cached = read_json(doc_file)
     except Exception:
         return None
     return cached if epmc_xml_has_content(cached) else None
