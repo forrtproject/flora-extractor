@@ -14,12 +14,12 @@ compares each pair, and releases a row only when three conditions hold:
    took a median of 14 s (range 8–49 s), with about 27k input and 2.3k output tokens.
    At API list prices the first 12 calls would have cost $2.86; on the subscription
    the incremental cost is $0.
-2. **8 of the 22 rows were released: 5 correct, 2 errors and 1 undetermined.** The
-   check held 10 of the 12 rows humans judged wrong, and 4 of the 9 they judged correct.
+2. **9 of the 22 rows were released: 6 correct, 2 errors and 1 undetermined.** The
+   check held 10 of the 12 rows humans judged wrong, and 3 of the 9 they judged correct.
 
    | Human verdict (pair unit) | Released | Held |
    | --- | ---: | ---: |
-   | correct | 5 | 4 |
+   | correct | 6 | 3 |
    | error | 2 | 10 |
    | undetermined | 1 | 0 |
 
@@ -32,30 +32,46 @@ compares each pair, and releases a row only when three conditions hold:
    records would not separate them either: a third released OSF record (the
    religious-cognition replication) is validated as correct.
 4. **What held the 10 errors:**
-   - In five, the originals did not pair off: genetic-association papers (6 vs 9,
-     2 vs 6), a psychological-distance RRR (3 vs 2), a paper where the pipeline
-     shipped a background citation as a second original (2 vs 1), and an fMRI study (2
-     vs 3).
-   - In two, the paper was abstract-only and the blind coder could name no original.
+   - In six, the originals did not pair off: three genetic-association papers (6 vs 9,
+     2 vs 6, 11 vs 9), a psychological-distance RRR (3 vs 2), a paper where the pipeline
+     shipped a background citation as a second original (2 vs 1), and an fMRI study
+     (2 vs 3).
+   - In three, the blind coder was not confident of its outcome (see finding 6).
    - One, a reply to a commentary, the blind coder called `not_a_replication`; humans
      rejected it as well.
-   - In two, the blind coder was not confident of its outcome (see finding 6).
-5. **What held the 4 correct rows:**
-   - Two abstract-only rows (no document, no reference list), on which the blind coder
-     could not name the original.
-   - The Ankyrin paper, where the blind coder names other originals for 2 of its 3
-     rows. Those two rows are not validated, so the hold may be right.
-   - One row where the outcome was `failed` against the blind coder's unconfident
-     `mixed`.
+5. **What held the 3 correct rows.** Each hold is a defensible call rather than a
+   fault of the check:
+   - **Ankyrin.** The validated row (Athanasiu 2010) agrees. For the paper's other two
+     originals, the blind coder names "the two previous GWA studies" (Baum 2008,
+     Ferreira 2008), and the pipeline shipped Schulze 2009 and Lee 2011. Releasing per
+     pair instead of per work would release this row, but it would also release two
+     errors (stroke loci, reward fMRI), so holding the whole work is the better rule.
+   - **Antidepressants and autism/ADHD.** The original found ADHD risk and no autism
+     risk; the replication found neither. Under the codebook ("no effect where the
+     original also found none is success") the blind coder read this as `mixed`; the
+     pipeline and humans said `failed`. The blind coder marked its own answer
+     unconfident. This is a codebook boundary case.
+   - **Translation and vocabulary.** The abstract cites only "earlier research", and two
+     references fit (Prince 1996; Laufer & Shmueli 1997). The codebook says to name no
+     original when two records fit equally well. The pipeline's pick, Prince, was
+     right, but it was an inference.
 6. **Requiring a confident blind outcome was added after batch 2, so it is
    post hoc.** In batch 2, the released error with a human-corrected outcome
    (Johnson et al., 2002, `failed` → `mixed`) was the one where the blind coder had
-   marked its own outcome unconfident. Across both batches, the rule held 2 released
-   errors and no correct row. It needs confirming on rows it was not chosen on.
-7. **One held correct row was a matching bug, now fixed.** The blind coder gave
-   Wilkins and Kaiser's (2014) title with its subtitle, so the title Jaccard fell to
-   0.5. Title similarity now also counts the share of the shorter title found in the
-   longer one.
+   marked its own outcome unconfident. Across both batches, the rule held 3 errors that
+   would otherwise have been released, and no correct row. It needs confirming on rows
+   it was not chosen on.
+7. **Two fixes after batch 2 each released a correct row.**
+   - A matching bug: the blind coder gave Wilkins and Kaiser's (2014) title with its
+     subtitle, so the title Jaccard fell to 0.5. Title similarity now also counts the
+     share of the shorter title found in the longer one.
+   - The blind coder now gets the work's OpenAlex reference list (OpenCitations as
+     fallback) when the document supplies none. This is the list the pipeline's
+     reference-list rung reads, so it is an input, not the pipeline's answer. With it,
+     the bureaucracy paper's original is named by DOI, and the azoospermia paper's
+     original is now paired. The latter is held for an unconfident outcome, which
+     humans corrected. Of the 97 validated records without a document, 82 have a cached
+     OpenAlex list; 15 have none from either source.
 8. **Quote heuristic.** No quote from either coder was fabricated: every one was found
    in the source text (87–100% of its 4-word sequences; below 100% only through
    punctuation introduced by the parse). Where the two quotes pointed at different
@@ -81,10 +97,10 @@ compares each pair, and releases a row only when three conditions hold:
   side has the extra one. A different count is the clearest sign of a misread paper.
   The 200-record run will show how often it holds correct works.
 - **A confident blind outcome is required for release** (post hoc; finding 6).
-- **Abstract-only rows are always held**, because the blind coder sees no reference list
-  and cannot name an original that the abstract does not cite. That accounted for 2 of
-  the 4 correct rows held. Giving the coder the OpenAlex reference list (an input, not
-  the pipeline's answer) should fix this; it changes the prompt for these rows only.
+- **The metadata reference list is unordered and has no in-text citations.** The blind
+  coder can therefore name an original only when the abstract identifies it well
+  enough to pick one entry. Where two entries fit, it names none (translation and
+  vocabulary), and the row goes to a human.
 - **Effort `high`; the document is capped at 150,000 characters, with its parsed
   reference list appended.** The parse stores the reference list as its own field. The
   pipeline sends it as a separate keyed block, but my script's first version sent only
@@ -170,10 +186,10 @@ validated reproduction was available.
 | cbd7583d Nurmsoo & Bloom (OSF) | 1 | error: rejected | released | blind coder: completed replication |
 | a7126e0b fast-mapping poster (OSF) | 1 | error: rejected | held | outcome not confident |
 | 429086a5 hormonal contraception | 1 | correct (sibling reassignment) | released | 3 vs 3 pair off |
-| 55ff05c7 baldness SNPs | 1 | error: original + outcome | held | no full text; 11 vs 1 |
+| 55ff05c7 baldness SNPs | 1 | error: original + outcome | held | no full text; 11 vs 9 |
 | 8fd66ead norm theory | 1 | undetermined (sibling; outcome unscored) | released | 2 vs 2 pair off |
 | d61206a5 psychological distance RRR | 1 | error: original (SSRN version) | held | 3 vs 2 |
-| 0bfdb9f5 azoospermia | 1 | error: outcome → mixed | held | no full text; no original named |
+| 0bfdb9f5 azoospermia | 1 | error: outcome → mixed | held | outcome not confident |
 | b3452ec1 stroke loci | 1 | error: outcome → mixed | held | 6 vs 9 |
 | 2fd9b954 ulcerative colitis loci | 1 | error: outcome → successful | held | 2 vs 6 |
 | 627bd4e4 Ankyrin | 1 | correct | held | 1 of 3 originals pairs |
@@ -186,8 +202,8 @@ validated reproduction was available.
 | 3d69a538 reward fMRI (OSF) | 2 | error: rejected | held | 2 vs 3 |
 | cadbfc8e religious cognition (OSF) | 2 | correct | released | — |
 | dd021dfc antidepressants and autism | 2 | correct | held | `failed` vs unconfident `mixed` |
-| e3361013 representative bureaucracy | 2 | correct | held | abstract only; no original named |
-| 54c1c5b5 translation and vocabulary | 2 | correct | held | abstract only; no original named |
+| e3361013 representative bureaucracy | 2 | correct | released | original named by DOI from the reference list |
+| 54c1c5b5 translation and vocabulary | 2 | correct | held | two references fit; none named |
 | 80269c6d Wilkins & Kaiser (OSF) | 2 | correct | released | (matching bug, fixed) |
 
 ## Files and rerun
