@@ -63,6 +63,7 @@ import datetime
 import contextlib
 import gzip
 import hashlib
+import io
 import json
 import shutil
 import sqlite3
@@ -284,17 +285,17 @@ def pack_shard(files: Iterable[Path], dest: Path, *,
         for path in sorted(files, key=lambda p: _entry_name(p, compressed_json)):
             compressed = compressed_json and path.name.endswith(".json.gz")
             with (gzip.open(path, "rb") if compressed else open(path, "rb")) as handle:
+                # One entry, never the shard, is held in memory: a gzip stream's size
+                # is known only by decompressing it, and rewinding decompresses again.
+                body = io.BytesIO(handle.read()) if compressed else handle
                 info = tarfile.TarInfo(name=_entry_name(path, compressed_json))
-                if compressed:
-                    info.size = handle.seek(0, os.SEEK_END)
-                    handle.seek(0)
-                else:
-                    info.size = os.fstat(handle.fileno()).st_size
+                info.size = (body.getbuffer().nbytes if compressed
+                             else os.fstat(handle.fileno()).st_size)
                 info.mtime = 0
                 info.uid = info.gid = 0
                 info.uname = info.gname = ""
                 info.mode = 0o644
-                tar.addfile(info, handle)
+                tar.addfile(info, body)
     return _file_digest(dest)
 
 
@@ -887,7 +888,10 @@ def main() -> None:
             "`cloud-data-link` into the R2 mount), and a push reads EVERY file in it: "
             "one remote request per file plus a download of the whole directory.\n"
             + (f"Push the rest:  .venv/bin/python -m shared.cache_sync --push --parts "
-               f"{','.join(rest)}\n" if rest else "")
+               f"{','.join(rest)}"
+               + (f" --repo {args.repo}" if args.repo else "")
+               + (" --force" if args.force else "")
+               + (" --dry-run" if args.dry_run else "") + "\n" if rest else "")
             + "Push the linked part from a machine that holds it locally — or pass "
             "--allow-linked-parts to read it through the link anyway.\n"))
 

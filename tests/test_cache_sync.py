@@ -315,6 +315,13 @@ def test_a_push_refuses_a_part_symlinked_onto_remote_storage(
     assert "--push --parts llm\n" in capsys.readouterr().err
     assert [p.name for p in cs.linked_parts(cs.parse_parts("llm,pdfs"))] == ["pdfs"]
 
+    # The suggested command is the same invocation minus the linked part.
+    monkeypatch.setattr("sys.argv", ["cache_sync", "--push", "--parts", "llm,pdfs",
+                                     "--repo", "me/other", "--force", "--dry-run"])
+    with pytest.raises(SystemExit):
+        cs.main()
+    assert "--push --parts llm --repo me/other --force --dry-run\n" in capsys.readouterr().err
+
 
 # ---------------------------------------------------------------------------
 # The abstract store is pushed WHOLE, so its guard needs a remote size it trusts

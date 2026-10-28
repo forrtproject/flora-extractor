@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import stat
 import tempfile
 from typing import BinaryIO
 
@@ -34,12 +35,15 @@ def _digest(handle: BinaryIO) -> str:
 def compress_entry(source: Path) -> tuple[int, int]:
     """Return original/stored bytes; retain the original on any verification error."""
     before = _signature(source)
+    mode = stat.S_IMODE(source.stat().st_mode)
     target = source.with_suffix('.json.gz')
     fd, name = tempfile.mkstemp(prefix=target.name + '.', suffix='.tmp', dir=source.parent)
     tmp = Path(name)
     try:
         original = hashlib.sha256()
         with os.fdopen(fd, 'wb') as out:
+            # mkstemp creates 0600 and os.link keeps it; the entry keeps its own mode.
+            os.fchmod(out.fileno(), mode)
             with gzip.GzipFile(filename='', fileobj=out, mode='wb', compresslevel=6, mtime=0) as gz:
                 with source.open('rb') as src:
                     for chunk in iter(lambda: src.read(1 << 20), b''):

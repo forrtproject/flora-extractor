@@ -937,7 +937,7 @@ run from the project root:
 .venv/bin/python -m shared.compress_cache --apply --workers 2
 ```
 
-The migration streams at most two files at once. Each gzip is decompressed and
+The migration streams up to `--workers` files at once (one to four; two by default). Each gzip is decompressed and
 checked against the original SHA-256 before the unchanged plain source is removed.
 Existing gzip entries with different contents stop the migration. A restart skips
 completed files; plain and compressed entries may coexist throughout the run.

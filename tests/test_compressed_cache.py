@@ -116,10 +116,12 @@ def test_migration_preserves_original_bytes_and_resumes(tmp_path: Path) -> None:
     path = tmp_path / 'answer.json'
     raw = b'{ "spacing": [1, 2], "unicode": "\\u00e9" }\n'
     path.write_bytes(raw)
+    path.chmod(0o644)
     original, stored = compress_entry(path)
     assert original == len(raw)
     assert not path.exists()
     assert gzip.decompress((tmp_path / 'answer.json.gz').read_bytes()) == raw
+    assert (tmp_path / 'answer.json.gz').stat().st_mode & 0o777 == 0o644
     path.write_bytes(raw)
     assert compress_entry(path) == (original, stored)
 
