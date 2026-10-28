@@ -112,7 +112,8 @@ retire the 857 shipped deferred works as `screen_deferred`.
 The inputs this report was computed from are in `out/`. `pull.py` OVERWRITES them: it
 reads the routing store, Supabase and the exported CSVs (writing nothing to any of
 them), and a re-pull against today's store and tables gives today's inputs, not
-these. `measure.py` alone re-derives the tables from `out/`:
+these. `measure.py` re-derives the tables from `out/` plus the gate assignments in
+the committed spec bundle and `data/human_judged.csv`:
 
 ```bash
 .venv/bin/python -m analysis.rule_gate_2026-10.pull --store cache/engine/engine.duckdb --data data --release 61f07fd07f19
