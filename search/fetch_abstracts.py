@@ -1,5 +1,5 @@
 """
-fetch_abstracts.py — The six abstract sources, their order, and the contract
+fetch_abstracts.py — The seven abstract sources, their order, and the contract
 that keeps a transient failure from being recorded as a definitive miss.
 
 This module is a library of phase runners, not a command. Its one consumer is
@@ -7,9 +7,9 @@ This module is a library of phase runners, not a command. Its one consumer is
 and decides where the recovered text lands (an overlay chunk). Everything about
 HOW an abstract is fetched lives here so there is exactly one copy of it.
 
-**Two pathways, because the six sources do not cost the same thing.** Two of them
+**Two pathways, because the seven sources do not cost the same thing.** Two of them
 answer about many identifiers per request and are neither keyed nor quota'd, so
-they can be run over a whole corpus up front; the other four are one request per
+they can be run over a whole corpus up front; the other five are one request per
 identifier, or gated by a key, an entitlement or a weekly quota, so they are worth
 spending only on the rows that are still missing text AND that some caller
 actually needs. `filter.engine.backfill` runs them as two phases in that order —
@@ -64,7 +64,17 @@ and only for a worklist that matters:
                         sustained at a 14.5% hit rate, vs CrossRef's ~3/sec at ~0.6%.
   5. CrossRef by DOI  — one DOI per call; CrossRef has no batch-by-DOI-list
                         endpoint, so its cost is linear in the worklist.
-  6. Scopus by DOI    — Elsevier Abstract Retrieval API, last because it is the
+  6. Springer Nature Meta API — Springer Nature DOIs only (SPRINGER_NATURE_PREFIXES
+                        in shared/utils.py), several DOIs OR-ed into one query;
+                        needs SPRINGER_META_API_KEY (free). Springer does not
+                        deposit abstracts to CrossRef, so OpenAlex and CrossRef
+                        miss them, and Europe PMC and S2 cover them only in part:
+                        on the 31 benchmark Springer papers all four left empty
+                        (2026-10-28), it returned an abstract for all 31. After S2
+                        and CrossRef because the basic plan allows 500 requests a
+                        day — spend it only on what the unmetered sources could not
+                        answer — and before Scopus, which is quota'd by the week.
+  7. Scopus by DOI    — Elsevier Abstract Retrieval API, last because it is the
                         most gated of all: an ELSEVIER_API_KEY, an IP-bound
                         entitlement, and a ~10k requests/week quota, so a caller
                         must cap its Scopus phase.
@@ -79,7 +89,8 @@ should be dropped from a worklist entirely — they have no abstract to find, so
 every phase would spend calls confirming that forever.
 
 Results go to `shared/abstract_store.py` — one SQLite row per identifier
-(oa:<id>, epmc:10.x/y, doi:10.x/y, s2:10.x/y, scopus:10.x/y, osf:<id>). Each phase
+(oa:<id>, epmc:10.x/y, doi:10.x/y, s2:10.x/y, springer:10.x/y, scopus:10.x/y,
+osf:<id>). Each phase
 owns its own namespace, so adding one never invalidates another's progress, and
 the store is shared across callers on purpose: a DOI one run already asked Europe
 PMC about is answered for free next time, and a miss recorded once is a miss
@@ -106,6 +117,7 @@ import requests
 from shared import abstract_store
 from shared.config import (
     ELSEVIER_INSTTOKEN, EPMC_BATCH_SIZE, EPMC_RATE_SEC, OA_BATCH_SIZE,
+    SPRINGER_RATE_SEC,
     OSF_TOKEN, RESEARCHER_EMAIL, S2_BATCH_RATE_SEC, S2_BATCH_SIZE, log,
 )
 from shared.openalex_keys import headers as oa_headers, is_budget_refusal, rotate_key
@@ -129,6 +141,12 @@ _DOI_PREFIX_RE = re.compile(r"(10\.\d{4,9})/")
 # and stop a phase gracefully — the host is throttling us; rerun to resume the
 # un-checkpointed rows. Mirrors how the Scopus phase stops on quota exhaustion.
 TRANSIENT_BREAKER_LIMIT = 25
+
+# What a batch fetcher returns, instead of a result dict or None, when the host
+# REFUSED the request — a rejected key, a spent daily quota. None means "this batch
+# failed, try the next"; this means "every remaining batch will be refused too", so
+# the phase ends at once and nothing is recorded.
+PHASE_STOP = object()
 
 # One session for every host, deliberately carrying NO Authorization header. The
 # OpenAlex key must never leak to CrossRef, which rejects an unknown Bearer token
@@ -179,7 +197,8 @@ def _already_resolved(oa_id: str, doi_r: str, found_index: set[str]) -> bool:
     if oa_id and f"oa:{oa_id}" in found_index:
         return True
     return bool(doi) and any(
-        f"{p}:{doi}" in found_index for p in ("epmc", "doi", "s2", "scopus", "osf"))
+        f"{p}:{doi}" in found_index
+        for p in ("epmc", "doi", "s2", "springer", "scopus", "osf"))
 
 
 # ---------------------------------------------------------------------------
@@ -521,7 +540,110 @@ def _fetch_s2_batch(dois: list[str], s2_key: str) -> Optional[dict[str, Optional
 
 
 # ---------------------------------------------------------------------------
-# Source 6: Elsevier Scopus by DOI — targeted pathway, last (weekly quota)
+# Source 6: Springer Nature Meta API by DOI — targeted pathway, Springer DOIs only
+# ---------------------------------------------------------------------------
+
+_SPRINGER_META_API = "https://api.springernature.com/meta/v2/json"
+# The basic plan's page ceiling: `p=25` answers, `p=100` is refused with HTTP 403
+# "premium feature" (measured 2026-10-28). The batch leaves 5 records of headroom
+# for a DOI that matches twice; a batch whose matches overflow the page is refused
+# rather than truncated, as Europe PMC's is. Constants, not tunables: they are a
+# property of the API plan, and a larger batch would only be refused.
+_SPRINGER_PAGE_SIZE = 25
+SPRINGER_BATCH_SIZE = 20
+
+
+def _flatten_springer_abstract(value) -> Optional[str]:
+    """The Meta API's `abstract` as plain text.
+
+    Usually a string; a structured abstract arrives as nested dicts/lists of
+    headings and paragraphs, whose string leaves are joined in document order.
+    """
+    parts: list[str] = []
+
+    def walk(node) -> None:
+        if isinstance(node, str):
+            text = _JATS_RE.sub("", node).strip()
+            if text:
+                parts.append(text)
+        elif isinstance(node, dict):
+            for child in node.values():
+                walk(child)
+        elif isinstance(node, list):
+            for child in node:
+                walk(child)
+
+    walk(value)
+    return "\n".join(parts) or None
+
+
+def _fetch_springer_batch(dois: list[str], api_key: str):
+    """Abstracts for up to SPRINGER_BATCH_SIZE Springer Nature DOIs in one query.
+
+    The Meta API takes a boolean query, so the batch is `(doi:"a" OR doi:"b" ...)`
+    and the join is by each record's `doi` — results are unordered. Returns
+    `{doi: abstract | None}` for an answered batch (a DOI the response does not
+    carry is a definitive miss), None for a transient failure (nothing recorded),
+    or PHASE_STOP when the host refused us:
+
+      401/403 — a rejected key, or a plan feature we do not have. Neither says
+                anything about the record, and both will refuse every remaining
+                batch, so they end the phase rather than becoming misses.
+      429     — at SPRINGER_RATE_SEC the phase stays under the plan's 100
+                requests/minute, so a 429 is the 500/day being spent. Retrying
+                it would only spend time.
+    """
+    query = "(" + " OR ".join(f'doi:"{d}"' for d in dois) + ")"
+    params = {"q": query, "api_key": api_key, "p": _SPRINGER_PAGE_SIZE}
+
+    def send():
+        # The key travels in the query string, and a network exception's message
+        # quotes the URL — so it is redacted before _request_with_retry logs it.
+        try:
+            return _SESSION.get(_SPRINGER_META_API, params=params, timeout=60)
+        except requests.RequestException as exc:
+            raise requests.RequestException(
+                str(exc).replace(api_key, "<redacted>")) from None
+
+    resp, status = _request_with_retry(
+        "Springer Meta batch", send,
+        stop_on=lambda r: r.status_code == 429,
+    )
+    if status == "transient":
+        return None
+    if resp.status_code == 429:
+        log.warning("Springer Meta API answered 429 — treating the daily quota (500 "
+                    "requests on the basic plan) as spent; rerun tomorrow to resume.")
+        return PHASE_STOP
+    if resp.status_code in (401, 403):
+        # resp.text echoes the reason, never the key (which travels as a param).
+        log.warning("Springer Meta API refused the request (HTTP %d) — stopping the "
+                    "phase rather than recording misses it cannot establish. Check "
+                    "SPRINGER_META_API_KEY. %s", resp.status_code, resp.text[:200])
+        return PHASE_STOP
+    if resp.status_code >= 400:
+        log.warning("Springer Meta batch error (batch not checkpointed): HTTP %d — %s",
+                    resp.status_code, resp.text[:200])
+        return None
+
+    payload = resp.json()
+    records = payload.get("records") or []
+    total = sum(int((r or {}).get("total") or 0) for r in (payload.get("result") or []))
+    if total > len(records):
+        log.warning("Springer Meta batch returned %d of %d matches (page truncated; "
+                    "batch not checkpointed).", len(records), total)
+        return None
+
+    result: dict[str, Optional[str]] = {d: None for d in dois}
+    for record in records:
+        doi = clean_doi(str(record.get("doi") or ""))
+        if doi in result and not result[doi]:
+            result[doi] = _flatten_springer_abstract(record.get("abstract"))
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Source 7: Elsevier Scopus by DOI — targeted pathway, last (weekly quota)
 # ---------------------------------------------------------------------------
 
 def _parse_scopus_abstract(payload: dict) -> Optional[str]:
@@ -874,7 +996,7 @@ def _fetch_osf_wiki(guid: str, headers: dict) -> tuple[Optional[str], str]:
 
 
 # ---------------------------------------------------------------------------
-# Phase runners — one contract for all six sources
+# Phase runners — one contract for all seven sources
 # ---------------------------------------------------------------------------
 
 def _phase_targets(worklist: list[dict], namespace: str, done: set[str],
@@ -900,7 +1022,8 @@ def _run_batch_phase(label: str, namespace: str, ids: list[str], batch_size: int
     """Run one batched phase over *ids*; return how many abstracts it recovered.
 
     *fetch* takes the uncached ids of one batch and returns {id: abstract | None},
-    or None for a whole-batch failure. That distinction is the contract: a failed
+    None for a whole-batch failure, or PHASE_STOP when the host refused the request
+    (the phase ends; nothing in the batch is recorded). That distinction is the contract: a failed
     batch leaves its ids un-cached and un-checkpointed so a later run retries them,
     while an id absent from a SUCCESSFUL response is a definitive miss, cached as
     ``__none__`` and checkpointed so no later run pays for it again.
@@ -927,6 +1050,10 @@ def _run_batch_phase(label: str, namespace: str, ids: list[str], batch_size: int
         if uncached:
             time.sleep(rate_sec)
             fetched = fetch(uncached)
+            if fetched is PHASE_STOP:
+                log.warning("%s: stopping phase (%d rows done, %d found).",
+                            label, batch_start, found)
+                break
             if fetched is None:
                 batch_transient = True
                 consecutive_transient += 1
@@ -976,7 +1103,7 @@ def _run_item_phase(label: str, namespace: str, dois: list[str], rate_sec: float
     TRANSIENT_BREAKER_LIMIT transient failures in a row stop the phase too.
 
     Only ``empty`` is ever written. ``empty`` therefore has one meaning across all
-    six sources: the source ANSWERED, and its answer was that it holds no abstract
+    seven sources: the source ANSWERED, and its answer was that it holds no abstract
     for this identifier. A response that was refused rather than answered — 401,
     403, a rate limit, a network failure — is never it.
     """

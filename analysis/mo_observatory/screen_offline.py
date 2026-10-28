@@ -55,7 +55,7 @@ COLS = ("doi_r", "title_r", "abstract_chars", "abstract_source", "screen_verdict
 
 # The namespaces the recovery waterfall writes, best first. `oa` is the OpenAlex
 # abstract the work already had; the rest are what the waterfall went and got.
-SOURCES = ("oa", "epmc", "doi", "scopus", "s2", "osf")
+SOURCES = ("oa", "epmc", "doi", "springer", "scopus", "s2", "osf")
 
 
 def text_for(doi: str, oa_id: str) -> tuple[str, str]:

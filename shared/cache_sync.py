@@ -89,6 +89,7 @@ from shared.config import (
     PARSE_CACHE_DIR,
     PDF_CACHE_DIR,
     S2_API_KEY,
+    SPRINGER_META_API_KEY,
     log,
 )
 from shared.hf import (
@@ -175,6 +176,7 @@ PARTS[ABSTRACTS_PART] = Part(ABSTRACTS_PART, ABSTRACT_DB_PATH.parent, "", 0,
 _GATED_NAMESPACES = {
     "scopus": "ELSEVIER_API_KEY",
     "s2": "S2_API_KEY",
+    "springer": "SPRINGER_META_API_KEY",
     "osf": "OSF_TOKEN",
 }
 
@@ -185,6 +187,7 @@ def capabilities() -> dict[str, bool]:
     """Which gated abstract sources THIS machine is configured for."""
     configured = {"ELSEVIER_API_KEY": bool(ELSEVIER_API_KEY),
                   "S2_API_KEY": bool(S2_API_KEY),
+                  "SPRINGER_META_API_KEY": bool(SPRINGER_META_API_KEY),
                   "OSF_TOKEN": bool(OSF_TOKEN)}
     return {ns: configured[var] for ns, var in _GATED_NAMESPACES.items()}
 

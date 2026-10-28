@@ -587,3 +587,20 @@ def reconstruct_abstract(inverted_index: "dict | None") -> "str | None":
         for pos in pos_list:
             positions[pos] = word
     return " ".join(positions[k] for k in sorted(positions)) if positions else None
+
+
+# DOI registrants whose works the Springer Nature APIs (Meta, Open Access) index.
+# Kept to the prefixes this corpus actually holds — measured 2026-10-28 over
+# data/extracted.csv (doi_r / doi_o rows): 10.1007 Springer 216/471, 10.1038 Nature
+# 146/596, 10.1186 BMC 161/83, 10.3758 Psychonomic Society 79/187, 10.1057 Palgrave
+# 5/14 — and each confirmed indexed by a live Meta API query the same day. Left out:
+# 10.1140 (EPJ, 0/1) and 10.1365 (0/0), indexed but absent here, and 10.1023 (legacy
+# Kluwer, 5/31), whose probed record the Meta API did not return. Any other DOI is a
+# call whose answer is known before it is made.
+SPRINGER_NATURE_PREFIXES = frozenset({"10.1007", "10.1038", "10.1057", "10.1186", "10.3758"})
+
+
+def is_springer_nature_doi(doi: str) -> bool:
+    """True when *doi* is on a registrant the Springer Nature APIs answer about."""
+    doi = clean_doi(doi)
+    return bool(doi) and doi.split("/", 1)[0] in SPRINGER_NATURE_PREFIXES

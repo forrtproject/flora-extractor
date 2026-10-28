@@ -158,6 +158,9 @@ ELSEVIER_API_KEY = os.getenv("ELSEVIER_API_KEY", "")
 # CORE (core.ac.uk) API v3 key — the CORE acquisition tier is skipped without one,
 # because the v3 search answers anonymous callers with 429.
 CORE_API_KEY = os.getenv("CORE_API_KEY", "").strip()
+# Springer Nature Meta API key (free, https://dev.springernature.com/) — the abstract
+# backfill's `springer` source is skipped without it.
+SPRINGER_META_API_KEY = os.getenv("SPRINGER_META_API_KEY", "").strip()
 # An institutional token grants Scopus entitlement off the subscribing network;
 # without it Elsevier entitlement is IP-bound (campus network / VPN).
 ELSEVIER_INSTTOKEN = os.getenv("ELSEVIER_INSTTOKEN", "").strip()
@@ -444,6 +447,8 @@ EPMC_RATE_SEC      = float(os.getenv("EPMC_RATE_SEC", "0.4"))
 CROSSREF_RATE_SEC  = float(os.getenv("CROSSREF_RATE_SEC",  "0.1"))
 S2_RATE_SEC        = float(os.getenv("S2_RATE_SEC",        "0.5"))
 SCOPUS_RATE_SEC    = float(os.getenv("SCOPUS_RATE_SEC",    "1.0"))  # Elsevier: ~1 req/sec
+# Springer Nature Meta API: the basic plan allows 100 requests/min and 500/day.
+SPRINGER_RATE_SEC  = float(os.getenv("SPRINGER_RATE_SEC",  "1.0"))
 # OSF meters anonymous callers per hour and token-bearing ones per day, so the
 # polite default suits a keyless run; set OSF_TOKEN and lower this to go faster.
 OSF_RATE_SEC       = float(os.getenv("OSF_RATE_SEC",       "1.0"))

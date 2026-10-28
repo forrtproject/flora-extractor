@@ -499,3 +499,74 @@ def test_an_unreadable_wiki_is_transient_not_a_miss(monkeypatch):
     checkpointing it would record "no abstract" for something we never read."""
     _osf_router(monkeypatch, description="", wiki_status=403)
     assert fa._fetch_osf_registration("10.17605/osf.io/abcde") == (None, "transient")
+
+
+# ---------------------------------------------------------------------------
+# Springer Nature Meta API — batched, Springer Nature DOIs only
+# ---------------------------------------------------------------------------
+
+def _springer_payload(*records):
+    return {"result": [{"total": str(len(records))}], "records": list(records)}
+
+
+def test_springer_batch_records_text_and_misses_and_flattens_structure(monkeypatch):
+    """One OR-ed query per batch, joined by DOI. A structured abstract is flattened
+    to its text; a DOI the answered batch does not carry is a recorded miss."""
+    captured = {}
+
+    def fake_get(url, params=None, timeout=None, **kw):
+        captured["params"] = params
+        return DummyResponse(_springer_payload(
+            {"doi": "10.1007/B", "abstract": {"h1": "Abstract", "p": [
+                "<i>First</i> paragraph.", "Second."]}},
+            {"doi": "10.1007/a", "abstract": "Plain body"}))
+
+    monkeypatch.setattr(fa._SESSION, "get", fake_get)
+    fa._run_batch_phase("Springer", "springer", ["10.1007/a", "10.1007/b", "10.1007/c"],
+                        20, 0, lambda b: fa._fetch_springer_batch(b, "KEY"), set())
+
+    assert captured["params"]["q"] == ('(doi:"10.1007/a" OR doi:"10.1007/b" '
+                                       'OR doi:"10.1007/c")')
+    assert fa._read_abstract_cache("springer:10.1007/a") == "Plain body"
+    assert fa._read_abstract_cache("springer:10.1007/b") == (
+        "Abstract\nFirst paragraph.\nSecond.")
+    assert fa._read_abstract_cache("springer:10.1007/c") == "__none__"
+
+
+def test_a_failed_springer_batch_records_nothing(monkeypatch):
+    """A persistent 5xx is transient: nothing is checkpointed, so a rerun asks again."""
+    monkeypatch.setattr(fa._SESSION, "get",
+                        lambda url, **kw: DummyResponse({}, status_code=503))
+    fa._run_batch_phase("Springer", "springer", ["10.1007/a"], 20, 0,
+                        lambda b: fa._fetch_springer_batch(b, "KEY"), set())
+    assert fa._load_checkpoint() == set()
+
+
+@pytest.mark.parametrize("status_code", [401, 403, 429])
+def test_a_springer_refusal_stops_the_phase_and_records_nothing(monkeypatch,
+                                                                status_code):
+    """A rejected key, a premium-only parameter (403) or the spent 500/day quota
+    (429) says nothing about any record, and refuses every later batch too: the
+    phase ends at the first one, recording no miss."""
+    calls = []
+
+    def fake_get(url, params=None, **kw):
+        calls.append(params["q"])
+        return DummyResponse({}, status_code=status_code)
+
+    monkeypatch.setattr(fa._SESSION, "get", fake_get)
+    fa._run_batch_phase("Springer", "springer", ["10.1007/a", "10.1007/b"], 1, 0,
+                        lambda b: fa._fetch_springer_batch(b, "KEY"), set())
+    assert len(calls) == 1
+    assert fa._load_checkpoint() == set()
+
+
+def test_a_springer_network_error_never_logs_the_key(monkeypatch, caplog):
+    """The key rides in the query string, which a connection error quotes."""
+    def boom(url, params=None, **kw):
+        raise fa.requests.ConnectionError(f"failed: {url}?api_key={params['api_key']}")
+
+    monkeypatch.setattr(fa._SESSION, "get", boom)
+    assert fa._fetch_springer_batch(["10.1007/a"], "SECRETKEY") is None
+    assert "network error" in caplog.text and "<redacted>" in caplog.text
+    assert "SECRETKEY" not in caplog.text

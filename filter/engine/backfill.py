@@ -1,4 +1,4 @@
-"""Filling a text overlay: the six abstract sources, run over a routing worklist.
+"""Filling a text overlay: the seven abstract sources, run over a routing worklist.
 
 The sources, their batch shapes, their per-identifier cache and their checkpoint
 namespaces all come from `search/fetch_abstracts.py` unchanged — this module
@@ -15,8 +15,9 @@ they are not spent on the same rows:
             one request answers about EPMC_BATCH_SIZE / OA_BATCH_SIZE
             identifiers — and it goes FIRST so the expensive pathway never asks
             about a row it already answered.
-  targeted  OSF, then Semantic Scholar, then CrossRef, then Scopus last. Each is
-            gated by a key, an entitlement, a weekly quota, or one call per DOI.
+  targeted  OSF, then Semantic Scholar, then CrossRef, then Springer Nature (its
+            own DOIs only), then Scopus last. Each is gated by a key, an
+            entitlement, a daily or weekly quota, or one call per DOI.
             It sees only the rows the bulk pathway left without text.
 
 `--phase bulk` and `--phase targeted` are what make that a workflow rather than
@@ -73,16 +74,17 @@ from filter.engine.overlay import (
 from search.fetch_abstracts import (
     _DATASET_PREFIXES, _already_resolved, _fetch_crossref_abstract,
     _fetch_epmc_batch, _fetch_openalex_batch, _fetch_osf_registration,
-    _fetch_s2_batch, _fetch_scopus_abstract, _load_checkpoint,
+    _fetch_s2_batch, _fetch_scopus_abstract, _fetch_springer_batch, _load_checkpoint,
     _load_found_index, _phase_targets, _read_abstract_cache, _run_batch_phase,
-    _run_item_phase, OSF_TEMPLATE_PREFIX, osf_identifier,
+    _run_item_phase, OSF_TEMPLATE_PREFIX, SPRINGER_BATCH_SIZE, osf_identifier,
 )
 from shared.config import (
     CROSSREF_RATE_SEC, ELSEVIER_API_KEY, EPMC_BATCH_SIZE, EPMC_RATE_SEC,
     OA_BATCH_SIZE, OPENALEX_RATE_SEC, OSF_RATE_SEC, OVERLAY_DIR, S2_API_KEY,
-    S2_BATCH_RATE_SEC, S2_BATCH_SIZE, SCOPUS_DEFAULT_LIMIT, SCOPUS_RATE_SEC, log,
+    S2_BATCH_RATE_SEC, S2_BATCH_SIZE, SCOPUS_DEFAULT_LIMIT, SCOPUS_RATE_SEC,
+    SPRINGER_META_API_KEY, SPRINGER_RATE_SEC, log,
 )
-from shared.utils import clean_doi
+from shared.utils import clean_doi, is_springer_nature_doi
 
 # Source name → the checkpoint/cache namespace fetch_abstracts writes it under.
 # The names are this module's CLI vocabulary; the namespaces are that module's
@@ -93,6 +95,7 @@ NAMESPACES = {
     "epmc": "epmc",
     "s2": "s2",
     "crossref": "doi",
+    "springer": "springer",
     "scopus": "scopus",
 }
 
@@ -100,13 +103,15 @@ NAMESPACES = {
 # why `osf` leads: an OSF registration's own template line has to be the text the
 # overlay stores, and another source's abstract for the same row would displace
 # it. This is not the order calls are spent in; RUN_ORDER below is.
-SOURCE_ORDER = ("osf", "openalex", "epmc", "s2", "crossref", "scopus")
+SOURCE_ORDER = ("osf", "openalex", "epmc", "s2", "crossref", "springer", "scopus")
 
 # The two pathways, in the order calls are SPENT (see fetch_abstracts' module
 # docstring). Bulk is batched, keyless and unquota'd, so it runs first over the
 # whole worklist; targeted is per-item or gated, so it only ever sees what bulk
-# left unresolved. Scopus is last within targeted: an ELSEVIER_API_KEY, an
-# IP-bound entitlement and a ~10k/week quota.
+# left unresolved. Springer Nature is asked only about its own DOIs, after the
+# unmetered S2 and CrossRef, because its basic plan allows 500 requests a day.
+# Scopus is last within targeted: an ELSEVIER_API_KEY, an IP-bound entitlement and
+# a ~10k/week quota.
 #
 # OpenAlex is bulk-SHAPED but opt-in (`--include-openalex`, or naming it in
 # `--source`): its measured yield on this corpus is 0 of 200, because the corpus
@@ -116,7 +121,7 @@ SOURCE_ORDER = ("osf", "openalex", "epmc", "s2", "crossref", "scopus")
 BULK_SOURCES = ("epmc",)
 OPT_IN_SOURCES = ("openalex",)
 ALL_BULK_SOURCES = OPT_IN_SOURCES + BULK_SOURCES
-TARGETED_SOURCES = ("osf", "s2", "crossref", "scopus")
+TARGETED_SOURCES = ("osf", "s2", "crossref", "springer", "scopus")
 RUN_ORDER = ALL_BULK_SOURCES + TARGETED_SOURCES
 DEFAULT_SOURCES = tuple(s for s in RUN_ORDER if s not in OPT_IN_SOURCES)
 PHASES = ("all", "bulk", "targeted")
@@ -237,7 +242,12 @@ def _targets(source: str, rows: list[dict], done: set[str],
                 if r["oa"] and f"{namespace}:{r['oa']}" not in done]
     if source == "osf":
         return _osf_targets(rows, done)
-    return _phase_targets(rows, namespace, done, found)
+    targets = _phase_targets(rows, namespace, done, found)
+    if source == "springer":
+        # The Meta API answers about Springer Nature's registrants only, so any
+        # other DOI is a call (and a recorded miss) whose answer is already known.
+        return [doi for doi in targets if is_springer_nature_doi(doi)]
+    return targets
 
 
 def _osf_targets(rows: list[dict], done: set[str]) -> list[str]:
@@ -276,6 +286,10 @@ def _source_shape(source: str) -> dict:
                "skipped": "" if S2_API_KEY else "S2_API_KEY not set"},
         "crossref": {"batch_size": 1, "rate_sec": CROSSREF_RATE_SEC,
                      "quota": None, "skipped": ""},
+        "springer": {"batch_size": SPRINGER_BATCH_SIZE, "rate_sec": SPRINGER_RATE_SEC,
+                     "quota": None,
+                     "skipped": "" if SPRINGER_META_API_KEY
+                     else "SPRINGER_META_API_KEY not set"},
         "scopus": {"batch_size": 1, "rate_sec": SCOPUS_RATE_SEC,
                    "quota": SCOPUS_DEFAULT_LIMIT,
                    "skipped": "" if ELSEVIER_API_KEY else "ELSEVIER_API_KEY not set"},
@@ -459,6 +473,11 @@ def _run_source(source: str, rows: list[dict], done: set[str], found: set[str],
     elif source == "crossref":
         _run_item_phase(label, namespace, targets, CROSSREF_RATE_SEC,
                         _fetch_crossref_abstract, found, progress_every=2000)
+    elif source == "springer":
+        _run_batch_phase(label, namespace, targets, SPRINGER_BATCH_SIZE,
+                         SPRINGER_RATE_SEC,
+                         lambda batch: _fetch_springer_batch(batch, SPRINGER_META_API_KEY),
+                         found)
     elif source == "scopus":
         if scopus_limit and scopus_limit > 0:
             targets = targets[:scopus_limit]

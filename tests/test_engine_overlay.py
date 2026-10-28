@@ -258,7 +258,8 @@ def test_a_dry_run_fetches_nothing_and_prices_every_source(
         raise AssertionError("a dry run fetched something")
 
     for name in ("_fetch_openalex_batch", "_fetch_epmc_batch", "_fetch_s2_batch",
-                 "_fetch_crossref_abstract", "_fetch_scopus_abstract"):
+                 "_fetch_crossref_abstract", "_fetch_scopus_abstract",
+                 "_fetch_springer_batch"):
         monkeypatch.setattr(backfill, name, _never)
 
     assert backfill.main(["--worklist", str(wl), "--overlay-dir",
@@ -480,12 +481,14 @@ def test_a_template_line_is_written_whatever_text_the_row_has(
 @pytest.fixture
 def wl_osf(tmp_path) -> Path:
     """The worklist plus an OSF registration, whose phase is the one exception to
-    the targeted pathway's narrowing."""
+    the targeted pathway's narrowing, and a Springer Nature article — the one
+    registrant the Springer source is asked about."""
     path = tmp_path / "worklist-osf.parquet"
     pq.write_table(pa.Table.from_pylist(
         [{"work_id": 1, "doi": "10.1234/one", "title": "T1", "year": 2021},
          {"work_id": 2, "doi": "10.1234/two", "title": "T2", "year": 2022},
-         {"work_id": 4, "doi": "10.17605/osf.io/ab12d", "title": "R", "year": 2023}],
+         {"work_id": 4, "doi": "10.17605/osf.io/ab12d", "title": "R", "year": 2023},
+         {"work_id": 5, "doi": "10.1007/s11409-015-9151-5", "title": "S", "year": 2016}],
         schema=overlay.WORKLIST_SCHEMA), path)
     return path
 
@@ -507,8 +510,11 @@ def _trace(monkeypatch, calls: list, epmc_finds=()) -> None:
                         _fake("s2", lambda dois: {d: None for d in dois}))
     monkeypatch.setattr(backfill, "_fetch_crossref_abstract", _fake("crossref", (None, "empty")))
     monkeypatch.setattr(backfill, "_fetch_scopus_abstract", _fake("scopus", (None, "empty")))
+    monkeypatch.setattr(backfill, "_fetch_springer_batch",
+                        _fake("springer", lambda dois: {d: None for d in dois}))
     monkeypatch.setattr(backfill, "_fetch_osf_registration", _fake("osf", (None, "empty")))
     monkeypatch.setattr(backfill, "S2_API_KEY", "KEY")
+    monkeypatch.setattr(backfill, "SPRINGER_META_API_KEY", "KEY")
     monkeypatch.setattr(backfill, "ELSEVIER_API_KEY", "KEY")
 
 
@@ -527,6 +533,9 @@ def test_the_bulk_pathway_is_exhausted_before_any_gated_source_is_asked(
     # then the targeted one, with Scopus last.
     assert sorted(set(order[bulk:])) == sorted(backfill.TARGETED_SOURCES)
     assert order[-1] == "scopus"
+    # Springer Nature is asked about its own registrant's DOI and nothing else.
+    assert [arg for name, arg in calls if name == "springer"] == [
+        ["10.1007/s11409-015-9151-5"]]
 
 
 def test_the_targeted_pathway_only_sees_rows_bulk_left_without_text(
@@ -575,7 +584,8 @@ def test_a_phase_restricts_the_run_to_one_pathway(wl, isolated_cache, tmp_path,
 
     calls.clear()
     backfill.run(wl, tmp_path / "ov2", phase="targeted")
-    assert {name for name, _ in calls} == {"s2", "crossref", "scopus"}   # no OSF DOI here
+    # No OSF and no Springer Nature DOI here, so neither source is asked.
+    assert {name for name, _ in calls} == {"s2", "crossref", "scopus"}
 
     with pytest.raises(ValueError, match="unknown phase"):
         backfill.run(wl, tmp_path / "ov3", phase="cheap")
