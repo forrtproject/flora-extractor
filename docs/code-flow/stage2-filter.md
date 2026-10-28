@@ -1,6 +1,8 @@
 # Stage 2: Filter — Code Flow
 
-**Entry point:** `python -m filter.engine <command>` — `route`, then `screen`.
+**Entry point:** `.venv/bin/python -m filter.engine <command>` — `route`, then `screen`.
+
+[Documentation index](../README.md) · [Models and screening](../models-and-screening.md)
 
 ## What it does
 
@@ -28,7 +30,7 @@ document is the flow.
 filter/spec/*.json                       the bundle — one file per rule
     │   spec.py loads and validates it, bundle_hash() names it
     ▼
-python -m filter.engine route --pool cache/snapshot_pool
+.venv/bin/python -m filter.engine route --pool cache/snapshot_pool
     │
     ├── release.py mints a release id from six inputs
     │       (pool fingerprint, overlay, bundle, engine version, aliases, schema)
@@ -38,13 +40,13 @@ python -m filter.engine route --pool cache/snapshot_pool
     │
     ├── route.py evaluates every spec against every batch
     │       highest precedence wins; shadow matches are recorded, not applied
-    │       screen pile + no abstract → pending/no_text
+    │       screen pile + no abstract → pending/no_text (OSF title exception)
     │
     └── store.py persists routing + evaluations in the DuckDB store
             piles: discard · screen_expensive · screen_cheap · needs_human · pending
     ▼
-python -m filter.engine screen --tier screen_expensive [--run]
-python -m filter.engine screen --tier screen_cheap   [--run] [--live]
+.venv/bin/python -m filter.engine screen --tier screen_expensive [--run]
+.venv/bin/python -m filter.engine screen --tier screen_cheap   [--run] [--live]
     │
     ├── tiers.py reads the pile's works, with pool text attached
     │
@@ -70,10 +72,18 @@ with a manifest sidecar — a record someone asked for, which nothing reads back
 the `pending/no_text` rows for the abstract backfill that produces an overlay.
 
 ```bash
-python -m filter.engine export-csv --out data/screened-<id>.csv --release <id>
+.venv/bin/python -m filter.engine export-csv --out data/screened-<id>.csv --release <id>
 ```
 
 ## The two LLM tiers
+
+The main classifier uses **DeepSeek V4 Flash + GPT-6 Luna, both at low effort**.
+Only two `none` votes discard; every other complete pair proceeds. Missing votes
+leave the work incomplete. See [models and screening](../models-and-screening.md)
+for exact IDs, API keys, evaluation evidence and per-vote caching.
+
+The cheap tier is **dormant**: all three of its specs have `shadow: true`.
+Its CLI finds no work unless a routing spec is promoted and the pool is routed again.
 
 | Tier | What asks | What it may conclude |
 |------|-----------|----------------------|
@@ -101,13 +111,10 @@ to the `paper_type` / `filter_confidence` an exported row carries (`discard` →
 `needs_human` → `needs_review` low; `pending` is not exported). Both screen piles set
 `vocabulary_names_status`, so a row there takes the winning rule's `vocabulary` as its
 status and falls back to `needs_review` when the rule names none.
-The six `screen_expensive` rules — the five `replication-claim-*` tiers
-(`cited-title` 760, `title-strong` 750, `title-broad` 740, `text` 730, `residual`
-710) and `osf-registration-completed` (936) — all name none by design: an
-admission to the two-voter screen is a request for attention, not the verdict the
-screen exists to produce — so their rows export `needs_review`/high. The three cheap
-rules (`replication-signal`, `replication-probe`, `reproduction-signal`) do name
-theirs, at `screen_cheap`/medium. `filter_method` is `engine:<release id prefix>` and
+The current rules and their shadow status are in `filter/spec/*.json`; inspect
+`.venv/bin/python -m filter.engine specs` rather than relying on a fixed rule count.
+The dormant cheap rules (`replication-signal`, `replication-probe`,
+`reproduction-signal`) name their vocabulary at `screen_cheap`/medium. `filter_method` is `engine:<release id prefix>` and
 `filter_evidence` is `rule:<spec id>` plus what the backend matched — except on a
 row a live `screen_expensive` run typed, where `filter_method` is `screen`.
 

@@ -1,5 +1,10 @@
 # CLAUDE.md — FLoRA Extractor
 
+**Reader navigation:** [Documentation index](docs/README.md) ·
+[Models and screening](docs/models-and-screening.md) · [Setup](docs/setup.md).
+The classification screen uses DeepSeek V4 Flash + GPT-6 Luna at low effort;
+only two `none` votes discard. This file is the detailed maintainer/agent reference.
+
 ## What This Project Does
 
 **FLoRA Extractor** discovers, extracts, and validates replication and reproduction
@@ -882,7 +887,7 @@ and its rationale belong together in one committed place. Key variables:
 ```bash
 RESEARCHER_EMAIL=...            # required: OpenAlex/CrossRef politeness headers
 GEMINI_API_KEY=...              # required
-OPENAI_API_KEY=...              # required for Stage 3 (default screen voter 2)
+OPENAI_API_KEY=...              # Stage 2 voter 2; Stage 3 linking and outcomes
 OPENROUTER_API_KEY=...          # required: screen voter 1 and the pick check are "/" ids
 OPENAI_DAILY_TOKEN_BUDGET=9500000   # 0 disables the cap (default = the free daily allocation, resets midnight UTC)
 GEMINI_USE_FLEX=true            # 50% discount on paid keys; flex uses GEMINI_FLEX_TIMEOUT

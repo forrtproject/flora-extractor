@@ -563,11 +563,13 @@ checkpoint and points the previous result row at the new one
 (`supersede_verdict`), so the old row stays as evidence of what was believed and
 stops being read.
 
-**A changed prompt or model reopens everything at once.** The extract GENERATION is
-the hash of the ladder version, the prompts and the models at their call-site efforts
-(`generation_inputs()` in `extract/tier.py`). Editing any of them means no work has a
-current-generation verdict, so the whole worklist is claimable again — the equivalent
-of the old `--rescreen`, without a flag and without a file to reopen.
+**A changed prompt, model or effort changes the extraction generation.** It hashes
+prompt versions and model IDs at their call-site efforts (`generation_inputs()` in
+`extract/tier.py`). Older results stop settling works unless an explicit generation
+equivalence preserves them. The ladder version is provenance only; a ladder change
+requires a named reopen with `--redo` or `--redo-status`. See
+[models and screening](models-and-screening.md) for current models and historical
+verdicts.
 
 **The dry run prices by rung, and OpenAlex in credits.** What a row costs is almost
 entirely how far down the ladder it went, so the estimate is a weighted sum over
