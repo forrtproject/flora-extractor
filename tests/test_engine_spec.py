@@ -94,8 +94,10 @@ def test_specs_are_returned_highest_precedence_first():
 
 def test_admission_sits_between_the_two_kinds_of_discard():
     """The definitional discards outrank admission; the metadata-crosswalk discard
-    does not, so a mistyped replication is screened rather than deleted. The whole
-    claim family shares that band, so the ordering holds for every tier."""
+    does not, so a mistyped replication is screened rather than deleted. The one
+    exception is `peer-review-record`: for that type the crosswalk was measured
+    rather than trusted (its `measured` entry), so it sits above. The whole claim
+    family shares that band, so the ordering holds for every tier."""
     precedence = {s.id: s.precedence for s in load_specs(SPEC_DIR)}
     for admission in _ADMISSION:
         for rule in _ABOVE_ADMISSION:
