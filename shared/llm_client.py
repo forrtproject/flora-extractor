@@ -1598,11 +1598,17 @@ _decision_sessions = threading.local()
 def _decide_once(study_r: str, abstract_r: str, model: str) -> "dict | None":
     """One decision-model answer: `{"probs", "model", "served_by"}`, or None.
 
-    Retried three times with 1/2/4 s back-off against the same model. Any failure —
-    an HTTP error, a 404 for a withdrawn id, an answer whose probabilities are not a
-    distribution over the five classes — returns None: a failed vote, which leaves
-    the screen incomplete and re-askable, never a "none".
+    Three attempts, 1 s and 2 s apart, against the same model. Any failure — a
+    missing key, an HTTP error, a 404 for a withdrawn id, an answer whose
+    probabilities are not a distribution over the five classes — returns None: a
+    failed vote, which leaves the screen incomplete and re-askable, never a "none".
+    Like every other transport, each attempt first checks LLM_DAILY_USD_BUDGET, and
+    an exhausted budget raises rather than failing the vote.
     """
+    if not OPENROUTER_API_KEY:
+        log.warning("No OPENROUTER_API_KEY set — skipping the decision vote (model=%s)",
+                    model)
+        return None
     body = {"model": model, **build_screen_decision(study_r, abstract_r)}
     if not hasattr(_decision_sessions, "s"):
         _decision_sessions.s = requests.Session()
@@ -1610,6 +1616,7 @@ def _decide_once(study_r: str, abstract_r: str, model: str) -> "dict | None":
     for attempt in range(3):
         if attempt:
             time.sleep(2 ** (attempt - 1))
+        token_usage.check_usd_budget()
         _throttle("openrouter")
         try:
             r = _decision_sessions.s.post(

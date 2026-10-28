@@ -977,8 +977,27 @@ def test_decision_response_accepts_both_probability_shapes(monkeypatch, list_for
     session = MagicMock()
     session.post.return_value = response
     monkeypatch.setattr(llm._decision_sessions, "s", session, raising=False)
+    monkeypatch.setattr(llm, "OPENROUTER_API_KEY", "or-test")
     answer = llm._decide_once("Title", "Abstract", llm.SCREENING_MODEL_2)
     assert answer["probs"] == probs and session.post.call_count == 1
+
+
+def test_a_decision_vote_without_a_key_or_budget_sends_nothing(monkeypatch):
+    """No key is a failed vote with no request; an exhausted daily dollar budget
+    stops the run like every other transport, before the request goes out."""
+    session = MagicMock()
+    monkeypatch.setattr(llm._decision_sessions, "s", session, raising=False)
+    monkeypatch.setattr(llm, "OPENROUTER_API_KEY", "")
+    assert llm._decide_once("Title", "Abstract", llm.SCREENING_MODEL_2) is None
+
+    def exhausted(day: str = "") -> None:
+        raise llm.token_usage.TokenBudgetExhausted("spent")
+
+    monkeypatch.setattr(llm, "OPENROUTER_API_KEY", "or-test")
+    monkeypatch.setattr(llm.token_usage, "check_usd_budget", exhausted)
+    with pytest.raises(llm.token_usage.TokenBudgetExhausted):
+        llm._decide_once("Title", "Abstract", llm.SCREENING_MODEL_2)
+    assert session.post.call_count == 0
 
 
 @pytest.mark.parametrize("payload", [
@@ -997,6 +1016,7 @@ def test_decision_response_accepts_both_probability_shapes(monkeypatch, list_for
 ])
 def test_invalid_decision_responses_retry_without_caching(monkeypatch, tmp_path, payload):
     monkeypatch.setattr(llm, "LLM_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(llm, "OPENROUTER_API_KEY", "or-test")
     response = MagicMock(status_code=200)
     response.json.return_value = payload
     session = MagicMock()
