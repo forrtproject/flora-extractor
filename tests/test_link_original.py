@@ -1797,6 +1797,9 @@ def test_two_subtitles_under_one_main_title_are_two_papers():
     assert link_original._titles_agree(
         "Ego depletion vs. no depletion in self control",
         "Ego depletion vs. no depletion in self control: a multi-lab replication")
+    assert not link_original._titles_agree(
+        "Ego depletion vs. glucose intake in self control of eating",
+        "Ego depletion vs. mood repair in emotional regulation tasks")
 
 
 @pytest.mark.parametrize("later_record, doi, conflict", [
