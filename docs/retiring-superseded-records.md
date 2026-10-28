@@ -102,6 +102,7 @@ original_rank, doi_o, title_o, link_method, superseded_by, doi_o_now`
 | `unresolved` | in `extracted.csv` but no longer importable | |
 | `not_admitted` | the routing release dropped the work | the release |
 | `screen_discarded` | the current screen discards it | |
+| `screen_deferred` | the screen proceeded it, but its rules' strict admission gate holds it back (`filter/spec/CONVENTIONS.md`, "Admission gates"); relaxing the gate ships it again | |
 | `in_flora` | its DOI is now in FLoRA | |
 | `unexplained` | no current verdict speaks for the work | held on the validation side |
 

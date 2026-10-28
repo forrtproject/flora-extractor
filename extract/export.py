@@ -44,7 +44,11 @@ generation extracted is the gap: the current screen has said it is not a replica
 the worklist never reopens it, and its old verdict would render forever. The render
 therefore drops every work the current screen discards (`decisions()` in
 `filter/engine/handoff.py`, the same reading the worklist takes) and prints the count.
-Measured 2026-08-16, after the voter-pair change: 85 works.
+Measured 2026-08-16, after the voter-pair change: 85 works. It drops the proceeds a
+strict admission gate defers too (`deferred_works()`), for the same reason: the
+worklist never offers them, so an earlier extraction would otherwise keep shipping.
+The gate is the release's routing read against the rule book on disk, so only a
+`--release` render applies it; `--all-releases` asks no routing question.
 
 **Two generations, and why the older one still counts.** A verdict belongs to a
 generation — the ladder, the prompts and the models it was produced by
@@ -87,7 +91,8 @@ original changes, that is set aside, or that routing drops leaves its old record
 validation queue — this repo stops writing at the CSV and cannot delete it. So a live
 render to the production path appends one row per `pair_id` that the PREVIOUS file
 shipped and this one does not, with the reason (`superseded` by which pair ids,
-`set_aside` into which file, `not_admitted`, `screen_discarded`, `in_flora`, or
+`set_aside` into which file, `not_admitted`, `screen_discarded`, `screen_deferred`,
+`in_flora`, or
 `unexplained`), and `csv_to_db.py --retire` in flora-validation retires exactly those.
 "Previous" is the file COMMITTED at `HEAD`, not the one on disk: the validation sync
 downloads `data/extracted.csv` from GitHub, so a commit is what can have been imported,
@@ -109,7 +114,7 @@ from typing import Optional
 
 from filter.engine.claims import ClaimsClient, ClaimsNotConfigured
 from filter.engine.export import SPEC_DIR, StaleBundleError, check_release_binding
-from filter.engine.handoff import decisions
+from filter.engine.handoff import admission_gates, decisions, deferred_works
 from filter.engine.release import read_release
 from extract.sanity_check import classify_row, demote_malformed
 from extract.tier import (RESULT_VERDICTS, TIER_EXTRACT, equivalent_generations,
@@ -229,8 +234,12 @@ def check_binding(release_id: str, spec_dir: Path, cache_dir: Path) -> None:
 
 def admitted_work_ids(release: "str | None",
                       store_path: Optional[Path] = None,
-                      spec_dir: Path = SPEC_DIR) -> tuple[str, set[int]]:
-    """`(the full release id, the works it routed into an admitted pile)`.
+                      spec_dir: Path = SPEC_DIR
+                      ) -> tuple[str, set[int], dict[int, str]]:
+    """`(the full release id, the works it routed into an admitted pile, their gates)`.
+
+    The gates are `handoff.admission_gates()` over the same release: each screen-pile
+    work's admission gate under the rule book in *spec_dir*.
 
     The one place this module touches the routing store, and it is skipped entirely
     under `--all-releases`: the imports are local so that render still costs no
@@ -242,6 +251,7 @@ def admitted_work_ids(release: "str | None",
     `extract/tier.py` and `filter/engine/cli.py`.
     """
     from filter.engine.route import ADMITTED_PILES
+    from filter.engine.spec import load_specs
     from filter.engine.store import (DEFAULT_STORE_PATH, open_store, releases,
                                      resolve_release)
 
@@ -261,10 +271,11 @@ def admitted_work_ids(release: "str | None",
         rows = con.execute(
             "SELECT work_id FROM routing WHERE release_id = ? AND pile IN ?",
             [release_id, sorted(ADMITTED_PILES)]).fetchall()
+        gates = admission_gates(con, release_id, load_specs(spec_dir))
     finally:
         con.close()
     check_binding(release_id, spec_dir, store.parent)
-    return release_id, {int(row[0]) for row in rows}
+    return release_id, {int(row[0]) for row in rows}, gates
 
 
 def rows_from_results(results: dict[int, dict]) -> list[dict]:
@@ -425,6 +436,7 @@ def collapse_duplicate_pairs(rows: list[dict], shipped_before: set[int]
 def render(client: ClaimsClient, *, mode: str = "live",
            current_generation_only: bool = False,
            admitted: Optional[set[int]] = None,
+           gates: Optional[dict[int, str]] = None,
            include_unconfirmed_search: bool = False,
            shipped_before: frozenset[int] = frozenset(),
            data_dir: Path = DATA_DIR) -> dict:
@@ -434,6 +446,9 @@ def render(client: ClaimsClient, *, mode: str = "live",
     before anything is counted or rendered, so every number below it, `--check`
     included, describes the same filtered set. The superseded-generation count is
     recomputed over what survived, or it would report rows this render did not carry.
+
+    *gates* — the admitted works' admission gates (`admitted_work_ids()`); a proceed
+    its gate defers is dropped like a discard. None applies no gate.
 
     *shipped_before* — the work ids the committed file shipped, preferred when two
     works render the same pair_id (`collapse_duplicate_pairs`).
@@ -458,10 +473,15 @@ def render(client: ClaimsClient, *, mode: str = "live",
     # The current screen's discards, applied at render too: the worklist never offers
     # such a work, so nothing else would ever replace the verdict an earlier screen's
     # admission bought.
-    discarded = decisions(client)[0]
+    discarded, screen = decisions(client)
     _drop(set(results) & set(discarded), "screen_discarded")
     kept = {work: row for work, row in results.items() if work not in discarded}
     screen_discarded = len(results) - len(kept)
+    results = kept
+    deferred = deferred_works(screen, gates) if gates is not None else set()
+    _drop(set(results) & deferred, "screen_deferred")
+    kept = {work: row for work, row in results.items() if work not in deferred}
+    screen_deferred = len(results) - len(kept)
     results = kept
     # The skip lists the worklist reads, applied at render too: a work that entered
     # FLoRA or the validation tables AFTER it was extracted keeps its verdict as
@@ -500,7 +520,8 @@ def render(client: ClaimsClient, *, mode: str = "live",
             "duplicate_pairs": duplicate_pairs,
             "already_in_flora": suppressed,
             "superseded_generation": stale, "not_admitted": not_admitted,
-            "screen_discarded": screen_discarded, "dropped": dropped,
+            "screen_discarded": screen_discarded,
+            "screen_deferred": screen_deferred, "dropped": dropped,
             "validated_skip": (validated_ids, validated_dois),
             "endings": Counter(str(r.get("verdict") or "") for r in results.values())}
 
@@ -516,7 +537,7 @@ RETIRED_COLS = ["retired_at", "baseline", "release", "generation", "reason", "de
 # The closed vocabulary of `reason`. `already_in_validation` is computed but never
 # written: those works are suppressed BECAUSE the validation tables hold their records.
 RETIRE_REASONS = ("superseded", "set_aside", "unresolved", "not_admitted",
-                  "screen_discarded", "in_flora", "unexplained")
+                  "screen_discarded", "screen_deferred", "in_flora", "unexplained")
 
 # The validation sync refuses a snapshot that removes more than this share of the
 # previous one's resolved pair ids (`EXTRACTOR_MAX_REMOVAL_PERCENT` in flora-validation
@@ -835,7 +856,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         raise SystemExit("--release names one rule book and --all-releases asks for "
                          "every one; pass one or the other.")
 
-    release_id, admitted = "", None
+    release_id, admitted, gates = "", None, None
     if args.release or not args.all_releases:
         # No default release, deliberately, and no "the newest one" either. Which
         # rule book the file reflects decides which papers reach validation, and the
@@ -847,8 +868,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         # applied to the file the validation import reads.
         from filter.engine.store import StoreUnavailable
         try:
-            release_id, admitted = admitted_work_ids(args.release or None,
-                                                     spec_dir=args.spec_dir)
+            release_id, admitted, gates = admitted_work_ids(args.release or None,
+                                                            spec_dir=args.spec_dir)
         except StoreUnavailable as exc:
             raise SystemExit(str(exc))
         except StaleBundleError as exc:
@@ -870,7 +891,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                                               args.retired_baseline or ["HEAD"])
     report = render(client, mode=args.mode,
                     current_generation_only=args.current_generation_only,
-                    admitted=admitted,
+                    admitted=admitted, gates=gates,
                     include_unconfirmed_search=args.include_unconfirmed_search,
                     shipped_before=frozenset(
                         work for row in previous.values()
@@ -890,6 +911,9 @@ def main(argv: Optional[list[str]] = None) -> int:
               "says about its work")
     print(f"  works the current screen discards: {report['screen_discarded']:,}  "
           "(dropped from the render)")
+    if gates is not None:
+        print(f"  proceeds a strict admission gate defers: "
+              f"{report['screen_deferred']:,}  (dropped from the render)")
     if report["superseded_generation"]:
         print(f"  rows from a superseded generation: "
               f"{report['superseded_generation']:,}  (carried forward; "

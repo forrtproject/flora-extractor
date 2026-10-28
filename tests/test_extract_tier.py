@@ -335,7 +335,7 @@ def test_no_extract_verdict_predates_the_generation_field():
 
 
 def _run_worklist(monkeypatch, *, rows, screen, drop=frozenset(),
-                  claimed=frozenset(), settled=frozenset(), **kwargs):
+                  claimed=frozenset(), settled=frozenset(), gates=(), **kwargs):
     client = MagicMock()
     client.claimed_work_ids.return_value = set(claimed)
     monkeypatch.setattr(tier_mod, "check_release_binding", lambda *a, **k: None)
@@ -344,6 +344,7 @@ def _run_worklist(monkeypatch, *, rows, screen, drop=frozenset(),
     monkeypatch.setattr(tier_mod, "iter_export_rows",
                         lambda *a, **k: iter(rows))
     monkeypatch.setattr(tier_mod, "decisions", lambda c: (set(drop), screen))
+    monkeypatch.setattr(tier_mod, "admission_gates", lambda *a: dict(gates))
     monkeypatch.setattr(tier_mod, "settled_work_ids", lambda c, mode="live": set(settled))
     monkeypatch.setattr(tier_mod, "screen_columns", lambda row, decision: {})
     monkeypatch.setattr(tier_mod, "_flora_skip_dois", lambda d: set())
@@ -386,6 +387,7 @@ def test_the_flora_and_validation_skip_lists_are_honoured(monkeypatch):
                         lambda *a, **k: iter(_export_rows(1, 2, 3)))
     monkeypatch.setattr(tier_mod, "decisions",
                         lambda c: (set(), {1: _PROCEED, 2: _PROCEED, 3: _PROCEED}))
+    monkeypatch.setattr(tier_mod, "admission_gates", lambda *a: {})
     monkeypatch.setattr(tier_mod, "settled_work_ids", lambda c, mode="live": set())
     monkeypatch.setattr(tier_mod, "screen_columns", lambda row, decision: {})
     monkeypatch.setattr(tier_mod, "_flora_skip_dois", lambda d: {"10.1000/w1"})
@@ -404,6 +406,22 @@ def test_redo_re_admits_a_settled_work(monkeypatch):
     works = _run_worklist(monkeypatch, rows=_export_rows(1),
                           screen={1: _PROCEED}, settled={1}, redo=[1])
     assert [w.work_id for w in works] == [1]
+
+
+def test_a_proceed_its_strict_gate_defers_is_not_offered_even_to_redo(monkeypatch):
+    """Deferred is the screen's answer not admitting the work, like a discard: a
+    redo reopens a settled extraction, not a held admission."""
+    sure = {"classification": "replication", "confident": True}
+    unsure = {"classification": "replication", "confident": False}
+    screen = {1: {**_PROCEED, "votes": [sure, unsure]},
+              2: {**_PROCEED, "votes": [sure, sure]},
+              3: {**_PROCEED, "votes": [sure, unsure]}}
+    counts: dict = {}
+    works = _run_worklist(monkeypatch, rows=_export_rows(1, 2, 3), screen=screen,
+                          gates={1: "strict", 2: "strict", 3: "lenient"},
+                          redo=[1], counts=counts)
+    assert [w.work_id for w in works] == [2, 3]
+    assert counts == {"deferred": 1}
 
 
 def test_a_work_this_run_already_judged_is_not_offered_again(monkeypatch):

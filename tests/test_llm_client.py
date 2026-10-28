@@ -138,6 +138,13 @@ def test_screen_gate_needs_two_votes():
     assert llm.screen_gate([]) is None
 
 
+def test_screen_strict_needs_every_vote_qualifying_and_confident():
+    assert llm.screen_strict([_v("replication", True), _v("both", True)])
+    assert not llm.screen_strict([_v("replication", True), _v("replication", False)])
+    assert not llm.screen_strict([_v("replication", True), _v("unclear", True)])
+    assert not llm.screen_strict([_v("replication", True)])
+
+
 # ── Vote parsing ─────────────────────────────────────────────────────────────
 
 def test_a_classification_outside_the_enum_becomes_unclear(monkeypatch):

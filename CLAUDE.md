@@ -49,7 +49,8 @@ release put in an admitted pile, because a verdict outlives the routing that bou
 — a work today's rule book discards would otherwise keep reaching the validation
 import forever. It also drops the works the current screen discards
 (`decisions()` in `filter/engine/handoff.py`): the worklist never offers such a work,
-so a verdict bought under an earlier screen's admission would never be replaced. Omitted, the release is the store's when it holds exactly one, and a
+so a verdict bought under an earlier screen's admission would never be replaced. The
+same holds for a proceed its rules' strict admission gate DEFERS (below). Omitted, the release is the store's when it holds exactly one, and a
 store holding several refuses; `--all-releases` renders every stored verdict whatever
 routing says. Resume is the verdict row, not the file: the
 worklist subtracts every work whose latest current-generation result SETTLES it.
@@ -267,6 +268,16 @@ has not yet been scored against that evaluation set):
 - **no decision** — fewer than two votes: 1 vote → `target_pending` (re-run decides),
   0 votes → `api_error`. An incomplete screen is never a verdict, but each vote that
   did answer is cached on its own key (see below), so the re-run buys only the gap.
+
+**A proceed is admitted by the RULE's gate.** Every screen-pile spec names
+`admission: lenient | strict`. `lenient` admits on the proceed; `strict` also needs
+`screen_strict()` — every vote qualifying AND confident. A work is held strict only
+when every live screen-pile rule it matched is strict (the most lenient wins). A strict
+miss is DEFERRED, not discarded: not offered to the extract tier, not rendered, and
+released with no new call when the gate is relaxed. The gate is left out of the
+release id and the screening generation; it is applied to the stored votes by
+`admission_gates()` / `deferred_works()` in `filter/engine/handoff.py`. Policy and the
+per-rule assignments: `filter/spec/CONVENTIONS.md`, "Admission gates".
 
 On a pass, the screen's `record_type` (both voters agreeing wins; splits fall back to
 the first qualifying voter; `both` → replication) becomes `type` and overwrites

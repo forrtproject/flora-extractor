@@ -33,6 +33,12 @@ paper. Passing the gate means the paper can be investigated further, not that a
 human has validated it. For paper type, the first qualifying vote in voter order
 wins (`both` maps to replication); categories are the union of the two votes.
 
+A proceed then has to pass the **admission gate of the rule that routed the work**.
+Rules whose measured base rate is high are `lenient` and admit every proceed. The
+others are `strict`: they also need every vote to qualify and be confident. A strict
+miss is deferred, not discarded, and can be released later without new screening
+calls. See [the admission gates](../filter/spec/CONVENTIONS.md#admission-gates).
+
 Stage 1 searches the OpenAlex snapshot. Stage 2 rules route candidates or discard
 measured false positives; only the screening tier admits papers to Stage 3.
 **Stage 3 reads the stored screening verdict and does not run the classifier again.**
