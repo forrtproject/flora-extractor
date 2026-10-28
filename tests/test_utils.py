@@ -279,6 +279,26 @@ class TestCleanSearchQuery:
             'American Economic Review'
         ) == "A New Approach to Estimating the Production Function for Housing"
 
+    @pytest.mark.parametrize("query, cleaned", [
+        # A phrase the title quotes is part of the title, not the title. The title
+        # searches key on the CLEANED query, so the miss cached for "identified
+        # victim" is not replayed for the whole title.
+        ('The "identified victim" effect: an identified group, or just a single '
+         'individual?',
+         'The "identified victim" effect: an identified group, or just a single '
+         'individual?'),
+        ('Kogut, T., & Ritov, I. (2005). The \u201cidentified victim\u201d effect: an '
+         'identified group, or just a single individual? Journal of Behavioral Decision '
+         'Making, 18(3), 157-167.',
+         'Kogut, T., & Ritov, I. (2005). The \u201cidentified victim\u201d effect: an '
+         'identified group, or just a single individual'),
+        # A quoted span that IS a citation element is still taken out of its quotes.
+        ('J. Smith, "Another long quoted title here," IEEE Trans. 4(1), 5-9',
+         "Another long quoted title here"),
+    ])
+    def test_a_quoted_phrase_inside_a_title_is_kept_in_it(self, query, cleaned):
+        assert clean_search_query(query) == cleaned
+
     def test_an_article_id_and_a_url_are_dropped(self):
         assert clean_search_query(
             "Sleep loss and emotion recognition e77661 https://doi.org/10.1/x"

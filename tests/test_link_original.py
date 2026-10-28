@@ -1758,3 +1758,42 @@ def test_a_search_hit_is_the_replication_only_by_identity_or_an_undated_title(hi
 ])
 def test_the_stop_gate_counts_every_citation_the_parser_reads(abstract, may_stop):
     assert link_original.may_stop_at_a_rule("A study", abstract, 2020) is may_stop
+
+
+_REGISTRY_KOGUT = {"doi": "10.1002/bdm.492", "openalex_id": "https://openalex.org/W2168955200",
+                   "title": "The “identified victim” effect: an identified group, or "
+                            "just a single individual", "year": "2005",
+                            "first_author": "Tehila Kogut"}
+
+
+@pytest.mark.parametrize("later_record, doi, conflict", [
+    # The full-text rung's parsed reference line for the same work: the registry
+    # identity survives it.
+    ({"doi": "", "openalex_id": "", "year": "2005", "first_author": "Kogut, T.",
+      "title": 'The "identified victim" effect: an identified group, or just a single '
+               'individual'}, "10.1002/bdm.492", False),
+    # The registry keeps the main title only; the reference line carries the subtitle.
+    ({**_REGISTRY_KOGUT, "doi": "", "openalex_id": "", "first_author": "Kogut, T.",
+      "title": 'The "identified victim" effect: an identified group, or just a single '
+               'individual? Extended'}, "10.1002/bdm.492", False),
+    # Same call-local key, another work: nothing is lent, and the disagreement is said.
+    ({"doi": "", "openalex_id": "", "year": "2005", "first_author": "Kogut, T.",
+      "title": "Perceived identifiability and willingness to help"}, "", True),
+    ({**_REGISTRY_KOGUT, "doi": "10.9/other", "openalex_id": ""}, "10.9/other", True),
+])
+def test_a_later_rung_keeps_the_identity_an_earlier_one_established(
+        later_record, doi, conflict):
+    earlier = {"key": "@kogut2005", "match_certain": True, "record": _REGISTRY_KOGUT,
+               "outcome_block": {"outcome": "cannot_be_determined"}}
+    later = {"key": "@kogut2005", "match_certain": True, "record": later_record,
+             "evidence_quote": "a close replication of Kogut and Ritov (2005a)",
+             "outcome_block": {"outcome": "failed"}}
+    [merged] = link_original._union_targets([earlier], [later])
+    assert merged["record"]["doi"] == doi
+    # The later reading's outcome and evidence stand on their own.
+    assert merged["outcome_block"] == {"outcome": "failed"}
+    assert bool(merged.get("identity_note")) is conflict
+    if conflict and doi:
+        entry = run_extract._target_entry(merged, "10.1017/jdm.2024.31", {})
+        assert entry["evidence"].startswith("a close replication")
+        assert "identity conflict for @kogut2005" in entry["evidence"]

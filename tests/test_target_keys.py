@@ -6,8 +6,11 @@ model's answer through the key_map from the same call — so a key that collides
 survives deduplication twice, or cannot be looked up is a wrong original waiting to
 be written.
 """
+import pytest
+
+from shared.grobid import parse_jats_sections, parse_tei_sections
 from shared.prompts import build_target_outcome_prompt
-from shared.target_keys import assign_target_keys
+from shared.target_keys import assign_target_keys, lend_reference_dois
 
 
 def _cand(**over) -> dict:
@@ -120,3 +123,45 @@ class TestDistinctDoisNeverMerge:
         assert len(entries) == 1
         assert entries[0]["doi"] == "10.1/candidate"
         assert entries[0]["in_candidates"] and entries[0]["in_references"]
+
+
+_TEI = ('<TEI xmlns="http://www.tei-c.org/ns/1.0"><text><back><listBibl><biblStruct>'
+        '<analytic><title level="a">Forming impressions of personality</title>'
+        '<author><persName><surname>Asch</surname></persName></author></analytic>'
+        '<monogr><imprint><date type="published" when="1946"/></imprint></monogr>'
+        '<idno type="DOI">10.1037/h0055756</idno></biblStruct></listBibl></back></text></TEI>')
+_JATS = ('<article><back><ref-list><ref><element-citation>'
+         '<person-group><name><surname>Asch</surname></name></person-group>'
+         '<article-title>Forming impressions of personality</article-title>'
+         '<year>1946</year><pub-id pub-id-type="doi">10.1037/h0055756</pub-id>'
+         '</element-citation></ref></ref-list></back></article>')
+
+
+def _raw(raw_ref: str) -> list[dict]:
+    return [{"authors": ["Margulieux, L."], "year": 2016, "raw_ref": raw_ref,
+             "title": "Improving problem solving with subgoal labels"}]
+
+
+@pytest.mark.parametrize("references, doi", [
+    # The structured DOI fields: the parsers fold their text into raw_ref.
+    (lambda: parse_tei_sections(_TEI)["references"], "10.1037/h0055756"),
+    (lambda: parse_jats_sections(_JATS)["references"], "10.1037/h0055756"),
+    # A DOI link in the reference text, with the link labels a flattened publisher
+    # page glues onto it.
+    (lambda: _raw("Margulieux, L. E., & Catrambone, R. (2016). Improving problem "
+                  "solving. Learning and Instruction, 42, 58-71. https://doi.org/"
+                  "10.1016/j.learninstruc.2015.12.002.Article Google Scholar"),
+     "10.1016/j.learninstruc.2015.12.002"),
+    (lambda: _raw("Smith (1977). Title. doi:10.1016/0022-1031(77)90049-X."),
+     "10.1016/0022-1031(77)90049-x"),
+    # Two DOIs: which one is this reference's is not decidable from the text.
+    (lambda: _raw("Reprinted from 10.1037/aaaa1 in 10.1037/bbbb2"), ""),
+])
+def test_a_reference_lines_doi_is_lent_to_the_pick_not_to_the_key(references, doi):
+    entries, key_map = assign_target_keys([], references())
+    [entry] = entries
+    # Never in "doi": that field decides the target call's cache key and dedup.
+    assert entry["doi"] == ""
+    targets = [{"key": entry["key"], "record": dict(entry), "match_certain": True}]
+    lend_reference_dois(targets, key_map)
+    assert targets[0]["record"]["doi"] == doi

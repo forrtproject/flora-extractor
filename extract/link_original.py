@@ -52,8 +52,8 @@ from shared.prompts import (
 from shared.schema import outcome_is_settled
 from shared.target_keys import assign_target_keys
 from shared.pdf_sources import acquire_pdf
-from shared.utils import (bare_work_id, cache_key, clean_doi, non_article_doi,
-                          psyctests_doi, usable_title)
+from shared.utils import (author_surname, bare_work_id, cache_key, clean_doi,
+                          non_article_doi, psyctests_doi, usable_title)
 
 # ── Unified rule-based resolver (runs before any LLM call) ───────────────────
 # Combines citation-context scoring with a same-author/year title-Jaccard fallback
@@ -601,7 +601,23 @@ OUTCOME_DESCENT = True
 #      abstract_r blank, and says so in link_evidence; never asked without a
 #      mismatch (2026-09-25)
 #      reopen: --redo 16766644,22047302,22986889,23811235,31908667,37892775,4400060759
-EXTRACT_LADDER_VERSION: int = 31
+#  32  three ways a named original was lost, from the 2026-10-27 Metascience
+#      Observatory benchmark (analysis/mo_doi_benchmark). (1) The self-link guard
+#      decides by identity before title: the replication's DOI or work id always
+#      rejects, but a shared title rejects only a candidate with no identifier of its
+#      own, so Asch (1946) "Forming impressions of personality" survives its 2014
+#      replication of the same name; the title searches drop a same-title hit only when
+#      it is the replication or does not predate it (`is_replication_itself`). (2) The
+#      citation parser reads typographic apostrophes, APA reference lists, year letters
+#      ("Kogut and Ritov (2005a)") and the first surname of a list; the stop gate counts
+#      (surname, year as cited) and the candidate cache is keyed on the patterns. (3) A
+#      later rung's identifierless record no longer erases the DOI an earlier rung's
+#      record carried for the same work (`_reconcile_record`; disagreements go to
+#      link_evidence), a parsed reference's own DOI string is lent to the pick
+#      (`lend_reference_dois`), and a phrase a title quotes is no longer searched as the
+#      whole title (2026-10-28)
+#      reopen: --redo-status target_pending,unidentified_original,no_original_found
+EXTRACT_LADDER_VERSION: int = 32
 
 
 # Columns to pass through from the input row (no renaming). Only columns
@@ -1081,6 +1097,87 @@ def _agrees_with_held(target: dict, held: dict) -> bool:
         and _norm(record.get("first_author")) == _norm(held.get("resolved_author_o")))
 
 
+# How close two titles of one reference must be for its identity to cross between
+# rungs. A parsed reference and the registry record of the same work differ in quotes,
+# case and punctuation — not in words — or the registry keeps the main title only
+# ("The Value of Believing in Free Will" against the reference's "…: Encouraging a
+# belief in determinism increases cheating"), so main titles are compared too. A main
+# title shorter than _MAIN_TITLE_MIN_WORDS says too little to lend an identity on.
+_SAME_WORK_TITLE_JACCARD = 0.8
+_MAIN_TITLE_MIN_WORDS = 3
+
+
+def _titles_agree(a: str, b: str) -> bool:
+    if jaccard_similarity(a, b) >= _SAME_WORK_TITLE_JACCARD:
+        return True
+    main_a, main_b = (re.split(r"[:?.]", str(t or ""), maxsplit=1)[0] for t in (a, b))
+    return (min(len(main_a.split()), len(main_b.split())) >= _MAIN_TITLE_MIN_WORDS
+            and jaccard_similarity(main_a, main_b) >= _SAME_WORK_TITLE_JACCARD)
+
+
+def _identity(record: dict) -> tuple[str, str]:
+    """(DOI, bare OpenAlex work id) of a target record — either may be ""."""
+    return (clean_doi(str(record.get("doi") or "")),
+            bare_work_id(str(record.get("openalex_id") or "")))
+
+
+def _same_bibliographic_work(a: dict, b: dict) -> bool:
+    """Whether two records describe one work by what they SAY, not by the key that
+    mapped them.
+
+    Identifiers decide where both records carry the same kind. Otherwise the title,
+    the first author's surname and the year must all agree: the identity of one
+    record is about to be lent to the other, and a wrong transfer writes a DOI no
+    reading of the paper chose. A field missing on either side is no agreement.
+    """
+    for field in (0, 1):
+        if _identity(a)[field] and _identity(b)[field]:
+            return _identity(a)[field] == _identity(b)[field]
+    surname_a = author_surname(a.get("first_author", "")).lower()
+    surname_b = author_surname(b.get("first_author", "")).lower()
+    year_a, year_b = _year(a.get("year")), _year(b.get("year"))
+    return bool(
+        _titles_agree(str(a.get("title") or ""), str(b.get("title") or ""))
+        and surname_a and surname_b and author_matches(surname_a, [surname_b])
+        and year_a and year_a == year_b)
+
+
+def _reconcile_record(earlier: dict, later: dict) -> "tuple[dict | None, str]":
+    """The record a merged target keeps, and a note when two readings disagree
+    about which work it is.
+
+    The later reading's record, except where it carries no identifier and the earlier
+    one did and both describe one work: then the earlier record's identity and
+    bibliography, laid over the later record's other fields.
+
+    Keys are per call, so one `@kogut2005` in the reference-list answer and another in
+    the full-text answer are two records that happen to share a label. The reference
+    list's record is the registry's, with a DOI; the full-text rung's is the PDF's own
+    reference line, parsed, with none. Taking the later record whole threw the DOI away
+    and the original was written `unidentified_original` (Kogut & Ritov 2005a; Many
+    Labs 5's LoBue & DeLoache and Vohs & Schooler). The identity is lent only when the
+    records agree bibliographically, and a disagreement is reported, not resolved.
+    """
+    before, after = earlier.get("record") or {}, later.get("record")
+    if not before or not after or not any(_identity(before)):
+        return after, ""
+    if any(_identity(after)):
+        if _same_bibliographic_work(before, after):
+            return after, ""
+    elif _same_bibliographic_work(before, after):
+        # The whole registry record, not its DOI alone: a DOI beside the parsed
+        # line's title is a row describing one work by two records, and verification
+        # would compare the registry's title with the PDF's spelling of it.
+        return {**after, **before}, ""
+    shown = " ".join(filter(None, _identity(before)))
+    note = (f"identity conflict for {later.get('key') or 'a target'}: an earlier "
+            f"reading linked {shown} (\"{str(before.get('title') or '')[:80]}\"); "
+            f"this reading's record is \"{str(after.get('title') or '')[:80]}\" "
+            f"({' '.join(filter(None, _identity(after))) or 'no identifier'}) — kept "
+            f"this reading's, not reconciled")
+    return after, note
+
+
 def _union_targets(*lists: list, record_type: str = "replication") -> list[dict]:
     """Every distinct target across several answers, in the order first seen.
 
@@ -1088,11 +1185,14 @@ def _union_targets(*lists: list, record_type: str = "replication") -> list[dict]
     reached through two rungs carries two keys (the namespaces are per call), and
     writing it twice would give two rows one pair_id.
 
-    A work seen twice keeps the LATER reading whole — it read more of the paper — with
-    one exception: a later UNSETTLED outcome does not overwrite an earlier settled one.
-    The full-text rung reads different evidence, not better evidence, about a verdict
-    the abstract already stated plainly. `outcome_stage` records which reading the
-    surviving outcome came from.
+    A work seen twice keeps the LATER reading — it read more of the paper — with two
+    exceptions. A later UNSETTLED outcome does not overwrite an earlier settled one:
+    the full-text rung reads different evidence, not better evidence, about a verdict
+    the abstract already stated plainly (`outcome_stage` records which reading the
+    surviving outcome came from). And an identity an earlier record established
+    survives a later record that carries none, when the two agree bibliographically
+    (`_reconcile_record`); records that disagree keep the later one and say so in
+    `identity_note`, which reaches the row's link_evidence.
     """
     at_key: dict = {}
     at_doi: dict = {}
@@ -1111,7 +1211,11 @@ def _union_targets(*lists: list, record_type: str = "replication") -> list[dict]
                                                record_type)):
                 kept["outcome_block"] = earlier.get("outcome_block")
                 kept["outcome_stage"] = earlier.get("outcome_stage", "")
+            kept["record"], note = _reconcile_record(earlier, target)
+            if note:
+                kept["identity_note"] = note
             merged[where] = kept
+            doi = clean_doi(str((kept.get("record") or {}).get("doi") or ""))
         else:
             where = len(merged)
             merged.append(target)

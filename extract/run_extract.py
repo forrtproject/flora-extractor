@@ -1380,7 +1380,12 @@ def _target_entry(target: dict, doi_r: str, context: dict) -> "dict | None":
         "openalex_id":  str(record.get("openalex_id") or ""),
         "study_number": _clean_study_numbers(target.get("study_numbers", "")),
         "study_r":      _clean_study_numbers(target.get("replication_study_numbers", "")),
-        "evidence":     str(target.get("evidence_quote") or ""),
+        # A disagreement between two rungs about which work this key named
+        # (`_reconcile_record`) travels after the quote, where a reviewer reads it.
+        # Joined even onto an empty quote, so `evidence_quote()` never reads it as one.
+        "evidence":     (str(target.get("evidence_quote") or "")
+                         + (f" | {target['identity_note']}"
+                            if target.get("identity_note") else "")),
         # match_certain is the acceptance gate, but confidence is about the RECORD the
         # key resolved to: with no DOI, or with a title that is a citation fragment,
         # there is nothing a validator can check and the row is not a confident one.

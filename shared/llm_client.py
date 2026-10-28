@@ -71,7 +71,7 @@ from .prompts import (
 )
 from .rate_limit import throttle
 from .schema import canonical_outcome, normalise_outcome_block
-from .target_keys import assign_target_keys
+from .target_keys import assign_target_keys, lend_reference_dois
 from .utils import clean_doi
 
 # Output cap for EVERY call in this module — the three chat entry points and the two
@@ -1175,6 +1175,19 @@ def resolve_targets_and_outcomes(doi_r:       str,
             block = t.get("outcome_block")
             if isinstance(block, dict) and block.get("outcome"):
                 block["outcome"] = canonical_outcome(block["outcome"])
+        # A reference line's DOI is lent after the answer, not shown to the model, so
+        # an answer cached before the lending existed gets it here — and an accepted
+        # link takes it in place of a title-search DOI, as a fresh call would.
+        lend_reference_dois(cached.get("targets"), key_map)
+        only = cached.get("targets") or []
+        if cached.get("resolved") and len(only) == 1 and only[0].get("record") \
+                and only[0].get("match_certain"):
+            lent = clean_doi(str(only[0]["record"].get("doi") or ""))
+            if lent and (not cached.get("resolved_doi_o") or str(
+                    cached.get("resolution_method") or "").startswith("llm_title_search_")):
+                cached["resolved_doi_o"] = lent
+                cached["resolution_method"] = (cached.get("target_stage")
+                                               or cached.get("resolution_method"))
         return cached
 
     result, provider, llm_error = call_model(prompt, LINKING_MODEL,
@@ -1216,6 +1229,7 @@ def resolve_targets_and_outcomes(doi_r:       str,
 
     targets, notes = _validate_targets(result.get("targets"), key_map, prompt,
                                        record_type, bool(discussion))
+    lend_reference_dois(targets, key_map)
 
     try:
         unidentified = max(0, int(result.get("unidentified_count") or 0))

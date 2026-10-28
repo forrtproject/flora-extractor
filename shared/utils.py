@@ -78,6 +78,43 @@ def clean_doi(doi: str) -> str:
     return doi.lower().rstrip("/")
 
 
+# A DOI inside free reference text. It ends at whitespace or markup; trailing sentence
+# punctuation and the link labels a publisher page glues onto it are removed after.
+_DOI_IN_TEXT_RE = re.compile(r"10\.\d{4,9}/[^\s\"<>]+")
+# "…2015.12.002.Article Google Scholar": Springer's reference links run into the DOI
+# when the page is flattened to text.
+_GLUED_LINK_LABEL_RE = re.compile(r"\.?(?:Article|CAS|PubMed|Google|Crossref|MathSciNet)$")
+
+
+def doi_in_reference(text: str) -> str:
+    """The one DOI a reference line carries, or "" when it carries none or several.
+
+    A parsed reference keeps its DOI only as text — a "https://doi.org/…" link, a
+    "doi:" label, or the TEI <idno type="DOI"> / JATS <pub-id pub-id-type="doi">
+    element, whose text the parsers fold into `raw_ref`. Several distinct DOIs (a
+    reprint, a commentary and its target) are ambiguous and give "".
+    """
+    found: set[str] = set()
+    for match in _DOI_IN_TEXT_RE.finditer(str(text or "")):
+        doi = match.group(0)
+        while True:
+            stripped = _GLUED_LINK_LABEL_RE.sub("", doi).rstrip(".,;:'")
+            # A closing bracket belongs to the DOI only when the DOI opened it:
+            # "10.1016/0022-1031(77)90049-x" against "(… 10.1037/abc)".
+            while stripped[-1:] in ")]}" and (stripped.count("(") + stripped.count("[")
+                                               + stripped.count("{")
+                                               < stripped.count(")") + stripped.count("]")
+                                               + stripped.count("}")):
+                stripped = stripped[:-1]
+            if stripped == doi:
+                break
+            doi = stripped
+        doi = clean_doi(doi)
+        if re.fullmatch(r"10\.\d{4,9}/\S+", doi):
+            found.add(doi)
+    return found.pop() if len(found) == 1 else ""
+
+
 def bare_work_id(value: str) -> str:
     """
     Normalise an OpenAlex work identifier to its bare form.
@@ -446,8 +483,8 @@ def author_surname(author: str) -> str:
 _ARTICLE_ID_RE = re.compile(r"\b[eE]\d{4,}\b")
 _QUOTED_TITLE_RE = re.compile(r"[\"“]([^\"”]{15,})[\"”]")
 # ". Journal Name 84(3), 600-621" — the citation tail a reference line carries after
-# the title.
-_JOURNAL_TAIL_RE = re.compile(r"\.\s+[A-Z][^.]{0,60}\s+\d{1,4}\s*\(")
+# the title, which may end on its own question mark instead of a full stop.
+_JOURNAL_TAIL_RE = re.compile(r"[.?!]\s+[A-Z][^.]{0,60}\s+\d{1,4}\s*\(")
 _VOLUME_PAGES_RE = re.compile(r",?\s*\d{1,4}\s*\(\d+\)\s*,?\s*[\d–\-]+\s*$")
 
 
@@ -465,8 +502,20 @@ def clean_search_query(text: str) -> str:
     text = re.sub(r"\bdoi:\s*\S+", " ", text, flags=re.I)
     text = re.sub(r"(\w)-\s+(\w)", r"\1\2", text)   # "cog- nition" -> "cognition"
     quoted = _QUOTED_TITLE_RE.search(text)
+    # A quoted span is the TITLE only when it is a citation ELEMENT: opened at the
+    # start or after the authors' or year's punctuation, and closed by its own
+    # punctuation or the end — Chicago's `Smith, J. "Title." Journal`, IEEE's
+    # `J. Smith, "Title," Trans.`. Anywhere else it is a phrase the title quotes:
+    # `The "identified victim" effect: an identified group, or just a single
+    # individual?` was searched as "identified victim" and found nothing (Kogut &
+    # Ritov 2005a).
     if quoted:
-        text = quoted.group(1)
+        before, after = text[:quoted.start()], text[quoted.end():]
+        opens  = not before.strip() or re.search(r"[.,;:)]\s*$", before)
+        closes = (re.search(r"[.,;:?!]\s*$", quoted.group(1))
+                  or re.match(r"\s*(?:[.,;:]|$)", after))
+        if opens and closes:
+            text = quoted.group(1)
     text = _JOURNAL_TAIL_RE.split(text)[0]
     text = _VOLUME_PAGES_RE.sub("", text)
     text = _ARTICLE_ID_RE.sub(" ", text)
