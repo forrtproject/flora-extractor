@@ -9,9 +9,10 @@ were run on the same 2,186 cases with the production request (`run_v12.py`;
 
 ## Result
 
-**v1.2 is not a drop-in replacement for v1.1.** At every cut-off it loses at least as
-many positives as v1.1 and discards fewer negatives; it finds fewer reproductions; and
-it opens the title-search shortcut for fewer positives. Flash v1.2 is worse than v1.1
+**v1.2 is not a drop-in replacement for v1.1.** At every cut-off from 0.3 to 0.6 it
+loses more positives than v1.1 and discards fewer hard negatives (curated negatives are
+level within one case at 0.5 and 0.6); it finds fewer reproductions; and it opens the
+title-search shortcut for fewer positives. Flash v1.2 is worse than v1.1
 on every measure except price.
 
 Each voter beside Luna, discarding only when both say `none`, at the shipped cut-off 0.4:
