@@ -181,6 +181,9 @@ def write_handoff(con, pool_dir: Path, out_csv: Path, release_id: str, *,
         "rows_per_pile": {pile: len(by_pile[pile]) for pile in HANDOFF_PILES},
         "dropped_by_tier_verdict": dropped,
         "deferred_by_admission_gate": held,
+        # Not in the release id (spec.UNROUTED_KEYS), so the file names it itself.
+        "admission": {s.id: s.admission for s in specs
+                      if s.admission and not s.shadow},
         "skipped_unscreened": unscreened,
         "screened_only": decided is not None,
         "typed_by_tier_verdict": retyped,

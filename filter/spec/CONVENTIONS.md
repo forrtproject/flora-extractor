@@ -100,8 +100,10 @@ render bound to the old release id, to say nothing new about routing.
 **Assigning a gate.** `lenient` only with measured evidence of a base rate of about
 70% or above; `strict` for anything lower or unmeasured. The 70% line is where the
 lenient gate still ships ~90% real replications, given the screen's measured
-hard-negative pass rate. Record the reason in the spec's `measured` entries or
-`description`, as for any routing claim. Assignments on 2026-10-28:
+hard-negative pass rate. Record the reason in the table below, and in a new rule's
+`description` when it is written. Changing an existing rule's `description` or
+`measured` mints a release, which a gate change alone does not, so the table is the
+gate's record. Assignments on 2026-10-28:
 
 | rule | gate | base-rate evidence |
 | --- | --- | --- |

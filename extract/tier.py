@@ -1044,6 +1044,9 @@ def extract_works(con, client: Optional[ClaimsClient], pool_dir: Path,
     never ends. Observed 2026-08-07: a 100-work sandbox run judged the same 51
     unsettled works eight times in twenty minutes before it was killed. A re-run is
     how those works get another chance; the same run is not.
+
+    *counts*, when given, receives `deferred`: how many works the admission gates
+    held back, for the dry run to print. Absent with no client: nothing was checked.
     """
     check_release_binding(spec_dir, release_id,
                           (record or {}).get("bundle_hash"),
@@ -1064,7 +1067,7 @@ def extract_works(con, client: Optional[ClaimsClient], pool_dir: Path,
         deferred = deferred_works(screen, admission_gates(con, release_id, specs))
         held = (client.claimed_work_ids(release_id, TIER_EXTRACT)
                 | (settled_work_ids(client, mode) - reopen))
-    if counts is not None:
+    if counts is not None and client is not None:
         counts["deferred"] = len(deferred)
 
     flora = _flora_skip_dois(data_dir)

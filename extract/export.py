@@ -114,6 +114,7 @@ from typing import Optional
 
 from filter.engine.claims import ClaimsClient, ClaimsNotConfigured
 from filter.engine.export import SPEC_DIR, StaleBundleError, check_release_binding
+from filter.engine.spec import LENIENT, load_specs
 from filter.engine.handoff import admission_gates, decisions, deferred_works
 from filter.engine.release import read_release
 from extract.sanity_check import classify_row, demote_malformed
@@ -251,7 +252,6 @@ def admitted_work_ids(release: "str | None",
     `extract/tier.py` and `filter/engine/cli.py`.
     """
     from filter.engine.route import ADMITTED_PILES
-    from filter.engine.spec import load_specs
     from filter.engine.store import (DEFAULT_STORE_PATH, open_store, releases,
                                      resolve_release)
 
@@ -872,7 +872,9 @@ def main(argv: Optional[list[str]] = None) -> int:
                                                             spec_dir=args.spec_dir)
         except StoreUnavailable as exc:
             raise SystemExit(str(exc))
-        except StaleBundleError as exc:
+        except (StaleBundleError, ValueError) as exc:
+            # ValueError: a --spec-dir that load_specs() refuses, e.g. an archived
+            # bundle from before every screen rule named its admission gate.
             raise SystemExit(str(exc))
 
     try:
@@ -912,8 +914,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     print(f"  works the current screen discards: {report['screen_discarded']:,}  "
           "(dropped from the render)")
     if gates is not None:
+        lenient = sorted(s.id for s in load_specs(args.spec_dir)
+                         if s.admission == LENIENT and not s.shadow)
         print(f"  proceeds a strict admission gate defers: "
-              f"{report['screen_deferred']:,}  (dropped from the render)")
+              f"{report['screen_deferred']:,}  (dropped from the render; lenient "
+              f"rules: {', '.join(lenient) or 'none'})")
     if report["superseded_generation"]:
         print(f"  rows from a superseded generation: "
               f"{report['superseded_generation']:,}  (carried forward; "
