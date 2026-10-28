@@ -1800,10 +1800,10 @@ def test_two_subtitles_under_one_main_title_are_two_papers():
     assert not link_original._titles_agree(
         "Ego depletion vs. glucose intake in self control of eating",
         "Ego depletion vs. mood repair in emotional regulation tasks")
-    # An accented capital opens a subtitle too.
-    assert not link_original._titles_agree(
-        "Menace du stéréotype et performance. Étude de réplication en classe",
-        "Menace du stéréotype et performance. Évaluation chez les adultes")
+    # An accented capital opens a subtitle too, so the registry's main title matches.
+    assert link_original._titles_agree(
+        "Les effets de la menace du stéréotype",
+        "Les effets de la menace du stéréotype. Étude de réplication")
 
 
 @pytest.mark.parametrize("later_record, doi, conflict", [
