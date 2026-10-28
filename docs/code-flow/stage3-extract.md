@@ -368,10 +368,12 @@ wording, with nothing to bump by hand.
 
 | Cache | Contents |
 | ----- | -------- |
-| `cache/llm/classify_*.json` | front-door verdicts (complete screens only). Written by Stage 2's expensive tier; never read in Stage 3, and read by the handoff through `cached_classification()` for the category union and the voters' reasoning |
-| `cache/llm/reftarget_*.json` | reference-list target picks |
-| `cache/llm/llm_*.json` | abstract-level and full-text identification |
-| `cache/llm/outcome_*.json` | outcome verdicts, including escalations |
+| `cache/llm/classifyvote_*.json` | one front-door screening vote per entry, keyed on the prompt version, that voter's model at its effort, and the prompt; written by Stage 2's expensive tier as each vote parses. Never read in Stage 3; read by the handoff through `cached_classification()` for the category union and the voters' reasoning. Pair-keyed `classify_*` entries from before are split into votes on first read |
+| `cache/llm/targetoutcome_*.json` | the combined target-and-outcome answers of the abstract, reference-list and full-text rungs; the key names the rung and the record type. The older `llm_*` and `reftarget_*` entries stay on disk unread |
+| `cache/llm/authoryearpick_*.json` | the linking model's pick among the pooled title and author-year search candidates |
+| `cache/llm/outcome_*.json` | the standalone outcome coder's verdicts on rule-resolved links |
+| `cache/llm/pickcheck_*.json`, `keyedconfirm_*.json`, `searchconfirm_*.json` | the blind check of a reference-list pick, the keyed-record check, and the search-link grade |
+| `cache/llm/studystatus_*.json` | the title-only completed-or-prospective question for works with no abstract and no document |
 | `cache/parse/parse_*.json` | per-method parse results — read by the ladder before it parses, and by `_best_fulltext_from_cache` |
 | `cache/pdfs/pdfsrc_*.json` | per-DOI `{source, url}` — which tier really supplied the saved PDF, replayed by `acquire_pdf`'s up-front on-disk check |
 | `cache/pdfs/retry_*.json` | per-DOI `{tier: timestamp}` — which acquisition tiers came back empty and when. The same file shape keyed on `url:<URL>` holds back one URL the server answered 404/410 for |
@@ -379,10 +381,13 @@ wording, with nothing to bump by hand.
 
 Declines are cached; API failures are not.
 
-**Acquisition retry delays.** `data/target_pending.csv` is reopened by every run and
-almost none of its rows have a document, so each run used to re-pay the whole
-eleven-tier waterfall: uncached failed downloads, landing-page scrapes, a headless
-Chromium launch per row, and the metered OpenAlex content request. A tier that comes
+**Acquisition retry delays.** A `target_pending` work is extracted again only when
+something reopens it — a new extract generation, `--redo`, or `--redo-status
+target_pending`; otherwise its current-generation verdict rests (`_resting()` in
+`extract/tier.py`). Almost none of these works have a document, so each such re-run
+used to re-pay the whole eleven-tier waterfall: uncached failed downloads,
+landing-page scrapes, a headless Chromium launch per row, and the metered OpenAlex
+content request. A tier that comes
 back empty is now timestamped and not re-probed for `PDF_RETRY_AFTER_DAYS` (14, in
 `shared/pdf_sources.py`); the content-free XML answer gets the same delay
 (`OA_XML_RETRY_AFTER_DAYS`). This is a retry delay, never a verdict — the tier is asked

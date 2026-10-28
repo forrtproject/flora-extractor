@@ -54,11 +54,12 @@ docker run -t --rm -p 8070:8070 lfoppiano/grobid:0.8.0
 
 **Keep `GROBID_URL=http://localhost:8070` in your `.env`.** That line is set by
 `.env.example`, but it is *not* the code default: `shared/config.py` falls back to
-the **public** server `https://kermitt2-grobid.hf.space`. Deleting or blanking the
-env line therefore does not disable GROBID — it starts uploading every PDF the
-pipeline acquires to a third-party host. If you do not want that, either run the
-local container or point `GROBID_URL` somewhere unreachable so the pipeline logs a
-warning and tries the other reference-extraction methods.
+the **public** server `https://kermitt2-grobid.hf.space` when the variable is absent.
+Deleting the line therefore does not disable GROBID: every PDF it is called on — those
+whose local parse found no references — is uploaded to a third-party host. Blanking
+it (`GROBID_URL=`) leaves no server to call, so each attempt logs a warning and the
+pipeline tries the other reference-extraction methods, as it does when the server is
+unreachable.
 
 ## Running the pipeline
 

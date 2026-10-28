@@ -886,7 +886,7 @@ and its rationale belong together in one committed place. Key variables:
 
 ```bash
 RESEARCHER_EMAIL=...            # required: OpenAlex/CrossRef politeness headers
-GEMINI_API_KEY=...              # required
+GEMINI_API_KEY=...              # Stage 3's document reference-extraction fallback (PDF_PARSE_MODEL)
 OPENAI_API_KEY=...              # required: Stage 2 voter 2; Stage 3 linking and outcomes
 OPENROUTER_API_KEY=...          # required: screen voter 1 and the pick check are "/" ids
 OPENAI_DAILY_TOKEN_BUDGET=9500000   # 0 disables the cap (default = the free daily allocation, resets midnight UTC)
