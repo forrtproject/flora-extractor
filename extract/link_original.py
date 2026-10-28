@@ -1144,7 +1144,7 @@ def _agrees_with_held(target: dict, held: dict) -> bool:
 # title shorter than _MAIN_TITLE_MIN_WORDS says too little to lend an identity on.
 _SAME_WORK_TITLE_JACCARD = 0.8
 _MAIN_TITLE_MIN_WORDS = 3
-_TITLE_SUBTITLE = re.compile(r"[:?]|\.(?=\s+[A-Z])")
+_TITLE_SUBTITLE = re.compile(r"[:?]|\.(?=\s+[A-ZÀ-ÖØ-Þ])")
 
 
 def _titles_agree(a: str, b: str) -> bool:
