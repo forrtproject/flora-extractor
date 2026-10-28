@@ -1,27 +1,31 @@
 # FLoRA Extractor — Documentation
 
-**This page is the documentation index** for the guides and references below.
-`README.md` and `CLAUDE.md` point here rather than keeping lists of their own, so a
-new guide is added in one place and cannot go missing from a second.
+Start with the question you need answered. The guides describe current behaviour;
+dated campaign notes and evaluation reports record the configuration used at the time.
 
-## Quick links
+## Start here
 
-| Document | Description |
-|----------|-------------|
-| [../CLAUDE.md](../CLAUDE.md) | **Start here.** Module map, key design decisions, caching, error handling |
-| [setup.md](setup.md) | Installation, environment variables, running the pipeline |
-| [cli-reference.md](cli-reference.md) | All CLI commands with flags for every stage |
-| [filter-engine.md](filter-engine.md) | Stage 2's declarative routing engine (issue #146) |
-| [cleanup-worklist.md](cleanup-worklist.md) | Completion record for the 2026-08-06 cleanup round: what was done, skipped, or is pending a maintainer decision |
-| [aws-snapshot-scan.md](aws-snapshot-scan.md) | Runbook: the full OpenAlex snapshot scan on EC2, published to Hugging Face |
-| [parquet-cache.md](parquet-cache.md) | The dashboard's parquet cache |
-| [csv-schema.md](csv-schema.md) | Column definitions for the pipeline CSVs |
-| [retiring-superseded-records.md](retiring-superseded-records.md) | How a record the export stops shipping is retired from the validation tables (`data/retired_pairs.csv` → `csv_to_db.py --retire`) |
-| [dashboard-guide.md](dashboard-guide.md) | How to use the Pipeline + Validation dashboard tabs |
-| [check-page.md](check-page.md) | The dashboard's record-check page |
-| [supabase-schema.md](supabase-schema.md) | Supabase table schemas used by the validation monitoring tab |
-| [testing.md](testing.md) | How to run tests, write new tests, live API test guard |
-| [limitations.md](limitations.md) | Known limitations and revisit obligations |
+- **Which models do we use, and how do they classify a paper?**
+  [Models and screening](models-and-screening.md).
+- **How do I install and run the pipeline?** [Setup](setup.md), then
+  [CLI reference](cli-reference.md) for flags and dry runs.
+- **What do the results mean?** [CSV columns](csv-schema.md),
+  [dashboard guide](dashboard-guide.md) and [known limitations](limitations.md).
+- **How does the code work?** Use the stage walkthroughs below.
+  [CLAUDE.md](../CLAUDE.md) is the detailed maintainer and AI agent guide.
+
+## Reference and operations
+
+| Document | Use it for |
+|----------|------------|
+| [filter-engine.md](filter-engine.md) | Routing, claims, verdict storage and engine contracts |
+| [../filter/spec/CONVENTIONS.md](../filter/spec/CONVENTIONS.md) | Rule precedence, pile meanings and evidence requirements |
+| [aws-snapshot-scan.md](aws-snapshot-scan.md) | Full OpenAlex snapshot scan on EC2 and pool publication |
+| [parquet-cache.md](parquet-cache.md) | Dashboard cache |
+| [retiring-superseded-records.md](retiring-superseded-records.md) | Retire rows from the separate validation system |
+| [check-page.md](check-page.md) | Inspect a record in the dashboard |
+| [supabase-schema.md](supabase-schema.md) | Validation monitoring tables |
+| [testing.md](testing.md) | Tests and live API guards |
 
 ## Code-flow walkthroughs
 
@@ -36,6 +40,12 @@ Detailed code flows for each pipeline stage:
 | [code-flow/pdf-pipeline.md](code-flow/pdf-pipeline.md) | PDF acquisition waterfall + parse scoring |
 | [code-flow/analysis.md](code-flow/analysis.md) | Analysis scripts: the APA resolver's flow, plus a pointer to `analysis/README.md` (the gap/overlap analysis is retired) |
 
-Not indexed above, because they are records rather than references:
-`docs/archive/` (superseded design docs), `docs/tasks/` (dated handover notes) and
-`docs/superpowers/specs/`.
+## Historical records and evaluations
+
+- [Screening evaluations](../analysis/screening_eval/README.md) and
+  [pre-screen evaluations](../analysis/prescreen_eval/README.md): check the model,
+  prompt and gate used before applying a reported score to current settings.
+- [Analysis index](../analysis/README.md): experiments and dated reports.
+- [August cleanup record](cleanup-worklist.md), `handover-*.md`, `tasks/` and
+  `superpowers/specs/`: dated work records and plans, not current setup instructions.
+- `archive/`: superseded documentation.

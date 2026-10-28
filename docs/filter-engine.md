@@ -6,6 +6,13 @@ Rules route and discard; only LLM tiers admit. This document is the authority fo
 module interfaces; `filter/spec/CONVENTIONS.md` is the authority for policy
 (precedence, pile→status mapping, measurement levels).
 
+[Documentation index](README.md) · [Models and screening](models-and-screening.md) ·
+[Stage 2 walkthrough](code-flow/stage2-filter.md)
+
+For the current classifier, exact model IDs, gate, keys and evaluation evidence,
+start with **[models and screening](models-and-screening.md)**. This document is the
+engine contract reference.
+
 ## Semantics (from issue #146)
 
 - **Piles:** `discard` (the only rule-terminal state), `screen_expensive` (two-voter
@@ -622,7 +629,7 @@ record export in `filter/engine/handoff.py`, two CLI subcommands.
 
 - **`screen_cheap`** asks `shared/prescreen.py`'s question through
   `prescreen_vote()` — same prompt, same models, same parsing, same three bypasses
-  (`hard_signal`, `short_text`, a curated source) that refuse to let a 3B model end
+  (`hard_signal`, `short_text`, a curated source) that refuse to let a small model end
   a row — and applies the gate itself, in `_cheap_judge()`: two explicit noes
   discard, everything else proceeds. A bypass is recorded as a verdict rather than
   skipped: deciding not to ask is a decision. The tier is **dormant** — see
@@ -849,7 +856,7 @@ sandbox it promoted from; the sandbox is `--mode validation` plus a render.
 
 | Module | Contract |
 | --- | --- |
-| `extract/tier.py` | `extract_generation()` / `generation_inputs()` (the ladder version, the six `_GENERATION_PROMPTS` versions and three model ids at their call sites' efforts); `extract_works(con, client, pool_dir, release_id, *, only, limit, redo, …) -> list[ExtractWork]` (the worklist); `run_extract_tier(con, client, release_id, *, mode, limit, run, batch_size, …)` (the batched claims loop); `estimate(works)` / `render_estimate(est)` (the per-rung dry run); `result_payload(source_row, doi_r, rows, observed)` and `render_payload(payload)` (the two halves of the round trip); `settled_work_ids(client)` (the checkpoint). CLI: `python -m extract.tier [--run] [--limit N] [--batch-size N] [--batch-label …] [--mode live\|validation] [--only ids] [--redo ids] [--release <id>] [--overlay path\|--no-overlay] [--store …] [--pool …] [--spec-dir …]`. `--release` is not optional in practice: the tier refuses when the store holds several releases, exactly as `extract.export` and the `filter.engine` subcommands do. |
+| `extract/tier.py` | `extract_generation()` / `generation_inputs()` (the `_GENERATION_PROMPTS` versions and four model ids at their call sites' efforts; the ladder version is provenance only); `extract_works(con, client, pool_dir, release_id, *, only, limit, redo, …) -> list[ExtractWork]` (the worklist); `run_extract_tier(con, client, release_id, *, mode, limit, run, batch_size, …)` (the batched claims loop); `estimate(works)` / `render_estimate(est)` (the per-rung dry run); `result_payload(source_row, doi_r, rows, observed)` and `render_payload(payload)` (the two halves of the round trip); `settled_work_ids(client)` (the checkpoint). CLI: `python -m extract.tier [--run] [--limit N] [--batch-size N] [--batch-label …] [--mode live\|validation] [--only ids] [--redo ids] [--release <id>] [--overlay path\|--no-overlay] [--store …] [--pool …] [--spec-dir …]`. `--release` is not optional in practice: the tier refuses when the store holds several releases, exactly as `extract.export` and the `filter.engine` subcommands do. |
 | `extract/export.py` | `latest_results(client, *, mode, current_generation_only) -> (work → result row, superseded count)`; `rows_from_results(results)`; `partition(rows) -> (main, {set-aside file: rows})`; `render(client, …)`; `write(report, out_csv)`; `check(report, out_csv)`. CLI: `python -m extract.export [--out …] [--mode …] [--check] [--current-generation-only] [--release <id>\|--all-releases]`. |
 
 ### Two verdict-row kinds

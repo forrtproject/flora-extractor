@@ -4,6 +4,18 @@ A Python pipeline that discovers, extracts, and monitors replication and reprodu
 
 **Part of the [FORRT](https://forrt.org) project.**
 
+## Which models classify papers?
+
+**Stage 2 uses two voters: `deepseek/deepseek-v4-flash` through OpenRouter and
+`gpt-6-luna` through OpenAI, both at reasoning effort `low`.** A paper is discarded
+only when both say `none`; every other complete pair proceeds to extraction.
+The cheap pre-screen is dormant. Stage 3 reads the screen verdict and uses
+`gpt-6-luna` for linking and outcome coding.
+
+**[Models and screening](docs/models-and-screening.md)** explains the decision rule,
+all model roles, required API keys, evaluation evidence and historical results.
+Model settings live in [shared/config.py](shared/config.py).
+
 ---
 
 ## What It Does
@@ -38,20 +50,21 @@ lives in Stage 2's spec bundle, so there is one rule set to reason about.
 ## Quick Start
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/forrtproject/flora-extractor.git
 cd flora-extractor
-pip install -r requirements.txt
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
 cp .env.example .env   # fill in your API keys
 
 # Run the pipeline
-python -m search.run_search --scan
-python -m filter.engine route
-python -m filter.engine screen --tier screen_expensive --run
-python -m extract.tier --run
-python -m extract.export --release <id>
+.venv/bin/python -m search.pool_sync --pull   # obtain the existing survivor pool
+.venv/bin/python -m filter.engine route
+.venv/bin/python -m filter.engine screen --tier screen_expensive --run
+.venv/bin/python -m extract.tier --run
+.venv/bin/python -m extract.export   # with one routed release; otherwise pass --release
 
 # Start the monitoring web app
-python -m validate.app   # → http://localhost:5001
+.venv/bin/python -m validate.app   # → http://localhost:5001
 ```
 
 Stage 2's `screen` is a dry run without `--run`, printing what a tier would cost
@@ -65,18 +78,20 @@ See [docs/setup.md](docs/setup.md) for full setup instructions.
 
 ## Required environment variables
 
-```
-RESEARCHER_EMAIL=you@example.com   # for OpenAlex/Crossref API politeness
-GEMINI_API_KEY=...                 # primary LLM (free at aistudio.google.com)
-OPENAI_API_KEY=...                 # Stage 2's second screen voter (default SCREENING_MODEL_2) and Stage 3's linking/outcome models
+```bash
+RESEARCHER_EMAIL=you@example.com   # OpenAlex/Crossref politeness headers
+OPENROUTER_API_KEY=...            # Stage 2 voter 1; Stage 3 reference-list pick check
+OPENAI_API_KEY=...                # Stage 2 voter 2; Stage 3 linking and outcomes
+GEMINI_API_KEY=...                # Stage 3 document reference-extraction fallback
+SUPABASE_SERVICE_KEY=...          # claims and permanent verdicts for --run
+HF_TOKEN=...                      # access to the private survivor-pool dataset
 ```
 
-`OPENROUTER_API_KEY` is needed only when a model id contains a `/` (e.g. a
-`SCREENING_MODEL_2` or the optional pre-screen voters routed through OpenRouter).
-Optional: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `GROBID_URL`.
-
-`.env.example` is the authoritative list of every variable and its default — copy it
-rather than this excerpt.
+The shared `SUPABASE_URL` is supplied by `.env.defaults`. Model IDs and reasoning
+efforts are committed constants, not environment variables. Copy `.env.example`
+for the settings catalogue; defaults and loading rules live in
+[shared/config.py](shared/config.py). See [setup](docs/setup.md) for pool access,
+credentials and optional services.
 
 ---
 
