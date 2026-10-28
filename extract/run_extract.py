@@ -1174,7 +1174,7 @@ def _title_searched_entry(target: dict, doi_r: str, context: dict) -> "dict | No
         hits, hits_unavailable = title_search_candidates(
             doi_r, named, str(context.get("title_r") or ""), cited_year,
             "|".join(cited_surnames), context.get("year_r"),
-            str(context.get("work_id_r") or ""))
+            str(context.get("work_id_r") or ""), str(context.get("authors_r") or ""))
         unavailable = unavailable or hits_unavailable
         asked.append(f"title:{strip_citation_prefix(named)[:50]!r}")
         pool.extend(hits)
@@ -2046,7 +2046,8 @@ def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | Non
     context  = {"title_r": str(row.get("title_r", "") or ""),
                 "abstract_r": str(row.get("abstract_r", "") or ""),
                 "year_r": row.get("year_r"),
-                "work_id_r": str(row.get("openalex_id_r", "") or "")}
+                "work_id_r": str(row.get("openalex_id_r", "") or ""),
+                "authors_r": str(row.get("authors_r", "") or "")}
     recovered = link.get("_recovered_entry")
     resolved = ([(targets[0], recovered)] if recovered and len(targets) == 1
                 else [(t, _target_entry(t, doi_r, context)) for t in targets])
@@ -2321,7 +2322,8 @@ def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
             context = {"title_r": str(row.get("title_r", "") or ""),
                        "abstract_r": str(row.get("abstract_r", "") or ""),
                        "year_r": row.get("year_r"),
-                       "work_id_r": str(row.get("openalex_id_r", "") or "")}
+                       "work_id_r": str(row.get("openalex_id_r", "") or ""),
+                       "authors_r": str(row.get("authors_r", "") or "")}
             probe = {"key": None, "match_certain": True, "record": None,
                      "study_numbers": "", "replication_study_numbers": "",
                      "target_as_named": cited[0]["raw"],
@@ -2368,7 +2370,8 @@ def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
         context = {"title_r": str(row.get("title_r", "") or ""),
                    "abstract_r": str(row.get("abstract_r", "") or ""),
                    "year_r": row.get("year_r"),
-                   "work_id_r": str(row.get("openalex_id_r", "") or "")}
+                   "work_id_r": str(row.get("openalex_id_r", "") or ""),
+                   "authors_r": str(row.get("authors_r", "") or "")}
         raw_title = str(accepted_record.get("title") or "")
         cleaned   = clean_citation_title(raw_title)
         title     = raw_title if citation_fragment(cleaned) else cleaned

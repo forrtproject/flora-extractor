@@ -52,8 +52,9 @@ from shared.prompts import (
 from shared.schema import outcome_is_settled
 from shared.target_keys import assign_target_keys
 from shared.pdf_sources import acquire_pdf
-from shared.utils import (author_surname, bare_work_id, cache_key, clean_doi,
-                          non_article_doi, psyctests_doi, usable_title)
+from shared.utils import (OSF_PREPRINT_PREFIXES, author_surname, bare_work_id,
+                          cache_key, clean_doi, non_article_doi, psyctests_doi,
+                          usable_title)
 
 # ── Unified rule-based resolver (runs before any LLM call) ───────────────────
 # Combines citation-context scoring with a same-author/year title-Jaccard fallback
@@ -772,7 +773,7 @@ def published_after(year_o, year_r) -> bool:
 
 
 def is_replication_itself(hit: dict, doi_r: str, title_r: str, year_r=None,
-                          work_id_r: str = "") -> bool:
+                          work_id_r: str = "", authors_r: str = "") -> bool:
     """Whether a title-search hit is the replication's own record, not a distinct work.
 
     Identity decides first: the replication's DOI or OpenAlex work id is the
@@ -781,13 +782,17 @@ def is_replication_itself(hit: dict, doi_r: str, title_r: str, year_r=None,
     1946, replicated under that title in 2014), and refusing every hit at title Jaccard
     0.9 discarded exactly those originals.
 
-    A same-title hit is still refused unless it demonstrably PREDATES the replication.
-    A title search ranks the whole index, and the closest record to a replication's
-    own title is often the replication under another identifier — a repository copy,
-    a preprint, the journal version (holdout wrong-settle 2266446612; issue #191).
-    Those share the replication's year or come after it; an original it re-tests
-    cannot. A missing year on either side keeps the refusal: there is no evidence
-    the two are different works.
+    A same-title hit is still refused unless it is demonstrably someone else's earlier
+    work. A title search ranks the whole index, and the closest record to a
+    replication's own title is often the replication under another identifier — a
+    repository copy, a preprint, the journal version (holdout wrong-settle 2266446612;
+    issue #191). Year alone does not separate those: a preprint or a Stage 1 report
+    usually PREDATES the journal version. So a same-title hit must predate the
+    replication, must not be a preprint-server record, and must share no author with
+    it. Self-replications under an identical title are lost to this rule; they are
+    rare, and the full-text rung, which reads the citation, can still name them. A
+    missing year on either side keeps the refusal: there is no evidence the two are
+    different works.
     """
     doi = clean_doi(str(hit.get("doi") or ""))
     if doi and doi == clean_doi(doi_r):
@@ -798,12 +803,26 @@ def is_replication_itself(hit: dict, doi_r: str, title_r: str, year_r=None,
     if jaccard_similarity(hit.get("title", ""), title_r) <= 0.9:
         return False
     original, replication = _year(hit.get("year")), _year(year_r)
-    return not (original and replication and original < replication)
+    if not (original and replication and original < replication):
+        return True
+    if doi.split("/", 1)[0] in _PREPRINT_PREFIXES:
+        return True
+    surnames = {author_surname(a).lower() for a in str(authors_r or "").split(";")}
+    hit_authors = _hit_author_list(hit).lower()
+    return any(len(n) > 2 and re.search(rf"\b{re.escape(n)}\b", hit_authors)
+               for n in surnames)
+
+
+# Registrants whose records are preprints or repository deposits: OSF's branded
+# servers, bioRxiv/medRxiv, arXiv, SSRN, Research Square, Preprints.org.
+_PREPRINT_PREFIXES = OSF_PREPRINT_PREFIXES | {"10.1101", "10.48550", "10.2139",
+                                              "10.21203", "10.20944"}
 
 
 def _search_title_for_original(doi_r: str, target_desc: str,
                                study_r: str, year_r=None,
-                               work_id_r: str = "") -> "dict | None":
+                               work_id_r: str = "",
+                               authors_r: str = "") -> "dict | None":
     """Resolve a target the screen named but could not match to a reference.
 
     target_desc is however the abstract referred to the replicated study, so it may
@@ -818,7 +837,8 @@ def _search_title_for_original(doi_r: str, target_desc: str,
         doi_o = clean_doi(hit.get("doi", "") or "")
         # A replication whose title echoes the original's makes the original's own
         # record and the replication easy to confuse; never link a paper to itself.
-        if not doi_o or is_replication_itself(hit, doi_r, study_r, year_r, work_id_r):
+        if not doi_o or is_replication_itself(hit, doi_r, study_r, year_r, work_id_r,
+                                              authors_r):
             continue
         if published_after(hit.get("year"), year_r):
             log.info("[%s] title hit %s dropped: published %s, after the "
@@ -939,7 +959,8 @@ def title_search_candidates(doi_r: str, target_desc: str,
                             cited_year: str = "",
                             cited_surname: str = "",
                             year_r=None,
-                            work_id_r: str = "") -> "tuple[list[dict], bool]":
+                            work_id_r: str = "",
+                            authors_r: str = "") -> "tuple[list[dict], bool]":
     """(candidates, unavailable) for *target_desc*.
 
     `_search_title_for_original` returns the first confident hit and discards the
@@ -1004,7 +1025,8 @@ def title_search_candidates(doi_r: str, target_desc: str,
         # is how a real original — an old work, a report, a chapter — never reached the
         # model at all. Only a hit that cannot be identified AT ALL is dropped.
         if not ident or ident in seen or is_replication_itself(hit, doi_r, study_r,
-                                                               year_r, work_id_r):
+                                                               year_r, work_id_r,
+                                                               authors_r):
             continue
         flags = []
         reason = non_article_doi(doi_o)
@@ -1828,7 +1850,8 @@ def run_for_doi(doi_r:              str,
                              for v in votes))
         if target_desc and both_sure:
             hit = _search_title_for_original(doi_r, target_desc, study_r,
-                                             cands_row.get("year_r"), oa_id_r)
+                                             cands_row.get("year_r"), oa_id_r,
+                                             str(cands_row.get("authors_r") or ""))
             if hit:
                 log.info("[%s] Resolved by pre-PDF title search: %s", doi_r,
                          hit["resolved_title_o"])

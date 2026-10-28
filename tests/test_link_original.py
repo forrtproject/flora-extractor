@@ -1736,11 +1736,18 @@ class TestReferencePickCheck:
     ({"doi": "10.31234/osf.io/abcde", "title": "Forming impressions of personality",
       "year": 2014}, True),
     ({"doi": "10.9/undated", "title": "Forming impressions of personality"}, True),
+    # A preprint or Stage 1 copy usually PREDATES the journal version, so an earlier
+    # year alone is not enough: a preprint-server record is refused ...
+    ({"doi": "10.31234/osf.io/abcde", "title": "Forming impressions of personality",
+      "year": 2012, "authors": ["Someone Else"]}, True),
+    # ... and so is an earlier record by the replication's own authors.
+    ({"doi": "10.9/early-copy", "title": "Forming impressions of personality",
+      "year": 2012, "authors": ["Nauts, S.", "Langner, O."]}, True),
 ])
-def test_a_search_hit_is_the_replication_only_by_identity_or_an_undated_title(hit, itself):
+def test_a_same_title_hit_must_be_someone_elses_earlier_work(hit, itself):
     assert link_original.is_replication_itself(
         hit, "10.1027/1864-9335/a000179", "Forming Impressions of Personality",
-        "2014", "W1") is itself
+        "2014", "W1", "Sanne Nauts; Oliver Langner; Inge Huijsmans") is itself
 
 
 @pytest.mark.parametrize("abstract, may_stop", [
