@@ -1,0 +1,35 @@
+v1 (shipped #219) 2186 valid
+v2 (all changes) 2186 valid
+v3 (none + title-only) 2186 valid
+v4 (title-only only) 2186 valid
+## Gate with Luna: positives lost, human-labelled / pipeline-labelled negatives discarded
+                            dev                     test                    all
+ds4 + luna (production)      4 lost  58%/ 83%        4 lost  78%/ 86%        8 lost  68%/ 85%
+v1 (shipped #219) <0.5       2 lost  55%/ 80%        3 lost  74%/ 78%        5 lost  65%/ 79%
+v1 (shipped #219) <0.7       2 lost  58%/ 82%        3 lost  76%/ 80%        5 lost  68%/ 81%
+v2 (all changes) <0.5        1 lost  50%/ 68%        2 lost  67%/ 70%        3 lost  59%/ 69%
+v2 (all changes) <0.7        1 lost  55%/ 75%        2 lost  69%/ 75%        3 lost  63%/ 75%
+v3 (none + title-onl <0.5    1 lost  55%/ 74%        4 lost  68%/ 76%        5 lost  62%/ 75%
+v3 (none + title-onl <0.7    2 lost  57%/ 78%        4 lost  73%/ 77%        6 lost  65%/ 78%
+v4 (title-only only) <0.5    2 lost  57%/ 79%        4 lost  74%/ 78%        6 lost  66%/ 79%
+v4 (title-only only) <0.7    3 lost  59%/ 81%        4 lost  76%/ 82%        7 lost  68%/ 82%
+## AUC within Luna's none (positives vs human-labelled negatives): dev / test
+  v1 (shipped #219)          0.889 / 0.893
+  v2 (all changes)           0.894 / 0.920
+  v3 (none + title-only)     0.910 / 0.882
+  v4 (title-only only)       0.887 / 0.851
+## Positives where Span answers mostly 'unclear' (P(unclear) > 0.5)
+  v1 (shipped #219)          40
+  v2 (all changes)           3
+  v3 (none + title-only)     18
+  v4 (title-only only)       15
+## Title-search shortcut (confident Luna + P >= 0.9 + type share >= 0.7): positives / hard / curated
+  v1 (shipped #219)          1284 / 15 / 9
+  v2 (all changes)           1367 / 37 / 15
+  v3 (none + title-only)     1314 / 17 / 10
+  v4 (title-only only)       1298 / 16 / 8
+## Type, Luna overridden at a 0.7 share (642 positives with validator types): correct/typed, reproductions found — dev | test
+  v1 (shipped #219)          299/305 (98.0%), repro 20/21 | 325/333 (97.6%), repro 19/22
+  v2 (all changes)           299/305 (98.0%), repro 18/21 | 326/334 (97.6%), repro 20/22
+  v3 (none + title-only)     299/306 (97.7%), repro 19/21 | 322/332 (97.0%), repro 19/22
+  v4 (title-only only)       297/305 (97.4%), repro 19/21 | 323/332 (97.3%), repro 19/22
