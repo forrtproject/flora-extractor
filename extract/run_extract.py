@@ -45,8 +45,8 @@ from shared.openalex_client import fetch_openalex_full_metadata as _oa_full_meta
 from shared.openalex_client import (
     _TitleSearchUnavailable, _search_crossref_by_title, _search_openalex_by_title,
 )
-from shared.pdf_sources import (cached_pdf, epmc_xml_has_content,
-                                springer_oa_xml_has_content,
+from shared.pdf_sources import (_springer_oa_cache_file, cached_pdf,
+                                epmc_xml_has_content, springer_oa_xml_has_content,
                                 openalex_xml_has_content,
                                 verified_cached_document)
 from shared.pdf_parsing import (
@@ -703,14 +703,14 @@ def _cached_epmc_xml(doi_r: str) -> "dict | None":
 def _cached_springer_oa_xml(doi_r: str) -> "dict | None":
     """The cached Springer Nature JATS document for *doi_r*, or None.
 
-    `get_springer_oa_fulltext()` files it under `springer_oa_xml_<key(doi)>` in
-    OA_XML_CACHE_DIR, and reading it back needs no lookup. The content test is the
+    `get_springer_oa_fulltext()` files it in OA_XML_CACHE_DIR under the name its
+    `_springer_oa_cache_file()` gives, and reading it back needs no lookup. The content test is the
     acquisition tier's, for the reason `_cached_oa_xml` states.
     """
     doi = clean_doi(doi_r)
     if not doi:
         return None
-    doc_file = OA_XML_CACHE_DIR / f"springer_oa_xml_{cache_key(doi)}.json"
+    doc_file = OA_XML_CACHE_DIR / _springer_oa_cache_file(doi).name
     if not doc_file.exists():
         return None
     try:

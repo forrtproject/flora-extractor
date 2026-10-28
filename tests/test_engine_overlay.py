@@ -538,6 +538,24 @@ def test_the_bulk_pathway_is_exhausted_before_any_gated_source_is_asked(
         ["10.1007/s11409-015-9151-5"]]
 
 
+def test_a_springer_refusal_holds_for_the_run_not_the_slice(
+        tmp_path, isolated_cache, monkeypatch):
+    """A rejected key or a spent daily quota refuses every later slice too, so it is
+    asked once per run, not once per slice."""
+    path = tmp_path / "worklist-springer.parquet"
+    pq.write_table(pa.Table.from_pylist(
+        [{"work_id": i, "doi": f"10.1007/s{i}", "title": f"T{i}", "year": 2016}
+         for i in (1, 2, 3)], schema=overlay.WORKLIST_SCHEMA), path)
+    calls: list = []
+    _trace(monkeypatch, calls)
+    monkeypatch.setattr(backfill, "_fetch_springer_batch",
+                        lambda dois, key: calls.append(("springer", dois))
+                        or backfill.PHASE_STOP)
+    backfill.run(path, tmp_path / "ov", batch_size=1)
+    assert len([name for name, _ in calls if name == "s2"]) == 3     # three slices
+    assert [arg for name, arg in calls if name == "springer"] == [["10.1007/s1"]]
+
+
 def test_the_targeted_pathway_only_sees_rows_bulk_left_without_text(
         wl, isolated_cache, tmp_path, monkeypatch):
     """The whole point of the split: a CrossRef or Scopus call spent on a row Europe

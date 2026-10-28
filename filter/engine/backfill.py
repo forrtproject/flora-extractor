@@ -76,7 +76,7 @@ from search.fetch_abstracts import (
     _fetch_epmc_batch, _fetch_openalex_batch, _fetch_osf_registration,
     _fetch_s2_batch, _fetch_scopus_abstract, _fetch_springer_batch, _load_checkpoint,
     _load_found_index, _phase_targets, _read_abstract_cache, _run_batch_phase,
-    _run_item_phase, OSF_TEMPLATE_PREFIX, SPRINGER_BATCH_SIZE, osf_identifier,
+    _run_item_phase, OSF_TEMPLATE_PREFIX, PHASE_STOP, SPRINGER_BATCH_SIZE, osf_identifier,
 )
 from shared.config import (
     CROSSREF_RATE_SEC, ELSEVIER_API_KEY, EPMC_BATCH_SIZE, EPMC_RATE_SEC,
@@ -287,7 +287,7 @@ def _source_shape(source: str) -> dict:
         "crossref": {"batch_size": 1, "rate_sec": CROSSREF_RATE_SEC,
                      "quota": None, "skipped": ""},
         "springer": {"batch_size": SPRINGER_BATCH_SIZE, "rate_sec": SPRINGER_RATE_SEC,
-                     "quota": None,
+                     "quota": None, "daily_requests": SPRINGER_DAILY_REQUESTS,
                      "skipped": "" if SPRINGER_META_API_KEY
                      else "SPRINGER_META_API_KEY not set"},
         "scopus": {"batch_size": 1, "rate_sec": SCOPUS_RATE_SEC,
@@ -295,6 +295,11 @@ def _source_shape(source: str) -> dict:
                    "skipped": "" if ELSEVIER_API_KEY else "ELSEVIER_API_KEY not set"},
     }
     return shapes[source]
+
+
+# The Meta API's basic plan. Not a cap the run enforces — the API's 429 ends the
+# phase — but a dry run that would exceed it should say so.
+SPRINGER_DAILY_REQUESTS = 500
 
 
 def _requests(item: dict) -> int:
@@ -319,6 +324,10 @@ def render_estimate(estimates: list[dict], rows: int, dropped: int) -> str:
         if not note and item["quota"] and item["targets"] > item["quota"]:
             note = (f"capped at {item['quota']:,}/run "
                     f"({item['targets'] - item['quota']:,} left over)")
+        daily = item.get("daily_requests")
+        if not note and daily and item["requests"] > daily:
+            note = (f"over the {daily:,} requests/day plan — the phase stops at the "
+                    f"API's 429; rerun on later days")
         lines.append(f"{item.get('phase', ''):<9} {item['source']:<10} "
                      f"{item['targets']:>10,} "
                      f"{item['requests']:>10,}  {item['rate_sec']:>6}  {note}")
@@ -401,6 +410,9 @@ def run(worklist_path: Path, overlay_dir: Path, sources=DEFAULT_SOURCES,
     chunks: list[str] = []
     by_source: dict[str, int] = {}
     scopus_left = scopus_limit
+    # Sources the host refused (a rejected key, a spent daily quota): the refusal
+    # holds for the run, so later slices do not each spend one more request on it.
+    stopped: set[str] = set()
 
     for rows, dropped in _row_batches(worklist_path, limit, batch_size):
         dropped_total += dropped
@@ -422,10 +434,12 @@ def run(worklist_path: Path, overlay_dir: Path, sources=DEFAULT_SOURCES,
             for source in (s for s in TARGETED_SOURCES if s in sources):
                 if source == "scopus" and scopus_limit and scopus_left <= 0:
                     continue
+                if source in stopped:
+                    continue
                 # OSF is asked about the full worklist: its template line is not an
                 # abstract another source can have supplied instead (_osf_targets).
                 spent = _run_source(source, rows if source == "osf" else remaining,
-                                    done, found, scopus_left)
+                                    done, found, scopus_left, stopped)
                 if source == "scopus" and scopus_limit:
                     # The quota is weekly and belongs to the RUN, not to a slice:
                     # capping per slice would multiply the ceiling by the number of
@@ -445,11 +459,12 @@ def run(worklist_path: Path, overlay_dir: Path, sources=DEFAULT_SOURCES,
 
 
 def _run_source(source: str, rows: list[dict], done: set[str], found: set[str],
-                scopus_limit: int) -> int:
+                scopus_limit: int, stopped: "set[str] | None" = None) -> int:
     """Run one source's phase over *rows*, recording what it finds in *found*.
 
     Returns how many identifiers it was actually spent on, which only the Scopus
-    caller reads: its quota is the run's, and a run is now several slices.
+    caller reads: its quota is the run's, and a run is now several slices. A source
+    the host refused is added to *stopped*, which the caller holds for the run.
     """
     namespace = NAMESPACES[source]
     shape = _source_shape(source)
@@ -476,14 +491,23 @@ def _run_source(source: str, rows: list[dict], done: set[str], found: set[str],
     elif source == "springer":
         _run_batch_phase(label, namespace, targets, SPRINGER_BATCH_SIZE,
                          SPRINGER_RATE_SEC,
-                         lambda batch: _fetch_springer_batch(batch, SPRINGER_META_API_KEY),
-                         found)
+                         _stopping(_fetch_springer_batch, "springer", stopped), found)
     elif source == "scopus":
         if scopus_limit and scopus_limit > 0:
             targets = targets[:scopus_limit]
         _run_item_phase(label, namespace, targets, SCOPUS_RATE_SEC,
                         _scopus_fetcher(), found, progress_every=500)
     return len(targets)
+
+
+def _stopping(fetch, source: str, stopped: "set[str] | None"):
+    """*fetch* bound to the source's key, noting in *stopped* when the host refuses."""
+    def batch(ids):
+        fetched = fetch(ids, SPRINGER_META_API_KEY)
+        if fetched is PHASE_STOP and stopped is not None:
+            stopped.add(source)
+        return fetched
+    return batch
 
 
 def _osf_fetcher(rows: list[dict]):

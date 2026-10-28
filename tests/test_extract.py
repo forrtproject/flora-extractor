@@ -2389,6 +2389,7 @@ class TestSpringerOaXmlIsFoundFromTheRow:
                 encoding="utf-8")
         doc = run_extract._cached_structured_document("10.1186/body")
         assert doc["source"] == "springer_oa_xml"
+        assert run_extract._has_document("10.1186/body", self._link())
         assert not run_extract._has_document("10.1186/shell", self._link())
 
 

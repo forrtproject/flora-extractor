@@ -61,7 +61,7 @@ reordering one never invalidates another's progress:
 | targeted | 3 | OSF registrations (`10.17605` only) | `OSF_TOKEN` for private records | recovers a registration template, not an abstract |
 | targeted | 4 | Semantic Scholar batch | `S2_API_KEY` | 8.5% here, 14.5% corpus-wide |
 | targeted | 5 | CrossRef by DOI | — | 0.3–0.6% |
-| targeted | 6 | Springer Nature Meta API (Springer Nature DOIs only: `10.1007`, `10.1038`, `10.1057`, `10.1186`, `10.3758`), 20 DOIs per query | `SPRINGER_META_API_KEY` (free) | 31/31 on benchmark Springer papers the other sources left empty; basic plan 500 requests/day, a 429 ends the phase |
+| targeted | 6 | Springer Nature Meta API (Springer Nature DOIs only: `10.1007`, `10.1038`, `10.1057`, `10.1186`, `10.3758`), 20 DOIs per query | `SPRINGER_META_API_KEY` (free) | 31/31 on benchmark Springer papers the other sources left empty; basic plan 500 requests/day; a 429 (quota spent) or 401/403 (key refused) ends the phase |
 | targeted | 7 | Scopus by DOI | `ELSEVIER_API_KEY` | quota-capped fallback (~10k/week) |
 
 Bulk goes first and over everything, because a batched keyless request answers
@@ -227,7 +227,7 @@ retired with it; the pool is the artifact to share.
 The pool is what nobody should have to re-scan; the caches are what nobody should
 have to re-buy. `cache/llm` is the provider bill, and because the models are not
 deterministic, re-running it does not reproduce our grading — it produces the
-collaborator's own. The abstract store is six rate-limited sources over ~500k
+collaborator's own. The abstract store is seven rate-limited sources over ~500k
 identifiers. Both go to the same private dataset repo as the pool, under a
 `cache/` prefix; `pool_sync` lists only parquet outside its own `overlay/` prefix,
 so the three sets of files never collide.
