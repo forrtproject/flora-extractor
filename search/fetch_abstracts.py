@@ -612,8 +612,9 @@ def _fetch_springer_batch(dois: list[str], api_key: str):
     if status == "transient":
         return None
     if resp.status_code == 429:
-        log.warning("Springer Meta API answered 429 — treating the daily quota (500 "
-                    "requests on the basic plan) as spent; rerun tomorrow to resume.")
+        log.warning("Springer Meta API answered 429 (per-minute limit or the basic "
+                    "plan's 500 requests/day) — stopping the phase; nothing is "
+                    "recorded, and a rerun resumes from the checkpoint.")
         return PHASE_STOP
     if resp.status_code in (401, 403):
         # resp.text echoes the reason, never the key (which travels as a param).

@@ -1284,7 +1284,13 @@ class TestGuardOriginalLink:
     @pytest.mark.parametrize("fields, kept", [
         # A distinct original that shares the replication's title (Asch 1946 and its
         # 2014 replication): its own DOI tells them apart.
-        ({"doi_o": "10.2/orig", "title_o": "A Study of Things"}, True),
+        ({"doi_o": "10.2/orig", "title_o": "A Study of Things", "year_o": "1946",
+          "year_r": "2014"}, True),
+        # A DOI with no work id that is not shown to predate it may be another
+        # identifier of the replication's own work.
+        ({"doi_o": "10.2/alias", "title_o": "A Study of Things", "year_o": "2014",
+          "year_r": "2014"}, False),
+        ({"doi_o": "10.2/alias", "title_o": "A Study of Things"}, False),
         # ... or its own work id, even when searching its title finds the replication.
         ({"doi_o": "", "title_o": "A Study of Things", "oa_work_id_o": "W2"}, True),
         # Identity decides whatever the title says.

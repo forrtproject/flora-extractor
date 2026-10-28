@@ -1523,6 +1523,14 @@ def _norm_title(t: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", str(t or "").lower()).strip()
 
 
+def _year_int(value) -> "int | None":
+    """A year field as an int, or None when it is blank or not a year."""
+    try:
+        return int(float(str(value).strip()))
+    except (TypeError, ValueError):
+        return None
+
+
 def _guard_original_link(row: dict) -> dict:
     """Reject self-links and recover a missing doi_o before the row is written.
 
@@ -1595,10 +1603,17 @@ def _guard_original_link(row: dict) -> dict:
             return "resolved original is the replication itself (same DOI)"
         if cand_work_id and work_id_r and cand_work_id == work_id_r:
             return "resolved original is the replication itself (same OpenAlex work)"
-        if (not cand_doi and not cand_work_id and title_o and title_r
-                and _norm_title(title_o) == _norm_title(title_r)):
-            return ("resolved original has the same title as the replication and no "
-                    "DOI or work id to tell them apart")
+        if title_o and title_r and _norm_title(title_o) == _norm_title(title_r):
+            if not cand_doi and not cand_work_id:
+                return ("resolved original has the same title as the replication and "
+                        "no DOI or work id to tell them apart")
+            # A DOI alone can be another identifier of the replication's own work
+            # (its work id is filled only after this guard), so a same-title record
+            # without a work id must at least predate the replication.
+            year_o, year_r = (_year_int(row.get(c)) for c in ("year_o", "year_r"))
+            if not cand_work_id and not (year_o and year_r and year_o < year_r):
+                return ("resolved original has the same title as the replication and "
+                        "is not shown to predate it")
         return ""
 
     reason = _is_self(doi_o, work_id_o_in)

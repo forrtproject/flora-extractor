@@ -1786,6 +1786,15 @@ _REGISTRY_KOGUT = {"doi": "10.1002/bdm.492", "openalex_id": "https://openalex.or
                             "first_author": "Tehila Kogut"}
 
 
+def test_two_subtitles_under_one_main_title_are_two_papers():
+    assert link_original._titles_agree(
+        "The value of believing in free will",
+        "The value of believing in free will: Encouraging a belief in determinism")
+    assert not link_original._titles_agree(
+        "The value of believing in free will: Study one of cheating",
+        "The value of believing in free will: A meta-analysis of priming")
+
+
 @pytest.mark.parametrize("later_record, doi, conflict", [
     # The full-text rung's parsed reference line for the same work: the registry
     # identity survives it.

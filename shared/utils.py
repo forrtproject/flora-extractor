@@ -550,7 +550,8 @@ def clean_search_query(text: str) -> str:
         before, after = text[:quoted.start()], text[quoted.end():]
         opens  = not before.strip() or re.search(r"[.,;:)]\s*$", before)
         closes = (re.search(r"[.,;:?!]\s*$", quoted.group(1))
-                  or re.match(r"\s*(?:[.,;:]|$)", after))
+                  or re.match(r"\s*(?:[.,;:]|$)", after)
+                  or re.match(r"\s+[A-Z][^.]{0,60}\s+\d{1,4}\s*\(\d", after))
         if opens and closes:
             text = quoted.group(1)
     text = _JOURNAL_TAIL_RE.split(text)[0]

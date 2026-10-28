@@ -302,6 +302,11 @@ class TestCleanSearchQuery:
         assert clean_search_query("Is it worth it? Results from Study 2 (N = 300)") == \
             "Is it worth it? Results from Study 2 (N = 300)"
 
+    def test_a_quoted_title_followed_by_its_journal_is_taken_out(self):
+        assert clean_search_query(
+            'Smith (2010). "A sufficiently long paper title" Journal of Example 4(2), 1-9'
+        ) == "A sufficiently long paper title"
+
     def test_a_quoted_title_is_taken_out_of_its_quotes(self):
         assert clean_search_query(
             '\u201cA New Approach to Estimating the Production Function for Housing.\u201d '

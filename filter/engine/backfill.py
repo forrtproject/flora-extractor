@@ -246,7 +246,8 @@ def _targets(source: str, rows: list[dict], done: set[str],
     if source == "springer":
         # The Meta API answers about Springer Nature's registrants only, so any
         # other DOI is a call (and a recorded miss) whose answer is already known.
-        return [doi for doi in targets if is_springer_nature_doi(doi)]
+        # Deduplicated too: a quota'd query should not spend a slot twice on one DOI.
+        return list(dict.fromkeys(doi for doi in targets if is_springer_nature_doi(doi)))
     return targets
 
 
