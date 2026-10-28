@@ -1355,6 +1355,38 @@ def test_a_work_whose_text_changed_is_asked_again():
     assert tiers.decided_work_ids(client, "screen_expensive", after) == set()
 
 
+def test_a_failed_re_screen_is_not_completed_by_an_answer_to_the_old_text():
+    """An abstract arrived after the screen, so the work is asked again; when one
+    voter's call then fails, that voter's answer to the OLD text must not complete
+    the pair. The work keeps its complete old screen and stays claimable until the
+    new text has two answers of its own."""
+    voter1, voter2 = _voter_models()
+    before = _asked(11, "A replication", "")
+    after = _asked(11, "A replication", "We replicated Smith (2019) and found no effect.")
+    generation = tiers.screening_generation("screen_expensive")
+    client = MagicMock()
+    client.claims.return_value = [{"id": c, "meta": {"mode": "live", "generation": generation}}
+                                  for c in ("old", "retry", "rerun")]
+    old = [{**v, "claim_id": "old", "prompt_hash": before[11],
+            "created_at": "2026-08-01T00:00:00+00:00"} for v in _expensive_votes()]
+    retry = [{"claim_id": "retry", "work_id": 11, "verdict": "none", "model": voter2,
+              "confidence": "confident", "prompt_hash": after[11],
+              "created_at": "2026-09-01T00:00:00+00:00"}]     # voter 1's call failed
+    client.verdicts.return_value = old + retry
+    assert tiers.decided_work_ids(client, "screen_expensive", after) == set()
+    decision = tiers.checkpoint_decisions(client, "screen_expensive")[11]
+    assert decision["outcome"] == "discard"
+    assert {vote["model"] for vote in decision["votes"]} == {voter1, voter2}
+
+    rerun = [{"claim_id": "rerun", "work_id": 11, "verdict": verdict, "model": model,
+              "confidence": "confident", "prompt_hash": after[11],
+              "created_at": "2026-09-02T00:00:00+00:00"}
+             for model, verdict in ((voter1, "replication"), (voter2, "none"))]
+    client.verdicts.return_value = old + retry + rerun
+    assert tiers.decided_work_ids(client, "screen_expensive", after) == {11}
+    assert tiers.checkpoint_decisions(client, "screen_expensive")[11]["outcome"] == "proceed"
+
+
 def test_a_verdict_predating_the_record_stands_unless_the_text_is_newer():
     """The backlog. Nothing recorded what these answered, so the timestamps decide:
     overlay text that arrived after the verdict was never shown to a voter. Without
