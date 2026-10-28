@@ -33,6 +33,8 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(ROOT))
 
+from shared.cache import cache_exists, read_json  # noqa: E402
+from shared.config import OA_CACHE_DIR  # noqa: E402
 from shared.disambiguation import jaccard_similarity, token_coverage  # noqa: E402
 from shared.pdf_parsing import read_parse_cache, score_parse_result  # noqa: E402
 from shared.prompts import (  # noqa: E402
@@ -40,7 +42,7 @@ from shared.prompts import (  # noqa: E402
     _TARGET_TASK)
 from shared.row_key import primary_key  # noqa: E402
 from shared.schema import OUTCOME_LABELS  # noqa: E402
-from shared.utils import clean_doi  # noqa: E402
+from shared.utils import cache_key, clean_doi  # noqa: E402
 
 MODEL = "claude-opus-5-5"
 EFFORT = "high"
@@ -197,6 +199,30 @@ _REF_HEADING = re.compile(r"^\s*(references|bibliography|literature cited)\s*$",
                          re.I | re.M)
 
 
+def metadata_references(row: dict) -> list[str]:
+    """The work's reference list from OpenAlex (OpenCitations as fallback), one line
+    per work, read from the pipeline's cache only.
+
+    These are the lists the ladder's reference-list rung reads for a row with no
+    document (`extract/link_original.py`). They are an input, not the pipeline's
+    answer, so giving them to the blind coder keeps the recode blind. A list that is
+    not cached is simply absent: this check makes no network call.
+    """
+    oa = row.get("oa_work_id_r") or str(row.get("openalex_id_r") or "").rsplit("/", 1)[-1]
+    paths = [OA_CACHE_DIR / f"refs_{oa}.json"] if oa else []
+    if clean_doi(row.get("doi_r", "")):
+        paths.append(OA_CACHE_DIR / f"ocrefs_{cache_key(clean_doi(row['doi_r']))}.json")
+    works = next((read_json(p) for p in paths if cache_exists(p) and read_json(p)), [])
+    lines = []
+    for w in works:
+        names = [a.get("author", {}).get("display_name", "") for a in w.get("authorships") or []]
+        authors = ", ".join(names[:3]) + (" et al." if len(names) > 3 else "")
+        doi = clean_doi(w.get("doi") or "")
+        lines.append(f"{authors or 'unknown'} ({w.get('publication_year') or '?'}). "
+                     f"{w.get('title') or ''}{f'. doi:{doi}' if doi else ''}")
+    return lines
+
+
 def build_prompt(row: dict, fulltext: str) -> str:
     parts = [EVIDENCE_POLICY + TASK, "PAPER", f"TITLE: {row.get('title_r', '')}"]
     if row.get("abstract_r"):
@@ -204,6 +230,13 @@ def build_prompt(row: dict, fulltext: str) -> str:
     if fulltext:
         parts.append("FULL TEXT, as parsed from the document (sections in order, "
                      "reference list at the end):\n" + fulltext[:FULLTEXT_CHARS])
+    # Without a document, or with one whose parse found no reference list, the
+    # original can only be named from the work's metadata reference list.
+    if not _REF_HEADING.search(fulltext) and "REFERENCES (as parsed)" not in fulltext:
+        refs = metadata_references(row)
+        if refs:
+            parts.append("REFERENCE LIST of this paper (from OpenAlex, not from the "
+                         "document; unordered):\n" + "\n".join(refs))
     return "\n\n".join(parts)
 
 
