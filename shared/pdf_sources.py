@@ -2950,6 +2950,10 @@ def download_pdf(url: str, doi: str = "", min_bytes: int = _MIN_PDF_BYTES,
         try:
             r = requests.get(url, headers=headers, timeout=60, stream=True,
                              allow_redirects=not auth_headers)
+            if auth_headers and r.status_code in (401, 403):
+                # An API's refusal is an answer about entitlement, not an outage.
+                return {"success": False, "path": None, "source": "",
+                        "reason": f"http_{r.status_code}"}
             if auth_headers and r.is_redirect:
                 # requests forwards a custom header across hosts, and the Wiley API
                 # redirects to a separate download host; the credential is for the
@@ -2957,10 +2961,6 @@ def download_pdf(url: str, doi: str = "", min_bytes: int = _MIN_PDF_BYTES,
                 bare = {k: v for k, v in headers.items() if k not in auth_headers}
                 r = requests.get(urljoin(url, r.headers["Location"]), headers=bare,
                                  timeout=60, stream=True)
-            if auth_headers and r.status_code in (401, 403):
-                # An API's refusal is an answer about entitlement, not an outage.
-                return {"success": False, "path": None, "source": "",
-                        "reason": f"http_{r.status_code}"}
             if r.status_code in _PERMANENT_HTTP_STATUS:
                 _write_retry_log(_url_failure_path(url),
                                  {f"http_{r.status_code}": _now_iso()})
