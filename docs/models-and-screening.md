@@ -52,8 +52,9 @@ The reference-list checker uses **V4.1 Flash**; the screening voter uses **V4 Fl
 Linking calls also code outcomes for their targets from the same reading. The
 standalone outcome coder handles originals resolved by deterministic rules.
 
-The cheap tier (`screen_cheap`) can only discard on two explicit noes; a keep or
-failure passes the work on to the main screen. All three routing specs for this tier
+The cheap tier (`screen_cheap`) can only discard on two explicit noes; a keep passes
+the work on to the main screen, and a failed call is no decision: the work stays open
+and is asked again. All three routing specs for this tier
 are currently `shadow: true`, so no live work reaches it. Its configured models are
 not additional active classification voters. See
 [activation requirements](filter-engine.md#activating-the-cheap-tier).
