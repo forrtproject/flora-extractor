@@ -103,7 +103,7 @@ def test_deep_flags_non_study_work_types(tmp_path, monkeypatch):
     monkeypatch.setattr(sc, "DATA_DIR", tmp_path)
     monkeypatch.setattr(sc.time, "sleep", lambda *_: None)
     types = {"10.5281/zenodo.99999": "dataset",
-             "10.7554/elife.12345.041": "peer-review",
+             "10.9999/report.12345": "peer-review",
              "10.1/study": "journal-article",
              "10.2/untyped": ""}
     monkeypatch.setattr(sc, "fetch_doi_metadata", lambda d: {"type": types.get(d, "")})

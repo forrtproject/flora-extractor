@@ -1,6 +1,6 @@
 # CLI Reference
 
-All commands are run from the project root with `python -m <module>`.
+All commands are run from the project root with `.venv/bin/python -m <module>`.
 
 ---
 
@@ -13,23 +13,23 @@ downstream reads. Stage 2 reads the SURVIVOR POOL, so the pool is what a scan
 produces, and `run_search` is a thin operator front-end over
 `search/snapshot_scan.py`.
 
-`--scan` is **required**. A bare `python -m search.run_search` exits 2 with usage
+`--scan` is **required**. A bare `.venv/bin/python -m search.run_search` exits 2 with usage
 rather than start a 725 GB, 13–21 hour read, and the whole parser is four flags:
 
 ```bash
 # Full corpus scan into the default pool (cache/snapshot_pool, or FLORA_POOL_DIR).
 # Resumable: partitions the ledger already marks done are skipped.
-python -m search.run_search --scan
+.venv/bin/python -m search.run_search --scan
 
 # Write the pool somewhere else. This is Stage 2's input — a scan that writes no
 # pool produces nothing.
-python -m search.run_search --scan --survivor-pool /mnt/big/pool
+.venv/bin/python -m search.run_search --scan --survivor-pool /mnt/big/pool
 
 # Stop after N snapshot partitions this run
-python -m search.run_search --scan --snapshot-max-files 20
+.venv/bin/python -m search.run_search --scan --snapshot-max-files 20
 
 # Scan on even though the ledger was written under a DIFFERENT search gate
-python -m search.run_search --scan --force-gate
+.venv/bin/python -m search.run_search --scan --force-gate
 ```
 
 Progress is a separate, read-only command (below), safe against a scan in flight.
@@ -38,16 +38,16 @@ Progress is a separate, read-only command (below), safe against a scan in flight
 
 `search/fetch_abstracts.py` is a library, not a command: it owns the six sources
 and their transient-vs-definitive contract, and its one caller is
-`python -m filter.engine.backfill` (Stage 2), which supplies the worklist and
+`.venv/bin/python -m filter.engine.backfill` (Stage 2), which supplies the worklist and
 writes the recovered text into an overlay chunk. Run the backfill, not this
 module — its CLI is in the Stage 2 section below.
 
 ```bash
 # Cheap bulk pathway over a wide worklist: batched, keyless, unquota'd
-python -m filter.engine.backfill --worklist wide.parquet --run --phase bulk
+.venv/bin/python -m filter.engine.backfill --worklist wide.parquet --run --phase bulk
 
 # Gated pathway, over the rows bulk left without text; Scopus is capped
-python -m filter.engine.backfill --worklist no_text.parquet --run --phase targeted \
+.venv/bin/python -m filter.engine.backfill --worklist no_text.parquet --run --phase targeted \
     --scopus-limit 9000
 ```
 
@@ -94,21 +94,21 @@ change to the search gate itself costs the full scan.
 
 ```bash
 # Full snapshot scan, writing the survivor pool. --scan is required: a bare
-# `python -m search.run_search` exits with usage rather than start a 725 GB read.
-python -m search.run_search --scan --survivor-pool cache/snapshot_pool
+# `.venv/bin/python -m search.run_search` exits with usage rather than start a 725 GB read.
+.venv/bin/python -m search.run_search --scan --survivor-pool cache/snapshot_pool
 
 # How far along is a running scan? Read-only, safe to run concurrently with it:
 # files/bytes/records consumed vs the manifest, rows kept, recent throughput, ETA,
 # and the pool's provenance (below).
-python -m search.snapshot_scan --status
-python -m search.snapshot_scan --status --json
+.venv/bin/python -m search.snapshot_scan --status
+.venv/bin/python -m search.snapshot_scan --status --json
 
 # Stamp an existing pool that predates the sidecar, without re-scanning or
 # re-pulling. The gate comes from the local ledger; with no ledger it REFUSES
 # rather than guess, and the fingerprint must be given:
-python -m search.snapshot_scan --stamp-pool
-python -m search.snapshot_scan --stamp-pool --gate <fingerprint>   # from the remote manifest
-python -m search.snapshot_scan --stamp-pool --gate local           # "this checkout scanned it"
+.venv/bin/python -m search.snapshot_scan --stamp-pool
+.venv/bin/python -m search.snapshot_scan --stamp-pool --gate <fingerprint>   # from the remote manifest
+.venv/bin/python -m search.snapshot_scan --stamp-pool --gate local           # "this checkout scanned it"
 ```
 
 **The pool's provenance sidecar** — `_pool_provenance.json`, written beside the
@@ -127,7 +127,7 @@ discovery ever sees it.
 
 There is no sample or pilot mode. To scan a few partitions for a look, run the
 same command against a scratch state directory — `FLORA_CACHE_DIR=/tmp/flora-sample
-python -m search.run_search --scan --snapshot-max-files 3` moves the ledger and,
+.venv/bin/python -m search.run_search --scan --snapshot-max-files 3` moves the ledger and,
 with it, the pool (`FLORA_POOL_DIR` defaults under the cache dir). The retired
 `--snapshot-pilot` wrote real parquet into the production pool while keeping no
 ledger, so the two disagreed about what had been consumed.
@@ -158,7 +158,7 @@ link that can do the whole pool in minutes.
 **Collaborator workflow — one command:**
 
 ```bash
-python -m search.pool_sync --pull        # the survivor pool + text overlay → Stage 2's input
+.venv/bin/python -m search.pool_sync --pull        # the survivor pool + text overlay → Stage 2's input
 ```
 
 Pool files are stored **year-sharded** on the remote
@@ -168,21 +168,21 @@ transfer is resumed by re-running the command.
 
 ```bash
 # Prove this machine can write to the repo BEFORE a long scan (commits preflight.json)
-python -m search.pool_sync --check-access
+.venv/bin/python -m search.pool_sync --check-access
 
 # Upload the local pool (creates the private repo on first push)
-python -m search.pool_sync --push
-python -m search.pool_sync --push --dry-run
+.venv/bin/python -m search.pool_sync --push
+.venv/bin/python -m search.pool_sync --push --dry-run
 
 # Download the whole pool, or only some partition years
-python -m search.pool_sync --pull
-python -m search.pool_sync --pull --years 2019,2021-2023
-python -m search.pool_sync --pull --pool-dir /mnt/big/pool --repo my-org/flora-survivor-pool
+.venv/bin/python -m search.pool_sync --pull
+.venv/bin/python -m search.pool_sync --pull --years 2019,2021-2023
+.venv/bin/python -m search.pool_sync --pull --pool-dir /mnt/big/pool --repo my-org/flora-survivor-pool
 
 # The text overlay alone — how a backfill is published, and how it is taken
-python -m search.pool_sync --push --overlay-only
-python -m search.pool_sync --pull --overlay-only
-python -m search.pool_sync --pull --no-overlay          # the pool alone
+.venv/bin/python -m search.pool_sync --push --overlay-only
+.venv/bin/python -m search.pool_sync --pull --overlay-only
+.venv/bin/python -m search.pool_sync --pull --no-overlay          # the pool alone
 ```
 
 A push writes `pool_manifest.json` at the repo root recording the search gate,
@@ -232,10 +232,10 @@ identifiers. Both go to the same private dataset repo as the pool, under a
 so the three sets of files never collide.
 
 ```bash
-python -m shared.cache_sync --pull                      # everything
-python -m shared.cache_sync --pull --parts llm,abstracts
-python -m shared.cache_sync --push
-python -m shared.cache_sync --push --dry-run
+.venv/bin/python -m shared.cache_sync --pull                      # everything
+.venv/bin/python -m shared.cache_sync --pull --parts llm,abstracts
+.venv/bin/python -m shared.cache_sync --push
+.venv/bin/python -m shared.cache_sync --push --dry-run
 ```
 
 Parts: `abstracts`, `llm`, `openalex`, `openalex_xml`, `parse`, `grobid`,
@@ -255,7 +255,7 @@ than the directory it replaced.
 already pushes those blobs as each tier run decides a work.
 
 `--repo` points `cache_sync` at a dataset repo other than `FLORA_POOL_REPO`.
-The abstract store has its own migration CLI: `python -m shared.abstract_store
+The abstract store has its own migration CLI: `.venv/bin/python -m shared.abstract_store
 --migrate` converts the old file-per-key cache into `cache/abstracts.sqlite`
 (`--cache-dir` for a cache directory other than the configured one).
 
@@ -287,7 +287,7 @@ shards already unpacked; `--force` on a pull re-extracts them)
 
 ## Stage 2 — Filter
 
-Stage 2 **is** the filter engine: `python -m filter.engine <command>`. The
+Stage 2 **is** the filter engine: `.venv/bin/python -m filter.engine <command>`. The
 per-row rule classifier (`filter.run_filter`, `filter/rule_filter.py`) and its
 `reset_backfilled` companion have been removed; nothing in the pipeline calls them
 any more.
@@ -311,49 +311,49 @@ The usual order is `route` → `screen`.
 
 ```bash
 # What the bundle currently says — one line per spec, plus the bundle hash
-python -m filter.engine specs
+.venv/bin/python -m filter.engine specs
 
 # Route the pool: mints a release id, writes cache/engine/releases/<id>.json,
 # fills the DuckDB store, prints the pile counts
-python -m filter.engine route --pool cache/snapshot_pool
+.venv/bin/python -m filter.engine route --pool cache/snapshot_pool
 
 # What one rule moves, what already covered it, and whether it is measured
-python -m filter.engine diagnose --spec dataset-type --pool cache/snapshot_pool
+.venv/bin/python -m filter.engine diagnose --spec dataset-type --pool cache/snapshot_pool
 
 # Materialize a pile as a Stage 3 CSV, with an immutable manifest beside it
-python -m filter.engine export --pile screen_expensive --out data/engine_expensive.csv \
+.venv/bin/python -m filter.engine export --pile screen_expensive --out data/engine_expensive.csv \
     --pool cache/snapshot_pool --from-year 2011
 
 # What an LLM tier would cost over its pile — claims nothing, spends nothing
-python -m filter.engine screen --tier screen_expensive
+.venv/bin/python -m filter.engine screen --tier screen_expensive
 
 # Claim a small first batch and spend on it
-python -m filter.engine screen --tier screen_expensive --run --limit 500 \
+.venv/bin/python -m filter.engine screen --tier screen_expensive --run --limit 500 \
     --batch-label first-expensive-batch
 
 # The cheap tier: verdicts recorded, no effect on anything, until --live
-python -m filter.engine screen --tier screen_cheap --run
-python -m filter.engine screen --tier screen_cheap --run --live
+.venv/bin/python -m filter.engine screen --tier screen_cheap --run
+.venv/bin/python -m filter.engine screen --tier screen_cheap --run --live
 
 # The sandbox, same semantics as the extract tier's: verdicts recorded, the
 # handoff and the live checkpoint ignore them; re-running live is the promotion
-python -m filter.engine screen --tier screen_expensive --run --limit 20 --mode validation
+.venv/bin/python -m filter.engine screen --tier screen_expensive --run --limit 20 --mode validation
 
 # The pending/no_text rows, as a worklist for the abstract backfill
-python -m filter.engine worklist --out data/no_text_worklist.csv --pool cache/snapshot_pool
+.venv/bin/python -m filter.engine worklist --out data/no_text_worklist.csv --pool cache/snapshot_pool
 
 # An ad-hoc CSV record of what this release admitted
-python -m filter.engine export-csv --out /tmp/release-2011.csv --from-year 2011
+.venv/bin/python -m filter.engine export-csv --out /tmp/release-2011.csv --from-year 2011
 
 # Push response blobs an earlier run left pending (dry run without --run)
-python -m filter.engine reconcile
+.venv/bin/python -m filter.engine reconcile
 
 # Releases on disk and the pile counts each of them routed
-python -m filter.engine status
+.venv/bin/python -m filter.engine status
 
 # Claims still holding works, and how to end one a dead run left behind
-python -m filter.engine release-claim
-python -m filter.engine release-claim --claim <id> --status failed --yes
+.venv/bin/python -m filter.engine release-claim
+.venv/bin/python -m filter.engine release-claim --claim <id> --status failed --yes
 ```
 
 | Command | What it does |
@@ -451,7 +451,7 @@ Each has `--help`; the one-liners are their own `description=`:
 
 ```bash
 # Fill a text overlay for the routing worklist's no_text rows (#146 M3). Dry-run by default.
-python -m filter.engine.backfill --worklist W [--overlay-dir D] [--run] [--freeze]
+.venv/bin/python -m filter.engine.backfill --worklist W [--overlay-dir D] [--run] [--freeze]
 #   also: --phase, --limit, --source, --batch-size, --scopus-limit,
 #         --include-openalex, --dry-run
 
@@ -459,17 +459,17 @@ python -m filter.engine.backfill --worklist W [--overlay-dir D] [--run] [--freez
 # opt-in via --include-openalex), so it is affordable over a wide worklist;
 # targeted is the gated sources (OSF, Semantic Scholar, CrossRef, then Scopus)
 # over the rows bulk left without text.
-python -m filter.engine.backfill --worklist wide.parquet --run --phase bulk
-python -m filter.engine.backfill --worklist no_text.parquet --run --phase targeted
+.venv/bin/python -m filter.engine.backfill --worklist wide.parquet --run --phase bulk
+.venv/bin/python -m filter.engine.backfill --worklist no_text.parquet --run --phase targeted
 
 # Reconcile a routing change against the validation tables (#146 M5).
 # Writes lineage records only — never a validation row. Dry-run by default.
-python -m filter.engine.supersede --old <release> --new <release> [--run] [--reason …]
+.venv/bin/python -m filter.engine.supersede --old <release> --new <release> [--run] [--reason …]
 #   also: --actor (defaults to $USER), --store
 
 # Postgres sizing for the engine state tables (#146 §8 decision 1): measures the
 # bytes one claimed row and one verdict actually cost.
-python -m filter.engine.sizing [--rows N] [--verdict-rate R] [--json]
+.venv/bin/python -m filter.engine.sizing [--rows N] [--verdict-rate R] [--json]
 #   defaults: --rows 5146160 --verdict-rate 0.1
 ```
 
@@ -483,35 +483,35 @@ and records, `extract.export` renders. Design: [`filter-engine.md`](filter-engin
 
 ```bash
 # What would this cost? Dry run is the DEFAULT — nothing claimed, nothing spent
-python -m extract.tier
+.venv/bin/python -m extract.tier
 
 # Claim the worklist and extract it
-python -m extract.tier --run
+.venv/bin/python -m extract.tier --run
 
 # A first small batch, labelled so the claims name the campaign
-python -m extract.tier --run --limit 50 --batch-label wave-1
+.venv/bin/python -m extract.tier --run --limit 50 --batch-label wave-1
 
 # The sandbox: real verdicts the live export ignores
-python -m extract.tier --run --mode validation
+.venv/bin/python -m extract.tier --run --mode validation
 
 # Specific works, and works the checkpoint would otherwise skip
-python -m extract.tier --run --only 2741809807,2884670852
-python -m extract.tier --run --redo 2741809807
+.venv/bin/python -m extract.tier --run --only 2741809807,2884670852
+.venv/bin/python -m extract.tier --run --redo 2741809807
 
 # Render data/extracted.csv from the verdicts of the works this release admits
-python -m extract.export --release <id>
+.venv/bin/python -m extract.export --release <id>
 
 # Every stored verdict, whatever routing now says about its work
-python -m extract.export --all-releases
+.venv/bin/python -m extract.export --all-releases
 
 # Render the sandbox's verdicts to their own CSV (set-asides go beside it)
-python -m extract.export --release <id> --mode validation --out data/extracted-test.csv
+.venv/bin/python -m extract.export --release <id> --mode validation --out data/extracted-test.csv
 
 # Does the file on disk match the verdicts? Writes nothing; non-zero if it differs
-python -m extract.export --release <id> --check
+.venv/bin/python -m extract.export --release <id> --check
 
 # Drop works whose only result row is from a superseded generation
-python -m extract.export --release <id> --current-generation-only
+.venv/bin/python -m extract.export --release <id> --current-generation-only
 ```
 
 **Input:** the routing release and the survivor pool, read in process — the tier
@@ -521,7 +521,7 @@ step, and no Stage 2 file is needed for a tier run.
 **Output:** permanent verdict rows in the state authority. `data/extracted.csv` is
 what `extract.export` renders from them.
 
-`python -m extract.run_extract` is retired: it prints a pointer and exits 2. The CSV
+`.venv/bin/python -m extract.run_extract` is retired: it prints a pointer and exits 2. The CSV
 runner it used to be — `--fresh`, `--rescreen`, `--extracted-test`, `--screen-here`,
 `--filtered-csv`, the chunked read and the appending writer — is parked on the
 `wip/csv-runner` branch, with a `WIP.md` recording what a revival would have to
@@ -563,11 +563,13 @@ checkpoint and points the previous result row at the new one
 (`supersede_verdict`), so the old row stays as evidence of what was believed and
 stops being read.
 
-**A changed prompt or model reopens everything at once.** The extract GENERATION is
-the hash of the ladder version, the prompts and the models at their call-site efforts
-(`generation_inputs()` in `extract/tier.py`). Editing any of them means no work has a
-current-generation verdict, so the whole worklist is claimable again — the equivalent
-of the old `--rescreen`, without a flag and without a file to reopen.
+**A changed prompt, model or effort changes the extraction generation.** It hashes
+prompt versions and model IDs at their call-site efforts (`generation_inputs()` in
+`extract/tier.py`). Older results stop settling works unless an explicit generation
+equivalence preserves them. The ladder version is provenance only; a ladder change
+requires a named reopen with `--redo` or `--redo-status`. See
+[models and screening](models-and-screening.md) for current models and historical
+verdicts.
 
 **The dry run prices by rung, and OpenAlex in credits.** What a row costs is almost
 entirely how far down the ladder it went, so the estimate is a weighted sum over
@@ -631,8 +633,8 @@ file whole — a re-render after a campaign is one large diff, and that is expec
 settle the live worklist.
 
 ```bash
-python -m extract.tier --run --mode validation --limit 20 --batch-label shakedown
-python -m extract.export --release <id> --mode validation --out data/extracted-test.csv
+.venv/bin/python -m extract.tier --run --mode validation --limit 20 --batch-label shakedown
+.venv/bin/python -m extract.export --release <id> --mode validation --out data/extracted-test.csv
 ```
 
 The sandbox render is filtered by a release like any other: `--mode` says which runs'
@@ -674,8 +676,8 @@ is held out by the tier's own checkpoint — so it is a static, committed file r
 than a query. `analysis/build_validated_skip.py` materialises it once:
 
 ```bash
-python -m analysis.build_validated_skip            # dry run: prints the counts
-python -m analysis.build_validated_skip --apply    # writes data/validated_skip.csv
+.venv/bin/python -m analysis.build_validated_skip            # dry run: prints the counts
+.venv/bin/python -m analysis.build_validated_skip --apply    # writes data/validated_skip.csv
 ```
 
 `--out` writes somewhere other than `data/validated_skip.csv`; `--dry-run` is the
@@ -695,13 +697,13 @@ count means the file and the verdicts have drifted apart.
 
 ```bash
 # Report over data/extracted.csv — writes nothing
-python -m extract.sanity_check
+.venv/bin/python -m extract.sanity_check
 
 # The sandbox render instead
-python -m extract.sanity_check --input data/extracted-test.csv
+.venv/bin/python -m extract.sanity_check --input data/extracted-test.csv
 
 # Also network-verify unregistered doi_o against doi.org and flag fabrications
-python -m extract.sanity_check --deep
+.venv/bin/python -m extract.sanity_check --deep
 ```
 
 The two `--deep` buckets are the reason the pass still exists: each needs a network
@@ -743,8 +745,8 @@ non-multi row, including rows that exited at the reference screen with no PDF, a
 resulting empty cache then masked the real parse on any later run that did get the PDF.
 
 ```bash
-python -m extract.clean_parse_cache          # dry run: count and report
-python -m extract.clean_parse_cache --apply  # delete them
+.venv/bin/python -m extract.clean_parse_cache          # dry run: count and report
+.venv/bin/python -m extract.clean_parse_cache --apply  # delete them
 ```
 
 ### Pre-validation audit
@@ -754,10 +756,10 @@ non-canonical `outcome` values (against `schema.OUTCOME_VALUES`), a `no_doi` row
 with no `oa_work_id_o` to show, and the rest.
 
 ```bash
-python -m extract.audit_extracted                       # audit data/extracted.csv
-python -m extract.audit_extracted --input data/extracted-test.csv
-python -m extract.audit_extracted --report data/pre_validation_audit.csv
-python -m extract.audit_extracted --doi 10.1234/example  # repeatable
+.venv/bin/python -m extract.audit_extracted                       # audit data/extracted.csv
+.venv/bin/python -m extract.audit_extracted --input data/extracted-test.csv
+.venv/bin/python -m extract.audit_extracted --report data/pre_validation_audit.csv
+.venv/bin/python -m extract.audit_extracted --doi 10.1234/example  # repeatable
 ```
 
 ### Backfilling authors
@@ -767,11 +769,11 @@ those columns were written. Like the DOI audit below, it reads the exported CSV 
 CORRECTS THE VERDICTS it is rendered from; render the result afterwards.
 
 ```bash
-python -m extract.backfill_authors                   # dry run
-python -m extract.backfill_authors --apply
-python -m extract.export --release <id>              # render the correction
-python -m extract.backfill_authors --mode validation
-python -m extract.backfill_authors --doi 10.1234/example
+.venv/bin/python -m extract.backfill_authors                   # dry run
+.venv/bin/python -m extract.backfill_authors --apply
+.venv/bin/python -m extract.export --release <id>              # render the correction
+.venv/bin/python -m extract.backfill_authors --mode validation
+.venv/bin/python -m extract.backfill_authors --doi 10.1234/example
 ```
 
 ### DOI verification audit
@@ -783,22 +785,22 @@ would be undone by the next render, so rendering is the third step and it is you
 
 ```bash
 # Dry run: print summary + write data/doi_audit_report.csv
-python -m extract.audit_dois
+.venv/bin/python -m extract.audit_dois
 
 # Claim, correct, supersede
-python -m extract.audit_dois --apply
+.venv/bin/python -m extract.audit_dois --apply
 
 # Render the corrected CSV
-python -m extract.export --release <id>
+.venv/bin/python -m extract.export --release <id>
 
 # Audit a single DOI
-python -m extract.audit_dois --doi 10.1234/example
+.venv/bin/python -m extract.audit_dois --doi 10.1234/example
 
 # Re-ask only the rows whose verification could not be completed last time
-python -m extract.audit_dois --status api_error --apply
+.venv/bin/python -m extract.audit_dois --status api_error --apply
 
 # The sandbox render, and the validation-mode verdicts behind it
-python -m extract.audit_dois --mode validation
+.venv/bin/python -m extract.audit_dois --mode validation
 ```
 
 Verification runs once, inside the tier's judge, and its answer is stored on the row —
@@ -820,7 +822,7 @@ Each Stage 3 run prints its free-text OpenAlex search count next to the token su
 
 ```bash
 # Start the web app
-python -m validate.app
+.venv/bin/python -m validate.app
 # → http://localhost:5001
 ```
 
@@ -840,7 +842,7 @@ Stage 1's corpus is the survivor pool now. The per-release recall monitor that
 replaces it is specified in `analysis/gold/README.md` and not yet implemented.
 
 `analysis/apa_resolver.py` is a library, not a command — it defines `resolve_all()`
-and `run_apa_resolution()` and has no `__main__` block, so `python -m
+and `run_apa_resolution()` and has no `__main__` block, so `.venv/bin/python -m
 analysis.apa_resolver` does nothing. Import it.
 
 **Outputs:** CSV and Markdown files in `analysis/` (see [code-flow/analysis.md](code-flow/analysis.md) for what each file means)
@@ -854,13 +856,13 @@ analysis and are no longer produced.
 
 ```bash
 # Drop superseded preprint versions (keep highest _v, or the version-less DOI) — issue #17
-python -m tools.dedup_preprint_versions --input data/extracted.csv            # dry-run
-python -m tools.dedup_preprint_versions --input data/extracted.csv --apply
+.venv/bin/python -m tools.dedup_preprint_versions --input data/extracted.csv            # dry-run
+.venv/bin/python -m tools.dedup_preprint_versions --input data/extracted.csv --apply
 
 # Corrections to stored rows go through superseding verdicts, never a CSV edit:
-#   python -m extract.audit_dois --apply        (doi_o corrections)
-#   python -m extract.backfill_authors          (authors_o / ref_o)
-# and a re-code of outcomes is a re-run: python -m extract.tier --redo <work_ids>
+#   .venv/bin/python -m extract.audit_dois --apply        (doi_o corrections)
+#   .venv/bin/python -m extract.backfill_authors          (authors_o / ref_o)
+# and a re-code of outcomes is a re-run: .venv/bin/python -m extract.tier --redo <work_ids>
 ```
 
 ---
@@ -869,16 +871,16 @@ python -m tools.dedup_preprint_versions --input data/extracted.csv --apply
 
 ```bash
 # Run all unit tests
-python -m pytest tests/
+.venv/bin/python -m pytest tests/
 
 # Run specific test file
-python -m pytest tests/test_extract.py -v
+.venv/bin/python -m pytest tests/test_extract.py -v
 
 # Run with live API access (requires TEST_LIVE_API=1)
-TEST_LIVE_API=1 python -m pytest tests/live/
+TEST_LIVE_API=1 .venv/bin/python -m pytest tests/live/
 
 # Run with coverage
-python -m pytest tests/ --cov=. --cov-report=html
+.venv/bin/python -m pytest tests/ --cov=. --cov-report=html
 ```
 
 ---
@@ -918,3 +920,26 @@ python -c "import shutil; shutil.rmtree('cache/llm', ignore_errors=True)"
 | `/api/dashboard/supabase-outcomes` | Outcome distribution from validated table |
 | `/api/dashboard/supabase-corrections` | Per-field correction frequency |
 | `/api/dashboard/supabase-drilldown` | Paginated incorrect-DOI table |
+
+
+## Compress the OpenAlex response cache
+
+The OpenAlex cache uses `.json.gz` entries. Readers accept existing `.json` files;
+new writes compress automatically. Logical keys and JSON payloads are unchanged.
+Cache sync publishes the same plain JSON archive members and shard names, so older
+collaborators can still pull them. Local pulls store OpenAlex entries compressed.
+Use `shared.cache.read_json()` and `cache_exists()` for path-based cache reads;
+reading a `.json` path directly does not find its gzip sibling.
+
+To reclaim space in an existing checkout, stop its cache-writing pipeline jobs and
+run from the project root:
+
+```bash
+.venv/bin/python -m shared.compress_cache                 # count only
+.venv/bin/python -m shared.compress_cache --apply --workers 2
+```
+
+The migration streams up to `--workers` files at once (one to four; two by default). Each gzip is decompressed and
+checked against the original SHA-256 before the unchanged plain source is removed.
+Existing gzip entries with different contents stop the migration. A restart skips
+completed files; plain and compressed entries may coexist throughout the run.

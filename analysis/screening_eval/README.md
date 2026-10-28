@@ -16,7 +16,7 @@ voter pair, the prompt wording, and the discard rule.
 and the voter pair, so a number computed on them is an in-sample number. Any future
 evaluation of a screening prompt or voter pair must hold these cases out or
 cross-validate — see the "Evaluation design" section of
-[`screening_prompt_proposal.md`](screening_prompt_proposal.md), which states the same
+[`screening_prompt_proposal.md`](../../archive/analysis/screening_eval/screening_prompt_proposal.md), which states the same
 requirement and proposes FLoRA entries as the out-of-sample positive set.
 
 Files were assembled from untracked scratch files in the repo root; the originals are

@@ -1013,45 +1013,53 @@ def _write_run_report(report: dict) -> Path:
 
 def _by_work(tier: str, rows: list[dict],
              generations: dict) -> dict[int, list[dict]]:
-    """Verdict rows of one accepted generation per work id.
+    """Verdict rows of one accepted generation, and one question, per work id.
 
     Grouped by claim first because the generation is recorded on the claim and one
     claim is one screening of that work; the surviving rows are then pooled per
     work, because two claims can each hold half a screen of the same work and the
     question every reader asks is what is known about the WORK. Equivalent model
     generations stay separate so their votes cannot jointly make a decision.
+
+    So do votes on different TEXT (`prompt_hash`, `question_hash()`). A work whose
+    abstract arrived after it was screened is asked again; if one voter's call then
+    fails, pooling would complete the pair with that voter's answer to the OLD text,
+    and the work would settle on a decision one voter never made about the text it
+    has now. Kept apart, the new attempt is incomplete, the older complete screen
+    stays the work's decision until the new one completes, and `_question_moved()`
+    keeps the work claimable meanwhile.
     """
     by_claim: dict[tuple, list[dict]] = {}
     for row in rows:
         by_claim.setdefault((row.get("claim_id"), int(row["work_id"])), []).append(row)
-    by_work_generation: dict[int, dict[str, list[dict]]] = {}
+    by_work_group: dict[int, dict[tuple[str, str], list[dict]]] = {}
     for (claim_id, work), claim_rows in by_claim.items():
         generation = generations.get(claim_id)
         if _generation_current(tier, generation, claim_rows):
-            by_work_generation.setdefault(work, {}).setdefault(
-                str(generation or ""), []).extend(claim_rows)
+            for row in claim_rows:
+                key = (str(generation or ""), str(row.get("prompt_hash") or ""))
+                by_work_group.setdefault(work, {}).setdefault(key, []).append(row)
 
-    # Equivalent generations keep their OWN complete answers. Combining their
-    # votes would turn the old mini and new Luna into a three-voter gate, or let
-    # two different one-vote attempts masquerade as a complete screen. Prefer a
-    # complete current-generation answer when one exists; otherwise retain a
-    # complete older answer. Incomplete attempts never settle on their own.
+    # Equivalent generations, and answers to different text, keep their OWN complete
+    # answers. Combining their votes would turn the old mini and new Luna into a
+    # three-voter gate, or let two different one-vote attempts masquerade as a
+    # complete screen. Prefer a complete current-generation answer, the latest
+    # question first; otherwise retain a complete older answer. Incomplete attempts
+    # never settle on their own.
     current = tier_spec(tier).generation()
     decide = tier_spec(tier).decide
     selected: dict[int, list[dict]] = {}
-    for work, groups in by_work_generation.items():
-        ordered = ([(current, groups[current])] if current in groups else [])
-        ordered.extend(sorted(
-            ((generation, claim_rows) for generation, claim_rows in groups.items()
-             if generation != current),
-            key=lambda item: max((_recorded_at(row) for row in item[1]),
-                                 default=("", "")), reverse=True))
-        for _generation, claim_rows in ordered:
-            if decide(claim_rows)["outcome"] != INCOMPLETE:
-                selected[work] = claim_rows
+    for work, groups in by_work_group.items():
+        ordered = sorted(groups.items(), reverse=True,
+                         key=lambda item: max((_recorded_at(row) for row in item[1]),
+                                              default=("", "")))
+        ordered.sort(key=lambda item: item[0][0] != current)  # stable: recency kept
+        for _key, group_rows in ordered:
+            if decide(group_rows)["outcome"] != INCOMPLETE:
+                selected[work] = group_rows
                 break
         else:
-            selected[work] = groups.get(current) or next(iter(groups.values()))
+            selected[work] = ordered[0][1]
     return selected
 
 

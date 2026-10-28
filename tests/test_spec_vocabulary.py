@@ -179,15 +179,22 @@ def test_a_paper_that_mentions_a_recommendation_is_spared(specs):
         assert not _matches(specs, rule, paper), rule
 
 
-def test_a_pci_review_suffix_is_claimed_by_its_identifier_too(specs):
-    """PCI extends the reviewed paper's own DOI rather than minting a path segment,
-    so the identifier says what the object is on its own evidence."""
+@pytest.mark.parametrize("doi,claimed", [
+    ("10.24072/pci.rr.101145.rev11", True),   # a review
+    ("10.24072/pci.rr.101145.d1", True),      # a decision
+    ("10.24072/pci.rr.101145.ar1", True),     # the authors' reply
+    ("10.24072/pci.rr.101145", True),         # the recommendation itself
+    ("10.24072/pci.ecology.100500", True),
+    ("10.24072/pcjournal.123", False),        # Peer Community Journal: a paper
+    ("10.24072/pci.rr", False),               # the community's own DOI
+])
+def test_pci_review_objects_are_claimed_by_their_identifier(specs, doi, claimed):
+    """PCI extends the recommendation's DOI for its reviews rather than minting a
+    path segment, and the recommendation is a review object too (Crossref
+    `is-review-of`), so the identifier says what the object is on its own evidence."""
     assert _matches(specs, "not-a-paper-doi",
                     _row("Revisiting the psychology of windfall gains", "",
-                         doi="10.24072/pci.rr.101145.rev11"))
-    assert not _matches(specs, "not-a-paper-doi",
-                        _row("Revisiting the psychology of windfall gains", "",
-                             doi="10.24072/pci.rr.101145"))
+                         doi=doi)) is claimed
 
 
 @pytest.mark.parametrize("doi,claimed", [
