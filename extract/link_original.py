@@ -704,15 +704,18 @@ def _write_parse_cache(cache_id: str, parse_results: dict) -> None:
 
 
 def _cands_row(doi_r: str, cands_df: pd.DataFrame) -> dict:
-    """Return openalex_candidates pass-through fields for *doi_r*."""
-    out = {c: "" for c in _OA_PASSTHROUGH}
+    """Return openalex_candidates pass-through fields for *doi_r*, plus `authors_r`,
+    which the pre-PDF title search reads (`is_replication_itself`) but no output
+    column carries from here."""
+    cols = [*_OA_PASSTHROUGH, "authors_r"]
+    out = {c: "" for c in cols}
     if cands_df is None or cands_df.empty:
         return out
     matches = cands_df[cands_df["doi_r"].apply(clean_doi) == clean_doi(doi_r)]
     if matches.empty:
         return out
     row = matches.iloc[0]
-    for col in _OA_PASSTHROUGH:
+    for col in cols:
         out[col] = str(row.get(col, "") or "")
     return out
 
@@ -800,7 +803,8 @@ def is_replication_itself(hit: dict, doi_r: str, title_r: str, year_r=None,
     issue #191). Year alone does not separate those: a preprint or a Stage 1 report
     usually PREDATES the journal version. So a same-title hit must predate the
     replication, must not be a preprint-server record, and must share no author with
-    it. Self-replications under an identical title are lost to this rule; they are
+    it — which needs both author lists: a side that names nobody is no evidence of
+    two different author teams. Self-replications under an identical title are lost to this rule; they are
     rare, and the full-text rung, which reads the citation, can still name them. A
     missing year on either side keeps the refusal: there is no evidence the two are
     different works.
@@ -818,10 +822,12 @@ def is_replication_itself(hit: dict, doi_r: str, title_r: str, year_r=None,
         return True
     if doi.split("/", 1)[0] in _PREPRINT_PREFIXES:
         return True
-    surnames = {author_surname(a).lower() for a in str(authors_r or "").split(";")}
+    surnames = {n for n in (author_surname(a).lower()
+                            for a in str(authors_r or "").split(";")) if len(n) > 1}
     hit_authors = _hit_author_list(hit).lower()
-    return any(len(n) > 2 and re.search(rf"\b{re.escape(n)}\b", hit_authors)
-               for n in surnames)
+    if not surnames or not hit_authors:
+        return True
+    return any(re.search(rf"\b{re.escape(n)}\b", hit_authors) for n in surnames)
 
 
 # Registrants whose records are preprints or repository deposits: OSF's branded

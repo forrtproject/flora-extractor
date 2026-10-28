@@ -236,6 +236,9 @@ def extract_author_year_patterns(text: str,
                 continue
 
             suffix = _YEAR_LETTER.match(normalised, m.end(len(groups)))
+            if suffix:
+                # The paren patterns consume the letter; a bare one stops at the year.
+                end = max(end, suffix.end())
             results.append({
                 "surname"   : surname.lower(),
                 "year"      : year,

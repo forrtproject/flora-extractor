@@ -296,6 +296,12 @@ class TestCleanSearchQuery:
             "M. Moieni, Low-grade inflammation"
         assert clean_search_query("12 Angry Men") == "12 Angry Men"
 
+    def test_a_question_mark_ends_a_title_only_before_volume_and_issue(self):
+        assert clean_search_query(
+            "Is it worth it? Psychological Science 22(3), 295-299") == "Is it worth it"
+        assert clean_search_query("Is it worth it? Results from Study 2 (N = 300)") == \
+            "Is it worth it? Results from Study 2 (N = 300)"
+
     def test_a_quoted_title_is_taken_out_of_its_quotes(self):
         assert clean_search_query(
             '\u201cA New Approach to Estimating the Production Function for Housing.\u201d '

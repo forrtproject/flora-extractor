@@ -154,6 +154,10 @@ def _raw(raw_ref: str) -> list[dict]:
      "10.1016/j.learninstruc.2015.12.002"),
     (lambda: _raw("Smith (1977). Title. doi:10.1016/0022-1031(77)90049-X."),
      "10.1016/0022-1031(77)90049-x"),
+    # A SICI DOI's angle brackets are part of it.
+    (lambda: _raw("Smith (1999). Title. doi:10.1002/(SICI)1097-4679(199901)55:1"
+                  "<1::AID-JCLP1>3.0.CO;2-J</idno>"),
+     "10.1002/(sici)1097-4679(199901)55:1<1::aid-jclp1>3.0.co;2-j"),
     # Two DOIs: which one is this reference's is not decidable from the text.
     (lambda: _raw("Reprinted from 10.1037/aaaa1 in 10.1037/bbbb2"), ""),
 ])
@@ -165,3 +169,9 @@ def test_a_reference_lines_doi_is_lent_to_the_pick_not_to_the_key(references, do
     targets = [{"key": entry["key"], "record": dict(entry), "match_certain": True}]
     lend_reference_dois(targets, key_map)
     assert targets[0]["record"]["doi"] == doi
+    assert key_map[entry["key"]]["doi"] == ""
+    # A cached answer's lent DOI follows the current reading of the line.
+    stale = [{"key": entry["key"], "match_certain": True,
+              "record": {**entry, "doi": "10.9/stale", "doi_source": "reference_line"}}]
+    lend_reference_dois(stale, key_map)
+    assert stale[0]["record"]["doi"] == doi

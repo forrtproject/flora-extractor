@@ -80,7 +80,9 @@ def clean_doi(doi: str) -> str:
 
 # A DOI inside free reference text. It ends at whitespace or markup; trailing sentence
 # punctuation and the link labels a publisher page glues onto it are removed after.
-_DOI_IN_TEXT_RE = re.compile(r"10\.\d{4,9}/[^\s\"<>]+")
+# Angle brackets end it too, except a SICI segment ("…55:1<1::AID-JCLP1>3.0.CO;2-#",
+# 1990s Wiley), told from markup by its "::".
+_DOI_IN_TEXT_RE = re.compile(r"10\.\d{4,9}/(?:[^\s\"<>]|<[^\s\"<>]*::[^\s\"<>]*>)+")
 # "…2015.12.002.Article Google Scholar": Springer's reference links run into the DOI
 # when the page is flattened to text.
 _GLUED_LINK_LABEL_RE = re.compile(r"\.?(?:Article|CAS|PubMed|Google|Crossref|MathSciNet)$")
@@ -517,8 +519,9 @@ def author_surname(author: str) -> str:
 _ARTICLE_ID_RE = re.compile(r"\b[eE]\d{4,}\b")
 _QUOTED_TITLE_RE = re.compile(r"[\"“]([^\"”]{15,})[\"”]")
 # ". Journal Name 84(3), 600-621" — the citation tail a reference line carries after
-# the title, which may end on its own question mark instead of a full stop.
-_JOURNAL_TAIL_RE = re.compile(r"[.?!]\s+[A-Z][^.]{0,60}\s+\d{1,4}\s*\(")
+# the title, which may end on its own question mark instead of a full stop. The issue
+# must be a number: "Is it worth it? Results from Study 2 (N = 300)" is a title.
+_JOURNAL_TAIL_RE = re.compile(r"[.?!]\s+[A-Z][^.]{0,60}\s+\d{1,4}\s*\(\d")
 _VOLUME_PAGES_RE = re.compile(r",?\s*\d{1,4}\s*\(\d+\)\s*,?\s*[\d–\-]+\s*$")
 
 

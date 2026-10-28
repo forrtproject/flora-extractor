@@ -61,6 +61,7 @@ class TestExtractAuthorYearPatterns:
         ("You, Dörnyei, and Csizér (2016) found", "you", "2016",
          "You, Dörnyei, and Csizér (2016)"),
         ("Kogut and Ritov (2005a) showed", "kogut", "2005a", "Kogut and Ritov (2005a)"),
+        ("as in Kogut and Ritov 2005b, the", "kogut", "2005b", "Kogut and Ritov 2005b"),
         # Particles kept; Unicode surnames kept.
         ("as van der Berg (2010) did", "vanderberg", "2010", "van der Berg (2010)"),
         ("Müller, K.-H., & Smith, J. (2003).", "müller", "2003",

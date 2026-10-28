@@ -1527,8 +1527,13 @@ def test_a_none_abstract_reaches_the_gate_as_empty():
             pd.Series({"doi_r": "10.1/x", "title_r": "T", "abstract_r": empty}))
         assert built.iloc[0]["abstract_r"] == "", repr(empty)
     kept = run_extract._build_cands_df(
-        pd.Series({"doi_r": "10.1/x", "title_r": "T", "abstract_r": "Real."}))
+        pd.Series({"doi_r": "10.1/x", "title_r": "T", "abstract_r": "Real.",
+                   "authors_r": "Sanne Nauts; Oliver Langner"}))
     assert kept.iloc[0]["abstract_r"] == "Real."
+    # The pre-PDF title search refuses a same-title hit by the replication's authors,
+    # so the authors must survive into the row run_for_doi reads.
+    assert link_original._cands_row("10.1/x", kept)["authors_r"] == \
+        "Sanne Nauts; Oliver Langner"
 
 
 def test_a_textless_documentless_row_survives_the_original_link_guard():
@@ -1726,7 +1731,15 @@ class TestReferencePickCheck:
 @pytest.mark.parametrize("hit, itself", [
     # A distinct, earlier work that shares the replication's title is an original.
     ({"doi": "10.1037/h0055756", "title": "Forming impressions of personality",
-      "year": 1946}, False),
+      "year": 1946, "authors": ["Asch, S. E."]}, False),
+    # ... but only when both author lists show two teams: a hit naming nobody, or
+    # sharing a short surname, is refused.
+    ({"doi": "10.1037/h0055756", "title": "Forming impressions of personality",
+      "year": 1946}, True),
+    ({"doi": "10.9/li", "title": "Forming impressions of personality",
+      "year": 2010, "authors": ["Li, X."]}, True),
+    # No identity of its own and the replication's year: the replication itself.
+    ({"title": "Forming impressions of personality", "year": 2014}, True),
     # Identity: the replication's DOI or work id, whatever the title.
     ({"doi": "10.1027/1864-9335/a000179", "title": "Something else", "year": 1946}, True),
     ({"doi": "10.9/alias", "openalex_id": "https://openalex.org/W1",
@@ -1747,7 +1760,7 @@ class TestReferencePickCheck:
 def test_a_same_title_hit_must_be_someone_elses_earlier_work(hit, itself):
     assert link_original.is_replication_itself(
         hit, "10.1027/1864-9335/a000179", "Forming Impressions of Personality",
-        "2014", "W1", "Sanne Nauts; Oliver Langner; Inge Huijsmans") is itself
+        "2014", "W1", "Sanne Nauts; Oliver Langner; Inge Huijsmans; Xia Li") is itself
 
 
 @pytest.mark.parametrize("abstract, may_stop", [
@@ -1797,6 +1810,8 @@ def test_a_later_rung_keeps_the_identity_an_earlier_one_established(
              "outcome_block": {"outcome": "failed"}}
     [merged] = link_original._union_targets([earlier], [later])
     assert merged["record"]["doi"] == doi
+    if not conflict:
+        assert merged["record"]["openalex_id"] == _REGISTRY_KOGUT["openalex_id"]
     # The later reading's outcome and evidence stand on their own.
     assert merged["outcome_block"] == {"outcome": "failed"}
     assert bool(merged.get("identity_note")) is conflict

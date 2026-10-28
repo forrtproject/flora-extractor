@@ -174,10 +174,17 @@ def lend_reference_dois(targets: list[dict], key_map: dict[str, dict]) -> None:
     In place, on the target's own copy of the record, so the key_map entry is
     untouched. `doi_source` says where the DOI came from: it was read off text, not
     looked up, and verification (`_verify_row`) checks it against the title as it
-    does every DOI a row is written with.
+    does every DOI a row is written with. A DOI lent earlier — on a cached answer — is
+    replaced by what the current reading of the line gives, because the target call's
+    key does not name the reference DOI and so cannot invalidate it.
     """
     for target in targets or []:
         record = target.get("record")
+        if not record:
+            continue
         lent = (key_map.get(target.get("key")) or {}).get("reference_doi", "")
-        if record and lent and not clean_doi(str(record.get("doi") or "")):
+        if record.get("doi_source") == "reference_line":
+            record = {k: v for k, v in record.items() if k != "doi_source"} | {"doi": ""}
+            target["record"] = record
+        if lent and not clean_doi(str(record.get("doi") or "")):
             target["record"] = {**record, "doi": lent, "doi_source": "reference_line"}

@@ -376,6 +376,7 @@ def _build_cands_df(row: pd.Series) -> pd.DataFrame:
         "year_r":                year_str(row.get("year_r")),
         "openalex_id_r":         str(row.get("openalex_id_r", "")),
         "url_r":                 str(row.get("url_r",    "")),
+        "authors_r":             str(row.get("authors_r", "")),
         "author_year_pattern_r": "",
     }])
 
@@ -2045,6 +2046,16 @@ def _merge_duplicate_originals(rows: list[dict], doi_r: str) -> list[dict]:
     return merged
 
 
+def _search_context(row: pd.Series) -> dict:
+    """The replication as the search resolvers judge a hit against it: what it is
+    about, when it appeared, and who wrote it (`is_replication_itself`)."""
+    return {"title_r": str(row.get("title_r", "") or ""),
+            "abstract_r": str(row.get("abstract_r", "") or ""),
+            "year_r": row.get("year_r"),
+            "work_id_r": str(row.get("openalex_id_r", "") or ""),
+            "authors_r": str(row.get("authors_r", "") or "")}
+
+
 def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | None",
                      no_llm: bool, no_pdf: bool, resolved_only: bool,
                      doc_doi: "str | None" = None) -> list[dict]:
@@ -2064,11 +2075,7 @@ def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | Non
     # What the paper is ABOUT, for the resolvers that need to judge a candidate's
     # subject matter rather than match its title, and WHEN it appeared, which bounds
     # what it can have replicated.
-    context  = {"title_r": str(row.get("title_r", "") or ""),
-                "abstract_r": str(row.get("abstract_r", "") or ""),
-                "year_r": row.get("year_r"),
-                "work_id_r": str(row.get("openalex_id_r", "") or ""),
-                "authors_r": str(row.get("authors_r", "") or "")}
+    context = _search_context(row)
     recovered = link.get("_recovered_entry")
     resolved = ([(targets[0], recovered)] if recovered and len(targets) == 1
                 else [(t, _target_entry(t, doi_r, context)) for t in targets])
@@ -2340,11 +2347,7 @@ def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
         cited = extract_author_year_patterns(
             f"{row.get('title_r', '')}\n{row.get('abstract_r', '')}")
         if cited:
-            context = {"title_r": str(row.get("title_r", "") or ""),
-                       "abstract_r": str(row.get("abstract_r", "") or ""),
-                       "year_r": row.get("year_r"),
-                       "work_id_r": str(row.get("openalex_id_r", "") or ""),
-                       "authors_r": str(row.get("authors_r", "") or "")}
+            context = _search_context(row)
             probe = {"key": None, "match_certain": True, "record": None,
                      "study_numbers": "", "replication_study_numbers": "",
                      "target_as_named": cited[0]["raw"],
@@ -2388,11 +2391,7 @@ def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
     accepted_record = (accepted or {}).get("record") or {}
     if (accepted and not clean_doi(str(link.get("resolved_doi_o", "") or ""))
             and not accepted_record.get("openalex_id")):
-        context = {"title_r": str(row.get("title_r", "") or ""),
-                   "abstract_r": str(row.get("abstract_r", "") or ""),
-                   "year_r": row.get("year_r"),
-                   "work_id_r": str(row.get("openalex_id_r", "") or ""),
-                   "authors_r": str(row.get("authors_r", "") or "")}
+        context = _search_context(row)
         raw_title = str(accepted_record.get("title") or "")
         cleaned   = clean_citation_title(raw_title)
         title     = raw_title if citation_fragment(cleaned) else cleaned

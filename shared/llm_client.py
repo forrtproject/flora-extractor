@@ -1183,8 +1183,10 @@ def resolve_targets_and_outcomes(doi_r:       str,
         if cached.get("resolved") and len(only) == 1 and only[0].get("record") \
                 and only[0].get("match_certain"):
             lent = clean_doi(str(only[0]["record"].get("doi") or ""))
-            if lent and (not cached.get("resolved_doi_o") or str(
-                    cached.get("resolution_method") or "").startswith("llm_title_search_")):
+            if lent and (not cached.get("resolved_doi_o")
+                         or only[0]["record"].get("doi_source") == "reference_line"
+                         or str(cached.get("resolution_method") or "")
+                         .startswith("llm_title_search_")):
                 cached["resolved_doi_o"] = lent
                 cached["resolution_method"] = (cached.get("target_stage")
                                                or cached.get("resolution_method"))
