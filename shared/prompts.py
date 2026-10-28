@@ -736,6 +736,51 @@ def build_classify_prompt(study_r: str, abstract_r: str) -> str:
             .replace("{abstract}", (abstract_r or "(not available)")[:4000]))
 
 
+# ── The screen's decision voter (2026-10) ─────────────────────────────────────
+# A decision model (OpenRouter's /api/alpha/decisions) is asked the SAME rules as the
+# LLM voter — _CLASSIFY_PROMPT from WHAT QUALIFIES up to the answer instructions — as a
+# `choice` over the five screen classes, and returns a probability per class and no
+# text. Only the generative output instructions are cut, because a decision model
+# cannot write a quote, a reasoning or a JSON object.
+#
+# The `none` criterion names the rules' exclusions outright. With a vague one-line
+# `none` the model kept viral/DNA "replication" and two-stage GWAS cohorts at 0.5–0.8;
+# naming them here lowered those (0.45 → 0.23, 0.48 → 0.25) and lifted the curated-
+# negative discard by a point at no recall cost
+# (analysis/jev_eval_2026-10/REPORT_pplx.md, `pplx_full2`). Three revisions tried on
+# Span-02 improved nothing on a held-out half (REPORT_prompt_ablation.md).
+_DECISION_CHOICES = {
+    "replication": "Re-tests a particular earlier published finding with newly collected data.",
+    "reproduction": "Re-analyses earlier data to check a published result, robustness, or "
+                    "reproducibility.",
+    "both": "Both re-analysis of earlier data and collection of new data to re-test the "
+            "finding.",
+    "none": "Not a check of another paper's finding. This includes: biological or technical "
+            "senses of 'replication' (DNA, viral, cell); a discovery-then-replication cohort, "
+            "two-stage or 'independent sample' design inside this same paper (GWAS and "
+            "similar); a new original study that only cites, builds on or extends earlier "
+            "work; a first validation or short form of a new instrument; a review, proposal, "
+            "protocol or commentary without its own re-test or re-analysis.",
+    "unclear": "The title and abstract do not settle whether the paper qualifies.",
+}
+
+
+def build_screen_decision(study_r: str, abstract_r: str) -> dict:
+    """The decision voter's request body minus the model: `{"state", "questions"}`.
+
+    The state is the same title and (4,000-char) abstract the LLM voter is shown.
+    """
+    rules = _CLASSIFY_PROMPT.split("WHAT QUALIFIES", 1)[1].split("Judge only from", 1)[0]
+    instructions = ("Screen this paper for the FLoRA replication/reproduction database. "
+                    "Judge only from its title and abstract. Choose exactly one category.\n\n"
+                    "WHAT QUALIFIES" + rules)
+    state = (f"Title: {study_r or '(not available)'}\n\n"
+             f"Abstract: {(abstract_r or '(not available)')[:4000]}")
+    return {"state": state,
+            "questions": {"screen": {"type": "choice", "instructions": instructions,
+                                     "criteria": _DECISION_CHOICES}}}
+
+
 # ── The cheap pre-screen (issue #130) ────────────────────────────────────────
 # What this prompt is avoiding: "could this paper be re-testing an earlier study?" is
 # unanswerable with "no". An abstract is partial information, so almost any paper COULD

@@ -6,9 +6,10 @@ A Python pipeline that discovers, extracts, and monitors replication and reprodu
 
 ## Which models classify papers?
 
-**Stage 2 uses two voters: `deepseek/deepseek-v4-flash` through OpenRouter and
-`gpt-6-luna` through OpenAI, both at reasoning effort `low`.** A paper is discarded
-only when both say `none`; every other complete pair proceeds to extraction.
+**Stage 2 uses two voters: `gpt-6-luna` through OpenAI at reasoning effort `low`, and
+the open-weight decision model `respan/span-02-20261015` through OpenRouter, which
+answers with probabilities.** A paper is discarded only when both say `none`; every
+other complete pair proceeds to extraction.
 The cheap pre-screen is dormant. Stage 3 reads the screen verdict and uses
 `gpt-6-luna` for linking and outcome coding.
 
@@ -80,8 +81,8 @@ See [docs/setup.md](docs/setup.md) for full setup instructions.
 
 ```bash
 RESEARCHER_EMAIL=you@example.com   # OpenAlex/Crossref politeness headers
-OPENROUTER_API_KEY=...            # Stage 2 voter 1; Stage 3 reference-list pick check
-OPENAI_API_KEY=...                # Stage 2 voter 2; Stage 3 linking and outcomes
+OPENROUTER_API_KEY=...            # Stage 2 voter 2 (Span-02); Stage 3 reference-list pick check
+OPENAI_API_KEY=...                # Stage 2 voter 1 (Luna); Stage 3 linking and outcomes
 GEMINI_API_KEY=...                # Stage 3 document reference-extraction fallback
 SUPABASE_SERVICE_KEY=...          # claims and permanent verdicts for --run
 HF_TOKEN=...                      # access to the private survivor-pool dataset

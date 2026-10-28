@@ -754,9 +754,11 @@ screen's answer is written onto the row: `screen_verdict`, `screen_record_type`,
 (`SCREEN_COLS`, `shared/schema.py`). `screen_votes` is the one that is not a
 summary — Stage 3's pre-PDF title-search rung fires only when both voters gave a
 qualifying answer AND stood behind it, and that cannot be recovered from a record
-type. `screen_evidence` carries BOTH voters' quotes, as `<model>: <quote>` segments
+type (for the decision voter, "stood behind it" is P(qualifies) ≥ 0.9).
+`screen_evidence` carries every voter's quote, as `<model>: <quote>` segments
 joined by ` || ` (a quote may contain a single `|`), because the gate is the pair's
-decision. An `--as-routed` row carries them blank for every work no live screen
+decision; the decision voter writes no quote, and its probabilities travel in
+`screen_reasoning`. An `--as-routed` row carries them blank for every work no live screen
 settled. There is no way to run the screen in Stage 3.
 
 `export-csv` reuses `export_pile()`'s row logic via `iter_export_rows()` and keeps
