@@ -66,7 +66,7 @@ class TestNonArticleType:
     def test_excluded_types_return_a_reason(self):
         for t in ("dataset", "database", "software", "peer-review",
                   "supplementary-materials", "component", "paratext", "libguides",
-                  "grant", "standard"):
+                  "grant", "standard", "journal-issue"):
             assert non_article_type(t), t
 
     def test_peer_review_reason_matches_non_article_doi(self):
@@ -119,6 +119,29 @@ class TestNonArticleDoi:
     def test_existing_guards_still_fire(self):
         assert non_article_doi("10.6084/m9.figshare.123") == "figshare_data_record"
         assert non_article_doi("10.7287/peerj.10325v0.1/reviews/2") == "peer_review_object"
+
+    @pytest.mark.parametrize("doi,reason", [
+        ("10.7554/elife.63751.sa2", "peer_review_object"),
+        ("10.7554/elife.88762.1.sa0", "peer_review_object"),
+        ("10.24072/pci.rr.100998.ar1", "peer_review_object"),
+        ("10.24072/pci.rr.100314.rev12", "peer_review_object"),
+        ("10.24072/pci.rr.100998", "peer_review_object"),
+        ("10.7554/elife.42256.021", "peer_review_object"),
+        ("10.1111/ejn.15166/v2/response1", "peer_review_object"),
+        ("10.3410/f.1090454.543956", "faculty_opinions_record"),
+        ("10.1002/pam.2013.32.issue-3", "journal_issue_record"),
+    ])
+    def test_records_about_a_paper_are_not_the_paper(self, doi, reason):
+        assert non_article_doi(doi) == reason
+
+    @pytest.mark.parametrize("doi", [
+        "10.7554/elife.63751",        # the eLife article itself
+        "10.7554/elife.88762.2",      # a reviewed-preprint version
+        "10.24072/pcjournal.123",     # Peer Community Journal: an article
+        "10.3410/b.1-7",              # F1000 Biology Reports, an article series
+    ])
+    def test_the_papers_those_records_describe_survive(self, doi):
+        assert non_article_doi(doi) == ""
 
     def test_prefix_match_is_whole_prefix_not_a_stem(self):
         """10.791 must not be caught by the 10.7910 entry."""
