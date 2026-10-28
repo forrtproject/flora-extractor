@@ -1,0 +1,24 @@
+{
+  "id": "peer-review-record",
+  "description": "The registry types the record `peer-review`: a referee report, an editor's assessment, a decision letter or an authors' reply, registered under its own DOI and pointing at the paper it is about (Crossref `relation.is-review-of`). Such a record is not a study, and it quotes the reviewed paper's title and summarises its abstract, so it fires the same replication arms as that paper does. Above admission (`replication-claim`, 700), unlike the other registry types, which stay in not-a-study-type below it: those yield to admission because a crosswalk can be wrong about a real paper, and for `peer-review` that risk was measured instead of assumed (see `measured`). The record is discarded, not redirected to the paper it reviews: in every case read, the reviewed paper is in the survivor pool as its own work, so a redirect would only duplicate it. eLife registers the decision letter and author response of the older model as `.NNN` suffixes and the reviews of the newer model as `.saN`; both are typed `peer-review`, so this rule reaches them without naming the registrant. Peer Community In recommendations are typed `journal-article` and are claimed by not-a-paper-doi instead.",
+  "match": {
+    "fields": {
+      "type": [
+        "peer-review"
+      ]
+    }
+  },
+  "pile": "discard",
+  "vocabulary": null,
+  "precedence": 942,
+  "shadow": false,
+  "measured": [
+    {
+      "level": "llm:claude-opus-5-5",
+      "date": "2026-10-28",
+      "owner": "flora-extractor",
+      "n": 167,
+      "rationale": "Exact count over a named population: release 61f07fd07f19 routed 234 works to a screening pile although not-a-study-type matched them, because admission outranked it. Their current OpenAlex types were fetched on 2026-10-28; 167 are `peer-review` (13 more no longer resolve). All 167 titles were read. Every one is a review object: 141 eLife (60 decision letters, 55 numbered public reviews, 23 eLife assessments, 3 editor's evaluations), 7 MetaROR reviews and assessments, 5 F1000Research reports, 4 ScienceOpen reviews, 4 Open Research Europe reviews, 4 Copernicus referee comments and replies, 1 PREreview and 1 review of a 10.25189 article. None is a study. For the eLife records, the reviewed article is in the extract output as its own work every time (e.g. 10.7554/elife.110085 and .110085.1 beside four .110085.1.saN reviews). Recall against data/flora.csv: 0 of the 1,808 doi_r values OpenAlex resolves are typed `peer-review`."
+    }
+  ]
+}
