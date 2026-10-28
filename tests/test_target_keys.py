@@ -181,6 +181,7 @@ def test_a_reference_lines_doi_is_lent_to_the_pick_not_to_the_key(references, do
     ("Müller, K.", True),      # the same author, accents folded
     ("Jones, A.", False),      # another author's same-title, same-year work
     ("", False),               # nobody to compare
+    ("Muller et al.", True),   # "et al." is not a surname
 ])
 def test_a_reference_lines_doi_joins_a_title_match_only_by_the_same_author(
         first_author, lent):

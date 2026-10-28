@@ -84,8 +84,8 @@ def _normalise(record: dict, role: str) -> dict:
 
 
 def _folded_surname(author: str) -> str:
-    return _surname(unicodedata.normalize("NFKD", str(author or ""))
-                    .encode("ascii", "ignore").decode())
+    text = re.sub(r"\s+et\s+al\.?\s*$", "", str(author or ""), flags=re.I)
+    return _surname(unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode())
 
 
 def _merge(into: dict, new: dict) -> None:

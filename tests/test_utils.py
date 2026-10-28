@@ -306,6 +306,13 @@ class TestCleanSearchQuery:
         assert clean_search_query(
             'Smith (2010). "A sufficiently long paper title" Journal of Example 4(2), 1-9'
         ) == "A sufficiently long paper title"
+        assert clean_search_query(
+            'Kogut (2005). "A sufficiently long paper title" J. Behav. Decis. Making '
+            '18(3), 157-167') == "A sufficiently long paper title"
+        # A phrase quoted after a title's own colon is not a citation element.
+        assert clean_search_query(
+            'Ego Depletion: "The Identified Victim Effect" in 2016 (3 Studies)'
+        ).startswith("Ego Depletion")
 
     def test_a_quoted_title_is_taken_out_of_its_quotes(self):
         assert clean_search_query(

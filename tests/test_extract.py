@@ -1291,6 +1291,11 @@ class TestGuardOriginalLink:
         ({"doi_o": "10.2/alias", "title_o": "A Study of Things", "year_o": "2014",
           "year_r": "2014"}, False),
         ({"doi_o": "10.2/alias", "title_o": "A Study of Things"}, False),
+        ({"doi_o": "10.2/alias", "title_o": "A Study of Things", "year_o": "2018.9",
+          "year_r": "2019"}, False),
+        # An earlier preprint of the replication is still the replication.
+        ({"doi_o": "10.31234/osf.io/abcde", "title_o": "A Study of Things",
+          "year_o": "2012", "year_r": "2014"}, False),
         # ... or its own work id, even when searching its title finds the replication.
         ({"doi_o": "", "title_o": "A Study of Things", "oa_work_id_o": "W2"}, True),
         # Identity decides whatever the title says.

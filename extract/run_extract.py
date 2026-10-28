@@ -77,7 +77,7 @@ from shared.schema import (
 from shared.utils import (author_surname, bare_work_id, cache_key, citation_fragment,
                           clean_citation_title, clean_doi, non_article_doi,
                           psyctests_doi, usable_title)
-from extract.link_original import run_for_doi
+from extract.link_original import _PREPRINT_PREFIXES, run_for_doi
 from extract.code_outcome import extract_outcome
 
 def build_bibtex(
@@ -1524,11 +1524,9 @@ def _norm_title(t: str) -> str:
 
 
 def _year_int(value) -> "int | None":
-    """A year field as an int, or None when it is blank or not a year."""
-    try:
-        return int(float(str(value).strip()))
-    except (TypeError, ValueError):
-        return None
+    """A year field as an int, or None when it is blank or not a four-digit year."""
+    m = re.fullmatch(r"(\d{4})(?:\.0+)?", str(value or "").strip())
+    return int(m.group(1)) if m else None
 
 
 def _guard_original_link(row: dict) -> dict:
@@ -1538,11 +1536,11 @@ def _guard_original_link(row: dict) -> dict:
 
     1. A paper is never its own original. A matching DOI or OpenAlex work id means
        the linker looped back on itself — always rejected, however confident the LLM
-       was. An identical title is rejected only when the candidate has no DOI and no
-       work id of its own: replications reuse their original's title ("Forming
-       impressions of personality", Asch 1946 and its 2014 replication), so a
-       distinct identifier outranks the shared title, and only an identityless
-       same-title record is presumed to be the paper's own.
+       was. An identical title is not rejected outright: replications reuse their
+       original's title ("Forming impressions of personality", Asch 1946 and its 2014
+       replication). A same-title record with its own work id stands; one with a DOI
+       but no work id stands only if it predates the replication and is not a
+       preprint; one with neither is presumed to be the paper's own.
     2. doi_o empty but title_o present → actively try to recover the DOI via
        CrossRef then OpenAlex title search before giving up.
     3. Still no DOI, but the title is substantive and distinct → KEEP the row and
@@ -1609,11 +1607,15 @@ def _guard_original_link(row: dict) -> dict:
                         "no DOI or work id to tell them apart")
             # A DOI alone can be another identifier of the replication's own work
             # (its work id is filled only after this guard), so a same-title record
-            # without a work id must at least predate the replication.
+            # without a work id must predate the replication and not be a preprint —
+            # a preprint of the replication predates its journal version.
             year_o, year_r = (_year_int(row.get(c)) for c in ("year_o", "year_r"))
             if not cand_work_id and not (year_o and year_r and year_o < year_r):
                 return ("resolved original has the same title as the replication and "
                         "is not shown to predate it")
+            if not cand_work_id and cand_doi.split("/", 1)[0] in _PREPRINT_PREFIXES:
+                return ("resolved original has the same title as the replication and "
+                        "is a preprint")
         return ""
 
     reason = _is_self(doi_o, work_id_o_in)

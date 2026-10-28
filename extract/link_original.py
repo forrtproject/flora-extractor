@@ -1149,12 +1149,13 @@ _MAIN_TITLE_MIN_WORDS = 3
 def _titles_agree(a: str, b: str) -> bool:
     if jaccard_similarity(a, b) >= _SAME_WORK_TITLE_JACCARD:
         return True
-    split_a, split_b = (re.split(r"[:?.]", str(t or ""), maxsplit=1) for t in (a, b))
     # Main titles stand for the whole only when one side HAS no subtitle; two
-    # different subtitles under one main title are two papers.
-    if all(len(s) > 1 and s[1].strip() for s in (split_a, split_b)):
+    # different subtitles under one main title are two papers. A subtitle follows
+    # a colon or question mark — not a full stop, which "vs." and "e.g." carry.
+    if all(len(re.split(r"[:?]", str(t or ""), maxsplit=1)) > 1
+           and re.split(r"[:?]", str(t or ""), maxsplit=1)[1].strip() for t in (a, b)):
         return False
-    main_a, main_b = split_a[0], split_b[0]
+    main_a, main_b = (re.split(r"[:?.]", str(t or ""), maxsplit=1)[0] for t in (a, b))
     return (min(len(main_a.split()), len(main_b.split())) >= _MAIN_TITLE_MIN_WORDS
             and jaccard_similarity(main_a, main_b) >= _SAME_WORK_TITLE_JACCARD)
 

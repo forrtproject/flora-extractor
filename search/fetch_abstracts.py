@@ -590,8 +590,10 @@ def _fetch_springer_batch(dois: list[str], api_key: str):
                 anything about the record, and both will refuse every remaining
                 batch, so they end the phase rather than becoming misses.
       429     — at SPRINGER_RATE_SEC the phase stays under the plan's 100
-                requests/minute, so a 429 is the 500/day being spent. Retrying
-                it would only spend time.
+                requests/minute, so a 429 is almost always the 500/day being
+                spent. A rarer per-minute 429 (a key shared with another client)
+                ends the phase too: nothing is recorded, and a rerun resumes from
+                the checkpoint, so stopping costs a rerun, never a wrong miss.
     """
     query = "(" + " OR ".join(f'doi:"{d}"' for d in dois) + ")"
     params = {"q": query, "api_key": api_key, "p": _SPRINGER_PAGE_SIZE}

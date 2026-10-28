@@ -1793,6 +1793,10 @@ def test_two_subtitles_under_one_main_title_are_two_papers():
     assert not link_original._titles_agree(
         "The value of believing in free will: Study one of cheating",
         "The value of believing in free will: A meta-analysis of priming")
+    # A full stop inside a title ("vs.") is not a subtitle.
+    assert link_original._titles_agree(
+        "Ego depletion vs. no depletion in self control",
+        "Ego depletion vs. no depletion in self control: a multi-lab replication")
 
 
 @pytest.mark.parametrize("later_record, doi, conflict", [
