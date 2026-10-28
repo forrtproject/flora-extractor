@@ -2,118 +2,115 @@
 
 The unit of FLoRA is the replication–original pair. The check therefore compares works,
 not single rows: it pairs the pipeline's originals with the blind coder's one-to-one,
-compares each pair, and releases a row only if its work pairs off completely.
+compares each pair, and releases a row only when three conditions hold:
+- its pair agrees on type and outcome;
+- the blind coder was confident of that outcome;
+- its whole work pairs off, with no original left over on either side.
 
-## Findings
+## Findings (22 human-validated rows, two batches)
 
 1. **The check works and costs nothing extra.** Claude Opus 5.5 (`claude-opus-5-5`,
-   effort `high`, via `claude -p` on the subscription) coded 12 human-validated rows
-   blind. A call took a median of 15 s (range 9–49 s), with about 27k input and 2.3k
-   output tokens. At API list prices the 12 calls would have cost $2.86; on the
-   subscription the incremental cost is $0.
-2. **Agreement with the pipeline.** Type agreed on 12/12 rows. For 9/12 rows, the
-   shipped original was paired with an original the blind coder named, and the outcome
-   agreed on all 9 pairs. In 6 of the 12 rows' works, the two sides paired off
-   completely, so 6 rows would be released.
-3. **Of the 7 rows humans judged wrong, the check held 5.** In every case the two sides
-   disagreed on which originals the paper re-tests:
-   - In three, the shipped and the blind originals did not pair off: two
-     genetic-association papers (6 shipped vs 9 blind, 2 vs 6) and a Registered
-     Replication Report on psychological distance (3 vs 2). In the last, the blind coder
-     omitted Wakslak et al. (2006), and the pipeline had shipped the SSRN version of
-     that paper.
-   - The other two were abstract-only rows on which the blind coder could not name an
-     original at all.
-4. **The 2 errors it released are OSF records that validators rejected**
-   (`not_validation`): a completed student replication of Nurmsoo and Bloom (2008),
-   and a preregistration poster that also reports an initial replication (N = 56).
-   Both read as completed replications under the codebook, and the blind coder said
-   so. The rejections apply an inclusion policy that the codebook does not state, so a
-   blind recode with the same codebook cannot reproduce them.
-5. **Two "original wrong" verdicts were sibling reassignments.** In two multi-original
-   papers, a validator who saw only one row "corrected" its original to another
-   original of the same paper. The pipeline had already shipped that original as its
-   own row. Under the pair unit this is not an error of the row, and the check now
-   scores it as `sibling`. The outcome verdict given alongside such a correction was
-   about the other original, so it is `unscored`. The first of these papers is now
-   correct on all fields; the second is undetermined, because its outcome verdict
-   cannot be scored.
-6. **Released rows: 3 correct, 2 errors, 1 undetermined.** The two errors are the OSF
-   rejections. Held rows: 5 errors and 1 correct (Ankyrin). For Ankyrin, the blind
-   coder names Baum 2008 and Ferreira 2008 for two originals that the pipeline shipped
-   as Schulze 2009 and Lee 2011. Those two rows are not validated, so holding the work
-   may well be right.
-7. **Quote heuristic.** Every quote from both coders was found in the source text
-   (87–100% of its 4-word sequences; the 87% cases differ only in punctuation
-   introduced by the parse), so no quote was fabricated. The 9 paired rows graded as
-   follows:
+   effort `high`, via `claude -p` on the subscription) coded each row blind. A call
+   took a median of 14 s (range 8–49 s), with about 27k input and 2.3k output tokens.
+   At API list prices the first 12 calls would have cost $2.86; on the subscription
+   the incremental cost is $0.
+2. **8 of the 22 rows were released: 5 correct, 2 errors and 1 undetermined.** The
+   check held 10 of the 12 rows humans judged wrong, and 4 of the 9 they judged correct.
 
-   | Verdict | Pairs |
-   | --- | ---: |
-   | `same` | 5 |
-   | `same_claim` | 1 |
-   | `adjacent` | 1 |
-   | `different` | 2 |
+   | Human verdict (pair unit) | Released | Held |
+   | --- | ---: | ---: |
+   | correct | 5 | 4 |
+   | error | 2 | 10 |
+   | undetermined | 1 | 0 |
 
-   Both `different` pairs had matching outcome categories: the two coders cited
-   different evidence for the same verdict, such as the abstract's summary against a
-   sentence in the discussion. Across the pilot, a quote mismatch was never a sign of
-   error, so it is best used as a fabrication check and a secondary flag.
-8. **Scaling to the ~200 validated records is worthwhile**: it costs $0 and takes about
-   20 minutes with 4 parallel calls. With about 100 released rows, a 95% confidence
-   interval on precision spans roughly ±4.5 percentage points. That is enough to tell
-   95% apart from 85%, but not from 92%.
+3. **Both released errors are OSF projects that humans rejected or doubted.** One is a
+   completed student replication of Nurmsoo and Bloom (2008), rejected as
+   `not_validation`. The other replicates Chandler et al. (2012); one validator rejected
+   it and the other accepted type and original, so the record is still `need_review`.
+   Both read as completed replications under the codebook. An unstated inclusion policy
+   cannot be reproduced by a blind recode with the same codebook. A blanket hold on OSF
+   records would not separate them either: a third released OSF record (the
+   religious-cognition replication) is validated as correct.
+4. **What held the 10 errors:**
+   - In five, the originals did not pair off: genetic-association papers (6 vs 9,
+     2 vs 6), a psychological-distance RRR (3 vs 2), a paper where the pipeline
+     shipped a background citation as a second original (2 vs 1), and an fMRI study (2
+     vs 3).
+   - In two, the paper was abstract-only and the blind coder could name no original.
+   - One, a reply to a commentary, the blind coder called `not_a_replication`; humans
+     rejected it as well.
+   - In two, the blind coder was not confident of its outcome (see finding 6).
+5. **What held the 4 correct rows:**
+   - Two abstract-only rows (no document, no reference list), on which the blind coder
+     could not name the original.
+   - The Ankyrin paper, where the blind coder names other originals for 2 of its 3
+     rows. Those two rows are not validated, so the hold may be right.
+   - One row where the outcome was `failed` against the blind coder's unconfident
+     `mixed`.
+6. **Requiring a confident blind outcome was added after batch 2, so it is
+   post hoc.** In batch 2, the released error with a human-corrected outcome
+   (Johnson et al., 2002, `failed` → `mixed`) was the one where the blind coder had
+   marked its own outcome unconfident. Across both batches, the rule held 2 released
+   errors and no correct row. It needs confirming on rows it was not chosen on.
+7. **One held correct row was a matching bug, now fixed.** The blind coder gave
+   Wilkins and Kaiser's (2014) title with its subtitle, so the title Jaccard fell to
+   0.5. Title similarity now also counts the share of the shorter title found in the
+   longer one.
+8. **Quote heuristic.** No quote from either coder was fabricated: every one was found
+   in the source text (87–100% of its 4-word sequences; below 100% only through
+   punctuation introduced by the parse). Where the two quotes pointed at different
+   passages, the outcome category still agreed. A quote mismatch was therefore never a
+   sign of error, and the quote check is best used as a fabrication check and a
+   secondary flag.
+9. **Scaling to the ~200 validated records is worthwhile**: it costs $0 and takes about
+   20 minutes with 4 parallel calls, and it is the test the post hoc confidence rule
+   needs. With about 100 released rows, a 95% confidence interval on precision spans
+   roughly ±4.5 percentage points. That is enough to tell 95% apart from 85%, but not
+   from 92%.
 
 ## Needs your decision
 
-- **The OSF inclusion policy (finding 4).** These are the only errors that got through
-  in the pilot. Two ways to handle them:
-  - state the policy in the codebook, so that both coders apply it;
-  - add a rule-based release filter that holds OSF records for review.
-
-  Which OSF records do validators reject, and why? If you can state the rule, I can
-  check it against the rejected records in `sb.json`.
+- **The OSF inclusion policy (finding 3).** These are the only errors that got through.
+  Which OSF projects do validators reject, and why? If you can state the rule, I will
+  test it against the rejected records in `sb.json`, either as a codebook rule (so both
+  coders apply it) or as a release filter.
 
 ## Decisions to review
 
 - **The release rule holds a whole work when its originals do not pair off**, whichever
-  side has the extra one. A different count is the clearest sign of a misread paper. In
-  the pilot it held every multi-original work with a human-found outcome error, and one
-  correct row. The 207-record run will show how often it holds correct works. An
-  original that only the blind coder found could instead be queued for recall while
-  the agreeing rows are released.
-- **Effort `high`, and the document capped at 150,000 characters with its reference
-  list appended.** The parse stores the reference list as its own field. The pipeline
-  sends it as a separate keyed block, but my script's first version sent only the body
-  text. The first run therefore named only 3 of 12 originals with a title. The list is
-  alphabetical, so a numbered citation cannot always be followed to its entry.
-- **The blind coder sees no reference list for abstract-only rows.** It therefore cannot
-  name an original that the abstract does not cite, and every such row is held. The
-  pipeline coded 98 of the 207 validated records without full text, although some of
-  them now have a parsed document in the cache. Giving the coder the OpenAlex reference
-  list (an input, not the pipeline's answer) would let it name the original on these
-  rows.
+  side has the extra one. A different count is the clearest sign of a misread paper.
+  The 200-record run will show how often it holds correct works.
+- **A confident blind outcome is required for release** (post hoc; finding 6).
+- **Abstract-only rows are always held**, because the blind coder sees no reference list
+  and cannot name an original that the abstract does not cite. That accounted for 2 of
+  the 4 correct rows held. Giving the coder the OpenAlex reference list (an input, not
+  the pipeline's answer) should fix this; it changes the prompt for these rows only.
+- **Effort `high`; the document is capped at 150,000 characters, with its parsed
+  reference list appended.** The parse stores the reference list as its own field. The
+  pipeline sends it as a separate keyed block, but my script's first version sent only
+  the body text, so the first run named only 3 of 12 originals with a title.
 - **Original pairing** (`original_grade` and `pair_originals` in `final_check.py`).
-  Three grades can form a pair:
+  Title similarity is the larger of the Jaccard index and the share of the shorter
+  title's words found in the longer one. Three grades can form a pair:
   - `doi`: equal after `clean_doi()`;
-  - `title`: title Jaccard ≥ 0.6, plus agreement on the year or the first author;
-  - `author_year`: first author and year agree, but no comparable title.
+  - `title`: similarity ≥ 0.6, plus agreement on the year or the first author;
+  - `author_year`: the first author and the year agree, and the blind coder gave no
+    title or one at least 0.3 similar. Two unlike titles by the same author in the
+    same year are the sibling case, and do not pair.
 
-  Pairs are formed greedily, strongest grade first. `title_only` and `partial` matches
-  are reported but cannot form a pair.
-- **`failed` vs `mixed` is reported as `soft`** and does not count as agreement. No
-  pilot pair differed on that boundary.
-- **A blind `prospective` study status counts as a type disagreement**, because a plan
-  has no result to validate.
+  Pairs are formed greedily, strongest grade first.
+- **`failed` vs `mixed` is reported as `soft`** and does not count as agreement.
+- **A blind `prospective` study status counts as a type disagreement.**
 - **Human truth** comes from three sources:
   - `final_*` values, where they exist;
   - rejected records, which count as a type error;
   - otherwise the human checks, used when they agree and recorded as `split` when they
     do not.
 
-  On top of that, a correction naming another shipped original of the same work becomes
-  `sibling` (counted correct), and its accompanying outcome verdict becomes `unscored`.
-  One pilot row (`validation_inprogress`) rests on a single check.
+  On top of that, a correction that names another shipped original of the same work
+  becomes `sibling` (counted correct), and its accompanying outcome verdict becomes
+  `unscored`. Several rows are still `validation_inprogress` or `need_review`, so their
+  truth rests on one or two checks.
 
 ## Method
 
@@ -138,8 +135,7 @@ the prompt.
 `compare_work()` takes every shipped row of a work and the blind coding of that work:
 - it pairs the originals one-to-one (`pair_originals()`);
 - for each pair it grades type, outcome and quotes;
-- it marks every row `released` only if the row's pair agrees and the work pairs off
-  completely.
+- it applies the release rule to every row.
 
 `quote_check()` measures:
 - how much of each quote is present in the source;
@@ -148,56 +144,65 @@ the prompt.
 - the distinctive numbers both quotes share.
 
 It grades each pair `same` / `adjacent` / `same_claim` / `numbers` / `different`, and
-adds `+fabricated_*` when a quote is less than half present in the source. `sb.json`
-holds no quote fields, so the thresholds rest on the pilot pairs and a synthetic check
-that a fabricated quote is flagged.
+adds `+fabricated_*` when a quote is less than half present. `sb.json` holds no quote
+fields, so the thresholds rest on the pilot pairs and a synthetic check that a
+fabricated quote is flagged.
 
-### Pilot sample
+### Samples
 
-The 12 rows were drawn from the 207 records validated since August
+Both batches come from the 207 records validated since August
 (`work/stage3_removal/tier_features.csv`). Each was joined to the newest `extracted.csv`
-on `doi_r` + `doi_o`, and all 207 joined.
+on `doi_r` + `doi_o`.
 
-The sample was drawn on the raw human verdicts:
+- **Batch 1 (12 rows)** was chosen for informativeness on the raw human verdicts:
+  - 2 rejected rows;
+  - 4 with the original marked wrong;
+  - 3 with the outcome marked wrong;
+  - 3 correct on all fields.
+- **Batch 2 (10 rows)** is a random draw (seed 2) from the remaining rows: 5 judged
+  wrong and 5 judged correct, scored on the pair unit.
 
-| Group | Rows |
-| --- | ---: |
-| Rejected by validators | 2 |
-| Original marked wrong | 4 |
-| Outcome marked wrong | 3 |
-| Marked correct on all fields | 3 |
-
-Eight of the rows are `llm_title_search` links, and ten had a parsed document. No
+15 of the 22 rows are `llm_title_search` links and 18 had a parsed document. No
 validated reproduction was available.
 
-| Record | Link method | Human verdict (pair unit) | Check | Why |
+| Record | Batch | Human verdict (pair unit) | Check | Why |
 | --- | --- | --- | --- | --- |
-| cbd7583d (Nurmsoo & Bloom, OSF) | author_year_search | error: rejected | released | blind coder: completed replication |
-| a7126e0b (fast-mapping poster, OSF) | title_search | error: rejected | released | blind coder: reports a result, so completed |
-| 429086a5 (hormonal contraception) | title_search | correct (sibling reassignment) | released | 3 shipped and 3 blind originals pair off |
-| 55ff05c7 (baldness SNPs) | references | error: original + outcome | held | no full text; 11 shipped vs 1 blind |
-| 8fd66ead (norm theory) | title_search | undetermined (sibling; outcome unscored) | released | 2 shipped and 2 blind pair off |
-| d61206a5 (psychological distance RRR) | title_search | error: original (SSRN version) | held | 3 shipped vs 2 blind; Wakslak 2006 unpaired |
-| 0bfdb9f5 (azoospermia) | references | error: outcome → mixed | held | no full text; no original named |
-| b3452ec1 (stroke loci) | title_search | error: outcome → mixed | held | 6 shipped vs 9 blind |
-| 2fd9b954 (ulcerative colitis loci) | title_search | error: outcome → successful | held | 2 shipped vs 6 blind |
-| 627bd4e4 (Ankyrin) | title_search | correct | held | only 1 of 3 originals pairs |
-| 361d9342 (Rand et al. RRR) | title_search | correct | released | — |
-| 34f948b0 (temporal framing) | references | correct | released | — |
+| cbd7583d Nurmsoo & Bloom (OSF) | 1 | error: rejected | released | blind coder: completed replication |
+| a7126e0b fast-mapping poster (OSF) | 1 | error: rejected | held | outcome not confident |
+| 429086a5 hormonal contraception | 1 | correct (sibling reassignment) | released | 3 vs 3 pair off |
+| 55ff05c7 baldness SNPs | 1 | error: original + outcome | held | no full text; 11 vs 1 |
+| 8fd66ead norm theory | 1 | undetermined (sibling; outcome unscored) | released | 2 vs 2 pair off |
+| d61206a5 psychological distance RRR | 1 | error: original (SSRN version) | held | 3 vs 2 |
+| 0bfdb9f5 azoospermia | 1 | error: outcome → mixed | held | no full text; no original named |
+| b3452ec1 stroke loci | 1 | error: outcome → mixed | held | 6 vs 9 |
+| 2fd9b954 ulcerative colitis loci | 1 | error: outcome → successful | held | 2 vs 6 |
+| 627bd4e4 Ankyrin | 1 | correct | held | 1 of 3 originals pairs |
+| 361d9342 Rand et al. RRR | 1 | correct | released | — |
+| 34f948b0 temporal framing | 1 | correct | released | — |
+| 7426ac06 Chandler et al. weight (OSF) | 2 | error: one validator rejects | released | blind coder: completed replication |
+| 561199ea default effects (OSF) | 2 | error: outcome → mixed | held | outcome not confident |
+| b6dad5a7 directed forgetting | 2 | error: outcome → successful | held | 2 vs 1: Sahakyan 2004 is background |
+| ed3eae6f reply to Williams | 2 | error: rejected | held | blind coder: `not_a_replication` |
+| 3d69a538 reward fMRI (OSF) | 2 | error: rejected | held | 2 vs 3 |
+| cadbfc8e religious cognition (OSF) | 2 | correct | released | — |
+| dd021dfc antidepressants and autism | 2 | correct | held | `failed` vs unconfident `mixed` |
+| e3361013 representative bureaucracy | 2 | correct | held | abstract only; no original named |
+| 54c1c5b5 translation and vocabulary | 2 | correct | held | abstract only; no original named |
+| 80269c6d Wilkins & Kaiser (OSF) | 2 | correct | released | (matching bug, fixed) |
 
 ## Files and rerun
 
 - `final_check.py`: the prompt, the cached `claude -p` call, `pair_originals()`,
   `compare_work()` and `quote_check()`.
 - `pilot.py`: builds the human truth (including sibling reassignments), joins records
-  to `extracted.csv`, selects the pilot rows, runs the check per work and writes
-  `pilot_results.csv`.
-- `cache/`: the 12 blind codings. A rerun reads these and makes no new call.
+  to `extracted.csv`, selects a batch, runs the check per work and writes
+  `pilot_results.csv` or `pilot_results_batch2.csv`.
+- `cache/`: the 22 blind codings. A rerun reads these and makes no new call.
 
 The scripts read `data/` and `work/` from the main checkout. They write only into this
 directory and touch no verdict, store or Supabase table.
 
 ```bash
 FLORA_CACHE_DIR=/home/lukas/flora-extractor/cache \
-  /home/lukas/flora-extractor/.venv/bin/python analysis/final_ai_check_2026-10/pilot.py
+  /home/lukas/flora-extractor/.venv/bin/python analysis/final_ai_check_2026-10/pilot.py --batch 2
 ```
