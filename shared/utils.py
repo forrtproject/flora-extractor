@@ -645,3 +645,17 @@ def is_springer_nature_doi(doi: str) -> bool:
     """True when *doi* is on a registrant the Springer Nature APIs answer about."""
     doi = clean_doi(doi)
     return bool(doi) and doi.split("/", 1)[0] in SPRINGER_NATURE_PREFIXES
+
+
+# Wiley's registrants: its own (10.1002), Blackwell's (10.1111, 10.1046), Munksgaard's
+# (10.1034), and two societies whose back files Wiley hosts — the British
+# Psychological Society (10.1348) and the Physiological Society (10.1113). The TDM
+# API answers only for articles on Wiley Online Library, so any other DOI is a call
+# whose answer is known before it is made.
+WILEY_PREFIXES = frozenset({"10.1002", "10.1111", "10.1046", "10.1034", "10.1348", "10.1113"})
+
+
+def is_wiley_doi(doi: str) -> bool:
+    """True when *doi* is on a registrant whose articles Wiley Online Library hosts."""
+    doi = clean_doi(doi)
+    return bool(doi) and doi.split("/", 1)[0] in WILEY_PREFIXES

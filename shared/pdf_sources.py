@@ -14,6 +14,8 @@ Acquisition order (the tier numbers acquire_pdf's comments use):
   2c. Springer Nature Open Access API JATS full text (Springer Nature DOIs only;
       needs SPRINGER_OA_API_KEY, skipped without)
   3.  OpenAlex locations[] — every copy it knows of, files then landing pages
+  3a. Wiley's text-and-data-mining API  (Wiley DOIs only; needs WILEY_TDM_TOKEN,
+      skipped without)
   3b. DataCite — the registrant's own metadata, for the DOIs Unpaywall never indexed
   4.  Unpaywall — all direct PDF URLs
   4b. The full-text links the publisher deposited in the Crossref record
@@ -72,14 +74,14 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
-from urllib.parse import unquote, urljoin, urlsplit
+from urllib.parse import quote, unquote, urljoin, urlsplit
 
 import requests
 
 from .config import (
     CORE_API_KEY, CROSSREF_RATE_SEC, OA_CACHE_DIR, OA_XML_CACHE_DIR, OPENALEX_API_KEYS,
     OSF_TOKEN, PDF_CACHE_DIR, RESEARCHER_EMAIL, SERPAPI_KEYS, SERPER_API_KEYS,
-    SPRINGER_OA_API_KEY, log,
+    SPRINGER_OA_API_KEY, WILEY_TDM_TOKEN, log,
 )
 
 from .openalex_keys import (current_index, headers as oa_headers,
@@ -87,7 +89,7 @@ from .openalex_keys import (current_index, headers as oa_headers,
 from .cache import cache_exists, read_json, write_json
 from .disambiguation import token_coverage
 from .rate_limit import throttle
-from .utils import clean_doi, cache_key, is_springer_nature_doi
+from .utils import clean_doi, cache_key, is_springer_nature_doi, is_wiley_doi
 
 # Seconds between calls to each source the waterfall asks. These APIs are free and
 # keyless and ask only for a mailto; the intervals are politeness, not quotas, and
@@ -106,6 +108,7 @@ _ZENODO_RATE_SEC          = 0.5
 _PMC_OA_RATE_SEC          = 0.2
 _HTML_RATE_SEC           = 0.5
 _SPRINGER_OA_RATE_SEC     = 1.0     # basic plan: 100 requests/min, 500 a day
+_WILEY_TDM_RATE_SEC       = 10.0    # documented: 60 requests per 10 minutes
 
 # The key is optional: without it you get the polite pool (mailto= parameter);
 # with it you get higher rate limits and access to content.openalex.org bulk
@@ -909,6 +912,7 @@ def get_osf_pdf_url(doi: str) -> Optional[str]:
 # those two specs — not this tier's.
 
 _OSF_REGISTRATION_API = "https://api.osf.io/v2/registrations/{guid}/"
+_WILEY_TDM_URL = "https://api.wiley.com/onlinelibrary/tdm/v1/articles/{doi}"
 
 # Below this, the form carries a title, an author line and little else — no design,
 # no hypotheses, nothing to read. Measured 2026-08-07 over four campaign
@@ -2895,7 +2899,8 @@ def _title_check(content: bytes, suffix: str, title: str) -> tuple[str, float]:
 
 
 def download_pdf(url: str, doi: str = "", min_bytes: int = _MIN_PDF_BYTES,
-                 title: str = "", referer: str = "") -> dict:
+                 title: str = "", referer: str = "",
+                 auth_headers: "dict | None" = None) -> dict:
     """
     Download a document and save it to PDF_CACHE_DIR.
 
@@ -2903,6 +2908,10 @@ def download_pdf(url: str, doi: str = "", min_bytes: int = _MIN_PDF_BYTES,
     servers routinely serve a file to a request that came from their own page and a
     challenge to one that arrived from nowhere, so the scraper passes the landing URL
     and the header overrides the default in either identity.
+
+    *auth_headers* is an API's credential. A request carrying one is asked once, as
+    FLoRA: the browser identity exists for servers that judge the caller, and an API
+    judges the token.
 
     Cache key = MD5 of doi (or url if doi missing), so repeat calls skip download.
     A PDF and a Word file are both documents; anything else is refused, and a Word
@@ -2933,7 +2942,8 @@ def download_pdf(url: str, doi: str = "", min_bytes: int = _MIN_PDF_BYTES,
                   PDF_RETRY_AFTER_DAYS, url)
         return {"success": False, "path": None, "source": "", "reason": "url_gone"}
 
-    identities = (_BROWSER_HEADERS, _polite_headers())
+    identities = ((_BROWSER_HEADERS, _polite_headers()) if not auth_headers
+                  else ({**_polite_headers(), **auth_headers},))
     for attempt, headers in enumerate(identities):
         if referer:
             headers = {**headers, "Referer": referer}
@@ -2955,7 +2965,7 @@ def download_pdf(url: str, doi: str = "", min_bytes: int = _MIN_PDF_BYTES,
             # The server answered, and what it sent is not a document. That can be the
             # URL's answer — or it can be an answer to WHO ASKED, which is why the
             # second identity exists. Only the last one's reason is reported.
-            if attempt == 0:
+            if attempt < len(identities) - 1:
                 log.debug("  %s to the browser identity: %s — asking again as "
                           "FLoRA", reason, url)
                 continue
@@ -3051,12 +3061,13 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
         return bool(tried) and all(r.startswith("download_error") for r in tried)
 
     def _try(url: str, label: str, referer: str = "", want_title: str = "",
-             name: str = "") -> bool:
+             name: str = "", auth_headers: "dict | None" = None) -> bool:
         nonlocal dl, pdf_url, pdf_src, pdf_name
         all_tried.append(url)
         # A tier fetching ANOTHER paper's document checks the bytes against that
         # paper's title, not the row's; everything else asks for the row's own.
-        dl = download_pdf(url, doi=doi_r, title=want_title or title, referer=referer)
+        dl = download_pdf(url, doi=doi_r, title=want_title or title, referer=referer,
+                          auth_headers=auth_headers)
         if dl["success"]:
             pdf_url, pdf_src = url, label
             pdf_name = name or _url_file_name(url)
@@ -3354,6 +3365,21 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
         else:
             if not any(_try(cand["url"], "openalex_oa") for cand in oa_locations):
                 _failed("openalex_oa")
+
+    # Tier 3a — Wiley's text-and-data-mining API. Wiley Online Library answers
+    # scripted clients with a bot check, so the Wiley URLs every index above and below
+    # hands out mostly fail; this is the publisher's own PDF, fetched with a token.
+    # Below Tier 3 because Wiley allows one request per ten seconds, so a repository
+    # copy OpenAlex knows of is cheaper. Off a subscribing network a subscription
+    # article answers 403 — measured 2026-10-28: four gold/hybrid articles served,
+    # four subscription ones refused — and that is recorded like any miss, so the
+    # tier is asked again after the retry delay. No token is a SKIP, like CORE's.
+    if (not dl["success"] and WILEY_TDM_TOKEN and is_wiley_doi(doi_r)
+            and not _held("wiley_tdm")):
+        throttle("wiley_tdm", _WILEY_TDM_RATE_SEC)
+        if not _try(_WILEY_TDM_URL.format(doi=quote(doi_r, safe="")), "wiley_tdm",
+                    auth_headers={"Wiley-TDM-Client-Token": WILEY_TDM_TOKEN}):
+            _failed("wiley_tdm")
 
     # Tier 3b — DataCite, the registrant's own metadata. Every index above is
     # Crossref-shaped, so a repository DOI reaches this tier having been asked about
