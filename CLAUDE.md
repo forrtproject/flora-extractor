@@ -314,8 +314,9 @@ The verdict reaches Stage 3 on the worklist row, in `SCREEN_COLS`:
 `screen_evidence`, `screen_reasoning`. `screen_votes` carries each voter's
 classification and confidence because a summary of the gate is not enough — the
 `llm_title_search` rung is gated on both voters qualifying AND confident (for the
-decision voter: P(qualifies) ≥ 0.9; with a confident Luna that let 20 of 344 hard
-negatives through, against 46 for the DeepSeek + Luna rule). The decision voter's
+decision voter: P(qualifies) ≥ 0.9 and a type at the 0.7 share, since an `unclear`
+vote does not qualify; with a confident Luna that let 19 of 344 hard negatives
+through, against 46 for the DeepSeek + Luna rule, for as many positives). The decision voter's
 `screen_evidence` segment is empty; its probabilities are in `screen_reasoning`.
 `_screen_from_row()` in `run_extract.py` rebuilds the `classify_replication()` dict
 from them, so everything below the front door is unchanged.

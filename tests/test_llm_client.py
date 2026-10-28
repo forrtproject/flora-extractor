@@ -982,6 +982,39 @@ def test_decision_response_accepts_both_probability_shapes(monkeypatch, list_for
     assert answer["probs"] == probs and session.post.call_count == 1
 
 
+@pytest.mark.parametrize("usage", [None, ["bad"], {"input_tokens": "bad", "cost": 4e-05},
+                                   {"input_tokens": 2000, "cost": float("nan")}])
+def test_a_served_decision_with_unreadable_usage_is_recorded_unpriced(monkeypatch, usage):
+    """A billed answer whose usage cannot be read must still reach the day's record —
+    as an unpriced call, which refuses an enabled dollar cap — and the answer itself
+    is kept rather than re-bought."""
+    response = MagicMock(status_code=200)
+    response.json.return_value = {"usage": usage, "answers": {
+        "screen": {"probabilities": _probs(0.8)["probs"]}}}
+    session = MagicMock()
+    session.post.return_value = response
+    monkeypatch.setattr(llm._decision_sessions, "s", session, raising=False)
+    monkeypatch.setattr(llm, "OPENROUTER_API_KEY", "or-test")
+    assert llm._decide_once("Title", "Abstract", llm.SCREENING_MODEL_2)["probs"]
+    assert session.post.call_count == 1
+    bucket = llm.token_usage.usage()["openrouter"][llm.SCREENING_MODEL_2]
+    assert bucket["unpriced_calls"] == 1 and "usd" not in bucket
+
+
+def test_a_cached_decision_answer_is_validated_before_it_votes(monkeypatch, tmp_path):
+    """An entry written under looser rules (out of range, summing to 1) is re-asked,
+    never read as a `none` that a unanimous gate could discard on."""
+    monkeypatch.setattr(llm, "LLM_CACHE_DIR", tmp_path)
+    args = ("10.1/x", "Title", "Abstract", "prompt", llm.SCREENING_MODEL_2, "")
+    key = llm._decision_key("10.1/x", "Title", "Abstract", llm.SCREENING_MODEL_2)
+    write_cache(tmp_path, key, {"probs": {**_probs(0.0)["probs"], "replication": -0.2,
+                                          "none": 1.2}, "model": llm.SCREENING_MODEL_2})
+    assert llm._screen_vote(*args, buy=False) is None
+    monkeypatch.setattr(llm, "_decide_once", lambda t, a, m: _probs(0.8))
+    assert llm._screen_vote(*args, buy=True)["classification"] == "replication"
+    assert llm._screen_vote(*args, buy=False)["classification"] == "replication"
+
+
 def test_a_decision_vote_without_a_key_or_budget_sends_nothing(monkeypatch):
     """No key is a failed vote with no request; an exhausted daily dollar budget
     stops the run like every other transport, before the request goes out."""

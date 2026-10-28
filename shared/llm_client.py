@@ -1575,8 +1575,10 @@ def _classify_once(prompt: str, model: str, effort: str) -> "dict | None":
 #   below DISCARD_BELOW  → "none", so the gate discards only if Luna also says none.
 #     0.4 is the highest cut-off that still lost only 2 of 1,456 positives (0.5: 4).
 #   at or above CONFIDENT_AT → "confident", which opens the pre-PDF title search
-#     together with a confident Luna (link_original.py). Luna confident + P ≥ 0.9
-#     allowed 1,379 positives and 20 hard negatives; Luna + DeepSeek allowed 1,363 / 46.
+#     together with a confident Luna (link_original.py) — when the vote also names a
+#     type (below), because an "unclear" vote does not qualify. Luna confident + such
+#     a vote allowed 1,364 positives and 19 hard negatives; Luna + DeepSeek allowed
+#     1,363 / 46 (P ≥ 0.9 alone, whatever the type, would allow 1,377 / 19).
 #   a type share at or above TYPE_SHARE → that type, which overrides Luna's type
 #     (_screen_record_type); below it the vote says "unclear" — qualifying for the
 #     gate, silent about the type. Typing by Luna with this override: 98.0% against
@@ -1593,6 +1595,30 @@ _DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"
 # One Session per thread: a fresh TLS context per call costs seconds of CPU on
 # Windows, and the screen runs on a worker pool.
 _decision_sessions = threading.local()
+
+
+def _decision_probs(probs: object) -> dict:
+    """The five class probabilities as floats, or ValueError.
+
+    Accepts the keyed mapping or the endpoint's list form; every class must be present
+    as a finite number in [0, 1], and the five must sum to 1 within 0.03. Applied to a
+    cached answer as well as a fresh one, so an entry written under looser rules is
+    re-asked rather than voted on.
+    """
+    if isinstance(probs, list):  # the endpoint has answered in both shapes
+        if len(probs) != len(SCREEN_CLASSIFICATIONS) or not all(
+                isinstance(p, dict) and isinstance(p.get("value"), str) for p in probs):
+            raise ValueError("invalid decision probability list")
+        probs = {p.get("value"): p.get("probability") for p in probs}
+    if (not isinstance(probs, dict) or set(probs) != set(SCREEN_CLASSIFICATIONS)
+            or any(isinstance(v, bool) or not isinstance(v, (int, float))
+                   for v in probs.values())):
+        raise ValueError("decision probabilities must name all five classes with numbers")
+    probs = {k: float(v) for k, v in probs.items()}
+    if (any(not math.isfinite(v) or not 0 <= v <= 1 for v in probs.values())
+            or abs(sum(probs.values()) - 1) > 0.03):
+        raise ValueError("decision probabilities are not a distribution")
+    return probs
 
 
 def _decide_once(study_r: str, abstract_r: str, model: str) -> "dict | None":
@@ -1625,34 +1651,30 @@ def _decide_once(study_r: str, abstract_r: str, model: str) -> "dict | None":
             if r.status_code != 200:
                 last = f"HTTP {r.status_code}: {r.text[:200]}"
                 continue
-            data = r.json()
+            try:
+                data = r.json()
+            except ValueError:
+                data = None
+            # A served response is charged before it is judged. Usage that cannot be
+            # read is recorded as an unpriced call, which an enabled dollar cap refuses,
+            # rather than letting a billed call go uncounted.
+            usage = data.get("usage") if isinstance(data, dict) else None
+            try:
+                n_in = int(usage.get("input_tokens") or 0)
+                n_out = int(usage.get("output_tokens") or 0)
+                usd = float(usage.get("cost") or 0)
+                if not math.isfinite(usd):
+                    raise ValueError("non-finite cost")
+            except (AttributeError, TypeError, ValueError, OverflowError):
+                n_in = n_out = 0
+                usd = 0.0
+            _record_tokens("openrouter", model, n_in, n_out, usd=usd)
             if not isinstance(data, dict):
-                raise ValueError("decision response is not an object")
-            usage = data.get("usage") or {}
-            if not isinstance(usage, dict):
-                raise ValueError("decision usage is not an object")
-            _record_tokens("openrouter", model, int(usage.get("input_tokens") or 0),
-                           int(usage.get("output_tokens") or 0),
-                           usd=float(usage.get("cost") or 0))
+                raise ValueError("decision response is not a JSON object")
             answers = data.get("answers")
             if not isinstance(answers, dict) or not isinstance(answers.get("screen"), dict):
                 raise ValueError("decision response has no screen answer object")
-            probs = answers["screen"].get("probabilities")
-            if isinstance(probs, list):  # the endpoint has answered in both shapes
-                if len(probs) != len(SCREEN_CLASSIFICATIONS) or not all(
-                        isinstance(p, dict) and isinstance(p.get("value"), str)
-                        for p in probs):
-                    raise ValueError("invalid decision probability list")
-                probs = {p.get("value"): p.get("probability") for p in probs}
-            if (not isinstance(probs, dict) or set(probs) != set(SCREEN_CLASSIFICATIONS)
-                    or any(isinstance(v, bool) or not isinstance(v, (int, float))
-                           for v in probs.values())):
-                raise ValueError("decision probabilities must name all five classes with numbers")
-            probs = {k: float(v) for k, v in probs.items()}
-            if (any(not math.isfinite(v) or not 0 <= v <= 1 for v in probs.values())
-                    or abs(sum(probs.values()) - 1) > 0.03):
-                raise ValueError("decision probabilities are not a distribution")
-            return {"probs": probs,
+            return {"probs": _decision_probs(answers["screen"].get("probabilities")),
                     "model": model, "served_by": str(data.get("model") or "")}
         except (requests.RequestException, ValueError, TypeError, OverflowError) as e:
             last = f"{type(e).__name__}: {e}"[:200]
@@ -1965,7 +1987,12 @@ def _screen_vote(doi_r: str, study_r: str, abstract_r: str, cls_prompt: str,
     if model in DECISION_MODELS:
         key = _decision_key(doi_r, study_r, abstract_r, model)
         answer = read_cache(LLM_CACHE_DIR, key)
-        if not (isinstance(answer, dict) and answer.get("probs")):
+        try:
+            # The key names the model, so the entry's own model field adds nothing.
+            answer = {**answer, "probs": _decision_probs(answer["probs"]), "model": model}
+        except (KeyError, TypeError, ValueError, OverflowError):
+            answer = None
+        if answer is None:
             answer = _decide_once(study_r, abstract_r, model) if buy else None
             if answer is not None:
                 write_cache(LLM_CACHE_DIR, key, answer)

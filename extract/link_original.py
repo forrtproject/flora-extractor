@@ -1670,10 +1670,11 @@ def run_for_doi(doi_r:              str,
         # same search already runs after the PDF stage as llm_title_search.
         #
         # Gated on both voters giving a qualifying answer AND both standing behind
-        # it — for the decision voter, "confident" means P(qualifies) >= 0.9
-        # (DECISION_CONFIDENT_AT in shared/llm_client.py; measured 2026-10: with a
-        # confident Luna it lets 20 of 344 hard negatives through where the old
-        # DeepSeek + Luna rule let 46). This is the one resolver that picks from the whole literature rather
+        # it — for the decision voter, "confident" means P(qualifies) >= 0.9 and
+        # "qualifying" needs a type at the 0.7 share (DECISION_CONFIDENT_AT and
+        # DECISION_TYPE_SHARE in shared/llm_client.py; measured 2026-10: with a
+        # confident Luna it lets 19 of 344 hard negatives through where the old
+        # DeepSeek + Luna rule let 46, for as many positives). This is the one resolver that picks from the whole literature rather
         # than a supplied candidate list, and the errors it makes are systematic: a
         # paper that is not a replication at all gets confidently linked to a
         # landmark it merely cites. The result is still written as provisional
