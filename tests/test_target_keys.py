@@ -175,3 +175,20 @@ def test_a_reference_lines_doi_is_lent_to_the_pick_not_to_the_key(references, do
               "record": {**entry, "doi": "10.9/stale", "doi_source": "reference_line"}}]
     lend_reference_dois(stale, key_map)
     assert stale[0]["record"]["doi"] == doi
+
+
+@pytest.mark.parametrize("first_author, lent", [
+    ("Müller, K.", True),      # the same author, accents folded
+    ("Jones, A.", False),      # another author's same-title, same-year work
+    ("", False),               # nobody to compare
+])
+def test_a_reference_lines_doi_joins_a_title_match_only_by_the_same_author(
+        first_author, lent):
+    doi = "10.1037/h0055756"
+    candidate = {"title": "Improving problem solving with subgoal labels", "year": 2016,
+                 "first_author": first_author, "all_authors": [first_author] if first_author else []}
+    reference = {"authors": ["Muller, K."], "year": 2016,
+                 "title": "Improving problem solving with subgoal labels",
+                 "raw_ref": f"Muller, K. (2016). Improving problem solving. doi:{doi}"}
+    [entry], _ = assign_target_keys([candidate], [reference])
+    assert entry["reference_doi"] == (doi if lent else "")

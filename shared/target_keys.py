@@ -11,6 +11,7 @@ Keys are BibTeX-style (@smith2009) over the deduplicated union of both lists, an
 returned key is only ever resolved against the key_map from the same call.
 """
 import re
+import unicodedata
 
 from .utils import clean_doi, doi_in_reference
 
@@ -82,10 +83,22 @@ def _normalise(record: dict, role: str) -> dict:
     }
 
 
+def _folded_surname(author: str) -> str:
+    return _surname(unicodedata.normalize("NFKD", str(author or ""))
+                    .encode("ascii", "ignore").decode())
+
+
 def _merge(into: dict, new: dict) -> None:
-    for field in ("doi", "title", "openalex_id", "first_author", "reference_doi"):
+    # Entries are joined on title and year; a DOI read off a reference line names
+    # one specific work, so it crosses only between records whose first authors
+    # agree — checked before the loop below can fill an empty first_author.
+    same_author = bool(_folded_surname(into["first_author"])) and (
+        _folded_surname(into["first_author"]) == _folded_surname(new["first_author"]))
+    for field in ("doi", "title", "openalex_id", "first_author"):
         if not into[field] and new[field]:
             into[field] = new[field]
+    if not into["reference_doi"] and new["reference_doi"] and same_author:
+        into["reference_doi"] = new["reference_doi"]
     if into["year"] is None:
         into["year"] = new["year"]
     if len(new["authors"]) > len(into["authors"]):
