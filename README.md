@@ -129,6 +129,16 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for useful issue reports and the workflow
 
 ---
 
+## Acknowledgements
+
+We thank [Dan Elton](https://github.com/delton137) for open-sourcing the
+[Metascience Observatory](https://github.com/The-Metascience-Observatory/mo_pipeline)
+replication extraction pipeline and database. Comparing our output against it helped
+us improve accuracy in several places. Its replication database also gave us
+candidates to screen that our own search had missed.
+
+---
+
 ## Related
 
 - [FLoRA database](https://forrt.org/replication-hub/flora/) — the database this pipeline feeds
