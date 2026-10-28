@@ -22,8 +22,8 @@ from .config import (
     OA_CACHE_DIR, OPENALEX_RATE_SEC, CROSSREF_RATE_SEC,
     RESEARCHER_EMAIL, log,
 )
-from .cache import (content_key, read_cache, read_cache_migrating, write_cache,
-                    write_json)
+from .cache import (cache_exists, content_key, read_cache, read_cache_migrating,
+                    read_json, write_cache, write_json)
 from .openalex_keys import (
     current_index, headers as oa_headers, is_budget_refusal, quota_message,
     rotate_key,
@@ -370,9 +370,8 @@ def fetch_referenced_works_metadata(openalex_id: str,
     bare       = re.sub(r"https?://openalex\.org/", "", openalex_id).strip()
     cache_file = OA_CACHE_DIR / f"refs_{bare}.json"
 
-    if use_cache and cache_file.exists():
-        with cache_file.open(encoding="utf-8") as fh:
-            return json.load(fh)
+    if use_cache and cache_exists(cache_file):
+        return read_json(cache_file)
 
     # Step 1: fetch the work to get its referenced_works list
     work = _oa_get(
@@ -444,9 +443,8 @@ def fetch_opencitations_references(doi_r: str) -> list[dict] | None:
         return []
 
     cache_file = OA_CACHE_DIR / f"ocrefs_{cache_key(doi_r)}.json"
-    if cache_file.exists():
-        with cache_file.open(encoding="utf-8") as fh:
-            return json.load(fh)
+    if cache_exists(cache_file):
+        return read_json(cache_file)
 
     try:
         throttle("crossref", CROSSREF_RATE_SEC)
@@ -565,9 +563,8 @@ def find_all_candidates(doi_r: str,
 
     key = content_key("candidates", doi_r, openalex_id_r, study_r, abstract_r, year_r)
     cache_file = OA_CACHE_DIR / f"{key}.json"
-    if cache_file.exists():
-        with cache_file.open(encoding="utf-8") as fh:
-            return json.load(fh)
+    if cache_exists(cache_file):
+        return read_json(cache_file)
 
     if not openalex_id_r:
         log.warning("[%s] find_all_candidates: no openalex_id_r — returning empty candidates", doi_r)
@@ -1549,9 +1546,8 @@ def _fetch_openalex_work(doi: str) -> Optional[dict]:
         return None
 
     cache_file = OA_CACHE_DIR / f"oa_work_{cache_key(doi)}.json"
-    if cache_file.exists():
-        with cache_file.open(encoding="utf-8") as fh:
-            return json.load(fh).get("work")
+    if cache_exists(cache_file):
+        return read_json(cache_file).get("work")
 
     data = _oa_get(
         "https://api.openalex.org/works",
@@ -1585,9 +1581,8 @@ def fetch_openalex_full_metadata(doi: str) -> Optional[dict]:
         return None
 
     cache_file = OA_CACHE_DIR / f"doi_full_{cache_key(doi)}.json"
-    if cache_file.exists():
-        with cache_file.open(encoding="utf-8") as fh:
-            return json.load(fh)
+    if cache_exists(cache_file):
+        return read_json(cache_file)
 
     # ── Try OpenAlex first ────────────────────────────────────────────────────
     result: Optional[dict] = None
@@ -1674,9 +1669,8 @@ def resolve_doi_from_url(url: str) -> str:
         return ""
 
     cache_file = OA_CACHE_DIR / f"url_doi_{cache_key(url)}.json"
-    if cache_file.exists():
-        with cache_file.open(encoding="utf-8") as fh:
-            return json.load(fh).get("doi", "")
+    if cache_exists(cache_file):
+        return read_json(cache_file).get("doi", "")
 
     def _save(doi: str) -> str:
         cache_file.parent.mkdir(parents=True, exist_ok=True)
