@@ -478,7 +478,7 @@ its frozen manifest.
 | --- | --- |
 | `pool_reader.py` | `iter_pool_batches(pool_dir, overlay_dir=None, batch_size=50_000, aliases=None)` — the engine's single input path: pool batches with overlay text written over the pool's `abstract_text`, empty or not. `overlay_manifest_hash(overlay_dir) -> str \| None` (defined in `overlay.py`, re-exported here so the input path is one import). The overlay is loaded once as a `work_id -> text` dict and applied per batch; with no overlay the stream is `iter_batches()` untouched. |
 | `overlay.py` | `worklist(con, release_id, pool_dir, out_path, aliases=None) -> int` (the `pending_reason='no_text'` rows joined to the pool for doi/title/year); `write_chunk()`, `load_overlay()`, `overlay_work_ids()`; `validate(overlay_dir) -> list[str]`; `freeze(overlay_dir, pool_manifest_hash=None) -> dict`; `overlay_manifest_hash()`, `read_manifest()`. |
-| `backfill.py` | `python -m filter.engine.backfill --worklist F [--overlay-dir D] [--run] [--phase all\|bulk\|targeted] [--limit N] [--source S] [--batch-size N] [--scopus-limit N] [--include-openalex] [--dry-run] [--freeze]` — the six abstract sources. `--phase bulk` with no `--source` runs Europe PMC alone and says so in one line, because OpenAlex is bulk-shaped but opt-in. over a worklist in two pathways (bulk, then targeted), results appended as an overlay chunk. `--overlay-dir` defaults to `OVERLAY_DIR`, the same directory the engine's commands read. |
+| `backfill.py` | `python -m filter.engine.backfill --worklist F [--overlay-dir D] [--run] [--phase all\|bulk\|targeted] [--limit N] [--source S] [--batch-size N] [--scopus-limit N] [--include-openalex] [--dry-run] [--freeze]` — the seven abstract sources. `--phase bulk` with no `--source` runs Europe PMC alone and says so in one line, because OpenAlex is bulk-shaped but opt-in. over a worklist in two pathways (bulk, then targeted), results appended as an overlay chunk. `--overlay-dir` defaults to `OVERLAY_DIR`, the same directory the engine's commands read. |
 
 **An overlay row wins, present pool text or not.** Every overlay row was written
 deliberately by a backfill this project ran, against a worklist this project
@@ -535,7 +535,7 @@ argument names them:
 | Pathway | Sources | Shape | Which rows |
 | --- | --- | --- | --- |
 | `bulk` | Europe PMC (OpenAlex opt-in) | batched, keyless, unquota'd; one request answers about `EPMC_BATCH_SIZE` / `OA_BATCH_SIZE` identifiers | every worklist row, and cheap enough for a worklist much wider than a release's `no_text` rows |
-| `targeted` | OSF → Semantic Scholar → CrossRef → Scopus | one call per DOI, or gated by a key, an IP-bound entitlement or a ~10k/week quota | only the rows bulk left without text, on the worklist that matters |
+| `targeted` | OSF → Semantic Scholar → CrossRef → Springer Nature → Scopus | one call per DOI, or gated by a key, an IP-bound entitlement, a 500/day or a ~10k/week quota | only the rows bulk left without text, on the worklist that matters |
 
 OpenAlex is in the bulk pathway's shape but not in its default run: it needs
 `--include-openalex` (or `--source openalex`). Measured yield on this corpus is 0

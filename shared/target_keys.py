@@ -11,8 +11,9 @@ Keys are BibTeX-style (@smith2009) over the deduplicated union of both lists, an
 returned key is only ever resolved against the key_map from the same call.
 """
 import re
+import unicodedata
 
-from .utils import clean_doi
+from .utils import clean_doi, doi_in_reference
 
 _KEY_STRIP   = re.compile(r"[^a-z0-9]")
 _TITLE_STRIP = re.compile(r"[^a-z0-9 ]")
@@ -61,8 +62,17 @@ def _year_of(record: dict) -> "int | None":
 
 def _normalise(record: dict, role: str) -> dict:
     authors = _authors_of(record)
+    doi = clean_doi(str(record.get("doi") or ""))
     return {
-        "doi":           clean_doi(str(record.get("doi") or "")),
+        "doi":           doi,
+        # A parsed reference's DOI, read off its own text. Held apart from "doi" on
+        # purpose: "doi" decides deduplication and the identities in the target
+        # call's cache key, and every reference list with a DOI in it would otherwise
+        # re-buy its call. The answer never depends on it — the model is not shown
+        # DOIs — so it is lent to the picked record afterwards
+        # (`lend_reference_dois`), where only the link it produces changes.
+        "reference_doi": ("" if doi or role != "reference"
+                          else doi_in_reference(record.get("raw_ref", ""))),
         "title":         str(record.get("title") or "").strip(),
         "year":          _year_of(record),
         "authors":       authors,
@@ -73,10 +83,22 @@ def _normalise(record: dict, role: str) -> dict:
     }
 
 
+def _folded_surname(author: str) -> str:
+    text = re.sub(r"\s+et\s+al\.?\s*$", "", str(author or ""), flags=re.I)
+    return _surname(unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode())
+
+
 def _merge(into: dict, new: dict) -> None:
+    # Entries are joined on title and year; a DOI read off a reference line names
+    # one specific work, so it crosses only between records whose first authors
+    # agree — checked before the loop below can fill an empty first_author.
+    same_author = bool(_folded_surname(into["first_author"])) and (
+        _folded_surname(into["first_author"]) == _folded_surname(new["first_author"]))
     for field in ("doi", "title", "openalex_id", "first_author"):
         if not into[field] and new[field]:
             into[field] = new[field]
+    if not into["reference_doi"] and new["reference_doi"] and same_author:
+        into["reference_doi"] = new["reference_doi"]
     if into["year"] is None:
         into["year"] = new["year"]
     if len(new["authors"]) > len(into["authors"]):
@@ -157,3 +179,25 @@ def assign_target_keys(candidates: list[dict],
         key_map[key] = entry
 
     return entries, key_map
+
+
+def lend_reference_dois(targets: list[dict], key_map: dict[str, dict]) -> None:
+    """Give each picked record without a DOI the one its reference line carries.
+
+    In place, on the target's own copy of the record, so the key_map entry is
+    untouched. `doi_source` says where the DOI came from: it was read off text, not
+    looked up, and verification (`_verify_row`) checks it against the title as it
+    does every DOI a row is written with. A DOI lent earlier — on a cached answer — is
+    replaced by what the current reading of the line gives, because the target call's
+    key does not name the reference DOI and so cannot invalidate it.
+    """
+    for target in targets or []:
+        record = target.get("record")
+        if not record:
+            continue
+        lent = (key_map.get(target.get("key")) or {}).get("reference_doi", "")
+        if record.get("doi_source") == "reference_line":
+            record = {k: v for k, v in record.items() if k != "doi_source"} | {"doi": ""}
+            target["record"] = record
+        if lent and not clean_doi(str(record.get("doi") or "")):
+            target["record"] = {**record, "doi": lent, "doi_source": "reference_line"}

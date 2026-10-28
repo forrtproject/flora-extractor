@@ -50,6 +50,29 @@ class TestExtractAuthorYearPatterns:
     def test_month_and_weekday_names_are_not_authors(self, text):
         assert extract_author_year_patterns(text) == []
 
+    @pytest.mark.parametrize("text, surname, year_label, raw", [
+        # A typographic apostrophe is a straight one; `raw` keeps the original.
+        ("As in Karimi et al.’s (2007) study", "karimi", "2007",
+         "Karimi et al.’s (2007)"),
+        # APA reference form, matched before the narrative patterns.
+        ("Kachurik, S., Ruiz, J., & Staub, M. (2013). Title.", "kachurik", "2013",
+         "Kachurik, S., Ruiz, J., & Staub, M. (2013)"),
+        # The FIRST surname of a list, Unicode intact — not the list run together.
+        ("You, Dörnyei, and Csizér (2016) found", "you", "2016",
+         "You, Dörnyei, and Csizér (2016)"),
+        ("Kogut and Ritov (2005a) showed", "kogut", "2005a", "Kogut and Ritov (2005a)"),
+        ("as in Kogut and Ritov 2005b, the", "kogut", "2005b", "Kogut and Ritov 2005b"),
+        # Particles kept; Unicode surnames kept.
+        ("as van der Berg (2010) did", "vanderberg", "2010", "van der Berg (2010)"),
+        ("Müller, K.-H., & Smith, J. (2003).", "müller", "2003",
+         "Müller, K.-H., & Smith, J. (2003)"),
+    ])
+    def test_citation_forms_are_read_with_offsets_into_the_original(
+            self, text, surname, year_label, raw):
+        [p] = extract_author_year_patterns(text)
+        assert (p["surname"], p["year_label"], p["raw"]) == (surname, year_label, raw)
+        assert text[p["start"]:p["end"]] == raw
+
     def test_real_surname_that_is_not_a_stopword_still_matches(self):
         patterns = extract_author_year_patterns("Friday et al. (2018) is not a real name, "
                                                   "but Smith (2018) is.")
@@ -232,6 +255,19 @@ class TestFindAllCandidates:
             find_all_candidates("10.9999/rep", "W999", "", "Smith (2010) studied this.", 2020, "")
             find_all_candidates("10.9999/rep", "W999", "", "Smith (2010) studied this.", 2020, "")
         assert mock_fetch.call_count == 1
+
+    def test_a_list_cached_before_the_parser_change_cannot_hide_its_new_match(
+            self, tmp_path):
+        """The text-keyed shape cached [] for a citation the old parser could not
+        read; that entry must not answer for the parser that reads it."""
+        title, abstract = "", "We replicated Smith et al.’s (2010) study."
+        old_key = content_key("candidates", "10.9999/rep", "W999", title, abstract, 2020)
+        (tmp_path / f"{old_key}.json").write_text("[]", encoding="utf-8")
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client.fetch_referenced_works_metadata",
+                   return_value=_REFS):
+            cands = find_all_candidates("10.9999/rep", "W999", title, abstract, 2020, "")
+        assert [c["doi"] for c in cands] == ["10.1000/smith2010"]
 
     def test_different_abstract_misses_the_cache(self, tmp_path):
         """The three call sites pass different titles/abstracts for the same DOI, and

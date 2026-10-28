@@ -1527,8 +1527,13 @@ def test_a_none_abstract_reaches_the_gate_as_empty():
             pd.Series({"doi_r": "10.1/x", "title_r": "T", "abstract_r": empty}))
         assert built.iloc[0]["abstract_r"] == "", repr(empty)
     kept = run_extract._build_cands_df(
-        pd.Series({"doi_r": "10.1/x", "title_r": "T", "abstract_r": "Real."}))
+        pd.Series({"doi_r": "10.1/x", "title_r": "T", "abstract_r": "Real.",
+                   "authors_r": "Sanne Nauts; Oliver Langner"}))
     assert kept.iloc[0]["abstract_r"] == "Real."
+    # The pre-PDF title search refuses a same-title hit by the replication's authors,
+    # so the authors must survive into the row run_for_doi reads.
+    assert link_original._cands_row("10.1/x", kept)["authors_r"] == \
+        "Sanne Nauts; Oliver Langner"
 
 
 def test_a_textless_documentless_row_survives_the_original_link_guard():
@@ -1721,3 +1726,116 @@ class TestReferencePickCheck:
             _run_gate(_GATE_TITLE, _TWO_PAIRS, _GATE_CANDS, screen=screen,
                       abstract_answer=_answer(), pdf_ok=False)
         assert "is the flagged record" not in caplog.text
+
+
+@pytest.mark.parametrize("hit, itself", [
+    # A distinct, earlier work that shares the replication's title is an original.
+    ({"doi": "10.1037/h0055756", "title": "Forming impressions of personality",
+      "year": 1946, "authors": ["Asch, S. E."]}, False),
+    # ... but only when both author lists show two teams: a hit naming nobody, or
+    # sharing a short surname, is refused.
+    ({"doi": "10.1037/h0055756", "title": "Forming impressions of personality",
+      "year": 1946}, True),
+    ({"doi": "10.9/li", "title": "Forming impressions of personality",
+      "year": 2010, "authors": ["Li, X."]}, True),
+    # No identity of its own and the replication's year: the replication itself.
+    ({"title": "Forming impressions of personality", "year": 2014}, True),
+    # Identity: the replication's DOI or work id, whatever the title.
+    ({"doi": "10.1027/1864-9335/a000179", "title": "Something else", "year": 1946}, True),
+    ({"doi": "10.9/alias", "openalex_id": "https://openalex.org/W1",
+      "title": "Something else", "year": 1946}, True),
+    # Same title, not shown to predate it: a repository copy or preprint of the
+    # replication under another identifier.
+    ({"doi": "10.31234/osf.io/abcde", "title": "Forming impressions of personality",
+      "year": 2014}, True),
+    ({"doi": "10.9/undated", "title": "Forming impressions of personality"}, True),
+    # A preprint or Stage 1 copy usually PREDATES the journal version, so an earlier
+    # year alone is not enough: a preprint-server record is refused ...
+    ({"doi": "10.31234/osf.io/abcde", "title": "Forming impressions of personality",
+      "year": 2012, "authors": ["Someone Else"]}, True),
+    # ... and so is an earlier record by the replication's own authors.
+    ({"doi": "10.9/early-copy", "title": "Forming impressions of personality",
+      "year": 2012, "authors": ["Nauts, S.", "Langner, O."]}, True),
+])
+def test_a_same_title_hit_must_be_someone_elses_earlier_work(hit, itself):
+    assert link_original.is_replication_itself(
+        hit, "10.1027/1864-9335/a000179", "Forming Impressions of Personality",
+        "2014", "W1", "Sanne Nauts; Oliver Langner; Inge Huijsmans; Xia Li") is itself
+
+
+@pytest.mark.parametrize("abstract, may_stop", [
+    # A methods citation beside a target only the current parser reads: two pairs, so
+    # the rule pick on the methods citation cannot end the row.
+    ("Using the procedure of Smith (2010), we replicated Karimi et al.\u2019s (2007) "
+     "finding.", False),
+    ("Using the procedure of Smith (2010), we replicated the effect reported by "
+     "Kachurik, S., Ruiz, J., & Staub, M. (2013).", False),
+    # Same authors, same year, two papers.
+    ("We replicated Kogut and Ritov (2005a) and Kogut and Ritov (2005b).", False),
+    # One paper cited twice, in full and as "et al.": one pair.
+    ("You, D\u00f6rnyei, and Csiz\u00e9r (2016) reported it; we replicate You et al. "
+     "(2016).", True),
+])
+def test_the_stop_gate_counts_every_citation_the_parser_reads(abstract, may_stop):
+    assert link_original.may_stop_at_a_rule("A study", abstract, 2020) is may_stop
+
+
+_REGISTRY_KOGUT = {"doi": "10.1002/bdm.492", "openalex_id": "https://openalex.org/W2168955200",
+                   "title": "The “identified victim” effect: an identified group, or "
+                            "just a single individual", "year": "2005",
+                            "first_author": "Tehila Kogut"}
+
+
+def test_two_subtitles_under_one_main_title_are_two_papers():
+    assert link_original._titles_agree(
+        "The value of believing in free will",
+        "The value of believing in free will: Encouraging a belief in determinism")
+    assert not link_original._titles_agree(
+        "The value of believing in free will: Study one of cheating",
+        "The value of believing in free will: A meta-analysis of priming")
+    # A full stop inside a title ("vs.") is not a subtitle.
+    assert link_original._titles_agree(
+        "Ego depletion vs. no depletion in self control",
+        "Ego depletion vs. no depletion in self control: a multi-lab replication")
+    assert not link_original._titles_agree(
+        "Ego depletion vs. glucose intake in self control of eating",
+        "Ego depletion vs. mood repair in emotional regulation tasks")
+    # An accented capital opens a subtitle too, so the registry's main title matches.
+    assert link_original._titles_agree(
+        "Les effets de la menace du stéréotype",
+        "Les effets de la menace du stéréotype. Étude de réplication")
+
+
+@pytest.mark.parametrize("later_record, doi, conflict", [
+    # The full-text rung's parsed reference line for the same work: the registry
+    # identity survives it.
+    ({"doi": "", "openalex_id": "", "year": "2005", "first_author": "Kogut, T.",
+      "title": 'The "identified victim" effect: an identified group, or just a single '
+               'individual'}, "10.1002/bdm.492", False),
+    # The registry keeps the main title only; the reference line carries the subtitle.
+    ({**_REGISTRY_KOGUT, "doi": "", "openalex_id": "", "first_author": "Kogut, T.",
+      "title": 'The "identified victim" effect: an identified group, or just a single '
+               'individual? Extended'}, "10.1002/bdm.492", False),
+    # Same call-local key, another work: nothing is lent, and the disagreement is said.
+    ({"doi": "", "openalex_id": "", "year": "2005", "first_author": "Kogut, T.",
+      "title": "Perceived identifiability and willingness to help"}, "", True),
+    ({**_REGISTRY_KOGUT, "doi": "10.9/other", "openalex_id": ""}, "10.9/other", True),
+])
+def test_a_later_rung_keeps_the_identity_an_earlier_one_established(
+        later_record, doi, conflict):
+    earlier = {"key": "@kogut2005", "match_certain": True, "record": _REGISTRY_KOGUT,
+               "outcome_block": {"outcome": "cannot_be_determined"}}
+    later = {"key": "@kogut2005", "match_certain": True, "record": later_record,
+             "evidence_quote": "a close replication of Kogut and Ritov (2005a)",
+             "outcome_block": {"outcome": "failed"}}
+    [merged] = link_original._union_targets([earlier], [later])
+    assert merged["record"]["doi"] == doi
+    if not conflict:
+        assert merged["record"]["openalex_id"] == _REGISTRY_KOGUT["openalex_id"]
+    # The later reading's outcome and evidence stand on their own.
+    assert merged["outcome_block"] == {"outcome": "failed"}
+    assert bool(merged.get("identity_note")) is conflict
+    if conflict and doi:
+        entry = run_extract._target_entry(merged, "10.1017/jdm.2024.31", {})
+        assert entry["evidence"].startswith("a close replication")
+        assert "identity conflict for @kogut2005" in entry["evidence"]

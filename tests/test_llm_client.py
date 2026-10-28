@@ -1593,6 +1593,45 @@ def test_a_cached_entry_written_without_a_record_is_repaired(monkeypatch, tmp_pa
     assert out["targets"][0]["record"]["doi"] == "10.1/orig"
 
 
+def test_a_cached_answer_takes_the_reference_lines_doi_as_read_today(monkeypatch, tmp_path):
+    """The key does not name a reference line's DOI, so a cached answer carries the
+    DOI lent when it was written; the current reading of the line replaces it."""
+    refs = [{"authors": ["Smith, J."], "year": 2015, "title": "Original",
+             "raw_ref": "Smith, J. (2015). Original. https://doi.org/10.1234/from-line"}]
+    calls: list = []
+    _targets(monkeypatch, tmp_path, {"targets": [_target()], "reasoning": "r"}, calls)
+    first = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", [], refs, rung="reftarget")
+    assert first["resolved_doi_o"] == "10.1234/from-line"
+
+    entry = next(tmp_path.glob("targetoutcome_*.json"))
+    stored = json.loads(entry.read_text())
+    stored["targets"][0]["record"]["doi"] = stored["resolved_doi_o"] = "10.9/stale"
+    entry.write_text(json.dumps(stored))
+
+    out = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", [], refs, rung="reftarget")
+    assert len(calls) == 1                                   # served from cache
+    assert out["targets"][0]["record"]["doi"] == "10.1234/from-line"
+    assert out["resolved_doi_o"] == "10.1234/from-line"
+    assert out["resolution_method"] == "llm_references"
+
+    # A line that no longer yields a DOI withdraws it, and the identity falls back to
+    # the metadata search a fresh call makes.
+    bare = [{**refs[0], "raw_ref": "Smith, J. (2015). Original."}]
+    # An outage in that search decides nothing: the cached identity stands.
+    from shared.doi_verify import UNVERIFIABLE
+    monkeypatch.setattr("shared.doi_verify.resolve_doi_by_metadata",
+                        lambda *a, **k: UNVERIFIABLE)
+    out = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", [], bare, rung="reftarget")
+    assert out["resolved_doi_o"] == "10.9/stale"
+    monkeypatch.setattr("shared.doi_verify.resolve_doi_by_metadata",
+                        lambda *a, **k: {"doi": "10.5555/by-metadata"})
+    out = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", [], bare, rung="reftarget")
+    assert len(calls) == 1
+    assert out["targets"][0]["record"]["doi"] == ""
+    assert out["resolved_doi_o"] == "10.5555/by-metadata"
+    assert out["resolution_method"].startswith("llm_title_search_")
+
+
 def test_target_stage_names_the_rung_that_produced_a_multi_target_answer(monkeypatch, tmp_path):
     """resolution_method on a two-target answer is llm_multi_target, which names no
     rung — but the rows the adapter writes need an honest link_method."""

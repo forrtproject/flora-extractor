@@ -44,28 +44,54 @@ _YEAR       = r"(?:19|20)\d{2}"
 # Study 1)" — and a pattern that demanded the year alone read those as no citation at
 # all, so the ladder searched their titles instead of their authors.
 _PAREN_TAIL = r"(?:\s*[,;][^)]{0,60})?"
+# A same-author, same-year pair is told apart by a letter: "Kogut and Ritov (2005a)".
+# Matched, not captured — the year group stays the last group of every pattern — and
+# read back by `extract_author_year_patterns` into `year_label`.
+_YEAR_SUFFIX = r"[a-z]?"
+# APA reference-list form: "Kachurik, S., Ruiz, J., & Staub, M. (2013)". The initials
+# are what make it unambiguous; without them it is the narrative list below.
+_INITIALS   = rf"[A-Z{_UPPER_UNI}]\.(?:\s*-?\s*[A-Z{_UPPER_UNI}]\.)*"
+_APA_AUTHOR = rf"{_NAME},\s+{_INITIALS}"
 
 # Patterns ordered most-specific → least-specific (avoids partial overlaps)
 _PATTERNS: list[tuple[str, str]] = [
+    ("apa_reference",
+     rf"({_APA_AUTHOR}(?:,\s+{_APA_AUTHOR})*(?:,?\s+(?:and|&)\s+{_APA_AUTHOR})?)\s*"
+     rf"\(({_YEAR}){_YEAR_SUFFIX}{_PAREN_TAIL}\)"),
     ("multi_and_paren",
-     rf"({_NAME}(?:,\s*{_NAME}){{1,}},?\s+(?:and|&)\s+{_NAME})\s*'?s?\s*\(({_YEAR}){_PAREN_TAIL}\)"),
+     rf"({_NAME}(?:,\s*{_NAME}){{1,}},?\s+(?:and|&)\s+{_NAME})\s*'?s?\s*\(({_YEAR}){_YEAR_SUFFIX}{_PAREN_TAIL}\)"),
     ("multi_and_bare",
      rf"({_NAME}(?:,\s*{_NAME}){{1,}},?\s+(?:and|&)\s+{_NAME}),?\s+({_YEAR})(?!\d)"),
     ("etal_paren",
-     rf"({_NAME})\s+et\s+al\.?\s*'?s?\s*\(({_YEAR}){_PAREN_TAIL}\)"),
+     rf"({_NAME})\s+et\s+al\.?\s*'?s?\s*\(({_YEAR}){_YEAR_SUFFIX}{_PAREN_TAIL}\)"),
     ("etal_bare",
      rf"({_NAME})\s+et\s+al\.?\s*,?\s+({_YEAR})(?!\d)"),
     ("two_and_paren",
-     rf"({_NAME})\s+(?:and|&)\s+({_NAME})\s*'?s?\s*\(({_YEAR}){_PAREN_TAIL}\)"),
+     rf"({_NAME})\s+(?:and|&)\s+({_NAME})\s*'?s?\s*\(({_YEAR}){_YEAR_SUFFIX}{_PAREN_TAIL}\)"),
     ("two_and_bare",
      rf"({_NAME})\s+(?:and|&)\s+({_NAME}),?\s+({_YEAR})(?!\d)"),
     ("single_paren",
-     rf"({_NAME})\s*'?s?\s*\(({_YEAR}){_PAREN_TAIL}\)"),
+     rf"({_NAME})\s*'?s?\s*\(({_YEAR}){_YEAR_SUFFIX}{_PAREN_TAIL}\)"),
     ("single_bare",
      rf"({_NAME}),?\s+({_YEAR})(?!\d)"),
 ]
 
 _COMPILED = [(name, re.compile(pat)) for name, pat in _PATTERNS]
+_FIRST_NAME = re.compile(_NAME)
+_YEAR_LETTER = re.compile(r"[a-z](?![^\W\d_])")
+
+# What the parser changes before matching, and the version the candidate cache is keyed
+# on. Bump the version whenever a change here can alter which patterns a text yields:
+# `find_all_candidates` caches its list under it, and an old list would otherwise keep
+# answering for a parser that no longer exists.
+#   2  typographic apostrophes, APA reference lists, year suffixes, and the first
+#      surname of a multi-author list rather than the whole list run together
+CITATION_PARSER_VERSION = 2
+# Every one is a single code point replaced by a single code point, so a match's
+# offsets in the normalised text are its offsets in the original, and `raw` is cut
+# from the original.
+_APOSTROPHES = str.maketrans({"\u2019": "'", "\u2018": "'", "\u02bc": "'",
+                              "\u2032": "'", "`": "'"})
 
 _MONTHS = {
     "january", "february", "march", "april", "may", "june",
@@ -146,11 +172,13 @@ def extract_author_year_patterns(text: str,
     Parse author-year citation patterns from *text*.
 
     Returns a list of dicts:
-        surname   – first-author surname (lowercased)
-        year      – publication year (int)
-        raw       – matched string
-        pattern   – pattern name
-        start/end – character offsets
+        surname    – first-author surname (lowercased; particles kept, joined:
+                     "van der Berg" → "vanderberg")
+        year       – publication year (int)
+        year_label – the year as cited, with any disambiguating letter ("2005a")
+        raw        – the matched substring of *text*, as written
+        pattern    – pattern name
+        start/end  – character offsets into *text*
     Overlapping matches are deduplicated; years > max_year are excluded.
 
     strict_bare – when True, apply two extra gates (both Stage-2 only, since
@@ -168,9 +196,10 @@ def extract_author_year_patterns(text: str,
 
     results: list[dict] = []
     covered: list[tuple[int, int]] = []
+    normalised = text.translate(_APOSTROPHES)
 
     for pat_name, rx in _COMPILED:
-        for m in rx.finditer(text):
+        for m in rx.finditer(normalised):
             start, end = m.start(), m.end()
             if any(s < end and start < e for s, e in covered):
                 continue
@@ -190,8 +219,11 @@ def extract_author_year_patterns(text: str,
             if any(tok.lower() in _NAME_STOPWORDS for tok in name_tokens):
                 continue
 
-            surname  = re.sub(r"[\s']", "", groups[0])
-            surname  = surname.split()[-1] if " " in surname else surname
+            # The FIRST surname, taken before whitespace is removed: a list
+            # ("You, Dörnyei, and Csizér") is otherwise run together into one token
+            # no author record carries.
+            first    = _FIRST_NAME.match(groups[0].strip())
+            surname  = re.sub(r"[\s']", "", first.group(0) if first else groups[0])
 
             try:
                 year = int(year_str)
@@ -203,13 +235,18 @@ def extract_author_year_patterns(text: str,
             if max_year is not None and year > max_year:
                 continue
 
+            suffix = _YEAR_LETTER.match(normalised, m.end(len(groups)))
+            if suffix:
+                # The paren patterns consume the letter; a bare one stops at the year.
+                end = max(end, suffix.end())
             results.append({
-                "surname": surname.lower(),
-                "year"   : year,
-                "raw"    : m.group(0),
-                "pattern": pat_name,
-                "start"  : start,
-                "end"    : end,
+                "surname"   : surname.lower(),
+                "year"      : year,
+                "year_label": year_str + (suffix.group(0) if suffix else ""),
+                "raw"       : text[start:end],
+                "pattern"   : pat_name,
+                "start"     : start,
+                "end"       : end,
             })
             covered.append((start, end))
 
@@ -549,19 +586,31 @@ def find_all_candidates(doi_r: str,
     that matches any extracted author-year pattern. None if the reference list
     could not be fetched at all — no candidates was not the answer given.
 
-    Cached in OA_CACHE_DIR on every argument the result depends on, not on doi_r
-    alone: the three call sites pass different titles and abstracts for the same
-    paper (run_extract passes the candidates-file title, link_original the
-    filtered-row one), and the extracted author-year patterns — hence the whole
-    candidate list — follow from them. pattern_str is not in the key because it is
-    not read: the call that used it is commented out below.
+    Cached in OA_CACHE_DIR on what the result depends on: the paper's identifiers
+    and the author-year patterns extracted from its title and abstract — the whole
+    candidate list follows from those and the (separately cached) reference list. The
+    key names the patterns rather than the text they came from, so a parser change
+    that reads a citation differently (`CITATION_PARSER_VERSION`) cannot be answered
+    by a list built from the old reading. Lists cached under the earlier text-keyed
+    shape are not read: they cost only cached reference lookups to rebuild.
+    pattern_str is not in the key because it is not read: the call that used it is
+    commented out below.
 
     Returns a list of dicts:
         openalex_id, doi, title, year, first_author,
         match_year_exact, cited_pattern
     """
 
-    key = content_key("candidates", doi_r, openalex_id_r, study_r, abstract_r, year_r)
+    # Extract author-year patterns from title and abstract.
+    # extract_author_year_patterns() always returns a list, so we can concatenate results immediately.
+    patterns = extract_author_year_patterns(study_r, max_year=year_r) \
+        + extract_author_year_patterns(abstract_r, max_year=year_r)
+        # + extract_author_year_patterns(pattern_str, max_year=year_r)
+
+    key = content_key("candidates", doi_r, openalex_id_r,
+                      f"patterns_v{CITATION_PARSER_VERSION}",
+                      json.dumps([(p["surname"], p["year"], p["raw"]) for p in patterns],
+                                 ensure_ascii=False))
     cache_file = OA_CACHE_DIR / f"{key}.json"
     if cache_exists(cache_file):
         return read_json(cache_file)
@@ -569,12 +618,6 @@ def find_all_candidates(doi_r: str,
     if not openalex_id_r:
         log.warning("[%s] find_all_candidates: no openalex_id_r — returning empty candidates", doi_r)
         return []
-
-    # Extract author-year patterns from title and abstract. 
-    # extract_author_year_patterns() always returns a list, so we can concatenate results immediately.
-    patterns = extract_author_year_patterns(study_r, max_year=year_r) \
-        + extract_author_year_patterns(abstract_r, max_year=year_r)
-        # + extract_author_year_patterns(pattern_str, max_year=year_r)
 
     if not patterns:
         return []

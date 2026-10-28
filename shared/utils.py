@@ -78,6 +78,45 @@ def clean_doi(doi: str) -> str:
     return doi.lower().rstrip("/")
 
 
+# A DOI inside free reference text. It ends at whitespace or markup; trailing sentence
+# punctuation and the link labels a publisher page glues onto it are removed after.
+# Angle brackets end it too, except a SICI segment ("…55:1<1::AID-JCLP1>3.0.CO;2-#",
+# 1990s Wiley), told from markup by its "::".
+_DOI_IN_TEXT_RE = re.compile(r"10\.\d{4,9}/(?:[^\s\"<>]|<[^\s\"<>]*::[^\s\"<>]*>)+")
+# "…2015.12.002.Article Google Scholar": Springer's reference links run into the DOI
+# when the page is flattened to text.
+_GLUED_LINK_LABEL_RE = re.compile(r"\.?(?:Article|CAS|PubMed|Google|Crossref|MathSciNet)$")
+
+
+def doi_in_reference(text: str) -> str:
+    """The one DOI a reference line carries, or "" when it carries none or several.
+
+    A parsed reference keeps its DOI only as text — a "https://doi.org/…" link, a
+    "doi:" label, or the TEI <idno type="DOI"> / JATS <pub-id pub-id-type="doi">
+    element, whose text the parsers fold into `raw_ref`. Several distinct DOIs (a
+    reprint, a commentary and its target) are ambiguous and give "".
+    """
+    found: set[str] = set()
+    for match in _DOI_IN_TEXT_RE.finditer(str(text or "")):
+        doi = match.group(0)
+        while True:
+            stripped = _GLUED_LINK_LABEL_RE.sub("", doi).rstrip(".,;:'")
+            # A closing bracket belongs to the DOI only when the DOI opened it:
+            # "10.1016/0022-1031(77)90049-x" against "(… 10.1037/abc)".
+            while stripped[-1:] in ")]}" and (stripped.count("(") + stripped.count("[")
+                                               + stripped.count("{")
+                                               < stripped.count(")") + stripped.count("]")
+                                               + stripped.count("}")):
+                stripped = stripped[:-1]
+            if stripped == doi:
+                break
+            doi = stripped
+        doi = clean_doi(doi)
+        if re.fullmatch(r"10\.\d{4,9}/\S+", doi):
+            found.add(doi)
+    return found.pop() if len(found) == 1 else ""
+
+
 def bare_work_id(value: str) -> str:
     """
     Normalise an OpenAlex work identifier to its bare form.
@@ -480,8 +519,9 @@ def author_surname(author: str) -> str:
 _ARTICLE_ID_RE = re.compile(r"\b[eE]\d{4,}\b")
 _QUOTED_TITLE_RE = re.compile(r"[\"“]([^\"”]{15,})[\"”]")
 # ". Journal Name 84(3), 600-621" — the citation tail a reference line carries after
-# the title.
-_JOURNAL_TAIL_RE = re.compile(r"\.\s+[A-Z][^.]{0,60}\s+\d{1,4}\s*\(")
+# the title, which may end on its own question mark instead of a full stop. The issue
+# must be a number: "Is it worth it? Results from Study 2 (N = 300)" is a title.
+_JOURNAL_TAIL_RE = re.compile(r"[.?!]\s+[A-Z][^.]{0,60}\s+\d{1,4}\s*\(\d")
 _VOLUME_PAGES_RE = re.compile(r",?\s*\d{1,4}\s*\(\d+\)\s*,?\s*[\d–\-]+\s*$")
 
 
@@ -499,8 +539,24 @@ def clean_search_query(text: str) -> str:
     text = re.sub(r"\bdoi:\s*\S+", " ", text, flags=re.I)
     text = re.sub(r"(\w)-\s+(\w)", r"\1\2", text)   # "cog- nition" -> "cognition"
     quoted = _QUOTED_TITLE_RE.search(text)
+    # A quoted span is the TITLE only when it is a citation ELEMENT: opened at the
+    # start or after the authors' or year's punctuation, and closed by its own
+    # punctuation or the end — Chicago's `Smith, J. "Title." Journal`, IEEE's
+    # `J. Smith, "Title," Trans.`. Anywhere else it is a phrase the title quotes:
+    # `The "identified victim" effect: an identified group, or just a single
+    # individual?` was searched as "identified victim" and found nothing (Kogut &
+    # Ritov 2005a).
     if quoted:
-        text = quoted.group(1)
+        before, after = text[:quoted.start()], text[quoted.end():]
+        opens  = not before.strip() or re.search(r"[.,;:)]\s*$", before)
+        closes = (re.search(r"[.,;:?!]\s*$", quoted.group(1))
+                  or re.match(r"\s*(?:[.,;:]|$)", after)
+                  # …or by the journal, when the quote opens a citation element
+                  # (not a phrase quoted after a title's own colon).
+                  or (re.search(r"(?:^|[.)])\s*$", before)
+                      and re.match(r"\s+[A-Z][^\n\"]{0,60}?\s+\d{1,4}\s*\(\d", after)))
+        if opens and closes:
+            text = quoted.group(1)
     text = _JOURNAL_TAIL_RE.split(text)[0]
     text = _VOLUME_PAGES_RE.sub("", text)
     text = _ARTICLE_ID_RE.sub(" ", text)
@@ -572,3 +628,20 @@ def reconstruct_abstract(inverted_index: "dict | None") -> "str | None":
         for pos in pos_list:
             positions[pos] = word
     return " ".join(positions[k] for k in sorted(positions)) if positions else None
+
+
+# DOI registrants whose works the Springer Nature APIs (Meta, Open Access) index.
+# Kept to the prefixes this corpus actually holds — measured 2026-10-28 over
+# data/extracted.csv (doi_r / doi_o rows): 10.1007 Springer 216/471, 10.1038 Nature
+# 146/596, 10.1186 BMC 161/83, 10.3758 Psychonomic Society 79/187, 10.1057 Palgrave
+# 5/14 — and each confirmed indexed by a live Meta API query the same day. Left out:
+# 10.1140 (EPJ, 0/1) and 10.1365 (0/0), indexed but absent here, and 10.1023 (legacy
+# Kluwer, 5/31), whose probed record the Meta API did not return. Any other DOI is a
+# call whose answer is known before it is made.
+SPRINGER_NATURE_PREFIXES = frozenset({"10.1007", "10.1038", "10.1057", "10.1186", "10.3758"})
+
+
+def is_springer_nature_doi(doi: str) -> bool:
+    """True when *doi* is on a registrant the Springer Nature APIs answer about."""
+    doi = clean_doi(doi)
+    return bool(doi) and doi.split("/", 1)[0] in SPRINGER_NATURE_PREFIXES

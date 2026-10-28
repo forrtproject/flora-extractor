@@ -52,7 +52,8 @@ from shared.prompts import (
 from shared.schema import outcome_is_settled
 from shared.target_keys import assign_target_keys
 from shared.pdf_sources import acquire_pdf
-from shared.utils import (cache_key, clean_doi, non_article_doi, psyctests_doi,
+from shared.utils import (OSF_PREPRINT_PREFIXES, author_surname, bare_work_id,
+                          cache_key, clean_doi, non_article_doi, psyctests_doi,
                           usable_title)
 
 # ── Unified rule-based resolver (runs before any LLM call) ───────────────────
@@ -183,8 +184,14 @@ def may_stop_at_a_rule(title_r: str, abstract_r: str, year_r: int) -> bool:
 
     Exactly one distinct author-year pair across title and abstract, and no stated
     study count. Anything else must reach a call that can enumerate targets.
+
+    The pair is the first surname and the year AS CITED, letter included: "Kogut and
+    Ritov (2005a)" and "(2005b)" are two papers, and counting them as one would let a
+    rule end the row on whichever of them it matched. Every citation the parser can
+    read counts, a methods citation included — that is what stops one: a paper citing
+    its procedure's source and its target is two pairs, and withheld.
     """
-    pairs = {(p["surname"], p["year"])
+    pairs = {(p["surname"], p["year_label"])
              for p in extract_author_year_patterns(title_r,    max_year=year_r)
                     + extract_author_year_patterns(abstract_r, max_year=year_r)}
     return len(pairs) == 1 and not _study_count_stated(title_r, abstract_r)
@@ -605,7 +612,24 @@ OUTCOME_DESCENT = True
 #      Classes from the Metascience Observatory's DOI audit; in our output, 14 works
 #      linked to such a record, all llm_title_search but one (2026-10-27)
 #      reopen: --redo 2055766296,2911411325,4212792994,4220947390,4225910309,4283783155,4361272113,4387293767,4388904550,4388904615,4391787029,4391898252,4399984952,6962756304
-EXTRACT_LADDER_VERSION: int = 32
+#  33  three ways a named original was lost, from the 2026-10-27 Metascience
+#      Observatory benchmark (analysis/mo_doi_benchmark). (1) The self-link guard
+#      decides by identity before title: the replication's DOI or work id always
+#      rejects, but a shared title rejects only a candidate with no identifier of its
+#      own, so Asch (1946) "Forming impressions of personality" survives its 2014
+#      replication of the same name; the title searches drop a same-title hit only when
+#      it is the replication, does not predate it, is a preprint, or shares an author
+#      with it (`is_replication_itself`). (2) The
+#      citation parser reads typographic apostrophes, APA reference lists, year letters
+#      ("Kogut and Ritov (2005a)") and the first surname of a list; the stop gate counts
+#      (surname, year as cited) and the candidate cache is keyed on the patterns. (3) A
+#      later rung's identifierless record no longer erases the DOI an earlier rung's
+#      record carried for the same work (`_reconcile_record`; disagreements go to
+#      link_evidence), a parsed reference's own DOI string is lent to the pick
+#      (`lend_reference_dois`), and a phrase a title quotes is no longer searched as the
+#      whole title (2026-10-28)
+#      reopen: --redo-status target_pending,unidentified_original,no_original_found
+EXTRACT_LADDER_VERSION: int = 33
 
 
 # Columns to pass through from the input row (no renaming). Only columns
@@ -680,15 +704,18 @@ def _write_parse_cache(cache_id: str, parse_results: dict) -> None:
 
 
 def _cands_row(doi_r: str, cands_df: pd.DataFrame) -> dict:
-    """Return openalex_candidates pass-through fields for *doi_r*."""
-    out = {c: "" for c in _OA_PASSTHROUGH}
+    """Return openalex_candidates pass-through fields for *doi_r*, plus `authors_r`,
+    which the pre-PDF title search reads (`is_replication_itself`) but no output
+    column carries from here."""
+    cols = [*_OA_PASSTHROUGH, "authors_r"]
+    out = {c: "" for c in cols}
     if cands_df is None or cands_df.empty:
         return out
     matches = cands_df[cands_df["doi_r"].apply(clean_doi) == clean_doi(doi_r)]
     if matches.empty:
         return out
     row = matches.iloc[0]
-    for col in _OA_PASSTHROUGH:
+    for col in cols:
         out[col] = str(row.get(col, "") or "")
     return out
 
@@ -759,8 +786,60 @@ def published_after(year_o, year_r) -> bool:
     return bool(original and replication and original > replication)
 
 
+def is_replication_itself(hit: dict, doi_r: str, title_r: str, year_r=None,
+                          work_id_r: str = "", authors_r: str = "") -> bool:
+    """Whether a title-search hit is the replication's own record, not a distinct work.
+
+    Identity decides first: the replication's DOI or OpenAlex work id is the
+    replication, whatever the title says. A shared title alone is not: replications
+    routinely reuse the original's title ("Forming impressions of personality", Asch
+    1946, replicated under that title in 2014), and refusing every hit at title Jaccard
+    0.9 discarded exactly those originals.
+
+    A same-title hit is still refused unless it is demonstrably someone else's earlier
+    work. A title search ranks the whole index, and the closest record to a
+    replication's own title is often the replication under another identifier — a
+    repository copy, a preprint, the journal version (holdout wrong-settle 2266446612;
+    issue #191). Year alone does not separate those: a preprint or a Stage 1 report
+    usually PREDATES the journal version. So a same-title hit must predate the
+    replication, must not be a preprint-server record, and must share no author with
+    it — which needs both author lists: a side that names nobody is no evidence of
+    two different author teams. Self-replications under an identical title are lost to this rule; they are
+    rare, and the full-text rung, which reads the citation, can still name them. A
+    missing year on either side keeps the refusal: there is no evidence the two are
+    different works.
+    """
+    doi = clean_doi(str(hit.get("doi") or ""))
+    if doi and doi == clean_doi(doi_r):
+        return True
+    work_id = bare_work_id(str(hit.get("openalex_id") or ""))
+    if work_id and work_id == bare_work_id(str(work_id_r or "")):
+        return True
+    if jaccard_similarity(hit.get("title", ""), title_r) <= 0.9:
+        return False
+    original, replication = _year(hit.get("year")), _year(year_r)
+    if not (original and replication and original < replication):
+        return True
+    if doi.split("/", 1)[0] in _PREPRINT_PREFIXES:
+        return True
+    surnames = {n for n in (author_surname(a).lower()
+                            for a in str(authors_r or "").split(";")) if len(n) > 1}
+    hit_authors = _hit_author_list(hit).lower()
+    if not surnames or not hit_authors:
+        return True
+    return any(re.search(rf"\b{re.escape(n)}\b", hit_authors) for n in surnames)
+
+
+# Registrants whose records are preprints or repository deposits: OSF's branded
+# servers, bioRxiv/medRxiv, arXiv, SSRN, Research Square, Preprints.org.
+_PREPRINT_PREFIXES = OSF_PREPRINT_PREFIXES | {"10.1101", "10.48550", "10.2139",
+                                              "10.21203", "10.20944"}
+
+
 def _search_title_for_original(doi_r: str, target_desc: str,
-                               study_r: str, year_r=None) -> "dict | None":
+                               study_r: str, year_r=None,
+                               work_id_r: str = "",
+                               authors_r: str = "") -> "dict | None":
     """Resolve a target the screen named but could not match to a reference.
 
     target_desc is however the abstract referred to the replicated study, so it may
@@ -775,9 +854,8 @@ def _search_title_for_original(doi_r: str, target_desc: str,
         doi_o = clean_doi(hit.get("doi", "") or "")
         # A replication whose title echoes the original's makes the original's own
         # record and the replication easy to confuse; never link a paper to itself.
-        if not doi_o or doi_o == clean_doi(doi_r):
-            continue
-        if jaccard_similarity(hit.get("title", ""), study_r) > 0.9:
+        if not doi_o or is_replication_itself(hit, doi_r, study_r, year_r, work_id_r,
+                                              authors_r):
             continue
         if published_after(hit.get("year"), year_r):
             log.info("[%s] title hit %s dropped: published %s, after the "
@@ -881,11 +959,10 @@ def _hit_carries_author(hit: dict, surname: str) -> bool:
     an EMPTY author list is rejected rather than waved through: a record with nobody
     on it cannot be the paper a citation names.
     """
-    # `extract_author_year_patterns` returns a multi-author citation as ONE run-on
-    # token — "Kaufmann, Weber, and Haisley (2013)" comes back as
-    # "kaufmann,weber,andhaisley" — so the value is split before it is matched, and
-    # ANY of its names carrying is enough. Matching the run-on string as a word cost
-    # a correct link on the first run of this guard.
+    # The value may name several authors — `_cited_surnames` joins every name of
+    # "Kaufmann, Weber, and Haisley (2013)" with "|" — so it is split before it is
+    # matched, and ANY of its names carrying is enough. Matching a run-on string as a
+    # word cost a correct link on the first run of this guard.
     names = [n for n in re.split(r"[^a-z]+", str(surname or "").lower())
              if len(n) > 2 and n != "and"]
     if not names:
@@ -897,7 +974,10 @@ def _hit_carries_author(hit: dict, surname: str) -> bool:
 def title_search_candidates(doi_r: str, target_desc: str,
                             study_r: str,
                             cited_year: str = "",
-                            cited_surname: str = "") -> "tuple[list[dict], bool]":
+                            cited_surname: str = "",
+                            year_r=None,
+                            work_id_r: str = "",
+                            authors_r: str = "") -> "tuple[list[dict], bool]":
     """(candidates, unavailable) for *target_desc*.
 
     `_search_title_for_original` returns the first confident hit and discards the
@@ -918,8 +998,9 @@ def title_search_candidates(doi_r: str, target_desc: str,
     1976 paper). So "OpenAlex said nothing while CrossRef was down" is not evidence
     that nothing exists, and settling on it would close a work on an outage.
 
-    Same guards as the single-hit resolver: never link a paper to itself, and never
-    accept a hit whose title is the replication's own.
+    Same guard as the single-hit resolver: never offer the replication itself
+    (`is_replication_itself` — its DOI or work id, or its title on a record that does
+    not predate it).
 
     *cited_surname* is the author the paper named. A hit that does not carry it is
     FLAGGED rather than dropped, because dropping it is the expensive mistake: a
@@ -960,9 +1041,9 @@ def title_search_candidates(doi_r: str, target_desc: str,
         # A hit with no DOI but an OpenAlex id is still a paper, and dropping it here
         # is how a real original — an old work, a report, a chapter — never reached the
         # model at all. Only a hit that cannot be identified AT ALL is dropped.
-        if not ident or doi_o and doi_o == clean_doi(doi_r) or ident in seen:
-            continue
-        if jaccard_similarity(hit.get("title", ""), study_r) > 0.9:
+        if not ident or ident in seen or is_replication_itself(hit, doi_r, study_r,
+                                                               year_r, work_id_r,
+                                                               authors_r):
             continue
         flags = []
         reason = non_article_doi(doi_o)
@@ -1055,6 +1136,94 @@ def _agrees_with_held(target: dict, held: dict) -> bool:
         and _norm(record.get("first_author")) == _norm(held.get("resolved_author_o")))
 
 
+# How close two titles of one reference must be for its identity to cross between
+# rungs. A parsed reference and the registry record of the same work differ in quotes,
+# case and punctuation — not in words — or the registry keeps the main title only
+# ("The Value of Believing in Free Will" against the reference's "…: Encouraging a
+# belief in determinism increases cheating"), so main titles are compared too. A main
+# title shorter than _MAIN_TITLE_MIN_WORDS says too little to lend an identity on.
+_SAME_WORK_TITLE_JACCARD = 0.8
+_MAIN_TITLE_MIN_WORDS = 3
+_TITLE_SUBTITLE = re.compile(r"[:?]|\.(?=\s+[A-ZÀ-ÖØ-Þ])")
+
+
+def _titles_agree(a: str, b: str) -> bool:
+    if jaccard_similarity(a, b) >= _SAME_WORK_TITLE_JACCARD:
+        return True
+    # Main titles stand for the whole only when one side HAS no subtitle; two
+    # different subtitles under one main title are two papers. A full stop
+    # separates a subtitle only before a capital — "vs." and "e.g." do not.
+    split_a, split_b = (_TITLE_SUBTITLE.split(str(t or ""), maxsplit=1) for t in (a, b))
+    if all(len(s) > 1 and s[1].strip() for s in (split_a, split_b)):
+        return False
+    main_a, main_b = split_a[0], split_b[0]
+    return (min(len(main_a.split()), len(main_b.split())) >= _MAIN_TITLE_MIN_WORDS
+            and jaccard_similarity(main_a, main_b) >= _SAME_WORK_TITLE_JACCARD)
+
+
+def _identity(record: dict) -> tuple[str, str]:
+    """(DOI, bare OpenAlex work id) of a target record — either may be ""."""
+    return (clean_doi(str(record.get("doi") or "")),
+            bare_work_id(str(record.get("openalex_id") or "")))
+
+
+def _same_bibliographic_work(a: dict, b: dict) -> bool:
+    """Whether two records describe one work by what they SAY, not by the key that
+    mapped them.
+
+    Identifiers decide where both records carry the same kind. Otherwise the title,
+    the first author's surname and the year must all agree: the identity of one
+    record is about to be lent to the other, and a wrong transfer writes a DOI no
+    reading of the paper chose. A field missing on either side is no agreement.
+    """
+    for field in (0, 1):
+        if _identity(a)[field] and _identity(b)[field]:
+            return _identity(a)[field] == _identity(b)[field]
+    surname_a = author_surname(a.get("first_author", "")).lower()
+    surname_b = author_surname(b.get("first_author", "")).lower()
+    year_a, year_b = _year(a.get("year")), _year(b.get("year"))
+    return bool(
+        _titles_agree(str(a.get("title") or ""), str(b.get("title") or ""))
+        and surname_a and surname_b and author_matches(surname_a, [surname_b])
+        and year_a and year_a == year_b)
+
+
+def _reconcile_record(earlier: dict, later: dict) -> "tuple[dict | None, str]":
+    """The record a merged target keeps, and a note when two readings disagree
+    about which work it is.
+
+    The later reading's record, except where it carries no identifier and the earlier
+    one did and both describe one work: then the earlier record's identity and
+    bibliography, laid over the later record's other fields.
+
+    Keys are per call, so one `@kogut2005` in the reference-list answer and another in
+    the full-text answer are two records that happen to share a label. The reference
+    list's record is the registry's, with a DOI; the full-text rung's is the PDF's own
+    reference line, parsed, with none. Taking the later record whole threw the DOI away
+    and the original was written `unidentified_original` (Kogut & Ritov 2005a; Many
+    Labs 5's LoBue & DeLoache and Vohs & Schooler). The identity is lent only when the
+    records agree bibliographically, and a disagreement is reported, not resolved.
+    """
+    before, after = earlier.get("record") or {}, later.get("record")
+    if not before or not after or not any(_identity(before)):
+        return after, ""
+    if any(_identity(after)):
+        if _same_bibliographic_work(before, after):
+            return after, ""
+    elif _same_bibliographic_work(before, after):
+        # The whole registry record, not its DOI alone: a DOI beside the parsed
+        # line's title is a row describing one work by two records, and verification
+        # would compare the registry's title with the PDF's spelling of it.
+        return {**after, **before}, ""
+    shown = " ".join(filter(None, _identity(before)))
+    note = (f"identity conflict for {later.get('key') or 'a target'}: an earlier "
+            f"reading linked {shown} (\"{str(before.get('title') or '')[:80]}\"); "
+            f"this reading's record is \"{str(after.get('title') or '')[:80]}\" "
+            f"({' '.join(filter(None, _identity(after))) or 'no identifier'}) — kept "
+            f"this reading's, not reconciled")
+    return after, note
+
+
 def _union_targets(*lists: list, record_type: str = "replication") -> list[dict]:
     """Every distinct target across several answers, in the order first seen.
 
@@ -1062,11 +1231,14 @@ def _union_targets(*lists: list, record_type: str = "replication") -> list[dict]
     reached through two rungs carries two keys (the namespaces are per call), and
     writing it twice would give two rows one pair_id.
 
-    A work seen twice keeps the LATER reading whole — it read more of the paper — with
-    one exception: a later UNSETTLED outcome does not overwrite an earlier settled one.
-    The full-text rung reads different evidence, not better evidence, about a verdict
-    the abstract already stated plainly. `outcome_stage` records which reading the
-    surviving outcome came from.
+    A work seen twice keeps the LATER reading — it read more of the paper — with two
+    exceptions. A later UNSETTLED outcome does not overwrite an earlier settled one:
+    the full-text rung reads different evidence, not better evidence, about a verdict
+    the abstract already stated plainly (`outcome_stage` records which reading the
+    surviving outcome came from). And an identity an earlier record established
+    survives a later record that carries none, when the two agree bibliographically
+    (`_reconcile_record`); records that disagree keep the later one and say so in
+    `identity_note`, which reaches the row's link_evidence.
     """
     at_key: dict = {}
     at_doi: dict = {}
@@ -1085,7 +1257,11 @@ def _union_targets(*lists: list, record_type: str = "replication") -> list[dict]
                                                record_type)):
                 kept["outcome_block"] = earlier.get("outcome_block")
                 kept["outcome_stage"] = earlier.get("outcome_stage", "")
+            kept["record"], note = _reconcile_record(earlier, target)
+            if note:
+                kept["identity_note"] = note
             merged[where] = kept
+            doi = clean_doi(str((kept.get("record") or {}).get("doi") or ""))
         else:
             where = len(merged)
             merged.append(target)
@@ -1697,7 +1873,9 @@ def run_for_doi(doi_r:              str,
                      and all(v["classification"] in SCREEN_QUALIFYING and v["confident"]
                              for v in votes))
         if target_desc and both_sure:
-            hit = _search_title_for_original(doi_r, target_desc, study_r, year_r)
+            hit = _search_title_for_original(doi_r, target_desc, study_r,
+                                             cands_row.get("year_r"), oa_id_r,
+                                             str(cands_row.get("authors_r") or ""))
             if hit:
                 log.info("[%s] Resolved by pre-PDF title search: %s", doi_r,
                          hit["resolved_title_o"])
