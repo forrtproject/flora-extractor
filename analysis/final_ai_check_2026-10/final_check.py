@@ -63,6 +63,10 @@ def _between(text: str, start: str, end: str) -> str:
 _TARGET_RULES = (_between(_TARGET_TASK, "What counts as a target:", "How to count:")
                  + "\n\n" + _between(_TARGET_TASK, "How to count:", "Two separate judgments"))
 
+# The sibling checklist, verbatim. The pipeline wraps it in its @key / match_certain
+# vocabulary, which this check does not use, so only the checklist itself is cut out.
+_SIBLINGS = re.sub(r"\s+", " ", _between(_TARGET_TASK, "rule out:", "When the evidence only"))
+
 _TASK = """You are checking a record for a database of replication and reproduction studies.
 Read the paper below and code it from scratch.
 
@@ -90,6 +94,16 @@ paper cites by number, follow the number to the reference. Give the "doi" ONLY i
 printed in the supplied text — never from memory. Leave a field "" only when the text
 truly does not give it; a year printed beside an in-text citation is still the year.
 
+Which entry is the original: where the paper cites it, follow the citation. Where it
+only DESCRIBES the original ("earlier research found that X", "our previous study"),
+name the one entry in the reference list whose title or content states that finding,
+when exactly one entry fits; leave the citation fields "" only when two entries fit
+equally well or none does. Before naming any entry, {siblings}
+
+"identified_by": "citation" when the paper cites the entry you named, "description" when
+you named it because it is the one entry that fits the paper's description of the
+finding, "" when you named none.
+
 STEP 3 — OUTCOME, per original
 
 For a replication, code "outcome" in this vocabulary:
@@ -103,6 +117,10 @@ For a reproduction, code the two axes instead ("outcome" is then ""):
 
 {multi_scope}
 
+"outcome_confident": true or false — whether you would stake the verdict on the
+evidence as written. It is about the OUTCOME only: how the original was identified is
+recorded in "identified_by", and must not lower this.
+
 QUOTES
 
 For each verdict, copy the verbatim passage that proves it: 1-4 complete consecutive
@@ -115,6 +133,7 @@ Respond with the JSON object the schema asks for."""
 
 TASK = _TASK.format(
     target_rules=_TARGET_RULES,
+    siblings=_SIBLINGS,
     replication_values=", ".join(f'"{v}"' for v in OUTCOME_LABELS.values()),
     outcome_rules=_OUTCOME_RULES,
     repro_rules=_REPRO_AXIS_RULES,
@@ -133,6 +152,7 @@ SCHEMA = {
             "type": "object",
             "properties": {
                 "authors": _S, "year": _S, "title": _S, "doi": _S,
+                "identified_by": {"enum": ["citation", "description", ""]},
                 "study_numbers": _S, "replication_study_numbers": _S,
                 "evidence_quote": _S,
                 "outcome": {"enum": [*OUTCOME_LABELS.values(), ""]},
@@ -148,7 +168,8 @@ SCHEMA = {
                 "outcome_confident": {"type": "boolean"},
                 "outcome_reasoning": _S,
             },
-            "required": ["authors", "year", "title", "doi", "evidence_quote", "outcome",
+            "required": ["authors", "year", "title", "doi", "identified_by",
+                         "evidence_quote", "outcome",
                          "outcome_quote", "outcome_quote_section", "outcome_confident"],
         }},
         "reasoning": _S,
@@ -588,6 +609,7 @@ def compare_work(work_rows: list[dict], coding: dict,
                                   f"{t.get('outcome_computation', '')}, "
                                   f"{t.get('outcome_robustness', '')}"),
                    blind_confident=t.get("outcome_confident"),
+                   blind_identified_by=t.get("identified_by"),
                    outcome_grade=og, outcome_agrees=og == "exact",
                    outcome_agrees_soft=og in ("exact", "soft"), blind_quote=q_blind)
         res.update({f"quote_{k}": v for k, v in quote_check(q_pipe, q_blind, sources).items()})
