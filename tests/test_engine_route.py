@@ -173,6 +173,12 @@ CORPUS = [
     _row(work="https://openalex.org/W30", doi="10.17605/OSF.IO/EF56G",
          title="Anchoring in context: Replication materials",
          abstract="Materials for our replication of the original anchoring study."),
+    # Abstract-only extension claim, without the title/first-person claims the
+    # existing live rules required. This also exercises the row/batch backend
+    # seam and evidence recovery for the new extension admission.
+    _row(work="https://openalex.org/W31", title="Judgement in a new context",
+         abstract="The present research replicates and extends previous findings "
+                  "about judgement in a separate population."),
     # doi-registry-twin (950, shadow): issue #210's example — a 1948 cosmic-ray
     # record filed under a JEAB 2010 replication's DOI, named by its record id
     _row(work="https://openalex.org/W21279159", doi="10.1901/jeab.2010.94-13",
@@ -240,6 +246,74 @@ def test_the_row_entry_point_is_the_batch_backend(specs, corpus):
     batch = _batch(rows)
     for spec in specs:
         assert eval_spec_rows(spec, rows) == eval_spec_batch(spec, batch).to_pylist(), spec.id
+
+
+@pytest.mark.parametrize("spec_id,abstract,matches", [
+    # Bibliographic syntax only: author/year or a year-first named-author reference.
+    ("replication-claim-cited-abstract",
+     "We replicated the anchoring effect with 2000 participants online.", False),
+    ("replication-claim-cited-abstract",
+     "We replicated the essential features of the 1978 Dermer and Pysczinski study.",
+     True),
+    ("replication-claim-cited-abstract",
+     "We replicated the anchoring effect in a new sample online.", False),
+    ("replication-claim-cited-abstract",
+     "We replicated the anchoring effect (Smith et al., 2009) online.", True),
+    ("replication-claim-cited-abstract",
+     "We replicated the decoy effect of Østergaard, 2015 in Denmark.", True),
+    ("replication-claim-cited-abstract",
+     "In this study we aim to replicate Goerlich and colleagues (2014).", True),
+    ("replication-claim-cited-abstract",
+     "We replicated the 1984 Álvarez and Müller study in a new setting.", True),
+    ("replication-claim-cited-abstract",
+     "This study replicates one done in 1984 by Amina Khan.", True),
+    ("replication-claim-cited-abstract",
+     "We replicated O’Neill’s findings (2012).", True),
+    ("replication-claim-cited-abstract",
+     "We replicated García et al. (2012).", True),
+    ("replication-claim-cited-abstract",
+     "We replicated de Vries (2012).", True),
+    ("replication-claim-cited-abstract",
+     "We replicated the effect using 2010 protocols.", False),
+    ("replication-claim-cited-abstract",
+     "We replicated a study conducted in 1984.", False),
+    ("replication-claim-cited-abstract",
+     "We replicated iPhone, 2019 with a different configuration.", False),
+    ("replication-claim-cited-abstract",
+     "We replicated wordSmith (2012).", False),
+    ("replication-claim-cited-abstract",
+     "We replicated smith (2012).", False),
+    ("replication-claim-cited-abstract",
+     "We replicated Smith (20000).", False),
+    ("replication-claim-cited-abstract",
+     "We replicated Smith (2012cats).", False),
+    ("replication-claim-cited-abstract",
+     "We replicated Smith2012.", False),
+    ("replication-claim-cited-abstract",
+     "We replicated Smith\n(2012).", False),
+    ("replication-claim-cited-abstract",
+     "We replicated the 2012\nSmith study.", False),
+    ("replication-claim-cited-abstract",
+     "We replicated work from 2012 by\nSmith.", False),
+    ("replication-claim-cited-abstract",
+     "We replicated work from 2012 by Smith2020.", False),
+    ("replication-claim-cited-abstract",
+     "We replicated the effect. Smith (2012) used another design.", False),
+    ("replication-claim-cited-abstract",
+     "We replicated the effect; Smith (2012) used another design.", False),
+    ("replication-claim-cited-abstract",
+     "We replicated the effect\nSmith (2012) used another design.", False),
+    ("replication-claim-extend-prior",
+     "We replicate-and-extend the original study of anchoring.", True),
+])
+def test_abstract_claim_expansion_edges(specs, spec_id, abstract, matches):
+    spec = next(s for s in specs if s.id == spec_id)
+    rows = [_row(title="Anchoring in a new sample", abstract=abstract)]
+    assert eval_spec_rows(spec, rows) == [matches]
+    if matches:
+        evidence = match_evidence(spec, _batch(rows))[0]
+        assert "replicat" in evidence.lower()
+        assert evidence in abstract
 
 
 def test_evidence_is_recovered_for_matched_rows_and_never_decides_one(specs):

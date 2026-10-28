@@ -11,7 +11,7 @@ import pytest
 
 import shared.llm_client as llm
 from shared import rate_limit
-from shared.cache import write_cache
+from shared.cache import content_key, write_cache
 
 
 def _resp(content: str):
@@ -740,8 +740,9 @@ def test_openai_flex_timeout_is_not_a_refusal(monkeypatch):
 
 
 def test_openai_flex_fallback_records_one_call_of_usage(monkeypatch):
-    # The refused flex request was never served: exactly one usage record and one
-    # budget check may result from the pair.
+    # The refused flex request was never served: one usage record. Budget is
+    # checked at entry and before both transports, since other workers may spend
+    # while a flex refusal is being waited out.
     _openai_flex_env(monkeypatch)
     recorded: list = []
     checks: list = []
@@ -769,7 +770,7 @@ def test_openai_flex_fallback_records_one_call_of_usage(monkeypatch):
 
     assert len(calls) == 2
     assert recorded == [("openai", "m", 100, 20, 0, 0)]
-    assert len(checks) == 1
+    assert len(checks) == 3
 
 
 def test_openai_standard_fallback_failure_enters_the_retry_loop(monkeypatch):
@@ -2445,3 +2446,50 @@ class TestCheckReferencePick:
         out, _ = self._ask(tmp_path, reply)
         assert out["flag"] is None and out["llm_error"]
         assert list(tmp_path.glob("*.json")) == []
+
+
+@pytest.mark.parametrize("evidence,expected_calls", [
+    ({}, 0),
+    ({"full_body": "Results: The effect replicated."}, 1),
+    # The fallback excerpt: its old DISCUSSION label cannot be translated unread.
+    ({"discussion": "The effect replicated.", "discussion_provenance": "fallback"}, 1),
+])
+def test_quote_source_edit_reuses_only_unchanged_target_prompt_cache(monkeypatch, tmp_path, evidence, expected_calls):
+    from shared import prompts
+    from shared.cache import content_key, write_cache
+    entries, _ = llm.assign_target_keys(_CAND, [])
+    prompt = prompts.build_target_outcome_prompt("T", "A", entries, **evidence)
+    identities = "|".join(f"{e['key']}:{e.get('doi') or e.get('openalex_id') or ''}" for e in entries)
+    old = prompts._QUOTE_SOURCE_VERSION_PAIRS["build_target_outcome_prompt"][1]
+    model_id = llm.cache_model_id(llm.LINKING_MODEL, llm.LINKING_EFFORT)
+    legacy = content_key("targetoutcome", "10.1/x", old, model_id, "fulltext", "replication", identities, prompt)
+    write_cache(tmp_path, legacy, {"targets": [], "resolved": False, "sentinel": "old"})
+    monkeypatch.setattr(llm, "LLM_CACHE_DIR", tmp_path)
+    calls = []
+    def fresh(prompt, model, **kw):
+        calls.append(prompt)
+        return dict(_DECLINE), "openai", ""
+    monkeypatch.setattr(llm, "call_model", fresh)
+    result = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", _CAND, [], rung="fulltext", **evidence)
+    assert len(calls) == expected_calls
+    assert (result.get("sentinel") == "old") == (expected_calls == 0)
+
+
+def test_quote_source_edit_preserves_blind_checker_cache(monkeypatch, tmp_path):
+    from shared import prompts
+    from shared.cache import content_key, write_cache
+    entries, _ = llm.assign_target_keys(_CAND, [])
+    prompt = prompts.build_pick_check_prompt("T", "A", entries, "Evidence")
+    identities = "|".join(f"{e['key']}:{e.get('doi') or e.get('openalex_id') or ''}" for e in entries)
+    old = prompts._QUOTE_SOURCE_VERSION_PAIRS["build_pick_check_prompt"][1]
+    model_id = llm.cache_model_id(llm.PICK_CHECK_MODEL, llm.PICK_CHECK_EFFORT)
+    legacy = content_key("pickcheck", "10.1/x", old, model_id, identities, prompt)
+    write_cache(tmp_path, legacy, {"status": "identified", "originals": ["@smith2015"], "reasoning": "cached"})
+    monkeypatch.setattr(llm, "LLM_CACHE_DIR", tmp_path)
+    def forbidden(*args, **kw):
+        raise AssertionError("Identical checker prompt must reuse its paid answer")
+    monkeypatch.setattr(llm, "call_model", forbidden)
+    result = llm.check_reference_pick("10.1/x", "T", "A", _CAND, [], "@smith2015", "Evidence")
+    assert result["reasoning"] == "cached"
+    key = content_key("pickcheck", "10.1/x", prompts.prompt_version("build_pick_check_prompt"), model_id, identities, prompt)
+    assert (tmp_path / (key + ".json")).exists()

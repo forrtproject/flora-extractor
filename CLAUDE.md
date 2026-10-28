@@ -453,6 +453,22 @@ Every mistake came from acting before one of those checks.
 
 ## API Budgets and Usage
 
+`LLM_DAILY_USD_BUDGET` is an optional daily dollar-equivalent cap across OpenAI,
+Gemini and OpenRouter (`0` by default, disabled). It resets at midnight UTC and
+counts usage already recorded that day. OpenRouter uses its reported billed `usd`;
+OpenAI/Gemini use conservative standard list prices, including cache discounts and
+cache writes. Luna is priced at the long-context rate because old daily aggregates
+cannot recover individual requests' context lengths. Flex/free-tier savings are not
+assumed. Missing model prices, missing response usage or OpenRouter billing stop an
+enabled cap rather than counting unknown spend as free. Legacy OpenRouter aggregates
+without a `billing_complete` marker are also refused: adding a new billed call does
+not establish the older calls' completeness. They must be reconciled against billing
+evidence or the run must wait for the next UTC day; no automatic certification exists.
+Like the token cap, calls already in flight can finish
+and slightly overshoot. For a $5 campaign day, set `LLM_DAILY_USD_BUDGET=5` and
+`OPENAI_DAILY_TOKEN_BUDGET=0` to replace the old token ceiling. This changes transport
+budgeting only, never prompts, cache keys or generations.
+
 Every LLM call records input/output tokens per day/provider/model in
 `cache/token_usage.json` (`shared/token_usage.py`). OpenAI spend is hard-capped by
 `OPENAI_DAILY_TOKEN_BUDGET` (default 9,500,000/day — the free allocation, resetting midnight UTC; `0` disables): when exhausted,
@@ -868,14 +884,17 @@ report, a commit message or a decision is read off the artifact.
 ## Testing
 
 Mock all external APIs in regular tests (`unittest.mock.patch`); never make live calls
-in `pytest` runs. Live tests go in `tests/live/` behind `TEST_LIVE_API=1`. Each stage
+in ordinary `pytest` runs. Unset `TEST_LIVE_API` for ordinary checks: the current
+guards treat any non-empty value, including `0`, as enabling live requests. Live
+tests go in `tests/live/`; use `TEST_LIVE_API=1` only for an agreed live evaluation. Each stage
 has a schema test via `validate_csv_columns()`. Do not over-test: one test per seam,
 and delete tests when their code path dies.
 
-**Run targeted tests while iterating, the full suite once.** `.venv/bin/pytest -q`
-over `tests/` takes 100–440 s. During iteration run only the affected file or class
-(`.venv/bin/pytest tests/test_engine_147_rules.py -q`); run the full suite once
-before pushing.
+**Run targeted tests while iterating, the full suite once.**
+`env -u TEST_LIVE_API .venv/bin/python -m pytest -q` over `tests/` takes 100–440 s.
+During iteration run only the affected file or class
+(`env -u TEST_LIVE_API .venv/bin/python -m pytest tests/test_engine_spec.py -q`); run
+the full suite once before pushing.
 
 ## Environment
 

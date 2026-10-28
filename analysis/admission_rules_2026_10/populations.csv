@@ -1,0 +1,4 @@
+rule,available_works,marginal_works,previously_reviewed,fresh_population,fresh_sample_n,all_new_routed_works
+replication-claim-extend-prior,2267,2267,80,2187,60,2323
+replication-claim-cited-abstract,1628,1585,251,1334,60,1719
+replication-claim-failure-prior,129,123,96,27,27,131

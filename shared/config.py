@@ -2,6 +2,7 @@
 config.py — Centralised configuration for the disambiguation pipeline.
 """
 import os
+import math
 import logging
 import sys
 from pathlib import Path
@@ -435,11 +436,18 @@ OPENAI_FLEX_PATIENCE = int(os.getenv("OPENAI_FLEX_PATIENCE", "0"))
 # the metered spend in this pipeline. The running total is persisted (see
 # shared/token_usage.py), so it survives a restart and is shared by concurrent runs;
 # a call that would be made past the ceiling is refused rather than billed. Gemini
-# and OpenRouter usage is recorded but never capped. Set OPENAI_DAILY_TOKEN_BUDGET=0
+# and OpenRouter are subject only to the optional dollar cap below. Set OPENAI_DAILY_TOKEN_BUDGET=0
 # to lift the cap — that is the explicit override, and nothing else disables it.
 # The default is OpenAI's free daily token allocation (9.5M, resets midnight UTC —
 # the day _today() in shared/token_usage.py keys on).
 OPENAI_DAILY_TOKEN_BUDGET = int(os.getenv("OPENAI_DAILY_TOKEN_BUDGET", "9500000"))
+
+# Optional dollar-equivalent ceiling across all LLM providers, reset at midnight
+# UTC. Uses billed OpenRouter dollars and conservative list-price estimates for
+# direct providers; see token_usage. 0 preserves the legacy token-only policy.
+LLM_DAILY_USD_BUDGET = float(os.getenv("LLM_DAILY_USD_BUDGET", "0"))
+if not math.isfinite(LLM_DAILY_USD_BUDGET) or LLM_DAILY_USD_BUDGET < 0:
+    raise ValueError("LLM_DAILY_USD_BUDGET must be finite and non-negative (0 disables it)")
 
 # ── Rate limits (seconds between calls) ──────────────────────────────────────
 OPENALEX_RATE_SEC  = float(os.getenv("OPENALEX_RATE_SEC", "0.3"))
