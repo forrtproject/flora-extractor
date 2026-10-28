@@ -121,14 +121,15 @@ a work no live current-generation verdict admitted. What the two voters do, belo
 unchanged — only where.
 
 The classifier and its decision rule are documented in
-[models and screening](../models-and-screening.md). It uses DeepSeek V4 Flash and
-GPT-6 Luna at low effort, with the **G-unanimous** gate: only two `none` votes
+[models and screening](../models-and-screening.md). It uses GPT-6 Luna at low effort
+and the Span-02 decision model, with the **G-unanimous** gate: only two `none` votes
 discard. Other complete pairs proceed; incomplete pairs stay open for retry.
 
-The screen sets `record_type` from the first qualifying vote (`both` maps to
-replication) and unions `screen_categories`. Each successful vote has its own
-`classifyvote_*` response cache entry, keyed on prompt version, model, effort and
-paper inputs. An incomplete screen never admits the work, but its successful vote
+The screen sets `record_type` from Luna's vote unless Span-02 names a different type
+(`both` maps to replication) and unions `screen_categories`. Each successful vote has
+its own response cache entry — `classifyvote_*` for Luna, keyed on prompt version,
+model, effort and paper inputs, and `classifydecide_*` for Span-02's raw
+probabilities. An incomplete screen never admits the work, but its successful vote
 remains cached. Stage 3 receives the stored verdict and per-vote provenance in
 `SCREEN_COLS` rather than calling either screening voter.
 

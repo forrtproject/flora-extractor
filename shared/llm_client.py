@@ -1569,25 +1569,26 @@ def _classify_once(prompt: str, model: str, effort: str) -> "dict | None":
     return vote
 
 
-# The decision voter's probabilities become a vote with three cut-offs, measured on
-# 2,186 labelled works (analysis/jev_eval_2026-10/REPORT_pplx.md). P(qualifies) is
-# P(replication) + P(reproduction) + P(both); "unclear" does not count toward it.
+# The decision voter's probabilities become a vote with three cut-offs, measured for
+# Span-02 on 2,186 labelled works (analysis/jev_eval_2026-10/REPORT_open_weights.md).
+# P(qualifies) is P(replication) + P(reproduction) + P(both); "unclear" does not count.
 #   below DISCARD_BELOW  → "none", so the gate discards only if Luna also says none.
-#     0.4 is the highest cut-off that still lost only 2 of 1,456 positives (0.5: 4).
+#     Span-02 answers near 0 or 1: from 0.2 to 0.7 it loses the same 5 of 1,456
+#     positives, and 0.7 discards the most (76% / 80% of hard / curated negatives).
 #   at or above CONFIDENT_AT → "confident", which opens the pre-PDF title search
 #     together with a confident Luna (link_original.py) — when the vote also names a
 #     type (below), because an "unclear" vote does not qualify. Luna confident + such
-#     a vote allowed 1,364 positives and 19 hard negatives; Luna + DeepSeek allowed
-#     1,363 / 46 (P ≥ 0.9 alone, whatever the type, would allow 1,377 / 19).
+#     a vote allowed 1,284 positives and 15 hard negatives; Luna + DeepSeek allowed
+#     1,363 / 46.
 #   a type share at or above TYPE_SHARE → that type, which overrides Luna's type
 #     (_screen_record_type); below it the vote says "unclear" — qualifying for the
-#     gate, silent about the type. Typing by Luna with this override: 98.0% against
-#     the validators' type on 645 positives; Luna alone 96.8% (it found 33 of 43
-#     reproductions, the override 38).
+#     gate, silent about the type. Typing by Luna with this override: 97.6% against
+#     the validators' type on 642 positives (Luna alone 97.0%), finding 38 of 43
+#     reproductions against Luna's 33.
 # All three decide what a stored vote SAYS, so all three are in the screening
 # generation (filter/engine/tiers.py); the raw probabilities are what is cached, so
 # moving a cut-off re-reads the cache rather than re-buying it.
-DECISION_DISCARD_BELOW = 0.4
+DECISION_DISCARD_BELOW = 0.7
 DECISION_CONFIDENT_AT = 0.9
 DECISION_TYPE_SHARE = 0.7
 
@@ -1753,9 +1754,9 @@ def _screen_record_type(votes: list[dict]) -> str:
     Voter 1's (Luna's) type stands, unless the DECISION voter names a different type,
     which then wins. The decision model names a type only
     when at least DECISION_TYPE_SHARE of its qualifying probability backs it — so this
-    is "Luna, overridden by Perplexity when it is at least 70% sure". Measured against
-    the validators' type on 645 positives: 98.0%, Luna alone 96.8%, and 38 of 43
-    reproductions found instead of 33. When Luna gives no type, the later voter's
+    is "Luna, overridden by the decision model when it is at least 70% sure". Measured
+    for Span-02 against the validators' type on 642 positives: 97.6%, Luna alone 97.0%,
+    and 38 of 43 reproductions found instead of 33. When Luna gives no type, the later voter's
     stands. Read from the classifications alone because that is all a stored verdict
     row keeps (filter/engine/tiers.py, _votes_from_rows). Retained two-LLM pairs keep
     their first qualifying voter's type; the override requires decision-model identity.

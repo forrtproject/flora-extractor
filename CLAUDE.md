@@ -2,7 +2,7 @@
 
 **Reader navigation:** [Documentation index](docs/README.md) ·
 [Models and screening](docs/models-and-screening.md) · [Setup](docs/setup.md).
-The classification screen uses DeepSeek V4 Flash + GPT-6 Luna at low effort;
+The classification screen uses GPT-6 Luna (low effort) + the Span-02 decision model;
 only two `none` votes discard. This file is the detailed maintainer/agent reference.
 
 ## What This Project Does
@@ -248,7 +248,7 @@ text: `classification` ∈ {replication, reproduction, both, none, unclear}, boo
 partial-overlap rule (evaluated copy: `analysis/screening_eval/prompt_v33.txt`;
 evidence: `analysis/screening_eval/report_v33.md`; earlier generations are under
 `archive/analysis/screening_eval/`). `SCREENING_MODEL_2` (default
-`perplexity/pplx-decider-v1.1-27b-20261006`, pinned to the dated id) is a DECISION
+`respan/span-02-20261015`, open weights, pinned to the dated id) is a DECISION
 model (`DECISION_MODELS` in `shared/config.py`): it is reached at OpenRouter's
 `POST /api/alpha/decisions`, not chat completions, is asked the same rules as a
 `choice` over the same five classes (`build_screen_decision()`, whose `none` class
@@ -259,7 +259,7 @@ generation:
 
 | P(qualifies) = P(replication + reproduction + both) | Vote |
 | --- | --- |
-| below `DECISION_DISCARD_BELOW` (0.4) | `none` |
+| below `DECISION_DISCARD_BELOW` (0.7) | `none` |
 | at least `DECISION_CONFIDENT_AT` (0.9) | `confident` (with ≤ 0.1, a confident `none`) |
 | one type holds at least `DECISION_TYPE_SHARE` (0.7) of it | that type; below the share, `unclear` |
 
@@ -267,16 +267,19 @@ Its cache holds the raw probabilities (`classifydecide_*`, keyed on the decision
 question's version, the model and the state), so moving a cut-off re-reads rather than
 re-buys. A decision-model failure — any HTTP error, a 404 for a withdrawn id, an
 answer that is not a distribution — is a missing vote, never a `none`. Evidence for the
-pair, the cut-offs and the type rule: `analysis/jev_eval_2026-10/REPORT_pplx.md`
-(2,186 labelled works; DeepSeek v4.1 and Jev 1.13 were measured and rejected there).
+pair, the cut-offs and the type rule: `analysis/jev_eval_2026-10/REPORT_open_weights.md`
+(2,186 labelled works; six open-weight decision models). Perplexity Decider was measured
+first (`REPORT_pplx.md`) and withdrawn twice in October, each version within days of its
+successor (`REPORT_v12.md`); three revisions of the decision prompt improved nothing on a
+held-out half (`REPORT_prompt_ablation.md`).
 
 **The gate is `screen_gate()`, defined once** (G-unanimous — no single voter
-discards alone; measured 2026-10 on 1,456 positives and 344 hard negatives, the Luna +
-Perplexity pair lost 2 positives and discarded 75% of hard negatives, against 8 and
-76% for the DeepSeek + Luna pair it replaced):
+discards alone; measured 2026-10 on 1,456 positives, the Luna + Span-02 pair lost 5
+positives against 8 for the DeepSeek + Luna pair it replaced, and both discarded 68% of
+the 161 negatives people labelled):
 
 - **discard** — all votes `none`, at any confidence → `not_a_replication`. For this
-  pair: Luna says `none` AND Perplexity's P(qualifies) is below 0.4.
+  pair: Luna says `none` AND Span-02's P(qualifies) is below 0.7.
 - **proceed** — everything else, including confident splits and a lone confident
   `none`. There is no `screen_disagreement` terminal state any more (historical rows
   on disk are still routed by the value in `schema.py`, `sanity_check.py` and
@@ -290,9 +293,9 @@ On a pass, the screen's `record_type` becomes `type` and overwrites `paper_type`
 kept and `type` stays empty. **Replication vs reproduction** (`_screen_record_type()`):
 voter 1's (Luna's) type stands, unless the decision voter names a DIFFERENT type, which
 then wins; when Luna gives no type, the later voter's stands; `both` → replication.
-Because Perplexity names a type only at a ≥ 70% share, this is "Luna, overridden by
-Perplexity when it is at least 70% sure" — 98.0% against the validators' type on 645
-positives, Luna alone 96.8% (38 of 43 reproductions found instead of 33). The rule
+Because the decision voter names a type only at a ≥ 70% share, this is "Luna,
+overridden by Span-02 when it is at least 70% sure" — 97.6% against the validators' type
+on 642 positives, Luna alone 97.0% (38 of 43 reproductions found instead of 33). The rule
 reads classifications only, because a stored verdict row keeps nothing else. Stage 3's
 `record_type_check` still corrects the type once a document is read.
 Retained two-LLM screens keep their historical voter order and the first qualifying
@@ -305,7 +308,7 @@ that voter's answers while the other's stay cache hits. Entries from the pair-ke
 era are split on first read (`_cached_vote()` in `shared/llm_client.py` lifts a vote
 out of a joint entry for the model AT the effort the joint era ran,
 `_JOINT_ERA_EFFORTS`). A voter, prompt, decision-question or cut-off change mints a
-new SCREENING GENERATION. The Luna + Perplexity generation (`eb560e1e840acd4b`)
+new SCREENING GENERATION. The Luna + Span-02 generation (`d1a64d65a6d66c50`)
 explicitly accepts settled DeepSeek + Luna verdicts (`3b93ecf06901e653`) and the
 `gpt-5.4-mini`-era ones that generation accepted (`98bcab0eff366d1d`), so the switch
 does not re-screen the backlog; new and incomplete works use the new pair. A later
@@ -320,8 +323,8 @@ The verdict reaches Stage 3 on the worklist row, in `SCREEN_COLS`:
 classification and confidence because a summary of the gate is not enough — the
 `llm_title_search` rung is gated on both voters qualifying AND confident (for the
 decision voter: P(qualifies) ≥ 0.9 and a type at the 0.7 share, since an `unclear`
-vote does not qualify; with a confident Luna that let 19 of 344 hard negatives
-through, against 46 for the DeepSeek + Luna rule, for as many positives). The decision voter's
+vote does not qualify; with a confident Luna that let 15 of 344 hard negatives and
+1,284 positives through, against 46 and 1,363 for the DeepSeek + Luna rule). The decision voter's
 `screen_evidence` segment is empty; its probabilities are in `screen_reasoning`.
 `_screen_from_row()` in `run_extract.py` rebuilds the `classify_replication()` dict
 from them, so everything below the front door is unchanged.
@@ -922,8 +925,8 @@ and its rationale belong together in one committed place. Key variables:
 ```bash
 RESEARCHER_EMAIL=...            # required: OpenAlex/CrossRef politeness headers
 GEMINI_API_KEY=...              # Stage 3's document reference-extraction fallback (PDF_PARSE_MODEL)
-OPENAI_API_KEY=...              # required: Stage 2 voter 2; Stage 3 linking and outcomes
-OPENROUTER_API_KEY=...          # required: screen voter 1 and the pick check are "/" ids
+OPENAI_API_KEY=...              # required: Stage 2 voter 1 (Luna); Stage 3 linking and outcomes
+OPENROUTER_API_KEY=...          # required: screen voter 2 (Span-02) and the pick check are "/" ids
 OPENAI_DAILY_TOKEN_BUDGET=9500000   # 0 disables the cap (default = the free daily allocation, resets midnight UTC)
 GEMINI_USE_FLEX=true            # 50% discount on paid keys; flex uses GEMINI_FLEX_TIMEOUT
 OPENAI_USE_FLEX=true            # same trade on OpenAI; refused flex falls back to standard

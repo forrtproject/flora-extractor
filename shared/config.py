@@ -218,19 +218,21 @@ PRESCREEN_MODEL_2 = "mistralai/mistral-small-24b-instruct-2501"
 # OpenRouter's decisions endpoint instead of chat completions.
 #
 # Measured 2026-10 on 2,186 labelled works (1,456 positives, 344 hard negatives, 386
-# curated negatives; analysis/jev_eval_2026-10/REPORT_pplx.md): the previous
+# curated negatives; analysis/jev_eval_2026-10/REPORT_open_weights.md): the previous
 # deepseek-v4-flash + gpt-6-luna pair lost 8 positives and discarded 76% / 85%;
-# gpt-6-luna + this decision model loses 2 and discards 75% / 81%, for $0.11 instead
-# of $0.16 per 1,000 works. DeepSeek v4.1 lost 10 at five times v4's price; Jev 1.13
-# separated worse than Perplexity at 2–5× the price.
+# gpt-6-luna + Span-02 loses 5 and discards 76% / 80%, and on the 161 negatives people
+# labelled both pairs discard 68%. Span-02 adds $0.022 per 1,000 works to Luna's $0.070
+# (DeepSeek: $0.091). Perplexity Decider, measured first (REPORT_pplx.md), was withdrawn
+# twice in October, each version within days of its successor (REPORT_v12.md).
 #
 # Luna is voter 1 because it is the voter whose text Stage 3 and the validators read,
 # and whose type stands unless the decision voter overrides it (_screen_record_type).
 SCREENING_MODEL_1 = "gpt-6-luna"
-# Pinned to the dated id: the undated v1 id this model's predecessor was benchmarked
-# under returned 404 within days. A 404 is a failed vote — an incomplete screen that
-# the next run re-asks — never a discard.
-SCREENING_MODEL_2 = "perplexity/pplx-decider-v1.1-27b-20261006"
+# Open weights (Apache-2.0, Hugging Face respanai/span-02, Gemma 4 26B-A4B), so a
+# withdrawn endpoint is not the end of the model; pinned to the dated id all the same.
+# A 404 is a failed vote — an incomplete screen that the next run re-asks — never a
+# discard.
+SCREENING_MODEL_2 = "respan/span-02-20261015"
 # Models that answer through OpenRouter's /api/alpha/decisions (probabilities, no
 # text, output free) rather than chat completions.
 DECISION_MODELS = frozenset({SCREENING_MODEL_2})

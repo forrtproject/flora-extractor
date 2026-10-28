@@ -113,11 +113,10 @@ log = logging.getLogger(__name__)
 # estimate() that is their only reader, and move only when a price or a voter model
 # does: update them in the same commit as the change they describe.
 # The expensive tier uses GPT-6 Luna at standard rates ($0.10/M in, $0.50/M out — flex
-# and prompt-cache savings are not assumed) plus Perplexity Decider v1.1 ($0.02/M in,
-# output free).
+# and prompt-cache savings are not assumed) plus Span-02 ($0.01/M in, output free).
 TIER_PRICE_PER_1K_IN = {
     "screen_cheap":     0.00014,
-    "screen_expensive": 0.00012,
+    "screen_expensive": 0.00011,
 }
 TIER_PRICE_PER_1K_OUT = {
     "screen_cheap":     0.00045,
@@ -229,19 +228,20 @@ def screening_generation(tier: str) -> str:
 def _expensive_equivalent_generations() -> tuple[str, ...]:
     """Keep settled earlier screens while new work uses the current pair.
 
-    `eb560e1e840acd4b` (2026-10, gpt-6-luna + Perplexity Decider v1.1) accepts the
-    settled deepseek-v4-flash + gpt-6-luna screens (`3b93ecf06901e653`) and the
+    `d1a64d65a6d66c50` (2026-10, gpt-6-luna + Span-02) accepts the settled
+    deepseek-v4-flash + gpt-6-luna screens (`3b93ecf06901e653`) and the
     gpt-5.4-mini-era ones that generation already accepted (`98bcab0eff366d1d`), so
     the switch does not re-screen the backlog; new and incomplete works use the new
-    pair. Measured on the same 2,186 works the new pair loses fewer positives (2 vs
+    pair. Measured on the same 2,186 works the new pair loses fewer positives (5 vs
     8), so the residue it would recover sits in the old DISCARDS — dropping this
-    declaration re-screens everything instead (≈ $0.11 per 1,000 works).
+    declaration re-screens everything instead (≈ $0.09 per 1,000 works, Luna's votes
+    being cached).
 
     Keyed to the exact generation: a later prompt, effort, cut-off or voter change
     stops accepting the older results until reviewed separately.
     """
     current = screening_generation(TIER_EXPENSIVE)
-    if current == "eb560e1e840acd4b":
+    if current == "d1a64d65a6d66c50":
         return ("3b93ecf06901e653", "98bcab0eff366d1d")
     if current == "3b93ecf06901e653":
         return ("98bcab0eff366d1d",)

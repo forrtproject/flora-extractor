@@ -921,15 +921,15 @@ def test_a_gemini_voter_is_sent_its_effort_rather_than_left_to_the_default(monke
 
 
 def test_the_production_voter_pair_and_efforts_are_pinned():
-    """The 2026-10 pair (analysis/jev_eval_2026-10/REPORT_pplx.md): Luna in text at
-    "low", and the dated Perplexity decision model, which takes no effort."""
+    """The 2026-10 pair (analysis/jev_eval_2026-10/REPORT_open_weights.md): Luna in
+    text at "low", and the dated Span-02 decision model, which takes no effort."""
     assert llm.SCREENING_MODEL_1 == "gpt-6-luna"
-    assert llm.SCREENING_MODEL_2 == "perplexity/pplx-decider-v1.1-27b-20261006"
+    assert llm.SCREENING_MODEL_2 == "respan/span-02-20261015"
     assert llm.SCREENING_MODEL_2 in llm.DECISION_MODELS
     assert (llm.SCREENING_EFFORT_1, llm.SCREENING_EFFORT_2) == ("low", "")
     assert [p for p, _m, _e, _eff in llm.screen_voters()] == ["openai", "openrouter"]
     assert (llm.DECISION_DISCARD_BELOW, llm.DECISION_CONFIDENT_AT,
-            llm.DECISION_TYPE_SHARE) == (0.4, 0.9, 0.7)
+            llm.DECISION_TYPE_SHARE) == (0.7, 0.9, 0.7)
 
 
 def _probs(rep: float, repro: float = 0.0, both: float = 0.0, unclear: float = 0.0) -> dict:
@@ -939,15 +939,15 @@ def _probs(rep: float, repro: float = 0.0, both: float = 0.0, unclear: float = 0
 
 
 @pytest.mark.parametrize("answer,classification,confident", [
-    (_probs(0.30, 0.05), "none", False),                 # P(qualifies) 0.35 < 0.4
+    (_probs(0.60, 0.05), "none", False),                 # P(qualifies) 0.65 < 0.7
     (_probs(0.05),       "none", True),                  # ≤ 0.1: confidently none
-    (_probs(0.50),       "replication", False),          # qualifies, type share 1.0
+    (_probs(0.75),       "replication", False),          # qualifies, type share 1.0
     (_probs(0.80, 0.15), "replication", True),           # 0.95 ≥ 0.9, share 0.84
     (_probs(0.10, 0.85), "reproduction", True),          # reproduction share 0.89
-    (_probs(0.30, 0.25, both=0.05), "unclear", False),   # qualifies, share 0.6 < 0.7
+    (_probs(0.45, 0.35, both=0.05), "unclear", False),   # qualifies, share 0.59 < 0.7
 ])
 def test_decision_probabilities_become_a_vote(answer, classification, confident):
-    """The three cut-offs: discard below 0.4, confident at 0.9, a type at a 0.7 share."""
+    """The three cut-offs: discard below 0.7, confident at 0.9, a type at a 0.7 share."""
     vote = llm._decision_vote(answer)
     assert (vote["classification"], vote["confident"]) == (classification, confident)
     assert vote["evidence"] == "" and vote["reasoning"].startswith("P(qualifies)=")
@@ -957,9 +957,9 @@ def test_decision_probabilities_become_a_vote(answer, classification, confident)
     ("replication", _probs(0.1, 0.85), "reproduction"),
     ("reproduction", _probs(0.8, 0.15), "replication"),
     ("both", _probs(0.1, 0.85), "reproduction"),
-    ("replication", _probs(0.3, 0.25, both=0.05), "replication"),
+    ("replication", _probs(0.45, 0.35, both=0.05), "replication"),
     ("none", _probs(0.1, 0.85), "reproduction"),
-    ("unclear", _probs(0.3, 0.25, both=0.05), ""),
+    ("unclear", _probs(0.45, 0.35, both=0.05), ""),
 ])
 def test_only_a_qualifying_decision_voter_overrides_the_llm_type(luna, answer, expected):
     answer = dict(answer, model=llm.SCREENING_MODEL_2)

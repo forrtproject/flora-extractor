@@ -1272,11 +1272,11 @@ def _era_generation(monkeypatch, model_1: str, model_2: str) -> str:
                                       ("deepseek/deepseek-v4-flash", "gpt-6-luna")])
 def test_current_screen_accepts_settled_earlier_generations_without_reopening(
         monkeypatch, old_pair):
-    """The Luna + Perplexity generation keeps the settled DeepSeek + Luna screens and
+    """The Luna + Span-02 generation keeps the settled DeepSeek + Luna screens and
     the mini-era ones that generation accepted; any later change reopens them."""
     old = _era_generation(monkeypatch, *old_pair)
     assert old in ("98bcab0eff366d1d", "3b93ecf06901e653")
-    assert tiers.screening_generation("screen_expensive") == "eb560e1e840acd4b"
+    assert tiers.screening_generation("screen_expensive") == "d1a64d65a6d66c50"
 
     votes = [{"work_id": 11, "verdict": "none", "model": m, "confidence": "confident"}
              for m in old_pair]
@@ -1285,7 +1285,7 @@ def test_current_screen_accepts_settled_earlier_generations_without_reopening(
     assert handoff_mod.decisions(client)[0] == {11}
 
     # Retaining the result retains its historical type, even when the database
-    # returns voter 2 first. Today's Perplexity override must not reinterpret it.
+    # returns voter 2 first. Today's decision-voter override must not reinterpret it.
     split = [{"work_id": 11, "verdict": label, "model": model,
               "confidence": "confident"}
              for model, label in zip(old_pair, ("replication", "reproduction"))]
@@ -1294,7 +1294,7 @@ def test_current_screen_accepts_settled_earlier_generations_without_reopening(
     assert handoff_mod.decisions(split_client)[1][11]["record_type"] == "replication"
 
     monkeypatch.setattr(tiers, "DECISION_DISCARD_BELOW", 0.5)
-    assert tiers.screening_generation("screen_expensive") != "eb560e1e840acd4b"
+    assert tiers.screening_generation("screen_expensive") != "d1a64d65a6d66c50"
     assert tiers.decided_work_ids(client, "screen_expensive") == set()
 
 

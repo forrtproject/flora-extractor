@@ -747,7 +747,8 @@ def build_classify_prompt(study_r: str, abstract_r: str) -> str:
 # `none` the model kept viral/DNA "replication" and two-stage GWAS cohorts at 0.5–0.8;
 # naming them here lowered those (0.45 → 0.23, 0.48 → 0.25) and lifted the curated-
 # negative discard by a point at no recall cost
-# (analysis/jev_eval_2026-10/REPORT_pplx.md, `pplx_full2`).
+# (analysis/jev_eval_2026-10/REPORT_pplx.md, `pplx_full2`). Three revisions tried on
+# Span-02 improved nothing on a held-out half (REPORT_prompt_ablation.md).
 _DECISION_CHOICES = {
     "replication": "Re-tests a particular earlier published finding with newly collected data.",
     "reproduction": "Re-analyses earlier data to check a published result, robustness, or "
