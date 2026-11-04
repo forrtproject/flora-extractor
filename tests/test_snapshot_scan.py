@@ -1194,8 +1194,9 @@ def test_a_pulled_pool_refuses_the_scan_until_its_ledger_is_rebuilt(snap_env, mo
 
 
 def test_reconstruction_claims_only_what_the_pool_files_prove(snap_env, monkeypatch):
-    """A file is evidence of a complete read. No file is evidence of nothing, and more
-    rows than the partition holds disproves the size, and neither gets an entry."""
+    """A file is evidence of a complete read. No file is evidence of nothing, so it
+    gets no entry. More rows than the partition holds disproves the size, and a stated
+    size is missing, so those are recorded as unverified and the scan re-reads them."""
     dates = ["2024-01-01", "2024-02-02", "2024-03-03"]
     pool = _pulled_pool(snap_env, dates)
     release = _release("2026-01-01", {"2024-01-01": 100, "2024-02-02": 200,
@@ -1217,6 +1218,13 @@ def test_reconstruction_claims_only_what_the_pool_files_prove(snap_env, monkeypa
 
     assert ss.reconstruct_ledger(pool)["added"] == 0, "a re-run adds nothing"
     assert ss.load_ledger() == ledger
+
+    reads = _serve(monkeypatch, snap_env.tmp, release)
+    ss.scan_snapshot(survivor_pool=pool)
+    assert [u.split("/")[-2] for u in reads] == ["updated_date=2024-02-02",
+                                                 "updated_date=2024-03-03",
+                                                 "updated_date=2024-04-04"], \
+        "the guard must not refuse what reconstruction chose to leave for the scan"
 
 
 def test_reconstruction_never_overwrites_an_entry(snap_env, monkeypatch):
@@ -1288,6 +1296,36 @@ def test_a_pulled_pool_updates_incrementally_after_reconstruction(snap_env, monk
 
     _no_network(monkeypatch)
     assert ss.scan_snapshot(survivor_pool=pool) == 0, "the second scan costs nothing"
+
+
+def test_a_refreshed_manifest_naming_unledgered_files_refuses_too(snap_env, monkeypatch):
+    """A cached manifest older than the pool does not name its newer files, so the
+    guard has to look again after the refresh or those files are all re-read."""
+    pool = _pulled_pool(snap_env, ["2024-01-01", "2024-02-02"])
+    _serve(monkeypatch, snap_env.tmp, _release("2026-01-01", {"2024-01-01": 100}))
+    ss.reconstruct_ledger(pool)
+
+    reads = _serve(monkeypatch, snap_env.tmp, _release("2026-02-02", {"2024-01-01": 100,
+                                                                      "2024-02-02": 200}))
+    with pytest.raises(RuntimeError, match="--reconstruct-ledger"):
+        ss.scan_snapshot(survivor_pool=pool, refresh_manifest=True)
+    assert reads == []
+
+    assert ss.reconstruct_ledger(pool)["added"] == 1
+    assert ss.scan_snapshot(survivor_pool=pool) == 0 and reads == []
+
+
+def test_a_scan_with_nothing_to_read_records_the_release_date(snap_env, monkeypatch):
+    """The partition loop normally saves the ledger. A preview still claims nothing."""
+    pool = snap_env.tmp / "pool"
+    _serve(monkeypatch, snap_env.tmp, _release("2026-01-01", {"2024-01-01": 100}))
+    ss.scan_snapshot(survivor_pool=pool)
+
+    reads = _serve(monkeypatch, snap_env.tmp, _release("2026-02-02", {"2024-01-01": 100}))
+    ss.scan_snapshot(survivor_pool=pool, refresh_manifest=True, max_files=0)
+    assert ss.load_ledger()["snapshot_date"] == "2026-01-01"
+    ss.scan_snapshot(survivor_pool=pool)
+    assert ss.load_ledger()["snapshot_date"] == "2026-02-02" and reads == []
 
 
 def test_a_rewrite_before_the_baseline_is_not_detected(snap_env, monkeypatch):
