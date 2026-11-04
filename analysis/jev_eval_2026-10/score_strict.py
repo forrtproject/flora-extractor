@@ -143,7 +143,8 @@ POS = [i for i in ids if cases[i]["truth"] == "yes"]
 NEG = [i for i in ids if cases[i]["truth"] == "no" and group(i) != "curated negative"]
 ALL = POS + NEG
 print(f"\n## 2. Strict-gated works of release 61f07fd07f19 with a stored DeepSeek + Luna verdict: {len(pop):,}")
-print(f"(left out: {int((df.strict_gate & ~df.luna_pair).sum()):,} strict-gated works whose stored pair is DeepSeek + gpt-5.4-mini, no Luna vote)")
+print(f"(left out: {int((df.strict_gate & ~df.luna_pair).sum()):,} strict-gated works whose stored pair is DeepSeek + gpt-5.4-mini, no Luna vote; "
+      f"{int((df.strict_gate & df.luna_pair & df.work_id.isin(exempt)).sum()):,} a person has judged (data/human_judged.csv), never deferred)")
 old = pop.old.value_counts()
 print(f"Stored votes: discard {old.get('discard', 0):,}, admit {old.get('admit', 0):,}, defer {old.get('defer', 0):,}; "
       f"deferred/proceed {100 * old.get('defer', 0) / (old.get('admit', 0) + old.get('defer', 0)):.1f}%")

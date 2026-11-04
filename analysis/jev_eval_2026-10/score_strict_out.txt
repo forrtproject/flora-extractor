@@ -35,7 +35,7 @@
 | curated negative | 68 | 62 | 9 | 15 |
 
 ## 2. Strict-gated works of release 61f07fd07f19 with a stored DeepSeek + Luna verdict: 19,837
-(left out: 5,217 strict-gated works whose stored pair is DeepSeek + gpt-5.4-mini, no Luna vote)
+(left out: 5,217 strict-gated works whose stored pair is DeepSeek + gpt-5.4-mini, no Luna vote; 223 a person has judged (data/human_judged.csv), never deferred)
 Stored votes: discard 6,790, admit 10,700, defer 2,347; deferred/proceed 18.0%
 
 | share of real replications among works both old voters were sure of | discard | admit | defer | deferred/proceed |
