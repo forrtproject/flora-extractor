@@ -10,14 +10,19 @@ Human truth per field, from `sb.json`:
   - a rejected record: type wrong, original and outcome not applicable;
   - otherwise the human checks: correct / incorrect when they agree, split when not.
 
-    FLORA_CACHE_DIR=/home/lukas/flora-extractor/cache \
-      /home/lukas/flora-extractor/.venv/bin/python analysis/final_ai_check_2026-10/pilot.py [--n-extra 0]
+`--batch 1` and `--batch 2` re-score the recorded samples; `--cached-only` refuses to
+buy a coding the cache does not hold. `--draw` draws a new informative sample. Run from
+a checkout holding `data/`, `work/` and `cache/`; from a worktree, name that checkout:
+
+    FLORA_MAIN_CHECKOUT=/path/to/checkout FLORA_CACHE_DIR=/path/to/checkout/cache \
+      .venv/bin/python analysis/final_ai_check_2026-10/pilot.py --batch 1 --cached-only
 """
 from __future__ import annotations
 
 import argparse
 import collections
 import json
+import os
 import re
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
@@ -25,15 +30,16 @@ from pathlib import Path
 
 import pandas as pd
 
-from final_check import (SourceIndex, build_prompt, compare_work,  # noqa: E402
+from final_check import (ROOT, SourceIndex, build_prompt, compare_work,  # noqa: E402
                          document_text, recode)
 from shared.utils import clean_doi
 
-# The worktree has no data/ or work/ of its own: the newest export and the validation
+# A worktree has no data/ or work/ of its own: the newest export and the validation
 # dump live in the main checkout, uncommitted.
-MAIN = Path("/home/lukas/flora-extractor")
+MAIN = Path(os.environ.get("FLORA_MAIN_CHECKOUT", ROOT))
 WORK = MAIN / "work/stage3_removal"
 OUT = Path(__file__).resolve().parent
+DRAW_SEED = 1
 
 
 def human_truth() -> pd.DataFrame:
@@ -122,24 +128,38 @@ def join_rows(truth: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(joined)
 
 
+def _draw(stratum: pd.DataFrame, n: int) -> pd.DataFrame:
+    """A fixed-seed draw, independent of the input's row order."""
+    return stratum.sort_values("rid").sample(min(n, len(stratum)), random_state=DRAW_SEED)
+
+
 def select(df: pd.DataFrame) -> pd.DataFrame:
-    """About ten informative rows: errors of each kind, the weak link method, full text."""
+    """About ten informative rows: errors of each kind, the weak link method, full text.
+
+    A new draw. The recorded batch 1 was taken in file order and is identified by the
+    rids in `pilot_results.csv` (`recorded`), not by this function.
+    """
     df = df.assign(any_wrong=(df[["truth_type", "truth_original", "truth_outcome"]]
                               == "incorrect").any(axis=1),
                    all_right=(df[["truth_type", "truth_original", "truth_outcome"]]
                               == "correct").all(axis=1))
     picks = [
-        df[df.truth_type == "incorrect"].head(2),                         # rejected / wrong type
+        _draw(df[df.truth_type == "incorrect"], 2),                       # rejected / wrong type
         # The raw human verdict, before sibling reassignments are recognised, so the
         # sample stays the one the pilot was drawn as.
-        df[(df.truth_original_raw == "incorrect") & (df.truth_type == "correct")].head(4),
-        df[(df.truth_outcome == "incorrect") & (df.final_outcome != "")].head(2),
-        df[(df.truth_outcome == "incorrect") & (df.final_outcome == "")].head(1),
-        df[df.all_right & (df.lm == "llm_title_search") & (df.fulltext == True)].head(2),
-        df[df.all_right & (df.fulltext == False) & (df.lm != "llm_title_search")].head(1),
-        df[df.all_right & (df.type == "reproduction")].head(1),
+        _draw(df[(df.truth_original_raw == "incorrect") & (df.truth_type == "correct")], 4),
+        _draw(df[(df.truth_outcome == "incorrect") & (df.final_outcome != "")], 2),
+        _draw(df[(df.truth_outcome == "incorrect") & (df.final_outcome == "")], 1),
+        _draw(df[df.all_right & (df.lm == "llm_title_search") & (df.fulltext == True)], 2),
+        _draw(df[df.all_right & (df.fulltext == False) & (df.lm != "llm_title_search")], 1),
+        _draw(df[df.all_right & (df.type == "reproduction")], 1),
     ]
     return pd.concat(picks).drop_duplicates("rid")
+
+
+def recorded(name: str) -> set[str]:
+    """The rids of a recorded batch: its results file is the record of its draw."""
+    return set(pd.read_csv(OUT / name, usecols=["rid"], dtype=str).rid)
 
 
 def select_batch2(df: pd.DataFrame, exclude: set[str], n: int = 10) -> pd.DataFrame:
@@ -162,10 +182,10 @@ def _human_verdict(df: pd.DataFrame) -> pd.Series:
     return out
 
 
-def run_one(row: dict) -> dict:
+def run_one(row: dict, cached_only: bool = False) -> dict:
     """Recode the work once and return this row's result within the work comparison."""
     text, method, texts = document_text(row)
-    rec = recode(build_prompt(row, text))
+    rec = recode(build_prompt(row, text), cached_only=cached_only)
     sources = [SourceIndex(f"{row.get('title_r', '')}\n{row.get('abstract_r', '')}")]
     sources += [SourceIndex(t) for t in texts.values()]
     mine = next(r for r in compare_work(work_rows(row), rec["coding"], sources)
@@ -179,15 +199,24 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--batch", type=int, default=1, choices=(1, 2))
+    ap.add_argument("--draw", action="store_true",
+                    help="draw a new sample with select() instead of a recorded batch")
+    ap.add_argument("--cached-only", action="store_true",
+                    help="raise on a cache miss rather than call claude -p")
     args = ap.parse_args()
     joined = join_rows(human_truth())
     print(f"{len(joined)} validated records joined to extracted.csv")
-    pilot = select(joined)
-    if args.batch == 2:
-        pilot = select_batch2(joined, set(pilot.rid))
+    batch1 = recorded("pilot_results.csv")
+    if args.draw:
+        pilot = select(joined[~joined.rid.isin(batch1 | recorded("pilot_results_batch2.csv"))])
+    elif args.batch == 2:
+        pilot = select_batch2(joined, batch1)
+    else:
+        pilot = joined[joined.rid.isin(batch1)]
     print(f"{len(pilot)} pilot rows")
     with ThreadPoolExecutor(args.workers) as pool:
-        results = list(pool.map(run_one, [r.to_dict() for _, r in pilot.iterrows()]))
+        results = list(pool.map(lambda r: run_one(r, args.cached_only),
+                                [r.to_dict() for _, r in pilot.iterrows()]))
     keep = ["rid", "pair_id", "doi_r", "openalex_id_r", "url_r", "title_r", "n_originals",
             "link_method", "pdf_source", "type", "doi_o",
             "authors_o", "year_o", "title_o", "outcome", "outcome_computation",
@@ -196,7 +225,8 @@ def main() -> None:
             "human_corrections", "human_named_dois"]
     out = pilot[keep].merge(pd.DataFrame(results).drop(columns="pair_id"), on="rid")
     out["human_verdict"] = _human_verdict(out)
-    name = "pilot_results.csv" if args.batch == 1 else "pilot_results_batch2.csv"
+    name = ("pilot_results_draw.csv" if args.draw else
+            "pilot_results.csv" if args.batch == 1 else "pilot_results_batch2.csv")
     out.to_csv(OUT / name, index=False)
     show = ["link_method", "type", "blind_type", "truth_type", "original_grade",
             "truth_original", "outcome", "blind_outcome", "outcome_grade", "truth_outcome",

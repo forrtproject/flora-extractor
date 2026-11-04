@@ -56,12 +56,17 @@ compares each pair, and releases a row only when three conditions hold:
      original also found none is success") the blind coder read this as `mixed` and
      marked itself unconfident. The pipeline and humans said `failed`.
 6. **The confidence flag helps, but it is unstable on borderline rows.** In the current
-   run it held two errors and no correct row. However, the fast-mapping poster and the
-   Chandler replication switched between confident and unconfident across the prompt
-   revisions of this pilot. The rule was added post hoc, after batch 2. The 200-record
+   run it held two errors and no correct row. However, the fast-mapping poster switched
+   from unconfident to confident across the prompt revisions of this pilot, which
+   released it. The rule was added post hoc, after batch 2. The 200-record
    run should code each row twice, to measure how often the flag (and the release
    decision) flips.
-7. **Four fixes during the pilot, each of which released a correct row:**
+7. **Four fixes during the pilot. Together they took the released rows from 5 correct
+   and 2 errors to 7 correct and 3 errors.** The title-matching fix came with batch 2, so
+   its effect is already in that count. The metadata reference list then released one
+   correct row (representative bureaucracy). The last two fixes were made together and
+   cannot be separated: they released one correct row (translation and vocabulary) and
+   one error (the fast-mapping poster).
    - **Title matching.** Title similarity now also counts the share of the shorter
      title found in the longer one, so a title cited with its subtitle still matches.
    - **Metadata reference list.** When the document supplies no reference list, the
@@ -81,12 +86,16 @@ compares each pair, and releases a row only when three conditions hold:
      - `identified_by` (`citation` / `description`) records how the original was found.
 
      Identification from a description does not block release.
-8. **Quote heuristic.** No quote from either coder was fabricated: every one was found
-   in the source text (87–100% of its 4-word sequences; below 100% only through
-   punctuation introduced by the parse). Where the two quotes pointed at different
-   passages, the outcome category still agreed. A quote mismatch was therefore never a
-   sign of error, and the quote check is best used as a fabrication check and a
-   secondary flag.
+8. **Quote heuristic: the 22 rows are not yet scored under the current check.** A quote
+   now counts as present only when its 4-word sequences are found in one passage of the
+   source, and each part of a `|`-joined quote is scored separately, with the quote
+   taking its worst part. The blind codings (`cache/`) and the parse cache are absent
+   from the machine where the check changed, so the rows could not be re-scored. The
+   `quote_present_*` and `quote_verdict` columns in the two results files come from the
+   earlier check, which counted sequences anywhere in the source and took a quote's best
+   part. Those presence values are therefore upper bounds, and whether any quote is
+   fabricated remains open until the re-score under "Files and rerun". The check also
+   runs only on paired rows, so the quotes of the 4 unpaired rows are unchecked.
 9. **Scaling to the ~200 validated records is worthwhile**: it costs $0 and takes about
    20 minutes with 4 parallel calls (40 minutes coded twice). With about 100 released
    rows, a 95% confidence interval on precision spans roughly ±4.5 percentage points.
@@ -112,7 +121,9 @@ compares each pair, and releases a row only when three conditions hold:
 - **Effort `high`; the document is capped at 150,000 characters, with its parsed
   reference list appended.** The parse stores the reference list as its own field. The
   pipeline sends it as a separate keyed block, but my script's first version sent only
-  the body text, so the first run named only 3 of 12 originals with a title.
+  the body text, so the first run named only 3 of 12 originals with a title. Over the
+  cap, the body is cut and the list kept (up to 50,000 characters). The longest pilot
+  document is 128,825 characters, so the cap reached no pilot prompt.
 - **Original pairing** (`original_grade` and `pair_originals` in `final_check.py`).
   Title similarity is the larger of the Jaccard index and the share of the shorter
   title's words found in the longer one. Three grades can form a pair:
@@ -122,7 +133,9 @@ compares each pair, and releases a row only when three conditions hold:
     title or one at least 0.3 similar. Two unlike titles by the same author in the
     same year are the sibling case, and do not pair.
 
-  Pairs are formed greedily, strongest grade first.
+  Pairs are formed greedily, strongest grade first. Two pairing choices remain open:
+  `author_year` and `title` do not compare two populated, differing DOIs, and the
+  shorter-title share lets a short title match any longer one containing its words.
 - **`failed` vs `mixed` is reported as `soft`** and does not count as agreement.
 - **A blind `prospective` study status counts as a type disagreement.**
 - **Human truth** comes from three sources:
@@ -133,8 +146,19 @@ compares each pair, and releases a row only when three conditions hold:
 
   On top of that, a correction that names another shipped original of the same work
   becomes `sibling` (counted correct), and its accompanying outcome verdict becomes
-  `unscored`. Several rows are still `validation_inprogress` or `need_review`, so their
-  truth rests on one or two checks.
+  `unscored` unless it was `correct`. That exception is asymmetric, and it affects one
+  row: 429086a5 counts as correct. Unscoring it too would make the released rows 6
+  correct, 3 errors and 2 undetermined. Several rows are still `validation_inprogress`
+  or `need_review`, so their truth rests on one or two checks.
+
+  Two further rules could not be measured here, because `sb.json` is absent: a record
+  with `final_type` set but `final_doi_o` or `final_outcome` empty counts that field as
+  incorrect, and a validated record whose outcome has since changed in `extracted.csv`
+  is joined to the new row and scored against it.
+- **Before scaling:** the prompt labels the metadata list "from OpenAlex" even when
+  OpenCitations supplied it, and the cache file is not written atomically. The label
+  stays until the next prompt revision, because changing it moves the cache key of every
+  row that carries the list.
 
 ## Method
 
@@ -169,8 +193,9 @@ the prompt.
 
 It grades each pair `same` / `adjacent` / `same_claim` / `numbers` / `different`, and
 adds `+fabricated_*` when a quote is less than half present. `sb.json` holds no quote
-fields, so the thresholds rest on the pilot pairs and a synthetic check that a
-fabricated quote is flagged.
+fields, so the thresholds rest on the pilot pairs and synthetic checks. A quote stitched
+from 12 far-apart 10-word phrases of a source scores 0.06 (0.72 under the earlier check),
+and a true quote split by a parsed page header scores 0.92.
 
 ### Samples
 
@@ -178,13 +203,21 @@ Both batches come from the 207 records validated since August
 (`work/stage3_removal/tier_features.csv`). Each was joined to the newest `extracted.csv`
 on `doi_r` + `doi_o`.
 
-- **Batch 1 (12 rows)** was chosen for informativeness on the raw human verdicts:
+- **Batch 1 (12 rows)** was chosen for informativeness on the raw human verdicts, taking
+  the first rows of each stratum in file order (`.head()`):
   - 2 rejected rows;
-  - 4 with the original marked wrong;
-  - 3 with the outcome marked wrong;
+  - 4 with the original marked wrong, two of which (55ff05c7, 8fd66ead) also have the
+    outcome marked wrong;
+  - 3 more with the outcome marked wrong, so 5 rows in all have that verdict;
   - 3 correct on all fields.
 - **Batch 2 (10 rows)** is a random draw (seed 2) from the remaining rows: 5 judged
   wrong and 5 judged correct, scored on the pair unit.
+
+The rids in `pilot_results.csv` and `pilot_results_batch2.csv` are the record of these
+two samples. `select()` now draws each stratum with a fixed seed from rows sorted by
+rid, so it would pick other rows: it serves only new draws (`--draw`), and batch 1 was
+not drawn that way. Both batches are enriched for errors (12 of 22 rows judged wrong), so
+their rates describe this sample and are not population estimates.
 
 15 of the 22 rows are `llm_title_search` links and 18 had a parsed document. No
 validated reproduction was available.
@@ -221,12 +254,19 @@ validated reproduction was available.
 - `pilot.py`: builds the human truth (including sibling reassignments), joins records
   to `extracted.csv`, selects a batch, runs the check per work and writes
   `pilot_results.csv` or `pilot_results_batch2.csv`.
-- `cache/`: the 22 blind codings. A rerun reads these and makes no new call.
+- `cache/`: the 22 blind codings. It is gitignored and exists only on the machine that
+  ran the pilot; it is absent from the machine where these scripts were last changed.
 
-The scripts read `data/` and `work/` from the main checkout. They write only into this
-directory and touch no verdict, store or Supabase table.
+The scripts read `data/`, `work/` and the parse cache from a checkout that holds them.
+They write only into this directory and touch no verdict, store or Supabase table. Merging
+`main` left the prompt version at `58aa27a6c868`, and the changes since the pilot leave
+the prompts of documents within the cap unchanged, so the cached codings should still
+match; this has not been run against the cache.
+
+To re-score the recorded samples from a checkout on this branch that holds those files
+and `cache/`, with `--cached-only` stopping at any miss instead of calling `claude -p`:
 
 ```bash
-FLORA_CACHE_DIR=/home/lukas/flora-extractor/cache \
-  /home/lukas/flora-extractor/.venv/bin/python analysis/final_ai_check_2026-10/pilot.py --batch 2
+.venv/bin/python analysis/final_ai_check_2026-10/pilot.py --batch 1 --cached-only
+.venv/bin/python analysis/final_ai_check_2026-10/pilot.py --batch 2 --cached-only
 ```
