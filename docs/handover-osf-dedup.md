@@ -3,9 +3,11 @@
 **Implemented and applied.** Commit `3fb6efe` added `analysis/build_osf_aliases.py` and
 14,744 same-guid aliases to `filter/spec/aliases.json`, and release `16d370746b45`
 applied them. On that release's export, OSF records reached by more than one work id
-fell from 92 (223 rows) to 6 (13 rows). This brief remains the record of the rule and
-the reasoning behind it; 405 groups were excluded as OpenAlex mis-located works, as the
-commit message explains.
+fell from 92 (223 rows) to 6 (13 rows). The 405 groups excluded as OpenAlex mis-located
+works are explained in the commit message.
+
+The sections below are the brief as it was written, kept for the rule and the reasoning
+behind it. The steps they describe have been carried out.
 
 ## The defect
 
