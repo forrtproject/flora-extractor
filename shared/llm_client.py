@@ -1623,6 +1623,21 @@ def screen_gate(votes: list[dict]) -> "str | None":
     return "proceed"
 
 
+def screen_strict(votes: list[dict]) -> bool:
+    """The STRICT admission gate: two or more votes, every one qualifying and confident.
+
+    Asked only of a work `screen_gate()` proceeded, and only when every rule that
+    routed it carries `admission: strict` (`filter/engine/handoff.py`). A proceed
+    that fails it is DEFERRED, never discarded: the votes are stored, so releasing
+    it later buys nothing. Read off the stored votes alone, so it holds for any
+    voter pair that writes `classification` and a boolean `confident` — a decision
+    voter's `confident` is its own probability cut-off. The pre-PDF title-search
+    rung asks the same of its two votes (`extract/link_original.py`).
+    """
+    return len(votes) >= 2 and all(
+        v["classification"] in SCREEN_QUALIFYING and v["confident"] for v in votes)
+
+
 def _screen_record_type(votes: list[dict]) -> str:
     """The paper type the screen settled on, for the `type` column and the outcome
     vocabulary. Both voters agreeing on a qualifying label wins; a "both" answer or

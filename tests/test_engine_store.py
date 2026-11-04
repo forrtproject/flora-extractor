@@ -278,7 +278,7 @@ def test_a_route_names_every_live_rule_that_matched_nothing(pool, tmp_path, caps
     quiet = [
         {"id": "syn-inert", "description": "a live rule ahead of its data",
          "match": {"text_regex": r"(?i)quokka registration template"},
-         "pile": "screen_cheap", "precedence": 210},
+         "pile": "screen_cheap", "admission": "strict", "precedence": 210},
         {"id": "syn-shadow-quiet", "description": "a draft that matches nothing yet",
          "match": {"text_regex": r"(?i)quokka deposit"},
          "pile": "discard", "precedence": 805, "shadow": True,
@@ -312,7 +312,7 @@ def test_a_route_counts_the_domain_rows_a_rule_never_reached(pool, tmp_path, cap
          "match": {"all_of": [{"doi_prefix": ["10.5555"]},
                               {"title_regex": r"(?i)\bwasps\b"}]},
          "domain": {"doi_prefix": ["10.5555"]},
-         "pile": "screen_cheap", "precedence": 208},
+         "pile": "screen_cheap", "admission": "strict", "precedence": 208},
     ]
     rows = POOL_ROWS + [
         pool_row(9, doi="https://doi.org/10.5555/reg.wasps", year=2021,

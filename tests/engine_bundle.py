@@ -50,16 +50,16 @@ SPECS: list[dict] = [
     {"id": "syn-cite", "description": "a phrase plus a named citation",
      "match": {"all_of": [{"text_regex": r"(?i)direct replication"},
                           {"text_regex": r"(?i)\bet\s+al\."}]},
-     "pile": "screen_expensive", "precedence": 350},
+     "pile": "screen_expensive", "admission": "lenient", "precedence": 350},
     {"id": "syn-reproduction", "description": "reproduction vocabulary",
      "match": {"abstract_regex": r"(?i)reproduced the original"},
-     "pile": "screen_cheap", "vocabulary": "reproduction", "precedence": 262},
+     "pile": "screen_cheap", "admission": "lenient", "vocabulary": "reproduction", "precedence": 262},
     {"id": "syn-replication", "description": "replication vocabulary",
      "match": {"text_regex": r"(?i)direct replication"},
-     "pile": "screen_cheap", "vocabulary": "replication", "precedence": 260},
+     "pile": "screen_cheap", "admission": "lenient", "vocabulary": "replication", "precedence": 260},
     {"id": "syn-concept", "description": "a topical concept, no vocabulary",
      "match": {"fields": {"concept_ids": ["C12590798"]}},
-     "pile": "screen_cheap", "precedence": 220},
+     "pile": "screen_cheap", "admission": "lenient", "precedence": 220},
 ]
 
 _CITE = "as reported by Smith et al. (2019)"

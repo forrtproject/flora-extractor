@@ -49,7 +49,8 @@ release put in an admitted pile, because a verdict outlives the routing that bou
 — a work today's rule book discards would otherwise keep reaching the validation
 import forever. It also drops the works the current screen discards
 (`decisions()` in `filter/engine/handoff.py`): the worklist never offers such a work,
-so a verdict bought under an earlier screen's admission would never be replaced. Omitted, the release is the store's when it holds exactly one, and a
+so a verdict bought under an earlier screen's admission would never be replaced. The
+same holds for a proceed its rules' strict admission gate DEFERS (below). Omitted, the release is the store's when it holds exactly one, and a
 store holding several refuses; `--all-releases` renders every stored verdict whatever
 routing says. Resume is the verdict row, not the file: the
 worklist subtracts every work whose latest current-generation result SETTLES it.
@@ -291,6 +292,18 @@ classification and confidence because a summary of the gate is not enough — th
 `llm_title_search` rung is gated on both voters qualifying AND confident.
 `_screen_from_row()` in `run_extract.py` rebuilds the `classify_replication()` dict
 from them, so everything below the front door is unchanged.
+
+**A proceed is admitted by the RULE's gate.** Every screen-pile spec names
+`admission: lenient | strict`. `lenient` admits on the proceed; `strict` also needs
+`screen_strict()` — every vote qualifying AND confident. A work is held strict only
+when every live screen-pile rule it matched is strict (the most lenient wins). A strict
+miss is DEFERRED, not discarded: not offered to the extract tier, not rendered, and
+released with no new call when the gate is relaxed. A work a person has judged in
+validation (`data/human_judged.csv`, `analysis/build_human_judged.py`) is never
+deferred. The gate is left out of the
+release id and the screening generation; it is applied to the stored votes by
+`admission_gates()` / `deferred_works()` in `filter/engine/handoff.py`. Policy and the
+per-rule assignments: `filter/spec/CONVENTIONS.md`, "Admission gates".
 
 **Resolution ladder** (`run_for_doi()`, cheapest first, returns at first resolution):
 title-pattern match → rule-based citation/candidate match → abstract LLM over

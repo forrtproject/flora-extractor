@@ -1,0 +1,8 @@
+{
+ "release_id": "61f07fd07f1997fe5454cfdea372d3cadbab18c64b70c26ff0336406d0747865",
+ "routing_rows": 32263,
+ "screen_decisions": 32293,
+ "screen_discards": 8096,
+ "ending_rows": 25761,
+ "data_dir": "/home/lukas/flora-extractor/data"
+}
