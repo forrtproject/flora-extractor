@@ -8,6 +8,7 @@ from urllib.parse import urlparse,urljoin,quote
 from shared.pdf_sources import _document_format,_title_check,_declared_pdf_urls,_front_matter_text,_MIN_PDF_BYTES
 UA={'User-Agent':'flora-repository-probe/1.0','Accept':'*/*'}
 HTTP=f'{SP}/probe_http'; DOCS=f'{SP}/probe_docs'
+os.makedirs(HTTP,exist_ok=True); os.makedirs(DOCS,exist_ok=True)
 last={}
 def get(url,timeout=30,allow=True,cache=True):
     """(kind,status,final,ctype,body). kind: ok|outage. Bodies cached on disk so reruns repeat no request."""
