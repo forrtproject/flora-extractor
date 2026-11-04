@@ -1858,7 +1858,7 @@ def run_for_doi(doi_r:              str,
         # Gated on both voters giving a qualifying answer AND both standing behind
         # it — for the decision voter, "confident" means P(qualifies) >= 0.9 and
         # "qualifying" needs a type at the 0.7 share (DECISION_CONFIDENT_AT and
-        # DECISION_TYPE_SHARE in shared/llm_client.py; measured 2026-10 for Span-02:
+        # DECISION_TYPE_SHARE in shared/config.py; measured 2026-10 for Span-02:
         # with a confident Luna it lets 15 of 344 hard negatives and 1,284 positives
         # through, where the old DeepSeek + Luna rule let 46 and 1,363). This is the one resolver that picks from the whole literature rather
         # than a supplied candidate list, and the errors it makes are systematic: a

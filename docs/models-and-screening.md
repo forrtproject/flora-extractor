@@ -28,8 +28,9 @@ otherwise `unclear`. Its weights are open (Apache-2.0, `respanai/span-02`).
 
 The strict admission gate reads these votes, so it is tighter under this pair than
 under two LLMs: among the same stored works, 18% of strict-rule proceeds defer under
-DeepSeek + Luna and an estimated 26–45% would under Luna + Span-02, according to how
-many of the works both old voters were sure of are real replications
+DeepSeek + Luna and an estimated 26–37% would under Luna + Span-02, according to how
+many of the works both old voters were sure of are real replications (45% if only
+60% are, a pessimistic floor)
 ([score_strict_out.txt](../analysis/jev_eval_2026-10/score_strict_out.txt)). Settled
 verdicts keep the votes they were judged on, so this reaches new works only.
 

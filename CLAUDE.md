@@ -951,7 +951,7 @@ FLORA_CACHE_DIR=                # move cache/ to an SSD; FLORA_POOL_DIR does the
 ```
 
 Constants are **not env vars anywhere** — see code-style rule 8. Every model id,
-`LINKING_EFFORT` and `CURATED_SOURCES` are in `shared/config.py` — one place
+`LINKING_EFFORT`, `CURATED_SOURCES` and the decision voter's cut-offs are in `shared/config.py` — one place
 that answers "what graded this row"; `PRESCREEN_MIN_ABSTRACT_CHARS` in
 `shared/prescreen.py`;
 `OUTCOME_DESCENT` in `extract/link_original.py`; the dry run's price list in
