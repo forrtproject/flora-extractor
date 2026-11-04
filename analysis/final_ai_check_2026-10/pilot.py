@@ -162,14 +162,13 @@ def recorded(name: str) -> set[str]:
     return set(pd.read_csv(OUT / name, usecols=["rid"], dtype=str).rid)
 
 
-def select_batch2(df: pd.DataFrame, exclude: set[str], n: int = 10) -> pd.DataFrame:
-    """A second, random batch outside the first: half rows humans judged wrong, half
-    judged correct (after sibling reassignments), so it measures both catching errors
-    and wrongly holding correct rows."""
-    df = df[~df.rid.isin(exclude)].assign(human_verdict=_human_verdict)
-    return pd.concat([df[df.human_verdict == v].sample(min(n // 2, (df.human_verdict == v).sum()),
-                                                        random_state=2)
-                      for v in ("error", "correct")])
+def recorded_rows(joined: pd.DataFrame, name: str) -> pd.DataFrame:
+    """A recorded batch's rows, whole: a re-score overwrites the batch's results file,
+    so a rid that no longer joins must stop the run rather than shrink the record."""
+    missing = recorded(name) - set(joined.rid)
+    if missing:
+        raise SystemExit(f"{len(missing)} rid(s) of {name} no longer join: {sorted(missing)}")
+    return joined[joined.rid.isin(recorded(name))]
 
 
 def _human_verdict(df: pd.DataFrame) -> pd.Series:
@@ -206,13 +205,12 @@ def main() -> None:
     args = ap.parse_args()
     joined = join_rows(human_truth())
     print(f"{len(joined)} validated records joined to extracted.csv")
-    batch1 = recorded("pilot_results.csv")
+    batch_file = "pilot_results.csv" if args.batch == 1 else "pilot_results_batch2.csv"
     if args.draw:
-        pilot = select(joined[~joined.rid.isin(batch1 | recorded("pilot_results_batch2.csv"))])
-    elif args.batch == 2:
-        pilot = select_batch2(joined, batch1)
+        taken = recorded("pilot_results.csv") | recorded("pilot_results_batch2.csv")
+        pilot = select(joined[~joined.rid.isin(taken)])
     else:
-        pilot = joined[joined.rid.isin(batch1)]
+        pilot = recorded_rows(joined, batch_file)
     print(f"{len(pilot)} pilot rows")
     with ThreadPoolExecutor(args.workers) as pool:
         results = list(pool.map(lambda r: run_one(r, args.cached_only),
@@ -225,8 +223,7 @@ def main() -> None:
             "human_corrections", "human_named_dois"]
     out = pilot[keep].merge(pd.DataFrame(results).drop(columns="pair_id"), on="rid")
     out["human_verdict"] = _human_verdict(out)
-    name = ("pilot_results_draw.csv" if args.draw else
-            "pilot_results.csv" if args.batch == 1 else "pilot_results_batch2.csv")
+    name = "pilot_results_draw.csv" if args.draw else batch_file
     out.to_csv(OUT / name, index=False)
     show = ["link_method", "type", "blind_type", "truth_type", "original_grade",
             "truth_original", "outcome", "blind_outcome", "outcome_grade", "truth_outcome",
