@@ -2208,6 +2208,19 @@ def test_a_challenge_status_on_a_handle_page_is_not_cached(_oa_cache_in_tmp):
 
 
 def test_a_row_that_is_not_a_handle_never_reaches_the_tier():
-    assert not ps.is_handle_url("https://doi.org/10.1/x")
+    patchers = _mock_all_tiers()
+    for p in patchers.values():
+        p.start()
+    try:
+        with patch.object(ps, "handle_landing_pdf_urls") as lookup, \
+                patch.object(ps.requests, "get", return_value=_Resp(404)), \
+                patch.object(ps, "get_html_document", return_value=None), \
+                patch.object(ps, "get_pdf_via_playwright",
+                             return_value={"success": False, "reason": "no_doi"}):
+            ps.acquire_pdf("", "A Title", url_r="https://repo.example/record/1")
+    finally:
+        for p in patchers.values():
+            p.stop()
+    assert not lookup.called
     assert not ps.is_handle_url("https://hdl.handle.net/")
     assert ps.is_handle_url("HTTP://hdl.handle.net/10419/57169")

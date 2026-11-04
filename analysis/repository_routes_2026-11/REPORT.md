@@ -30,7 +30,9 @@ and either `outcome = cannot_be_determined` or a `target_pending` row: 5,089 row
 ## Yield per route
 
 A document counts when it passes the module's format and title checks and its opening
-page, read by hand, is the paper itself rather than a supplement.
+page, read by hand, is the paper itself rather than a supplement. The probe tried up to
+three links per record and sent no `Referer`. The tier tries up to four and sends one, so
+these yields may undercount it.
 
 | Route | Sample | Right paper | Yield | Unanswered or refused |
 | ----- | -----: | ----------: | ----: | --------------------- |
@@ -67,7 +69,7 @@ or the OAI formats on offer.
 
 | Platform | Rows | Note |
 | -------- | ---: | ---- |
-| DSpace 7 or later | 12 | Georgia Tech, ECU, ANU, Helsinki, IU Indianapolis, CONICET, Edinburgh, Maryland, Arizona |
+| DSpace 7 or later | 12 | Georgia Tech, ECU, ANU, Helsinki, IU Indianapolis, CONICET, Edinburgh, Maryland, Arizona (one Arizona page answered 502 on both probes) |
 | DSpace 6 or DSpace-CRIS 5 | 4 | EconStor, CSIC |
 | DSpace, version unknown | 1 | Seoul National |
 | IRIS (Cineca) | 6 | all answered 403; inferred |
