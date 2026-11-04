@@ -136,8 +136,11 @@ changed partitions rather than 725 GB.
 .venv/bin/python -m search.run_search --scan --refresh-manifest
 ```
 
+These use the default pool. For a pool elsewhere, add `--survivor-pool <path>` to the scan
+and `--pool-dir <path>` to `snapshot_scan`, including `--reconstruct-ledger` below.
+
 The first command replaces the cached manifest and logs how many partitions are new,
-rewritten, interrupted and unchanged, with the gigabytes each would cost. A later scan
+rewritten, interrupted or unverified, and unchanged, with the gigabytes each would cost. A later scan
 compares against the ledger, so the preview does not hide anything from it.
 
 **An updated pool is not equivalent to a rescan.** A partition no longer in the manifest
@@ -145,8 +148,10 @@ is reported and left alone, so its pool file and rows stay. Where OpenAlex moved
 from that partition to a newer one, the pool holds both copies and routing uses the
 older. Routing reads files in name order, names start with the partition's date, and the
 first row per work is kept. The same applies to a file kept through an undetected
-rewrite (below). An update mints a new release id, because `pool_fingerprint()` hashes every file, so the whole pool
-is re-routed. Routing is local and spends nothing.
+rewrite (below). An update that changes a pool file's name, size or row count mints a new
+release id, because `pool_fingerprint()` hashes those, so the whole pool is re-routed.
+Routing is local and spends nothing. An update that changes none of them, such as a new
+partition with no survivors, keeps the release id.
 
 **A pulled pool needs its ledger rebuilt first.** `pool_sync` does not carry the ledger,
 so `--scan` refuses a pool whose files have no ledger entry rather than re-reading it all
@@ -166,7 +171,8 @@ Reconstruction transfers no pool data. What it can and cannot claim:
   `--refresh-manifest`, because an older baseline can only cause extra reads, never
   missed ones. A checkout with no cached manifest has to use the current one.
 - A pool file holding more rows than the manifest gives its partition was certainly
-  rewritten, so it gets no entry and is re-read.
+  rewritten, so it gets an `unverified` entry and is re-read. So does a partition whose
+  manifest entry states no size.
 - A partition with no pool file may have had no survivors, been skipped as unreadable or
   be new. These get no entry, so the next scan reads each once. The report gives their
   total as `no_pool_file_bytes`. A pool from an older release can share few partition

@@ -506,7 +506,8 @@ def reconstruct_ledger(pool_dir: Optional[Path] = None) -> dict:
       detected, so use the oldest manifest available: the cached one is used when there
       is one, and this should run before ``--refresh-manifest``. The one disproof the
       pool can offer is applied: a file with more rows than the manifest says its
-      partition holds was certainly rewritten, and gets no entry.
+      partition holds was certainly rewritten. It gets an ``unverified`` entry, which
+      the next scan re-reads, as does a partition whose manifest entry states no size.
     * **A missing pool file proves nothing.** It means no survivors, or an unreadable
       partition the scan skipped, or a partition new since the pool. Those partitions
       get no entry, so the next scan reads them once and records what it finds.
@@ -569,17 +570,19 @@ def reconstruct_ledger(pool_dir: Optional[Path] = None) -> dict:
             # `_needs_scan` reads a null size as "never changed", so writing one would
             # switch off rewrite detection for this partition for good.
             no_size.append(url)
+            entries[url] = {**meta, "status": "unverified", "reconstructed_from": baseline}
             continue
         rows = pq.ParquetFile(pool_dir / name).metadata.num_rows
         stated = meta.get("record_count")
         if stated is not None and rows > stated:
             disproved.append(url)
+            entries[url] = {**meta, "status": "unverified", "reconstructed_from": baseline}
             continue
         entries[url] = {**meta, "status": "done", "kept": rows, "reconstructed_from": baseline}
         added += 1
         rows_added += rows
 
-    if added:
+    if added or disproved or no_size:
         if theirs is None:
             ledger[_GATE_KEY] = pool_gate
         save_ledger(ledger)
@@ -645,7 +648,7 @@ def manifest_delta(all_files: list[tuple[str, dict]], ledger: dict,
 
 def _log_delta(delta: dict, previous_date: str, date: str) -> None:
     log.info("Snapshot manifest %s (ledger: %s): %d new (%.1f GB), %d rewritten (%.1f GB), "
-             "%d interrupted (%.1f GB), %d unchanged.",
+             "%d interrupted or unverified (%.1f GB), %d unchanged.",
              date or "undated", previous_date or "undated",
              delta["new"], delta["new_bytes"] / 1e9,
              delta["rewritten"], delta["rewritten_bytes"] / 1e9,
@@ -1117,8 +1120,9 @@ def scan_snapshot(max_files: Optional[int] = None,
 
     # A pool this ledger knows nothing about would otherwise be re-read in full: 725 GB
     # to rediscover files already on disk, with no sign of it until the bill arrives.
-    if files is None and survivor_pool is not None \
-            and not (pool_gate_mismatch or ledger_gate_mismatch):
+    def _refuse_unledgered_pool_files() -> None:
+        if survivor_pool is None or pool_gate_mismatch or ledger_gate_mismatch:
+            return
         unledgered = _unledgered_pool_files(all_files, ledger, survivor_pool)
         if unledgered:
             raise RuntimeError(
@@ -1129,6 +1133,9 @@ def scan_snapshot(max_files: Optional[int] = None,
                 "a true full re-read, scan into a fresh pool directory instead.")
 
     if files is None:
+        _refuse_unledgered_pool_files()
+
+    if files is None:
         # Fetched only here, and only if the call above did not just fetch it, so a
         # reconstructed ledger's baseline is never moved by a refused run.
         if refresh_manifest and had_cached_manifest:
@@ -1136,11 +1143,18 @@ def scan_snapshot(max_files: Optional[int] = None,
             all_files = _manifest_files(manifest)
             source_files = all_files
             n_available = len(all_files)
+            # A cached manifest older than the pool does not name its newer files.
+            _refuse_unledgered_pool_files()
         previous_date = ledger.get("snapshot_date", "") or ""
         ledger["snapshot_date"] = _manifest_date(manifest) or previous_date
         _log_delta(manifest_delta(all_files, ledger, survivor_pool),
                    previous_date, ledger["snapshot_date"])
     targets = [(u, m) for u, m in source_files if _needs_scan(u, m, ledger)]
+    # Nothing left to read means the ledger is current with this release, so its date
+    # has to be saved here: the loop below is what normally saves it. A preview (max 0)
+    # reads nothing by choice and claims nothing.
+    if files is None and not targets and max_files != 0:
+        save_ledger(ledger)
     if max_files is not None:
         targets = targets[:max_files]
 
