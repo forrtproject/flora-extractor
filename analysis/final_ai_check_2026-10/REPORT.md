@@ -153,7 +153,7 @@ compares each pair, and releases a row only when three conditions hold:
 
   Two further rules could not be measured here, because `sb.json` is absent: a record
   with `final_type` set but `final_doi_o` or `final_outcome` empty counts that field as
-  incorrect, and a validated record whose outcome has since changed in `extracted.csv`
+  incorrect unless the shipped field is also blank (then correct), and a validated record whose outcome has since changed in `extracted.csv`
   is joined to the new row and scored against it.
 - **Before scaling:** the prompt labels the metadata list "from OpenAlex" even when
   OpenCitations supplied it, and the cache file is not written atomically. The label
@@ -264,7 +264,8 @@ the prompts of documents within the cap unchanged, so the cached codings should 
 match; this has not been run against the cache.
 
 To re-score the recorded samples from a checkout on this branch that holds those files
-and `cache/`, with `--cached-only` stopping at any miss instead of calling `claude -p`:
+and `cache/`, with `--cached-only` stopping at any miss instead of calling `claude -p`.
+Rows are selected by recorded rid, and a rid that no longer joins stops the run:
 
 ```bash
 .venv/bin/python analysis/final_ai_check_2026-10/pilot.py --batch 1 --cached-only
