@@ -371,7 +371,8 @@ def _build_cands_df(row: pd.Series) -> pd.DataFrame:
         row = row.fillna("")
     return pd.DataFrame([{
         "doi_r":                 str(row.get("doi_r", "")),
-        "study_r":               str(row.get("title_r", row.get("study_r", ""))),
+        # The ladder names this paper's TITLE `study_r`, whatever the output column means.
+        "study_r":               str(row.get("title_r", "")),
         "abstract_r":            str(row.get("abstract_r", "")),
         "year_r":                year_str(row.get("year_r")),
         "openalex_id_r":         str(row.get("openalex_id_r", "")),
@@ -441,14 +442,9 @@ def _base_row(filter_row: pd.Series, match_type: str, match_conf: str,
     and the rank/count defaults are the same row for all of them.
     """
     row = filter_row.to_dict()
-    # propagate study_r → title_r if title_r is absent (old seeded data uses study_r)
-    if not row.get("title_r"):
-        row["title_r"] = row.get("study_r", "")
     row.update({
-        # The legacy seeded columns used study_r for a TITLE. Every producer sets the
-        # real value explicitly below, so blanking it here is what stops a title
-        # surviving into the study identifier.
-        "study_r": "",
+        # A pool record may have no title at all, and then this is None.
+        "title_r": row.get("title_r") or "",
         # The input row's year arrives however pandas typed the column it was read
         # from — a float where anything in that chunk was missing (#140).
         "year_r": year_str(row.get("year_r")),
@@ -1744,8 +1740,7 @@ def _verify_row(row: dict) -> dict:
     v = verify_and_correct(old_doi, str(row.get("title_o", "") or ""),
                            str(row.get("authors_o", "") or ""), row.get("year_o", ""),
                            exclude_doi=clean_doi(str(row.get("doi_r", ""))),
-                           exclude_title=str(row.get("title_r", "")
-                                             or row.get("study_r", "") or ""))
+                           exclude_title=str(row.get("title_r", "") or ""))
     if not keeps_no_doi(v["doi_o_verification"], str(row.get("doi_o_verification", "") or ""),
                         str(row.get("oa_work_id_o", "") or "")):
         row["doi_o_verification"] = v["doi_o_verification"]
@@ -2646,7 +2641,7 @@ def _registry_guard(row: pd.Series, doi_r: str) -> "tuple[str, str | None, str, 
     """
     if not doi_r:
         return doi_r, None, "", False
-    title = str(row.get("title_r", "") or row.get("study_r", "") or "")
+    title = str(row.get("title_r", "") or "")
     found = doi_registry.check(doi_r, title, row.get("year_r"))
     if found["verdict"] == "unanswered":
         log.warning("[%s] DOI registry did not answer — DOI-keyed fetches unguarded", doi_r)

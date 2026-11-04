@@ -2620,16 +2620,15 @@ class TestSamePaperStudiesCollapse:
         assert row["study_o"] == "1, 2"
         assert row["study_r"] == "3"
 
-    def test_a_legacy_study_r_title_never_survives_into_the_column(self):
-        """The seeded columns used study_r for a TITLE. _base_row blanks it, so only a
-        producer that sets a real number can fill it."""
+    def test_a_record_with_no_title_reaches_the_row_blank(self):
+        """A pool record may have no title, and the row carries "" rather than None."""
         row = _merge_multi_row(
-            pd.Series({"doi_r": "10.9/r", "title_r": "R", "study_r": "A Paper Title",
+            pd.Series({"doi_r": "10.9/r", "title_r": None, "year_r": 2020,
                        "paper_type": "replication"}),
             self._orig(1, "10.1000/a", "1"),
             {"outcome": "successful"}, "single_original", "high", 1,
         )
-        assert row["study_r"] == ""
+        assert row["title_r"] == ""
 
 
 # ── The per-target adapter (WP1) ─────────────────────────────────────────────
