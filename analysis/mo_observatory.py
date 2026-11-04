@@ -240,6 +240,8 @@ def build_spec(dois: Iterable[str]) -> dict:
             "written to drop."),
         "match": {"doi_in": listed},
         "pile": "screen_expensive",
+        # Unmeasured as an admission: filter/spec/CONVENTIONS.md, "Admission gates".
+        "admission": "strict",
         "precedence": 745,
         "shadow": False,
         "measured": [],

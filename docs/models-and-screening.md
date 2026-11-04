@@ -39,6 +39,14 @@ human has validated it. For paper type, Luna's type stands unless Span-02 names 
 different type, which then wins (`both` maps to replication); categories come from
 Luna.
 
+A proceed then has to pass an **admission gate set by the rules that matched the
+work**. Rules whose measured base rate is high are `lenient` and admit every proceed.
+The others are `strict`: they also need at least two votes, every one qualifying and
+confident. A work is held strict only when every live screening rule it matched is
+strict. A strict
+miss is deferred, not discarded, and can be released later without new screening
+calls. See [the admission gates](../filter/spec/CONVENTIONS.md#admission-gates).
+
 Stage 1 searches the OpenAlex snapshot. Stage 2 rules route candidates or discard
 measured false positives; only the screening tier admits papers to Stage 3.
 **Stage 3 reads the stored screening verdict and does not run the classifier again.**

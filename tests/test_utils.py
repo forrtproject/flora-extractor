@@ -296,11 +296,49 @@ class TestCleanSearchQuery:
             "M. Moieni, Low-grade inflammation"
         assert clean_search_query("12 Angry Men") == "12 Angry Men"
 
+    def test_a_question_mark_ends_a_title_only_before_volume_and_issue(self):
+        assert clean_search_query(
+            "Is it worth it? Psychological Science 22(3), 295-299") == "Is it worth it"
+        assert clean_search_query("Is it worth it? Results from Study 2 (N = 300)") == \
+            "Is it worth it? Results from Study 2 (N = 300)"
+
+    def test_a_quoted_title_followed_by_its_journal_is_taken_out(self):
+        assert clean_search_query(
+            'Smith (2010). "A sufficiently long paper title" Journal of Example 4(2), 1-9'
+        ) == "A sufficiently long paper title"
+        assert clean_search_query(
+            'Kogut (2005). "A sufficiently long paper title" J. Behav. Decis. Making '
+            '18(3), 157-167') == "A sufficiently long paper title"
+        # A phrase quoted after a title's own colon is not a citation element.
+        assert clean_search_query(
+            'Ego Depletion: "The Identified Victim Effect" in 2016 (3 Studies)'
+        ).startswith("Ego Depletion")
+
     def test_a_quoted_title_is_taken_out_of_its_quotes(self):
         assert clean_search_query(
             '\u201cA New Approach to Estimating the Production Function for Housing.\u201d '
             'American Economic Review'
         ) == "A New Approach to Estimating the Production Function for Housing"
+
+    @pytest.mark.parametrize("query, cleaned", [
+        # A phrase the title quotes is part of the title, not the title. The title
+        # searches key on the CLEANED query, so the miss cached for "identified
+        # victim" is not replayed for the whole title.
+        ('The "identified victim" effect: an identified group, or just a single '
+         'individual?',
+         'The "identified victim" effect: an identified group, or just a single '
+         'individual?'),
+        ('Kogut, T., & Ritov, I. (2005). The \u201cidentified victim\u201d effect: an '
+         'identified group, or just a single individual? Journal of Behavioral Decision '
+         'Making, 18(3), 157-167.',
+         'Kogut, T., & Ritov, I. (2005). The \u201cidentified victim\u201d effect: an '
+         'identified group, or just a single individual'),
+        # A quoted span that IS a citation element is still taken out of its quotes.
+        ('J. Smith, "Another long quoted title here," IEEE Trans. 4(1), 5-9',
+         "Another long quoted title here"),
+    ])
+    def test_a_quoted_phrase_inside_a_title_is_kept_in_it(self, query, cleaned):
+        assert clean_search_query(query) == cleaned
 
     def test_an_article_id_and_a_url_are_dropped(self):
         assert clean_search_query(

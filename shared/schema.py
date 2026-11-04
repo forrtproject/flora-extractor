@@ -147,11 +147,13 @@ EXTRACT_ADDED_COLS = [
     "pdf_source",          # str   — acquisition tier that supplied the document
                            #         (row_url | related_doi | arxiv | osf | zenodo |
                            #          openalex_oa | datacite | unpaywall_pdf |
-                           #          crossref_link | semanticscholar | core | europepmc |
+                           #          wiley_tdm | crossref_link | semanticscholar |
+                           #          core | europepmc |
                            #          pmc_oa | related_version | crossref_search |
                            #          landing_* | scholar (serpapi on older rows) |
                            #          playwright | osf_files | openalex_xml | epmc_xml |
-                           #          osf_registration | html_landing); blank when none
+                           #          springer_oa_xml | osf_registration |
+                           #          html_landing); blank when none
     "pdf_url",             # str   — the URL the document was actually fetched from, as
                            #         `acquire_pdf` reported it. The one column that
                            #         makes a full-text row checkable by hand: a reader
@@ -164,7 +166,8 @@ EXTRACT_ADDED_COLS = [
                            #         tier, this names WHICH of its files was read —
                            #         an OSF project routinely holds several.
     "parse_method",        # str   — winning parser from best_parse_result()
-                           #         (openalex_xml | epmc_xml | pdfminer | grobid |
+                           #         (openalex_xml | epmc_xml | springer_oa_xml |
+                           #          pdfminer | grobid |
                            #          docpluck | opendataloader | markitdown | docx);
                            #          blank when nothing parsed. A structured source
                            #          names itself here, so parse_method and pdf_source

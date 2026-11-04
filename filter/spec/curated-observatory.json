@@ -2993,6 +2993,7 @@
     ]
   },
   "pile": "screen_expensive",
+  "admission": "strict",
   "precedence": 745,
   "shadow": false,
   "measured": []

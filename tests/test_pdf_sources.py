@@ -50,6 +50,7 @@ _ALL_TIERS = [
     "list_osf_files", "crossref_reviewed_doi", "crossref_title_matches",
     "crossref_title", "crossref_pdf_links", "crossref_parent_doi",
     "datacite_related_dois", "get_zenodo_pdf_urls", "pmc_oa_pdf_url",
+    "get_springer_oa_fulltext",
 ]
 
 # The tier lookups that answer with a list; everything else answers with a scalar or
@@ -229,6 +230,7 @@ class _Resp:
     def __init__(self, status: int, body: bytes = b"", url: str = ""):
         self.status_code = status
         self.url = url
+        self.is_redirect = False
         self._body = body
         self.content = body
         self.text = body.decode("utf-8", errors="replace")
@@ -1064,6 +1066,7 @@ def test_osf_files_falls_through_to_the_registration_form_when_no_file_qualifies
             p.stop()
 
     assert out["pdf_source"] == "osf_registration"
+    assert out["pdf_url"] == "https://api.osf.io/v2/registrations/abc12/"
     assert out["openalex_xml"] is registration
     reg.assert_called_once()
     dl.assert_not_called()      # the one candidate was ranked out, not downloaded
@@ -1209,7 +1212,7 @@ def test_a_row_with_no_doi_reaches_the_crossref_search():
     patchers = _mock_all_tiers(crossref_title_matches=["10.1/mirror"])
     started = {name: p.start() for name, p in patchers.items()}
     try:
-        def _download(url, doi="", min_bytes=0, title="", referer=""):
+        def _download(url, doi="", min_bytes=0, title="", referer="", auth_headers=None):
             if url.endswith(".pdf"):
                 return {"success": True, "path": "/tmp/p.pdf", "source": "download",
                         "reason": ""}
@@ -1250,7 +1253,7 @@ def test_the_landing_tier_sends_a_referer_and_tries_the_second_candidate():
     repository that serves its own page's links refuses a request from nowhere."""
     calls: list[dict] = []
 
-    def _download(url, doi="", min_bytes=0, title="", referer=""):
+    def _download(url, doi="", min_bytes=0, title="", referer="", auth_headers=None):
         calls.append({"url": url, "referer": referer})
         if url.endswith("blocked.pdf"):
             return dict(_NO_PDF)
@@ -1922,3 +1925,182 @@ def test_a_browser_that_will_not_launch_is_a_skip_not_a_crash(monkeypatch):
     out = ps.get_pdf_via_playwright("10.1234/nobrowser")
     assert out["reason"] == "playwright_unavailable"
     assert launches == [1]
+
+
+# ── Springer Nature Open Access API ───────────────────────────────────────────
+# The JATS arrives wrapped in the API's own envelope, DOCTYPE included (the shape
+# served for 10.1186/s13024-018-0267-3 on 2026-10-28).
+
+def _springer_envelope(article: str) -> bytes:
+    return ("""<?xml version="1.0"?>
+<!DOCTYPE response [
+	<!ENTITY % article SYSTEM "http://jats.nlm.nih.gov/archiving/1.2/JATS-archivearticle1.dtd">
+	]><response><apiMessage>This XML was provided by Springer Nature</apiMessage>
+<query>doi:10.1186/x</query><result><total>1</total></result><records>"""
+            + article + "</records></response>").encode()
+
+
+@pytest.fixture()
+def _springer(tmp_path, monkeypatch):
+    monkeypatch.setattr(ps, "OA_XML_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(ps, "SPRINGER_OA_API_KEY", "SECRETKEY")
+    monkeypatch.setattr(ps, "_springer_oa_refused", False)
+    return tmp_path
+
+
+def test_springer_oa_jats_is_a_document_and_cached_without_the_key(_springer):
+    with patch.object(ps.requests, "get",
+                      return_value=_Resp(200, _springer_envelope(_JATS))) as get:
+        doc = ps.get_springer_oa_fulltext("10.1186/s13024-018-0267-3")
+
+    assert get.call_args.kwargs["params"]["q"] == "doi:10.1186/s13024-018-0267-3"
+    assert doc["source"] == "springer_oa_xml"
+    assert "did not replicate" in doc["sections"]["raw_text"]
+    assert doc["sections"]["references"][0]["title"] == "Attitudes toward HIV"
+    assert "SECRETKEY" not in json.dumps(doc)
+    with patch.object(ps.requests, "get", side_effect=AssertionError) as get:
+        assert ps.get_springer_oa_fulltext("10.1186/s13024-018-0267-3") == doc
+        get.assert_not_called()
+
+
+def test_a_springer_front_matter_shell_is_no_document_and_is_not_cached(_springer):
+    with patch.object(ps.requests, "get",
+                      return_value=_Resp(200, _springer_envelope(_JATS_RECORD_ONLY))):
+        assert ps.get_springer_oa_fulltext("10.1186/shell") is None
+    assert list(_springer.glob("springer_oa_xml_*.json")) == []
+
+
+def test_springer_oa_is_never_asked_about_another_publishers_doi(_springer):
+    with patch.object(ps.requests, "get", side_effect=AssertionError) as get:
+        assert ps.get_springer_oa_fulltext("10.1016/j.example.2020.01.001") is None
+        get.assert_not_called()
+
+
+def test_a_springer_refusal_is_an_outage_that_ends_the_tier_for_the_run(_springer):
+    """401/403/429 say nothing about the article and will refuse every later DOI, so
+    they are never recorded and nothing more is asked; a 404 is the answer "not
+    open access"."""
+    with patch.object(ps.requests, "get", return_value=_Resp(404)):
+        assert ps.get_springer_oa_fulltext("10.1007/paywalled") is None
+    # A body that is not XML (a gateway page, a cut-off transfer) is no answer either.
+    for body in (b"<html><body>Bad gateway", b"<html><body>Bad gateway</body></html>"):
+        with patch.object(ps.requests, "get", return_value=_Resp(200, body)):
+            with pytest.raises(ps.DocumentSourceUnavailable):
+                ps.get_springer_oa_fulltext("10.1186/cut")
+    with patch.object(ps.requests, "get", return_value=_Resp(401)):
+        with pytest.raises(ps.DocumentSourceUnavailable):
+            ps.get_springer_oa_fulltext("10.1186/a")
+    with patch.object(ps.requests, "get", side_effect=AssertionError) as get:
+        with pytest.raises(ps.DocumentSourceUnavailable):
+            ps.get_springer_oa_fulltext("10.1186/b")
+        get.assert_not_called()
+
+
+def _acquire_springer(doi: str, springer_doc):
+    patchers = _mock_all_tiers(get_springer_oa_fulltext=springer_doc)
+    started = {name: p.start() for name, p in patchers.items()}
+    try:
+        with patch.object(ps, "download_pdf", return_value=_NO_PDF) as dl, \
+             patch.object(ps, "get_pdf_via_playwright", return_value=_NO_PLAYWRIGHT), \
+             patch.object(ps, "SPRINGER_OA_API_KEY", "k"):
+            out = ps.acquire_pdf(doi, _TITLE)
+    finally:
+        for p in patchers.values():
+            p.stop()
+    return out, started, dl
+
+
+def test_the_springer_oa_xml_ends_the_waterfall_above_the_downloads():
+    doc = {"source": "springer_oa_xml", "xml_url": "u",
+           "sections": {"abstract": "a", "intro": "", "methods": "",
+                        "references": [{"title": "r"}]}}
+    out, started, dl = _acquire_springer("10.1186/s13024-018-0267-3", doc)
+    assert out["pdf_source"] == "springer_oa_xml"
+    assert out["pdf_url"] == "u"                 # blank only when pdf_source is
+    assert out["openalex_xml"] == doc
+    dl.assert_not_called()
+    started["get_openalex_locations"].assert_not_called()
+
+
+def test_a_springer_miss_is_held_and_other_dois_are_not_asked():
+    doi = "10.1007/s11409-015-9151-5"
+    out, started, _ = _acquire_springer(doi, None)
+    assert out["pdf_ok"] is False
+    assert "springer_oa" in _retry_log(doi)
+
+    _, started, _ = _acquire_springer("10.1016/j.example.2020.01.011", None)
+    started["get_springer_oa_fulltext"].assert_not_called()
+
+
+# ── Wiley TDM ─────────────────────────────────────────────────────────────────
+
+def _acquire_wiley(doi: str, served: dict, token: str = "TOKEN"):
+    patchers = _mock_all_tiers()
+    started = {name: p.start() for name, p in patchers.items()}
+    try:
+        with patch.object(ps, "download_pdf", side_effect=lambda url, **kw:
+                          served if "api.wiley.com" in url else _NO_PDF) as dl, \
+             patch.object(ps, "get_pdf_via_playwright", return_value=_NO_PLAYWRIGHT), \
+             patch.object(ps, "throttle"), \
+             patch.object(ps, "WILEY_TDM_TOKEN", token):
+            out = ps.acquire_pdf(doi, _TITLE)
+    finally:
+        for p in patchers.values():
+            p.stop()
+    return out, dl
+
+
+def test_the_wiley_tdm_tier_sends_the_token_and_names_itself():
+    ok = {"success": True, "path": "/tmp/w.pdf", "source": "download", "reason": ""}
+    out, dl = _acquire_wiley("10.1002/acp.3769", ok)
+    assert out["pdf_source"] == "wiley_tdm"
+    assert out["pdf_url"] == ("https://api.wiley.com/onlinelibrary/tdm/v1/articles/"
+                              "10.1002%2Facp.3769")
+    call = next(c for c in dl.call_args_list if "api.wiley.com" in c.args[0])
+    assert call.kwargs["auth_headers"] == {"Wiley-TDM-Client-Token": "TOKEN"}
+
+
+def test_a_wiley_refusal_is_held_and_other_dois_are_not_asked():
+    doi = "10.1111/j.1467-9280.2009.02455.x"
+    out, _ = _acquire_wiley(doi, _NO_PDF)
+    assert out["pdf_ok"] is False
+    assert "wiley_tdm" in _retry_log(doi)
+
+    _, dl = _acquire_wiley("10.1016/j.example.2020.01.012", _NO_PDF)
+    assert not any("api.wiley.com" in c.args[0] for c in dl.call_args_list)
+
+
+def test_an_authenticated_download_is_asked_once_with_its_credential(tmp_path, monkeypatch):
+    monkeypatch.setattr(ps, "PDF_CACHE_DIR", tmp_path)
+    with patch.object(ps.requests, "get", return_value=_Resp(200, b"<html>no</html>")) as get:
+        out = ps.download_pdf("https://api.wiley.com/x", doi="10.1002/x",
+                              auth_headers={"Wiley-TDM-Client-Token": "T"})
+    assert out["reason"] == "not_a_pdf"
+    get.assert_called_once()
+    assert get.call_args.kwargs["headers"]["Wiley-TDM-Client-Token"] == "T"
+
+
+def test_without_a_token_or_on_an_outage_the_wiley_tier_records_nothing():
+    doi = "10.1002/acp.3769"
+    _, dl = _acquire_wiley(doi, _NO_PDF, token="")
+    assert not any("api.wiley.com" in c.args[0] for c in dl.call_args_list)
+
+    outage = {"success": False, "path": None, "source": "",
+              "reason": "download_error: HTTP 503"}
+    _acquire_wiley(doi, outage)
+    assert "wiley_tdm" not in _retry_log(doi)
+
+
+def test_an_api_redirect_is_followed_without_the_credential(tmp_path, monkeypatch):
+    monkeypatch.setattr(ps, "PDF_CACHE_DIR", tmp_path)
+    hop = _Resp(302)
+    hop.is_redirect, hop.headers = True, {"Location": "https://alm.wiley.com/d/1"}
+    pdf = _Resp(200, b"%PDF-1.7 " + b"x" * 20_000)
+    with patch.object(ps.requests, "get", side_effect=[hop, pdf]) as get:
+        out = ps.download_pdf("https://api.wiley.com/x", doi="10.1002/x",
+                              auth_headers={"Wiley-TDM-Client-Token": "T"})
+    assert out["success"] is True
+    first, second = get.call_args_list
+    assert first.kwargs["headers"]["Wiley-TDM-Client-Token"] == "T"
+    assert second.args[0] == "https://alm.wiley.com/d/1"
+    assert "Wiley-TDM-Client-Token" not in second.kwargs["headers"]

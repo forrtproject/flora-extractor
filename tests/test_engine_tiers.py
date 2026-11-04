@@ -945,6 +945,54 @@ def test_the_handoff_is_a_file_stage_three_accepts(con, pool, tmp_path):
     assert all(row["abstract_r"] for row in rows)
 
 
+def test_a_strict_admission_gate_defers_a_proceed_unless_a_lenient_rule_matched(
+        con, pool, tmp_path):
+    """Work 11 matches two screen rules and its second vote is unconfident: the gate
+    PROCEEDS it, the strict gate does not. With both rules strict it is held back and
+    counted; with either one lenient it travels — the most lenient rule wins."""
+    from dataclasses import replace
+
+    voter1, voter2 = _voter_models()
+    live = _decided_client("screen_expensive", "live", [
+        {"work_id": 11, "verdict": "replication", "model": voter1,
+         "confidence": "confident", "quote": "q"},
+        {"work_id": 11, "verdict": "replication", "model": voter2,
+         "confidence": "unconfident", "quote": "q"},
+    ])
+    drop, screen = handoff_mod.decisions(live)
+    spec_dir = engine_bundle.write_bundle(tmp_path / "bundle")
+
+    def handoff(lenient: set[str]) -> dict:
+        specs = [replace(s, admission="lenient" if s.id in lenient else "strict")
+                 if s.admission else s for s in engine_bundle.specs()]
+        return handoff_mod.write_handoff(con, pool, tmp_path / "f.csv", RELEASE,
+                                         drop=drop, screen=screen, decided=set(screen),
+                                         specs=specs, spec_dir=spec_dir,
+                                         created_at="2026-10-28")
+
+    held = handoff(set())
+    assert (held["rows"], held["deferred_by_admission_gate"]) == (0, 1)
+    released = handoff({"syn-replication"})
+    assert (released["rows"], released["deferred_by_admission_gate"]) == (1, 0)
+
+
+def test_a_work_a_person_has_judged_is_never_deferred(tmp_path):
+    """The validation judgment outranks two screen votes, and deferring the work
+    would retire the record the judgment sits on."""
+    unsure = [{"classification": "replication", "confident": True},
+              {"classification": "replication", "confident": False}]
+    screen = {7: {"outcome": "proceed", "votes": unsure},
+              8: {"outcome": "proceed", "votes": unsure}}
+    judged = tmp_path / "human_judged.csv"
+    judged.write_text("work_id,record_id,validation_status\n7,r-7,validated\n",
+                      encoding="utf-8-sig")
+    exempt = handoff_mod.human_judged_work_ids(judged)
+    assert exempt == {7}
+    gates = {7: "strict", 8: "strict"}
+    assert handoff_mod.deferred_works(screen, gates, exempt) == {8}
+    assert handoff_mod.human_judged_work_ids(tmp_path / "absent.csv") == set()
+
+
 def test_the_screen_verdict_travels_to_stage_three_intact(con, pool, tmp_path,
                                                           monkeypatch):
     """The move: the screen runs here, so what it decided has to reach Stage 3 on

@@ -49,7 +49,8 @@ release put in an admitted pile, because a verdict outlives the routing that bou
 — a work today's rule book discards would otherwise keep reaching the validation
 import forever. It also drops the works the current screen discards
 (`decisions()` in `filter/engine/handoff.py`): the worklist never offers such a work,
-so a verdict bought under an earlier screen's admission would never be replaced. Omitted, the release is the store's when it holds exactly one, and a
+so a verdict bought under an earlier screen's admission would never be replaced. The
+same holds for a proceed its rules' strict admission gate DEFERS (below). Omitted, the release is the store's when it holds exactly one, and a
 store holding several refuses; `--all-releases` renders every stored verdict whatever
 routing says. Resume is the verdict row, not the file: the
 worklist subtracts every work whose latest current-generation result SETTLES it.
@@ -134,7 +135,7 @@ never been independently validated. Discuss shared changes with all stage teams.
 
 | Stage | Files |
 | ----- | ----- |
-| `search/` | `run_search.py` (the Stage 1 entry point: `--scan` runs the ledger-backed snapshot scan (sample scans use a scratch `FLORA_CACHE_DIR`); a bare invocation never starts a 725 GB scan), `snapshot_scan.py` (the bulk-parquet scan: **the search gate** → the survivor pool; also `pool_fingerprint()`, the pool's identity in a Stage 2 release id, and the `_pool_provenance.json` sidecar it reads — the gate the pool's rows were ADMITTED under and the file count that completes it, written by the scan and by `--pull`, stamped onto an older pool with `--stamp-pool`), `pool_sync.py` (share the pool AND the frozen text overlay through a private HF dataset repo: `--push` / `--pull`, plus `--overlay-only` / `--no-overlay`; the overlay travels with the pool because `overlay_hash` is a routing-release input, not a cache), `fetch_abstracts.py` (the six abstract-source phase runners — a library now, whose one consumer is `filter/engine/backfill.py`). Stage 1 searches and does not filter: the non-snapshot discovery sources were retired to `wip/api-harvest-sources` (PR #158) because nothing downstream read `data/candidates.csv` |
+| `search/` | `run_search.py` (the Stage 1 entry point: `--scan` runs the ledger-backed snapshot scan (sample scans use a scratch `FLORA_CACHE_DIR`); a bare invocation never starts a 725 GB scan), `snapshot_scan.py` (the bulk-parquet scan: **the search gate** → the survivor pool; also `pool_fingerprint()`, the pool's identity in a Stage 2 release id, and the `_pool_provenance.json` sidecar it reads — the gate the pool's rows were ADMITTED under and the file count that completes it, written by the scan and by `--pull`, stamped onto an older pool with `--stamp-pool`), `pool_sync.py` (share the pool AND the frozen text overlay through a private HF dataset repo: `--push` / `--pull`, plus `--overlay-only` / `--no-overlay`; the overlay travels with the pool because `overlay_hash` is a routing-release input, not a cache), `fetch_abstracts.py` (the seven abstract-source phase runners — a library now, whose one consumer is `filter/engine/backfill.py`). Stage 1 searches and does not filter: the non-snapshot discovery sources were retired to `wip/api-harvest-sources` (PR #158) because nothing downstream read `data/candidates.csv` |
 | `filter/` | `phrase_detection.py` — the token/stem vocabulary the **search gate** is built from. It is Stage 1's only keyword logic; Stage 2 does not call it. The old `rule_filter.py`/`run_filter.py` path is retired (#146) |
 | `filter/engine/` | The issue #146 filter engine, which IS Stage 2: declarative JSON specs in `filter/spec/` routed by precedence into piles (`discard` / `screen_expensive` / `screen_cheap` / `needs_human` / `pending`) over the survivor pool; claimed, budget-gated LLM tiers; Stage 3 reads the screen verdicts from the store, and `export-csv` writes a release's screened rows as an ad-hoc record CSV. Rules route and discard; only LLMs admit. Design: [`docs/filter-engine.md`](docs/filter-engine.md); policy (precedence, pile→status mapping, measurement levels): `filter/spec/CONVENTIONS.md`. CLI: `python -m filter.engine specs\|route\|diagnose\|worklist\|screen\|export\|reconcile\|export-csv\|release-claim\|status` |
 | `db/migrations/` | The engine's Postgres state authority (claims, permanent verdicts, audit, validation lineage) — SQL the maintainer runs in Supabase |
@@ -166,7 +167,7 @@ Never change a column name without updating `schema.py` and notifying all teams.
   is a contradiction.
 
   **A document need not be a PDF, but every source has a content check that
-  a record page fails.** Four sources hand back a sections dict instead of a file
+  a record page fails.** Five sources hand back a sections dict instead of a file
   (`_STRUCTURED_SOURCES` in `shared/pdf_sources.py`), and each is paired with the
   test that says whether what came back is a document:
 
@@ -174,6 +175,7 @@ Never change a column name without updating `schema.py` and notifying all teams.
   | ------------ | ---------- | ---------------------- |
   | `openalex_xml` | OpenAlex GROBID XML | `openalex_xml_has_content()` — any section text or any reference |
   | `epmc_xml` | Europe PMC JATS full text (`parse_jats_sections()` in `shared/grobid.py`) | `epmc_xml_has_content()` — any section text or any reference |
+  | `springer_oa_xml` | Springer Nature Open Access API JATS full text, asked only for Springer Nature DOIs (`SPRINGER_NATURE_PREFIXES` in `shared/utils.py`; needs `SPRINGER_OA_API_KEY`) | `springer_oa_xml_has_content()` — the `epmc_xml` test, same markup |
   | `osf_registration` | The OSF registration form, from the API | `osf_registration_has_content()` — ≥ 1,000 chars of description + form fields |
   | `html_landing` | The row's own page, parsed with lxml | `html_document_has_content()` — ≥ 10,000 chars BEYOND the abstract, or a ≥ 2,000-char reference block |
 
@@ -328,6 +330,18 @@ vote does not qualify; with a confident Luna that let 15 of 344 hard negatives a
 `screen_evidence` segment is empty; its probabilities are in `screen_reasoning`.
 `_screen_from_row()` in `run_extract.py` rebuilds the `classify_replication()` dict
 from them, so everything below the front door is unchanged.
+
+**A proceed is admitted by the RULE's gate.** Every screen-pile spec names
+`admission: lenient | strict`. `lenient` admits on the proceed; `strict` also needs
+`screen_strict()` — every vote qualifying AND confident. A work is held strict only
+when every live screen-pile rule it matched is strict (the most lenient wins). A strict
+miss is DEFERRED, not discarded: not offered to the extract tier, not rendered, and
+released with no new call when the gate is relaxed. A work a person has judged in
+validation (`data/human_judged.csv`, `analysis/build_human_judged.py`) is never
+deferred. The gate is left out of the
+release id and the screening generation; it is applied to the stored votes by
+`admission_gates()` / `deferred_works()` in `filter/engine/handoff.py`. Policy and the
+per-rule assignments: `filter/spec/CONVENTIONS.md`, "Admission gates".
 
 **Resolution ladder** (`run_for_doi()`, cheapest first, returns at first resolution):
 title-pattern match → rule-based citation/candidate match → abstract LLM over

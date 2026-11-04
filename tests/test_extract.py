@@ -1281,18 +1281,45 @@ class TestGuardOriginalLink:
              "pair_id": "p", "doi_o_verification": "verified", "ref_o": "x"}
         r.update(kw); return r
 
-    def test_self_link_by_doi_rejected(self):
-        out = run_extract._guard_original_link(self._row(doi_o="10.1/repl"))
-        assert out["link_method"] == "target_pending"
-        assert out["doi_o"] == ""
-
-    @pytest.mark.parametrize("title_o", [
-        "A Study of Things",
-        "  a study of THINGS.  ",   # case and punctuation must not hide a self-link
+    @pytest.mark.parametrize("fields, kept", [
+        # A distinct original that shares the replication's title (Asch 1946 and its
+        # 2014 replication): its own DOI tells them apart.
+        ({"doi_o": "10.2/orig", "title_o": "A Study of Things", "year_o": "1946",
+          "year_r": "2014"}, True),
+        # A DOI with no work id that is not shown to predate it may be another
+        # identifier of the replication's own work.
+        ({"doi_o": "10.2/alias", "title_o": "A Study of Things", "year_o": "2014",
+          "year_r": "2014"}, False),
+        ({"doi_o": "10.2/alias", "title_o": "A Study of Things"}, False),
+        ({"doi_o": "10.2/alias", "title_o": "A Study of Things", "year_o": "2018.9",
+          "year_r": "2019"}, False),
+        # An earlier preprint of the replication is still the replication.
+        ({"doi_o": "10.31234/osf.io/abcde", "title_o": "A Study of Things",
+          "year_o": "2012", "year_r": "2014"}, False),
+        # ... or its own work id, even when searching its title finds the replication.
+        ({"doi_o": "", "title_o": "A Study of Things", "oa_work_id_o": "W2"}, True),
+        # Identity decides whatever the title says.
+        ({"doi_o": "10.1/repl"}, False),
+        ({"doi_o": "10.2/alias", "oa_work_id_o": "W1"}, False),
+        # Same title and nothing else to tell them apart: presumed the paper's own.
+        ({"doi_o": "", "title_o": "A Study of Things"}, False),
+        ({"doi_o": "", "title_o": "  a study of THINGS.  "}, False),
     ])
-    def test_self_link_by_title_rejected(self, title_o):
-        out = run_extract._guard_original_link(self._row(doi_o="", title_o=title_o))
-        assert out["link_method"] == "target_pending"
+    def test_self_link_is_decided_by_identity_before_title(self, fields, kept):
+        replication = {"doi": "10.1/repl", "openalex_id": "https://openalex.org/W1",
+                       "title": "A Study of Things"}
+        with patch("extract.run_extract._search_crossref_by_title",
+                   return_value=replication), \
+             patch("extract.run_extract._search_openalex_by_title", return_value=None):
+            out = run_extract._guard_original_link(
+                self._row(oa_work_id_r="W1", **fields))
+        if kept:
+            assert out["link_method"] == "llm_fulltext"
+            assert (out["doi_o"], out.get("oa_work_id_o", "")) == (
+                fields["doi_o"], fields.get("oa_work_id_o", ""))
+        else:
+            assert out["link_method"] == "target_pending"
+            assert out["doi_o"] == ""
 
     def test_demotion_clears_a_merged_outcome(self):
         """The multi-original path merges the outcome before the guard runs, so a
@@ -2352,6 +2379,29 @@ class TestEuropePmcXmlIsFoundFromTheRow:
         assert "We replicated Smith" in cached["openalex_xml"]["raw_text"]
         # ...and it says which source supplied it, so parse_method matches pdf_source.
         assert cached["openalex_xml"]["source"] == "epmc_xml"
+
+
+class TestSpringerOaXmlIsFoundFromTheRow:
+    """A Springer Nature JATS document is filed under the row's DOI; a re-parse that
+    could not find it would code the row from its abstract."""
+
+    _link = TestParseCacheOnlyAfterTheDocument._link
+
+    def test_the_springer_document_is_read_and_a_shell_is_not(self, tmp_path,
+                                                              monkeypatch):
+        monkeypatch.setattr(run_extract, "PDF_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(run_extract, "OA_XML_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(run_extract, "OA_CACHE_DIR", tmp_path)
+        from shared.utils import cache_key
+        for doi, raw in (("10.1186/body", "We replicated it."), ("10.1186/shell", "")):
+            (tmp_path / f"springer_oa_xml_{cache_key(doi)}.json").write_text(
+                json.dumps({"source": "springer_oa_xml", "xml_url": "u",
+                            "sections": {"abstract": "a", "raw_text": raw}}),
+                encoding="utf-8")
+        doc = run_extract._cached_structured_document("10.1186/body")
+        assert doc["source"] == "springer_oa_xml"
+        assert run_extract._has_document("10.1186/body", self._link())
+        assert not run_extract._has_document("10.1186/shell", self._link())
 
 
 class TestParseCacheIdentity:

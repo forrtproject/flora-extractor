@@ -36,7 +36,7 @@ Progress is a separate, read-only command (below), safe against a scan in flight
 
 ### Backfilling missing abstracts
 
-`search/fetch_abstracts.py` is a library, not a command: it owns the six sources
+`search/fetch_abstracts.py` is a library, not a command: it owns the seven sources
 and their transient-vs-definitive contract, and its one caller is
 `.venv/bin/python -m filter.engine.backfill` (Stage 2), which supplies the worklist and
 writes the recovered text into an overlay chunk. Run the backfill, not this
@@ -61,7 +61,8 @@ reordering one never invalidates another's progress:
 | targeted | 3 | OSF registrations (`10.17605` only) | `OSF_TOKEN` for private records | recovers a registration template, not an abstract |
 | targeted | 4 | Semantic Scholar batch | `S2_API_KEY` | 8.5% here, 14.5% corpus-wide |
 | targeted | 5 | CrossRef by DOI | — | 0.3–0.6% |
-| targeted | 6 | Scopus by DOI | `ELSEVIER_API_KEY` | quota-capped fallback (~10k/week) |
+| targeted | 6 | Springer Nature Meta API (Springer Nature DOIs only: `10.1007`, `10.1038`, `10.1057`, `10.1186`, `10.3758`), 20 DOIs per query | `SPRINGER_META_API_KEY` (free) | 31/31 on benchmark Springer papers the other sources left empty; basic plan 500 requests/day; a 429 (quota spent) or 401/403 (key refused) ends the phase |
+| targeted | 7 | Scopus by DOI | `ELSEVIER_API_KEY` | quota-capped fallback (~10k/week) |
 
 Bulk goes first and over everything, because a batched keyless request answers
 about `EPMC_BATCH_SIZE` DOIs at once; targeted sees only what bulk left without
@@ -226,7 +227,7 @@ retired with it; the pool is the artifact to share.
 The pool is what nobody should have to re-scan; the caches are what nobody should
 have to re-buy. `cache/llm` is the provider bill, and because the models are not
 deterministic, re-running it does not reproduce our grading — it produces the
-collaborator's own. The abstract store is six rate-limited sources over ~500k
+collaborator's own. The abstract store is seven rate-limited sources over ~500k
 identifiers. Both go to the same private dataset repo as the pool, under a
 `cache/` prefix; `pool_sync` lists only parquet outside its own `overlay/` prefix,
 so the three sets of files never collide.
@@ -269,7 +270,7 @@ definitively has no abstract for this DOI", and not re-buying a known miss is mo
 of the value. But a miss from a machine that lacked an entitlement is not that
 fact, so the manifest records how many abstracts each source **actually
 recovered**, and a pull drops a miss when the pushing machine got zero hits from a
-gated source (`scopus`, `s2`, `osf`) that this machine is configured for. Because
+gated source (`scopus`, `s2`, `springer`, `osf`) that this machine is configured for. Because
 the row IS the checkpoint, not importing it is all it takes for this machine to
 fetch the DOI itself. Hits always import.
 
@@ -457,7 +458,8 @@ Each has `--help`; the one-liners are their own `description=`:
 
 # Two pathways. Bulk is batched, keyless and unquota'd (Europe PMC; OpenAlex is
 # opt-in via --include-openalex), so it is affordable over a wide worklist;
-# targeted is the gated sources (OSF, Semantic Scholar, CrossRef, then Scopus)
+# targeted is the gated sources (OSF, Semantic Scholar, CrossRef, Springer Nature,
+# then Scopus)
 # over the rows bulk left without text.
 .venv/bin/python -m filter.engine.backfill --worklist wide.parquet --run --phase bulk
 .venv/bin/python -m filter.engine.backfill --worklist no_text.parquet --run --phase targeted

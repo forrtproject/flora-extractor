@@ -41,6 +41,7 @@
     ]
   },
   "pile": "screen_cheap",
+  "admission": "strict",
   "vocabulary": "replication",
   "precedence": 300,
   "shadow": true,

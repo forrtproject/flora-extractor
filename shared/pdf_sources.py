@@ -11,7 +11,11 @@ Acquisition order (the tier numbers acquire_pdf's comments use):
   1.  arXiv                              (DOI pattern, no API)
   2.  OSF preprint direct download       (DOI pattern, no API)
   2b. Zenodo record files, via its API   (10.5281/zenodo.* only)
+  2c. Springer Nature Open Access API JATS full text (Springer Nature DOIs only;
+      needs SPRINGER_OA_API_KEY, skipped without)
   3.  OpenAlex locations[] — every copy it knows of, files then landing pages
+  3a. Wiley's text-and-data-mining API  (Wiley DOIs only; needs WILEY_TDM_TOKEN,
+      skipped without)
   3b. DataCite — the registrant's own metadata, for the DOIs Unpaywall never indexed
   4.  Unpaywall — all direct PDF URLs
   4b. The full-text links the publisher deposited in the Crossref record
@@ -30,11 +34,13 @@ Acquisition order (the tier numbers acquire_pdf's comments use):
   10. Playwright headless Chromium       (skipped when no browser build is installed)
   11. The row's own page, as HTML
 
-Four sources hand back a sections dict instead of a file, and each carries the
+Five sources hand back a sections dict instead of a file, and each carries the
 content check that says whether what came back is a document rather than a record of
 one (_STRUCTURED_SOURCES): Tier 0 OpenAlex GROBID XML and Tier 0b the OSF
 registration form, both above the download tiers because a hit there IS the document;
-Tier 7's Europe PMC JATS full text, which is tried before that tier's rendered PDF;
+Tier 2c's Springer Nature JATS, above the first tier that would download a Springer
+Nature PDF; Tier 7's Europe PMC JATS full text, which is tried before that tier's
+rendered PDF;
 and Tier 11, the row's own page as HTML, at the very bottom because it is the weakest
 evidence and the one result that has to be argued for rather than downloaded. A tier that comes
 back empty is timestamped and not re-probed for PDF_RETRY_AFTER_DAYS; so is a single
@@ -68,13 +74,14 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
-from urllib.parse import unquote, urljoin, urlsplit
+from urllib.parse import quote, unquote, urljoin, urlsplit
 
 import requests
 
 from .config import (
     CORE_API_KEY, CROSSREF_RATE_SEC, OA_CACHE_DIR, OA_XML_CACHE_DIR, OPENALEX_API_KEYS,
-    OSF_TOKEN, PDF_CACHE_DIR, RESEARCHER_EMAIL, SERPAPI_KEYS, SERPER_API_KEYS, log,
+    OSF_TOKEN, PDF_CACHE_DIR, RESEARCHER_EMAIL, SERPAPI_KEYS, SERPER_API_KEYS,
+    SPRINGER_OA_API_KEY, WILEY_TDM_TOKEN, log,
 )
 
 from .openalex_keys import (current_index, headers as oa_headers,
@@ -82,7 +89,7 @@ from .openalex_keys import (current_index, headers as oa_headers,
 from .cache import cache_exists, read_json, write_json
 from .disambiguation import token_coverage
 from .rate_limit import throttle
-from .utils import clean_doi, cache_key
+from .utils import clean_doi, cache_key, is_springer_nature_doi, is_wiley_doi
 
 # Seconds between calls to each source the waterfall asks. These APIs are free and
 # keyless and ask only for a mailto; the intervals are politeness, not quotas, and
@@ -100,6 +107,8 @@ _DATACITE_RATE_SEC        = 0.5
 _ZENODO_RATE_SEC          = 0.5
 _PMC_OA_RATE_SEC          = 0.2
 _HTML_RATE_SEC           = 0.5
+_SPRINGER_OA_RATE_SEC     = 1.0     # basic plan: 100 requests/min, 500 a day
+_WILEY_TDM_RATE_SEC       = 10.0    # documented: 60 requests per 10 minutes
 
 # The key is optional: without it you get the polite pool (mailto= parameter);
 # with it you get higher rate limits and access to content.openalex.org bulk
@@ -194,7 +203,8 @@ _MIN_TITLE_EVIDENCE_CHARS = 200
 # Sources that hand back a sections dict instead of a file. They are documents in
 # every sense the pipeline cares about, so the retry log is cleared for them exactly
 # as it is for a downloaded PDF.
-_STRUCTURED_SOURCES = {"openalex_xml", "epmc_xml", "osf_registration", "html_landing"}
+_STRUCTURED_SOURCES = {"openalex_xml", "epmc_xml", "springer_oa_xml",
+                       "osf_registration", "html_landing"}
 
 
 class DocumentSourceUnavailable(Exception):
@@ -723,6 +733,130 @@ def get_europepmc_fulltext(pmc_id: str) -> "dict | None":
     return document
 
 
+# ── Springer Nature Open Access API ───────────────────────────────────────────
+
+_SPRINGER_OA_JATS = "https://api.springernature.com/openaccess/jats"
+
+# Set once the API has refused this process's key (401/403) or its daily quota
+# (429): every later call would be refused the same way, and none of them may be
+# recorded as the DOI's answer. A new process asks again, which is when a key added
+# or a quota renewed takes effect.
+_springer_oa_refused = False
+
+
+def springer_oa_xml_has_content(document: "dict | None") -> bool:
+    """True when a parsed Springer Nature JATS result carries the paper.
+
+    The same test as `epmc_xml_has_content`, for the same reason: it is the same
+    markup, and JATS front matter carries the abstract, so an abstract alone is a
+    record of the paper rather than the paper.
+    """
+    return epmc_xml_has_content(document)
+
+
+def _springer_oa_cache_file(doi: str) -> Path:
+    return OA_XML_CACHE_DIR / f"springer_oa_xml_{cache_key(doi)}.json"
+
+
+def get_springer_oa_fulltext(doi: str) -> "dict | None":
+    """*doi*'s JATS full text from the Springer Nature Open Access API, or None.
+
+    The API covers Springer Nature's open-access articles (BMC, SpringerOpen, the OA
+    Nature and Springer journals) and answers 404 "No data was found" for anything
+    else — an answer about the DOI, so the caller records the tier as empty. A DOI
+    off Springer Nature's registrants is not asked at all, and None is returned
+    without a call.
+
+    No answer raises DocumentSourceUnavailable and is never recorded: a 5xx or a dead
+    connection, and a refusal — 401/403 (the key) or 429 (the basic plan's 500
+    requests a day) — after which the tier is off for the rest of the process.
+
+    Returns {"source": "springer_oa_xml", "sections": {...}, "xml_url": str}. A
+    result that fails `springer_oa_xml_has_content()` is None and is never cached.
+    """
+    global _springer_oa_refused
+    doi = clean_doi(doi)
+    if not doi or not is_springer_nature_doi(doi):
+        return None
+
+    cache_file = _springer_oa_cache_file(doi)
+    if cache_file.exists():
+        try:
+            cached = json.loads(cache_file.read_text(encoding="utf-8"))
+        except Exception:
+            cached = None
+        if cached is not None:
+            if springer_oa_xml_has_content(cached):
+                return cached
+            log.warning("Springer OA XML cache for %s is content-free — "
+                        "ignoring it and re-fetching", doi)
+
+    if not SPRINGER_OA_API_KEY:
+        raise DocumentSourceUnavailable("SPRINGER_OA_API_KEY not set")
+    if _springer_oa_refused:
+        raise DocumentSourceUnavailable("Springer OA API refused this run earlier")
+
+    throttle("springer_oa", _SPRINGER_OA_RATE_SEC)
+    try:
+        r = requests.get(_SPRINGER_OA_JATS, timeout=60,
+                         params={"q": f"doi:{doi}", "api_key": SPRINGER_OA_API_KEY},
+                         headers={"User-Agent": f"flora-extractor ({RESEARCHER_EMAIL})"})
+    except Exception as e:
+        # The key rides in the query string, which a connection error quotes.
+        raise DocumentSourceUnavailable(
+            f"Springer OA fetch failed for {doi}: "
+            f"{str(e).replace(SPRINGER_OA_API_KEY, '<redacted>')}") from None
+    if r.status_code in (401, 403, 429):
+        _springer_oa_refused = True
+        log.warning("Springer OA API refused the request (HTTP %d) — the tier is off "
+                    "for the rest of this run; check SPRINGER_OA_API_KEY or the daily "
+                    "quota.", r.status_code)
+        raise DocumentSourceUnavailable(f"Springer OA {doi} → HTTP {r.status_code}")
+    if r.status_code >= 500:
+        raise DocumentSourceUnavailable(f"Springer OA {doi} → HTTP {r.status_code}")
+    if r.status_code != 200:
+        log.debug("Springer OA %s → HTTP %s", doi, r.status_code)
+        return None
+
+    # A body that is not XML — a gateway's HTML error page, a cut-off transfer — is
+    # no answer about the DOI. parse_jats_sections swallows a parse error into empty
+    # sections, which would read as a content-free document and be recorded as the
+    # tier's miss, so the envelope is checked first.
+    # The API's own envelope is <response>; a well-formed page that is not one (an
+    # XHTML error page) would otherwise be read as article text.
+    text = r.content.decode("utf-8", errors="replace")
+    try:
+        from lxml import etree
+        root_tag = etree.QName(etree.fromstring(text.encode("utf-8"))).localname
+    except Exception as e:
+        raise DocumentSourceUnavailable(
+            f"Springer OA {doi} → unreadable XML ({type(e).__name__})") from None
+    if root_tag != "response":
+        raise DocumentSourceUnavailable(
+            f"Springer OA {doi} → unexpected <{root_tag}> envelope")
+    from .grobid import parse_jats_sections
+    sections = parse_jats_sections(text)
+
+    # The URL without the key, so the stored document and pdf_url never carry it.
+    document = {"source": "springer_oa_xml", "sections": sections,
+                "xml_url": f"{_SPRINGER_OA_JATS}?q=doi:{doi}"}
+    if not springer_oa_xml_has_content(document):
+        log.info("Springer OA served XML for %s with no body and no references — "
+                 "treating it as no document", doi)
+        return None
+
+    try:
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        cache_file.write_text(json.dumps(document, ensure_ascii=False),
+                              encoding="utf-8")
+    except Exception as e:
+        log.debug("Springer OA XML cache write failed: %s", e)
+
+    log.info("Springer OA XML acquired for %s (%d refs)", doi,
+             len(sections.get("references", [])))
+    return document
+
+
 # ── OSF preprint ──────────────────────────────────────────────────────────────
 
 # Every OSF preprint server files its downloads under the same osf.io/download/<guid>/,
@@ -778,6 +912,7 @@ def get_osf_pdf_url(doi: str) -> Optional[str]:
 # those two specs — not this tier's.
 
 _OSF_REGISTRATION_API = "https://api.osf.io/v2/registrations/{guid}/"
+_WILEY_TDM_URL = "https://api.wiley.com/onlinelibrary/tdm/v1/articles/{doi}"
 
 # Below this, the form carries a title, an author line and little else — no design,
 # no hypotheses, nothing to read. Measured 2026-08-07 over four campaign
@@ -2764,7 +2899,8 @@ def _title_check(content: bytes, suffix: str, title: str) -> tuple[str, float]:
 
 
 def download_pdf(url: str, doi: str = "", min_bytes: int = _MIN_PDF_BYTES,
-                 title: str = "", referer: str = "") -> dict:
+                 title: str = "", referer: str = "",
+                 auth_headers: "dict | None" = None) -> dict:
     """
     Download a document and save it to PDF_CACHE_DIR.
 
@@ -2772,6 +2908,10 @@ def download_pdf(url: str, doi: str = "", min_bytes: int = _MIN_PDF_BYTES,
     servers routinely serve a file to a request that came from their own page and a
     challenge to one that arrived from nowhere, so the scraper passes the landing URL
     and the header overrides the default in either identity.
+
+    *auth_headers* is an API's credential. A request carrying one is asked once, as
+    FLoRA: the browser identity exists for servers that judge the caller, and an API
+    judges the token.
 
     Cache key = MD5 of doi (or url if doi missing), so repeat calls skip download.
     A PDF and a Word file are both documents; anything else is refused, and a Word
@@ -2802,12 +2942,25 @@ def download_pdf(url: str, doi: str = "", min_bytes: int = _MIN_PDF_BYTES,
                   PDF_RETRY_AFTER_DAYS, url)
         return {"success": False, "path": None, "source": "", "reason": "url_gone"}
 
-    identities = (_BROWSER_HEADERS, _polite_headers())
+    identities = ((_BROWSER_HEADERS, _polite_headers()) if not auth_headers
+                  else ({**_polite_headers(), **auth_headers},))
     for attempt, headers in enumerate(identities):
         if referer:
             headers = {**headers, "Referer": referer}
         try:
-            r = requests.get(url, headers=headers, timeout=60, stream=True)
+            r = requests.get(url, headers=headers, timeout=60, stream=True,
+                             allow_redirects=not auth_headers)
+            if auth_headers and r.status_code in (401, 403):
+                # An API's refusal is an answer about entitlement, not an outage.
+                return {"success": False, "path": None, "source": "",
+                        "reason": f"http_{r.status_code}"}
+            if auth_headers and r.is_redirect:
+                # requests forwards a custom header across hosts, and the Wiley API
+                # redirects to a separate download host; the credential is for the
+                # API alone, so the redirect is followed without it.
+                bare = {k: v for k, v in headers.items() if k not in auth_headers}
+                r = requests.get(urljoin(url, r.headers["Location"]), headers=bare,
+                                 timeout=60, stream=True)
             if r.status_code in _PERMANENT_HTTP_STATUS:
                 _write_retry_log(_url_failure_path(url),
                                  {f"http_{r.status_code}": _now_iso()})
@@ -2824,7 +2977,7 @@ def download_pdf(url: str, doi: str = "", min_bytes: int = _MIN_PDF_BYTES,
             # The server answered, and what it sent is not a document. That can be the
             # URL's answer — or it can be an answer to WHO ASKED, which is why the
             # second identity exists. Only the last one's reason is reported.
-            if attempt == 0:
+            if attempt < len(identities) - 1:
                 log.debug("  %s to the browser identity: %s — asking again as "
                           "FLoRA", reason, url)
                 continue
@@ -2920,12 +3073,13 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
         return bool(tried) and all(r.startswith("download_error") for r in tried)
 
     def _try(url: str, label: str, referer: str = "", want_title: str = "",
-             name: str = "") -> bool:
+             name: str = "", auth_headers: "dict | None" = None) -> bool:
         nonlocal dl, pdf_url, pdf_src, pdf_name
         all_tried.append(url)
         # A tier fetching ANOTHER paper's document checks the bytes against that
         # paper's title, not the row's; everything else asks for the row's own.
-        dl = download_pdf(url, doi=doi_r, title=want_title or title, referer=referer)
+        dl = download_pdf(url, doi=doi_r, title=want_title or title, referer=referer,
+                          auth_headers=auth_headers)
         if dl["success"]:
             pdf_url, pdf_src = url, label
             pdf_name = name or _url_file_name(url)
@@ -2971,7 +3125,10 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
             elif failures:
                 _write_retry_log(retry_path, {**retries, **failures})
         return {
-            "pdf_url"       : pdf_url,
+            # A structured source has no file, but it was fetched from somewhere, and
+            # pdf_url is blank only when pdf_source is.
+            "pdf_url"       : pdf_url or (str((oa_xml or {}).get("xml_url") or "")
+                                          if pdf_src in _STRUCTURED_SOURCES else ""),
             "pdf_source"    : pdf_src if dl["success"] else (pdf_src or "none"),
             "pdf_name"      : pdf_name,
             "pdf_path"      : str(dl["path"]) if dl.get("path") else None,
@@ -3104,6 +3261,7 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
                 log.info("  [%s] OSF registration acquired (source=osf_registration)",
                          doi_r or url_r)
                 oa_xml  = registration
+                pdf_url = _OSF_REGISTRATION_API.format(guid=osf_guid)
                 pdf_src = "osf_registration"
                 return _result()
             _failed("osf_registration")
@@ -3181,6 +3339,31 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
                 if not _only_transient("zenodo"):
                     _failed("zenodo")
 
+    # Tier 2c — Springer Nature's own JATS, for its open-access articles. Above Tier 3
+    # because from there down every tier a Springer Nature DOI reaches is a PDF
+    # download — from link.springer.com and nature.com, which serve scripted clients
+    # bot checks often enough — and then a parse, while this is the publisher's
+    # labelled sections with nothing to download or title-check. Below everything
+    # above it because those are free, cached, or (arXiv, OSF, Zenodo) cannot match a
+    # Springer Nature DOI at all; and a call here spends the basic plan's 500
+    # requests a day, so it is made only for Springer Nature's registrants. No key is
+    # a SKIP, not a failure, like CORE's.
+    if (not dl["success"] and SPRINGER_OA_API_KEY and is_springer_nature_doi(doi_r)
+            and not _held("springer_oa")):
+        try:
+            springer_xml = get_springer_oa_fulltext(doi_r)
+        except DocumentSourceUnavailable as exc:
+            # Never recorded: a source that did not answer has said nothing.
+            log.info("  [%s] Springer OA unavailable: %s", doi_r, exc)
+        else:
+            if springer_xml is not None:
+                log.info("  [%s] Springer OA XML acquired (source=springer_oa_xml) — "
+                         "skipping the download tiers below", doi_r)
+                oa_xml  = springer_xml
+                pdf_src = "springer_oa_xml"
+                return _result()
+            _failed("springer_oa")
+
     # Tier 3 — every copy OpenAlex knows of, not only best_oa_location's one URL.
     # Landing pages included: two of the 88 measured location URLs answered with a
     # PDF, and both were landing pages. The ones that answer with HTML are refused as
@@ -3194,6 +3377,25 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
         else:
             if not any(_try(cand["url"], "openalex_oa") for cand in oa_locations):
                 _failed("openalex_oa")
+
+    # Tier 3a — Wiley's text-and-data-mining API. Wiley Online Library answers
+    # scripted clients with a bot check, so the Wiley URLs every index above and below
+    # hands out mostly fail; this is the publisher's own PDF, fetched with a token.
+    # Below Tier 3 because Wiley allows one request per ten seconds, so a repository
+    # copy OpenAlex knows of is cheaper. Off a subscribing network a subscription
+    # article answers 403 — measured 2026-10-28: four gold/hybrid articles served,
+    # four subscription ones refused — and that is recorded like any miss, so the
+    # tier is asked again after the retry delay. A connection error or a 5xx is not
+    # recorded. No token is a SKIP, like CORE's. A wrong token cannot be told from a
+    # missing entitlement: Wiley serves open-access articles whatever the token, and
+    # refuses subscription ones with 403 either way.
+    if (not dl["success"] and WILEY_TDM_TOKEN and is_wiley_doi(doi_r)
+            and not _held("wiley_tdm")):
+        throttle("wiley_tdm", _WILEY_TDM_RATE_SEC)
+        if not _try(_WILEY_TDM_URL.format(doi=quote(doi_r, safe="")), "wiley_tdm",
+                    auth_headers={"Wiley-TDM-Client-Token": WILEY_TDM_TOKEN}):
+            if not _only_transient("wiley_tdm"):
+                _failed("wiley_tdm")
 
     # Tier 3b — DataCite, the registrant's own metadata. Every index above is
     # Crossref-shaped, so a repository DOI reaches this tier having been asked about

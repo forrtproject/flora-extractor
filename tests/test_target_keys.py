@@ -6,8 +6,11 @@ model's answer through the key_map from the same call — so a key that collides
 survives deduplication twice, or cannot be looked up is a wrong original waiting to
 be written.
 """
+import pytest
+
+from shared.grobid import parse_jats_sections, parse_tei_sections
 from shared.prompts import build_target_outcome_prompt
-from shared.target_keys import assign_target_keys
+from shared.target_keys import assign_target_keys, lend_reference_dois
 
 
 def _cand(**over) -> dict:
@@ -120,3 +123,73 @@ class TestDistinctDoisNeverMerge:
         assert len(entries) == 1
         assert entries[0]["doi"] == "10.1/candidate"
         assert entries[0]["in_candidates"] and entries[0]["in_references"]
+
+
+_TEI = ('<TEI xmlns="http://www.tei-c.org/ns/1.0"><text><back><listBibl><biblStruct>'
+        '<analytic><title level="a">Forming impressions of personality</title>'
+        '<author><persName><surname>Asch</surname></persName></author></analytic>'
+        '<monogr><imprint><date type="published" when="1946"/></imprint></monogr>'
+        '<idno type="DOI">10.1037/h0055756</idno></biblStruct></listBibl></back></text></TEI>')
+_JATS = ('<article><back><ref-list><ref><element-citation>'
+         '<person-group><name><surname>Asch</surname></name></person-group>'
+         '<article-title>Forming impressions of personality</article-title>'
+         '<year>1946</year><pub-id pub-id-type="doi">10.1037/h0055756</pub-id>'
+         '</element-citation></ref></ref-list></back></article>')
+
+
+def _raw(raw_ref: str) -> list[dict]:
+    return [{"authors": ["Margulieux, L."], "year": 2016, "raw_ref": raw_ref,
+             "title": "Improving problem solving with subgoal labels"}]
+
+
+@pytest.mark.parametrize("references, doi", [
+    # The structured DOI fields: the parsers fold their text into raw_ref.
+    (lambda: parse_tei_sections(_TEI)["references"], "10.1037/h0055756"),
+    (lambda: parse_jats_sections(_JATS)["references"], "10.1037/h0055756"),
+    # A DOI link in the reference text, with the link labels a flattened publisher
+    # page glues onto it.
+    (lambda: _raw("Margulieux, L. E., & Catrambone, R. (2016). Improving problem "
+                  "solving. Learning and Instruction, 42, 58-71. https://doi.org/"
+                  "10.1016/j.learninstruc.2015.12.002.Article Google Scholar"),
+     "10.1016/j.learninstruc.2015.12.002"),
+    (lambda: _raw("Smith (1977). Title. doi:10.1016/0022-1031(77)90049-X."),
+     "10.1016/0022-1031(77)90049-x"),
+    # A SICI DOI's angle brackets are part of it.
+    (lambda: _raw("Smith (1999). Title. doi:10.1002/(SICI)1097-4679(199901)55:1"
+                  "<1::AID-JCLP1>3.0.CO;2-J</idno>"),
+     "10.1002/(sici)1097-4679(199901)55:1<1::aid-jclp1>3.0.co;2-j"),
+    # Two DOIs: which one is this reference's is not decidable from the text.
+    (lambda: _raw("Reprinted from 10.1037/aaaa1 in 10.1037/bbbb2"), ""),
+])
+def test_a_reference_lines_doi_is_lent_to_the_pick_not_to_the_key(references, doi):
+    entries, key_map = assign_target_keys([], references())
+    [entry] = entries
+    # Never in "doi": that field decides the target call's cache key and dedup.
+    assert entry["doi"] == ""
+    targets = [{"key": entry["key"], "record": dict(entry), "match_certain": True}]
+    lend_reference_dois(targets, key_map)
+    assert targets[0]["record"]["doi"] == doi
+    assert key_map[entry["key"]]["doi"] == ""
+    # A cached answer's lent DOI follows the current reading of the line.
+    stale = [{"key": entry["key"], "match_certain": True,
+              "record": {**entry, "doi": "10.9/stale", "doi_source": "reference_line"}}]
+    lend_reference_dois(stale, key_map)
+    assert stale[0]["record"]["doi"] == doi
+
+
+@pytest.mark.parametrize("first_author, lent", [
+    ("Müller, K.", True),      # the same author, accents folded
+    ("Jones, A.", False),      # another author's same-title, same-year work
+    ("", False),               # nobody to compare
+    ("Muller et al.", True),   # "et al." is not a surname
+])
+def test_a_reference_lines_doi_joins_a_title_match_only_by_the_same_author(
+        first_author, lent):
+    doi = "10.1037/h0055756"
+    candidate = {"title": "Improving problem solving with subgoal labels", "year": 2016,
+                 "first_author": first_author, "all_authors": [first_author] if first_author else []}
+    reference = {"authors": ["Muller, K."], "year": 2016,
+                 "title": "Improving problem solving with subgoal labels",
+                 "raw_ref": f"Muller, K. (2016). Improving problem solving. doi:{doi}"}
+    [entry], _ = assign_target_keys([candidate], [reference])
+    assert entry["reference_doi"] == (doi if lent else "")

@@ -36,6 +36,7 @@
     ]
   },
   "pile": "screen_expensive",
+  "admission": "strict",
   "vocabulary": null,
   "precedence": 740,
   "shadow": false,

@@ -54,6 +54,78 @@ rather than displacing a neighbour: the numbers are only ever compared, never
 counted, so gaps are free and renumbering an existing rule changes routing for
 rows nobody was thinking about.
 
+## Admission gates
+
+Every spec routing into a screen pile names an `admission` gate, `lenient` or
+`strict`; `validate_spec()` refuses one without it, shadow included, and refuses the
+field on any other pile. The gate decides what the front-door screen's PROCEED has to
+look like before the work reaches Stage 3:
+
+| gate | admits | evidence the gate reads |
+| --- | --- | --- |
+| `lenient` | every `screen_gate()` proceed | not every vote says `none` |
+| `strict` | a proceed that also passes `screen_strict()` | every vote (≥ 2) is replication/reproduction/both AND confident |
+
+**Why the gate is per rule.** The screen passes roughly a quarter to a third of hard
+negatives, and Stage 3 barely corrects that. The share of real replications among
+admitted works therefore follows each rule's BASE RATE: on an 8% rung the lenient gate
+ships ~26% real replications, the strict one ~60% (assuming the screen's pass rates
+carry over to each rung, which is unmeasured). On the validation tables (2026-10-28,
+release 61f07fd07f19), at least one validator judged 8% of validated screen proceeds
+that pass the strict test not to be replications (38 of 504) and 25% of those that fail
+it (13 of 53): 41% of the misses that only strict rules below matched (12 of 29),
+4% of the misses a lenient rule also matched (1 of 24). Evidence: `analysis/rule_gate_2026-10/REPORT.md`.
+
+**A strict miss is DEFERRED, never discarded.** The work is not exported, not offered
+to the extract tier, not rendered by `extract.export`. Nothing is written about it:
+the votes it was judged on are stored, so relaxing the rule's gate (or a future change
+to `screen_strict()`) releases it with no new screening call.
+
+**A work a person has judged in validation is never deferred.** The judgment is
+stronger evidence than two screen votes, and deferring the work would retire the
+record it sits on. The list is a committed snapshot, `data/human_judged.csv`, built by
+`.venv/bin/python -m analysis.build_human_judged --apply`; refresh and commit it before
+a live `extract.export` whose deferrals matter. A record judged after the snapshot is
+still safe: flora-validation's `--retire` flags, never removes, a touched record.
+
+**The most lenient matching rule wins.** A work matched by several live screen-pile
+rules is held to the strict gate only when all of them are strict. A rule's base rate
+is measured over every work it matches, overlaps included, so a work a high-precision
+rule matched carries that rule's evidence whichever rule won precedence. For the gate,
+precedence matters only in naming the routing winner (it also sets the pile and the
+exported vocabulary, which the gate does not touch); a rule outranking another is
+not evidence that it is the better predictor, and the broad rules match supersets of
+the narrow ones, so "strictest wins" would discount exactly the matches the narrow
+rule was measured on.
+
+**The gate is not part of the routing release.** `bundle_hash()` leaves `admission`
+out (`UNROUTED_KEYS` in `filter/engine/spec.py`). It moves no row between piles —
+it is applied to the stored votes where the verdicts are applied
+(`filter/engine/handoff.py`), and those are already read across releases. Binding it
+into the release would make every gate change a re-route and orphan every claim and
+render bound to the old release id, to say nothing new about routing.
+
+**Assigning a gate.** `lenient` only with measured evidence of a base rate of about
+70% or above; `strict` for anything lower or unmeasured. The 70% line is where the
+lenient gate still ships ~90% real replications, given the screen's measured
+hard-negative pass rate. Record the reason in the table below, and in a new rule's
+`description` when it is written. Changing an existing rule's `description` or
+`measured` mints a release, which a gate change alone does not, so the table is the
+gate's record. Assignments on 2026-10-28:
+
+| rule | gate | base-rate evidence |
+| --- | --- | --- |
+| `replication-claim-cited-title` | lenient | 97.2% (Sonnet, n = 108) |
+| `replication-claim-title-strong` | lenient | 94.1% (Sonnet, n = 237) |
+| `replication-claim-failure-prior` | lenient | 78.0% (census, gpt-6.1-sol) |
+| `replication-claim-extend-prior` | lenient | 71.4%, 95% CI 59–81% (gpt-6.1-sol, n = 140) — the closest call |
+| `replication-claim-cited-abstract` | strict | 59.8% (gpt-6.1-sol, n = 311) |
+| `replication-claim-general` | strict | ~50% clear (human, 9 of 18 screen proceeds) |
+| `replication-claim-title-broad` | strict | unmeasured as a rule; arms 5–90% |
+| `curated-observatory` | strict | unmeasured (another pipeline's LLM-extracted list) |
+| `osf-registration-completed` | strict | heuristic only; 31% of its extractions are prospective |
+| every shadow screen rule | strict | unmeasured as an admission |
+
 ## `pending_reason`
 
 `pending` is assigned by the engine, never by a spec — `validate_spec()` rejects

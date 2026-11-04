@@ -248,6 +248,15 @@ Match semantics:
   [`rule_ideas.md`](../filter/spec/rule_ideas.md) beside the arms that replaced it.
 - `pile` must be one of the four routable piles; `pending` is never a spec target.
 - `vocabulary` (`"replication"` / `"reproduction"` / null) feeds the status mapping.
+- `admission` (`"lenient"` / `"strict"`) is required on a `screen_expensive` or
+  `screen_cheap` spec, shadow included, and refused on any other pile. It is the
+  gate the screen's PROCEED must pass before the work reaches Stage 3: `lenient`
+  is `screen_gate()`'s proceed, `strict` also needs `screen_strict()` — at least two
+  votes, every one qualifying and confident. A work is held to `strict` only when every live
+  screen-pile rule it matched is strict, and a strict miss is deferred, never
+  discarded, and a work in `data/human_judged.csv` (judged in validation) never is. It is left out of `bundle_hash()`, so changing it mints no release.
+  Policy and the current assignments: `filter/spec/CONVENTIONS.md`, "Admission
+  gates".
 - `domain` (optional) is a match object naming the population the rule claims to
   govern. It decides no routing. After a route, every live spec that declares one
   is reported with its domain size, its match count, and the works in its domain
@@ -275,7 +284,7 @@ A LIVE (`shadow: false`) `discard` spec has three extra validation rules, all in
 `shadow: true` lifts all three.
 
 The full accepted key sets, from `spec.py`: top level `id, description, match,
-domain, pile, vocabulary, precedence, shadow, measured`; inside a match or a
+domain, pile, admission, vocabulary, precedence, shadow, measured`; inside a match or a
 domain `doi_prefix, doi_in, work_id_in,
 doi_regex, title_regex, abstract_regex, text_regex, url_regex, fields,
 abstract_missing, any_of, all_of, none_of`; inside
@@ -478,7 +487,7 @@ its frozen manifest.
 | --- | --- |
 | `pool_reader.py` | `iter_pool_batches(pool_dir, overlay_dir=None, batch_size=50_000, aliases=None)` — the engine's single input path: pool batches with overlay text written over the pool's `abstract_text`, empty or not. `overlay_manifest_hash(overlay_dir) -> str \| None` (defined in `overlay.py`, re-exported here so the input path is one import). The overlay is loaded once as a `work_id -> text` dict and applied per batch; with no overlay the stream is `iter_batches()` untouched. |
 | `overlay.py` | `worklist(con, release_id, pool_dir, out_path, aliases=None) -> int` (the `pending_reason='no_text'` rows joined to the pool for doi/title/year); `write_chunk()`, `load_overlay()`, `overlay_work_ids()`; `validate(overlay_dir) -> list[str]`; `freeze(overlay_dir, pool_manifest_hash=None) -> dict`; `overlay_manifest_hash()`, `read_manifest()`. |
-| `backfill.py` | `python -m filter.engine.backfill --worklist F [--overlay-dir D] [--run] [--phase all\|bulk\|targeted] [--limit N] [--source S] [--batch-size N] [--scopus-limit N] [--include-openalex] [--dry-run] [--freeze]` — the six abstract sources. `--phase bulk` with no `--source` runs Europe PMC alone and says so in one line, because OpenAlex is bulk-shaped but opt-in. over a worklist in two pathways (bulk, then targeted), results appended as an overlay chunk. `--overlay-dir` defaults to `OVERLAY_DIR`, the same directory the engine's commands read. |
+| `backfill.py` | `python -m filter.engine.backfill --worklist F [--overlay-dir D] [--run] [--phase all\|bulk\|targeted] [--limit N] [--source S] [--batch-size N] [--scopus-limit N] [--include-openalex] [--dry-run] [--freeze]` — the seven abstract sources. `--phase bulk` with no `--source` runs Europe PMC alone and says so in one line, because OpenAlex is bulk-shaped but opt-in. over a worklist in two pathways (bulk, then targeted), results appended as an overlay chunk. `--overlay-dir` defaults to `OVERLAY_DIR`, the same directory the engine's commands read. |
 
 **An overlay row wins, present pool text or not.** Every overlay row was written
 deliberately by a backfill this project ran, against a worklist this project
@@ -535,7 +544,7 @@ argument names them:
 | Pathway | Sources | Shape | Which rows |
 | --- | --- | --- | --- |
 | `bulk` | Europe PMC (OpenAlex opt-in) | batched, keyless, unquota'd; one request answers about `EPMC_BATCH_SIZE` / `OA_BATCH_SIZE` identifiers | every worklist row, and cheap enough for a worklist much wider than a release's `no_text` rows |
-| `targeted` | OSF → Semantic Scholar → CrossRef → Scopus | one call per DOI, or gated by a key, an IP-bound entitlement or a ~10k/week quota | only the rows bulk left without text, on the worklist that matters |
+| `targeted` | OSF → Semantic Scholar → CrossRef → Springer Nature → Scopus | one call per DOI, or gated by a key, an IP-bound entitlement, a 500/day or a ~10k/week quota | only the rows bulk left without text, on the worklist that matters |
 
 OpenAlex is in the bulk pathway's shape but not in its default run: it needs
 `--include-openalex` (or `--source openalex`). Measured yield on this corpus is 0
@@ -623,7 +632,7 @@ record export in `filter/engine/handoff.py`, two CLI subcommands.
 | --- | --- |
 | `tiers.py` | `pile_works(con, release_id, pile, pool_dir, …) -> list[Work]` (routing joined to overlay-aware pool text); `estimate(works, tier)` / `render_estimate(est)` (the §6 dry run); `run_tier(spec, client, release_id, works, *, mode, batch_label, run)` (the generic runner) with the two pile-reading wrappers `run_screen_cheap(...)` / `run_screen_expensive(con, client, release_id, work_ids=None, *, mode, batch_label, limit, run)`; `tier_decisions(client, release_id, tier, mode="live")` — `release_id=None` reads every release, because a verdict follows the work — and `decided_work_ids(client, tier)` (the checkpoint). Both read only the current SCREENING GENERATION — `screening_generation(tier)`, the hash of the tier's voter pair and its prompt, recorded in each claim's `meta.generation`: change a voter model or the classify prompt and the old verdicts stop settling their works and stop steering the export, while rows written before the field are grandfathered on their recorded `model`. |
 | `tiers.py` — `TierSpec` | What differs between tiers, as one frozen record: `name`, `judge` (ask the question), `decide` (read the stored rows back as a decision), `generation`, `accepts_legacy`, `estimate` / `render_estimate`, and the `workers` / `ttl_seconds` / `batch_size` a tier wants instead of `ENGINE_TIER_WORKERS` / `CLAIM_TTL_HOURS` / `FLORA_HF_COMMIT_BATCH`. The two screen tiers register theirs (`SCREEN_CHEAP`, `SCREEN_EXPENSIVE`) at the bottom of the module; anything else calls `register_tier(spec)` at import time and is then reachable by name through `tier_spec(name)`. `run_tier()` takes a spec and a list of `Work`, so a tier defined outside `filter/engine` runs on this spine without this package importing it — the import direction is one-way, and must stay so. |
-| `handoff.py` | `write_handoff(con, pool_dir, out_csv, release_id, *, drop, screen, decided, …)` — both screen piles in `ENGINE_EXPORTED_COLS` order, `screen_expensive` first; `decided` is a set of work ids for the screened-only export and `None` for as-routed — `set(screen)` is what a caller reading from `decisions()` passes, since the works the expensive tier settled are exactly that map's keys; `decisions(client) -> (drop, screen)` from the live, current-generation verdict rows of every release (the release scopes the piles, not the evidence). `screen` maps a work to what the EXPENSIVE tier decided — outcome, record type, votes — and `screen_columns()` writes that onto the row as `SCREEN_COLS`. **Only the expensive tier admits**: a cheap verdict contributes to `drop` and to nothing else, because its `proceed` means "on to the expensive screen" and a `prescreen_bypass` means "we did not ask". |
+| `handoff.py` | `write_handoff(con, pool_dir, out_csv, release_id, *, drop, screen, decided, …)` — both screen piles in `ENGINE_EXPORTED_COLS` order, `screen_expensive` first; `decided` is a set of work ids for the screened-only export and `None` for as-routed — `set(screen)` is what a caller reading from `decisions()` passes, since the works the expensive tier settled are exactly that map's keys; `decisions(client) -> (drop, screen)` from the live, current-generation verdict rows of every release (the release scopes the piles, not the evidence). `screen` maps a work to what the EXPENSIVE tier decided — outcome, record type, votes — and `screen_columns()` writes that onto the row as `SCREEN_COLS`. `admission_gates(con, release_id, specs)` gives each screen-pile work of a release its gate (the most lenient live screen-pile rule it matched wins) and `deferred_works(screen, gates)` the proceeds a strict gate holds back; `write_handoff()` applies them itself and counts `deferred_by_admission_gate`, and the extract worklist and `extract.export` apply the same two functions. **Only the expensive tier admits**: a cheap verdict contributes to `drop` and to nothing else, because its `proceed` means "on to the expensive screen" and a `prescreen_bypass` means "we did not ask". |
 
 ### The two tiers
 
@@ -939,7 +948,9 @@ commit that adds it, so a claim with no generation is unattributable, not legacy
 ### The worklist
 
 Works admitted by a live, current-generation `screen_expensive` PROCEED verdict
-(`handoff.decisions()`), minus its discards, minus works this tier has settled,
+(`handoff.decisions()`), minus its discards, minus the proceeds a strict admission
+gate defers (`handoff.deferred_works()`, held whatever `--redo` names; the dry run
+prints the count), minus works this tier has settled,
 minus works resting on a `target_pending` younger than `EXTRACT_PENDING_RETRY_DAYS`
 (14), minus works held by another runner's unexpired extract claim, minus the two skip
 lists Stage 3 has always honoured (already in published FLoRA; already in the
@@ -999,7 +1010,10 @@ would answer a question nobody is asked at the point of spending.
 verdicts of the works that release admits — a verdict outlives the routing that bought
 it, so an unfiltered render keeps shipping works the rule book now discards
 (`--all-releases` asks for exactly that, and is the only invocation that reads no
-routing store). Otherwise a pure render.
+routing store). Otherwise a pure render. A `--release` render also drops the works
+the current screen discards and the proceeds a strict admission gate defers, each
+counted, because the worklist offers neither and an earlier extraction would
+otherwise ship forever; the deferred ones are retired as `screen_deferred`.
 
 **Two generations, and why the older one still counts.** `--current-generation-only`
 gives the strict view: a verdict from a superseded ladder, prompt or model says
