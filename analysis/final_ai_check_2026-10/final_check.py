@@ -2,9 +2,11 @@
 
 Claude Opus 5.5 (`claude -p`, on the subscription) reads the record — title, abstract
 and, where the pipeline acquired one, the parsed full text — WITHOUT the pipeline's
-answer, and codes type, original(s) and outcome. `compare()` then grades agreement
-on each field. A row that agrees on all three may be released as a preliminary AI
-code; anything else goes to a human first.
+answer, and codes type, original(s) and outcome. `compare_work()` then pairs the
+work's originals one-to-one and grades each pair. A row may be released as a
+preliminary AI code when its pair agrees on type and outcome, the blind coder was
+confident of that outcome, and the whole work pairs off; anything else goes to a human
+first.
 
 The codebook is the pipeline's own: the target rules are cut out of `_TARGET_TASK`
 and the outcome rules are `_OUTCOME_RULES` / `_REPRO_AXIS_RULES` /
@@ -14,10 +16,8 @@ authors, year, title and DOI, and the record type is asked first instead of bein
 assumed.
 
 Read-only towards the pipeline: reads the row CSV and the parse cache, writes only
-under this directory (`cache/`). Run with the main checkout's cache:
-
-    FLORA_CACHE_DIR=/home/lukas/flora-extractor/cache \
-      /home/lukas/flora-extractor/.venv/bin/python analysis/final_ai_check_2026-10/pilot.py
+under this directory (`cache/`). `pilot.py` is the entry point; its docstring has the
+command.
 """
 from __future__ import annotations
 
@@ -50,6 +50,8 @@ CACHE = HERE / "cache"
 # Opus reads 1M tokens; 150k characters (~40k tokens) holds a whole article with its
 # reference list, which is where the original's title and DOI are read from.
 FULLTEXT_CHARS = 150_000
+# The most of that cap a reference list may take when the document is over it.
+REFERENCE_CHARS = 50_000
 
 
 def _between(text: str, start: str, end: str) -> str:
@@ -244,13 +246,31 @@ def metadata_references(row: dict) -> list[str]:
     return lines
 
 
+def _cap_document(text: str) -> str:
+    """The document within FULLTEXT_CHARS, cutting the body and not the reference list.
+
+    The list sits at the end, and it is where an original's title and year are read
+    from. A document within the cap passes through unchanged.
+    """
+    if len(text) <= FULLTEXT_CHARS:
+        return text
+    start = text.rfind("REFERENCES (as parsed)")
+    if start < 0:
+        tail = len(text) - len(text) // 3
+        start = max((m.start() for m in _REF_HEADING.finditer(text, tail)), default=-1)
+    if start < 0:
+        return text[:FULLTEXT_CHARS]
+    refs = text[start:start + REFERENCE_CHARS]
+    return text[:FULLTEXT_CHARS - len(refs) - 2] + "\n\n" + refs
+
+
 def build_prompt(row: dict, fulltext: str) -> str:
     parts = [EVIDENCE_POLICY + TASK, "PAPER", f"TITLE: {row.get('title_r', '')}"]
     if row.get("abstract_r"):
         parts.append(f"ABSTRACT: {row['abstract_r']}")
     if fulltext:
         parts.append("FULL TEXT, as parsed from the document (sections in order, "
-                     "reference list at the end):\n" + fulltext[:FULLTEXT_CHARS])
+                     "reference list at the end):\n" + _cap_document(fulltext))
     # Without a document, or with one whose parse found no reference list, the
     # original can only be named from the work's metadata reference list.
     if not _REF_HEADING.search(fulltext) and "REFERENCES (as parsed)" not in fulltext:
@@ -263,17 +283,20 @@ def build_prompt(row: dict, fulltext: str) -> str:
 
 # ── The call ─────────────────────────────────────────────────────────────────
 
-def recode(prompt: str) -> dict:
+def recode(prompt: str, cached_only: bool = False) -> dict:
     """The blind coding for *prompt*, cached on prompt version + model + prompt.
 
     `claude -p` with no tools, no MCP servers and no settings: the text is all it
-    has. A failed call raises and is not cached.
+    has. A failed call raises and is not cached. With *cached_only*, a miss raises
+    instead of calling, so a re-score cannot buy a new coding by accident.
     """
     key = hashlib.sha256(
         f"{PROMPT_VERSION}|{MODEL}@{EFFORT}|{prompt}".encode()).hexdigest()[:24]
     path = CACHE / f"recode_{key}.json"
     if path.exists():
         return json.loads(path.read_text())
+    if cached_only:
+        raise RuntimeError(f"no cached coding at {path}")
     t0 = time.time()
     proc = subprocess.run(
         ["claude", "-p", "--model", MODEL, "--effort", EFFORT, "--tools", "", "--strict-mcp-config",
@@ -375,6 +398,9 @@ def outcome_grade(row: dict, target: dict) -> str:
 _TOKEN = re.compile(r"[a-z]+|\d+(?:\.\d+)?")
 _NUMBER = re.compile(r"(?<![\w.])[<>=]?\s*-?\d*\.\d+|\b\d{2,}\b")
 SHINGLE = 4
+# How far a quote's 4-grams may drift apart and still count as one passage: enough for
+# a page header or a footnote marker the parse left inside a sentence.
+PASSAGE_SLACK = 20
 
 
 def _tokens(text: str) -> list[str]:
@@ -408,23 +434,31 @@ class SourceIndex:
             self.at.setdefault(s, []).append(i)
 
     def locate(self, quote: str) -> tuple[float, tuple[int, int] | None]:
-        """(share of the quote's 4-grams found, token span of the densest match).
+        """(share of the quote's 4-grams found in one passage, that passage's span).
 
-        The span is the median-anchored run of matched positions, so a stray common
-        4-gram elsewhere in the paper does not stretch it.
+        The passage is the window of PASSAGE_SLACK implied start positions holding the
+        most distinct 4-grams. Counting only those stops common phrases scattered
+        through a long paper from passing a fabricated quote. A quote under four words
+        has no 4-gram, so it counts as found when its words occur in sequence.
         """
-        sh = _shingles(_tokens(quote))
+        words = _tokens(quote)
+        sh = _shingles(words)
         if not sh:
+            hit = next((i for i in range(len(self.tokens) - len(words) + 1)
+                        if words and self.tokens[i:i + len(words)] == words), None)
+            return (1.0, (hit, hit + len(words))) if hit is not None else (0.0, None)
+        # Each found 4-gram implies a start position for the quote.
+        hits = sorted((p - k, k) for k, s in enumerate(sh) for p in self.at.get(s, []))
+        if not hits:
             return 0.0, None
-        # Anchor each found shingle at the position implied for the quote's start.
-        starts = [p - k for k, s in enumerate(sh) for p in self.at.get(s, [])]
-        found = sum(1 for s in sh if s in self.at)
-        if not starts:
-            return 0.0, None
-        starts.sort()
-        mid = starts[len(starts) // 2]
-        n = len(sh) + SHINGLE - 1
-        return found / len(sh), (mid, mid + n)
+        most, anchor, lo = 0, hits[0][0], 0
+        for hi in range(len(hits)):
+            while hits[hi][0] - hits[lo][0] > PASSAGE_SLACK:
+                lo += 1
+            found = len({k for _, k in hits[lo:hi + 1]})
+            if found > most:
+                most, anchor = found, hits[lo][0]
+        return most / len(sh), (anchor, anchor + len(words))
 
 
 def _parts(quote: str) -> list[str]:
@@ -449,9 +483,11 @@ def quote_check(q_pipe: str, q_blind: str, sources: list[SourceIndex]) -> dict:
     """Do the pipeline's and the blind coder's quotes point at the same evidence?
 
     Signals, each simple enough to read off the output:
-      present_*   share of the quote's 4-grams found in the source (title + abstract,
-                  or any parse of the document), best over its " | " parts. A quote
-                  under 0.5 is not in the text: flagged `fabricated_*`.
+      present_*   share of the quote's 4-grams found in one passage of the source
+                  (title + abstract, or any parse of the document). Each " | " part
+                  is scored on its best source and the quote takes its WORST part, so
+                  one real part cannot cover for an invented one. Under 0.5 the quote
+                  is not in the text: flagged `fabricated_*`.
       overlap     token containment |A∩B| / min(|A|,|B|) over all words.
       content     the same over content-word stems (stopwords dropped).
       distance    tokens between the two passages, located in a source both are in
@@ -472,7 +508,7 @@ def quote_check(q_pipe: str, q_blind: str, sources: list[SourceIndex]) -> dict:
                for name, q in (("pipe", q_pipe), ("blind", q_blind))}
     for name, hits in located.items():
         if hits:
-            res[f"present_{name}"] = round(max(h[0] for part in hits for h in part), 2)
+            res[f"present_{name}"] = round(min(max(h[0] for h in part) for part in hits), 2)
     if not located["pipe"] or not located["blind"]:
         res["verdict"] = "no_quote"
         return res
@@ -500,36 +536,6 @@ def quote_check(q_pipe: str, q_blind: str, sources: list[SourceIndex]) -> dict:
         res["verdict"] = "different"
     flags = [n for n in ("pipe", "blind") if res[f"present_{n}"] < 0.5]
     res["verdict"] += "".join(f"+fabricated_{n}" for n in flags)
-    return res
-
-    def best(q: str) -> tuple[float, int | None, tuple | None]:
-        top = (0.0, None, None)
-        for p in _parts(q):
-            for i, s in enumerate(sources):
-                share, span = s.locate(p)
-                if share > top[0]:
-                    top = (share, i, span)
-        return top
-
-    (sp, ip, span_p), (sb, ib, span_b) = best(q_pipe), best(q_blind)
-    res["present_pipe"], res["present_blind"] = round(sp, 2), round(sb, 2)
-    a, b = set(_tokens(q_pipe)), set(_tokens(q_blind))
-    res["overlap"] = round(len(a & b) / max(min(len(a), len(b)), 1), 2)
-    shared = _numbers(q_pipe) & _numbers(q_blind)
-    res["shared_numbers"] = " ".join(sorted(shared))
-    if span_p and span_b and ip == ib and sp >= 0.5 and sb >= 0.5:
-        res["distance"] = max(0, max(span_p[0], span_b[0]) - min(span_p[1], span_b[1]))
-    if res["overlap"] >= 0.6 or res["distance"] == 0:
-        res["verdict"] = "same"
-    elif res["distance"] is not None and res["distance"] <= 60:
-        res["verdict"] = "adjacent"
-    elif len(shared) >= 2:
-        res["verdict"] = "numbers"
-    else:
-        res["verdict"] = "different"
-    flags = [n for n, s in (("pipe", sp), ("blind", sb)) if s < 0.5]
-    if flags:
-        res["verdict"] += "".join(f"+fabricated_{n}" for n in flags)
     return res
 
 
@@ -568,10 +574,11 @@ def compare_work(work_rows: list[dict], coding: dict,
     Each row is compared with the blind target it is paired with
     (`pair_originals`). A row is released when its pair agrees on type and outcome,
     the blind coder was confident of that outcome (an outcome it would not stake was,
-    in the pilot, the kind humans corrected), and the whole work pairs off: the rule
-    holds every row of a work whose two sides do not pair off completely, whichever side has the extra original: a different count
-    of originals is the clearest sign that one side misread the paper, and it is
-    where outcomes get scoped to the wrong set of originals.
+    in the pilot, the kind humans corrected), and the whole work pairs off. The rule
+    holds every row of a work whose two sides do not pair off completely, whichever
+    side has the extra original: a different count of originals is the clearest sign
+    that one side misread the paper, and it is where outcomes get scoped to the wrong
+    set of originals.
     """
     targets = coding.get("targets") or []
     pairs = {i: (j, grade, jac) for i, j, grade, jac in pair_originals(work_rows, targets)}
@@ -595,7 +602,12 @@ def compare_work(work_rows: list[dict], coding: dict,
                        default=("no_target", 0.0))
             res.update(original_grade=f"unpaired:{best[0]}", original_agrees=False,
                        outcome_grade="unpaired", outcome_agrees=False,
-                       quote_verdict="unpaired", released=False)
+                       outcome_agrees_soft=False, title_jaccard=best[1],
+                       blind_original="", blind_outcome="", blind_confident=None,
+                       blind_identified_by="", blind_quote="",
+                       quote_present_pipe=None, quote_present_blind=None,
+                       quote_overlap=None, quote_content=None, quote_distance=None,
+                       quote_shared_numbers="", quote_verdict="unpaired", released=False)
             out.append(res)
             continue
         j, grade, jac = pairs[i]
