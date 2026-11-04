@@ -1061,3 +1061,292 @@ def test_status_counts_progress_and_never_fetches_the_manifest(snap_env, monkeyp
     assert (status["records_done"], status["records_total"]) == (10, 40)
     assert status["rows_kept"] == 7
     assert len(status["files_in_flight"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Incremental updates (issue #203)
+# ---------------------------------------------------------------------------
+
+def _partition(date: str) -> str:
+    return f"s3://openalex/data/parquet/works/updated_date={date}/part_0000.parquet"
+
+
+def _pool_name(date: str) -> str:
+    return f"part-{date}-part_0000.parquet"
+
+
+def _release(date: str, partitions: dict[str, int]) -> dict:
+    """A manifest in the live shape: top-level date, files[] with nested meta."""
+    return {"date": date, "format": "parquet", "entity": "works",
+            "files": [{"url": _partition(d),
+                       "meta": {"content_length": size, "record_count": 100}}
+                      for d, size in partitions.items()]}
+
+
+def _serve(monkeypatch, tmp_path, release: dict) -> list[str]:
+    """Serve *release* as the live manifest and every partition from one fixture.
+
+    Returns the list of partitions read, which is what these tests are about.
+    """
+    monkeypatch.setattr(ss.requests, "get", lambda *a, **kw: _Resp(release))
+    fixture = _write_parquet(tmp_path / "fixture.parquet", _POOL_RECORDS)
+    reads: list[str] = []
+
+    def _open(url):
+        reads.append(url)
+        return pq.ParquetFile(fixture)
+
+    monkeypatch.setattr(ss, "_open_parquet", _open)
+    return reads
+
+
+def _no_network(monkeypatch) -> None:
+    def _refuse(*a, **kw):
+        raise AssertionError("no network call was expected")
+    monkeypatch.setattr(ss.requests, "get", _refuse)
+    monkeypatch.setattr(ss, "_open_parquet", _refuse)
+
+
+def _rows(pool) -> int:
+    return sum(pq.ParquetFile(p).metadata.num_rows for p in pool.glob("*.parquet"))
+
+
+def _pulled_pool(snap_env, dates: list[str], expected=None):
+    """What `pool_sync --pull` leaves: files and a sidecar, with no ledger."""
+    pool = _pool_with(snap_env.tmp / "pool",
+                      {_pool_name(d): _POOL_RECORDS[:2] for d in dates})
+    ss.write_pool_provenance(pool, ss.search_gate_fingerprint(),
+                             len(dates) if expected is None else expected, "pull:them/pool")
+    return pool
+
+
+def test_refresh_reports_the_delta_then_reads_only_it(snap_env, monkeypatch, caplog):
+    """The manifest was cached forever, so a new release was invisible. The refresh
+    states new and rewritten partitions before reading any, a capped run stops at that
+    report, and an up-to-date scan afterwards uses no network at all."""
+    pool = snap_env.tmp / "pool"
+    first = _serve(monkeypatch, snap_env.tmp, _release("2026-01-01", {"2024-01-01": 100,
+                                                                      "2024-02-02": 200}))
+    ss.scan_snapshot(survivor_pool=pool)
+    assert len(first) == 2
+    assert ss.load_ledger()["snapshot_date"] == "2026-01-01", "read from the live shape"
+    rows_before = _rows(pool)
+    stamped = ss.read_pool_provenance(pool)
+
+    # Without the flag the cached manifest still answers, and nothing is read.
+    _no_network(monkeypatch)
+    assert ss.scan_snapshot(survivor_pool=pool) == 0
+
+    reads = _serve(monkeypatch, snap_env.tmp, _release(
+        "2026-02-02", {"2024-01-01": 100, "2024-02-02": 250, "2026-02-02": 300}))
+    with caplog.at_level("INFO"):
+        assert ss.scan_snapshot(survivor_pool=pool, refresh_manifest=True, max_files=0) == 0
+    assert reads == [], "the report comes before any read"
+    assert "1 new" in caplog.text and "1 rewritten" in caplog.text and "1 unchanged" in caplog.text
+    assert ss.read_pool_provenance(pool) == stamped, "a preview changes nothing about the pool"
+
+    ss.scan_snapshot(survivor_pool=pool, refresh_manifest=True)
+    assert [u.split("/")[-2] for u in reads] == ["updated_date=2024-02-02",
+                                                 "updated_date=2026-02-02"]
+    # The rewritten partition replaced its own file, so only the new one adds rows.
+    assert _rows(pool) == rows_before + rows_before // 2
+    assert ss.read_pool_provenance(pool)["expected_files"] == 3
+    assert ss.pool_fingerprint(pool)
+
+    _no_network(monkeypatch)
+    assert ss.scan_snapshot(survivor_pool=pool) == 0
+
+
+def test_a_refused_scan_does_not_move_the_cached_manifest(snap_env, monkeypatch):
+    """The gate refusal stays first: refreshing before it would change state on a run
+    that promises to leave everything as it found it."""
+    _serve(monkeypatch, snap_env.tmp, _release("2026-01-01", {"2024-01-01": 100}))
+    ss.fetch_manifest(refresh=True)
+    cached = snap_env.manifest.read_text()
+    pool = _pulled_pool(snap_env, ["2024-01-01"])
+    ss.write_pool_provenance(pool, "another-gate", 1, "pull:them/pool")
+
+    _serve(monkeypatch, snap_env.tmp, _release("2026-02-02", {"2026-02-02": 100}))
+    with pytest.raises(RuntimeError, match="DIFFERENT search gate"):
+        ss.scan_snapshot(survivor_pool=pool, refresh_manifest=True)
+    assert snap_env.manifest.read_text() == cached
+
+
+def test_a_failed_or_empty_refresh_keeps_the_previous_manifest(snap_env, monkeypatch):
+    """An empty list would read as every partition having been removed."""
+    _serve(monkeypatch, snap_env.tmp, _release("2026-01-01", {"2024-01-01": 100}))
+    ss.fetch_manifest(refresh=True)
+    cached = snap_env.manifest.read_text()
+    monkeypatch.setattr(ss.requests, "get", lambda *a, **kw: _Resp({"date": "x", "files": []}))
+    monkeypatch.setattr(ss.time, "sleep", lambda s: None)
+    with pytest.raises(ValueError):
+        ss.fetch_manifest(refresh=True)
+    assert snap_env.manifest.read_text() == cached
+
+
+def test_a_pulled_pool_refuses_the_scan_until_its_ledger_is_rebuilt(snap_env, monkeypatch):
+    """A pool with no ledger used to mean a silent 725 GB re-read."""
+    pool = _pulled_pool(snap_env, ["2024-01-01"])
+    reads = _serve(monkeypatch, snap_env.tmp, _release("2026-01-01", {"2024-01-01": 100}))
+    with pytest.raises(RuntimeError, match="--reconstruct-ledger"):
+        ss.scan_snapshot(survivor_pool=pool)
+    assert reads == [] and not snap_env.ledger.exists()
+
+
+def test_reconstruction_claims_only_what_the_pool_files_prove(snap_env, monkeypatch):
+    """A file is evidence of a complete read. No file is evidence of nothing, and more
+    rows than the partition holds disproves the size, and neither gets an entry."""
+    dates = ["2024-01-01", "2024-02-02", "2024-03-03"]
+    pool = _pulled_pool(snap_env, dates)
+    release = _release("2026-01-01", {"2024-01-01": 100, "2024-02-02": 200,
+                                      "2024-03-03": 300, "2024-04-04": 400})
+    release["files"][1]["meta"]["record_count"] = 1  # the pool file holds 2 rows
+    release["files"][2]["meta"]["content_length"] = None
+    _serve(monkeypatch, snap_env.tmp, release)
+
+    report = ss.reconstruct_ledger(pool)
+
+    assert (report["added"], report["rows"]) == (1, 2)
+    assert (report["no_pool_file"], report["no_pool_file_bytes"]) == (1, 400)
+    assert (report["disproved"], report["no_size"]) == (1, 1)
+    ledger = ss.load_ledger()
+    entry = ledger["files"][ss._https_url(_partition("2024-01-01"))]
+    assert entry == {"content_length": 100, "record_count": 100, "status": "done", "kept": 2,
+                     "reconstructed_from": "2026-01-01"}
+    assert ss.ledger_gate_fingerprint(ledger) == ss.search_gate_fingerprint()
+
+    assert ss.reconstruct_ledger(pool)["added"] == 0, "a re-run adds nothing"
+    assert ss.load_ledger() == ledger
+
+
+def test_reconstruction_never_overwrites_an_entry(snap_env, monkeypatch):
+    """An entry from a real scan is a better record than a baseline."""
+    pool = _pulled_pool(snap_env, ["2024-01-01"])
+    url = ss._https_url(_partition("2024-01-01"))
+    entry = {"content_length": 50, "status": "done", "kept": 2, "scanned_at": "2025-01-01"}
+    ss.save_ledger({"search_gate_fingerprint": ss.search_gate_fingerprint(), "files": {url: entry}})
+    _serve(monkeypatch, snap_env.tmp, _release("2026-01-01", {"2024-01-01": 100}))
+    ss.reconstruct_ledger(pool)
+    assert ss.load_ledger()["files"][url] == entry
+
+
+@pytest.mark.parametrize("gate, expected, message", [
+    (None, 1, "records no search gate"),
+    ("another-gate", 1, "DIFFERENT search gate"),
+    ("local", 2, "is short"),
+])
+def test_reconstruction_refuses_what_it_cannot_vouch_for(snap_env, monkeypatch, gate, expected,
+                                                         message):
+    """Stricter than the scan on purpose: every entry is a claim about this gate."""
+    pool = _pulled_pool(snap_env, ["2024-01-01"])
+    ss.write_pool_provenance(pool, ss.search_gate_fingerprint() if gate == "local" else gate,
+                             expected, "pull:them/pool")
+    _no_network(monkeypatch)
+    with pytest.raises(RuntimeError, match=message):
+        ss.reconstruct_ledger(pool)
+    assert not snap_env.ledger.exists()
+
+
+def test_reconstruction_refuses_an_unstamped_pool_and_another_gates_ledger(snap_env, monkeypatch):
+    pool = _pool_with(snap_env.tmp / "pool", {_pool_name("2024-01-01"): _POOL_RECORDS[:2]})
+    _no_network(monkeypatch)
+    with pytest.raises(RuntimeError, match="records no search gate"):
+        ss.reconstruct_ledger(pool)
+
+    ss.write_pool_provenance(pool, ss.search_gate_fingerprint(), 1, "pull:them/pool")
+    ss.save_ledger({"search_gate_fingerprint": "another-gate", "files": {}})
+    with pytest.raises(RuntimeError, match="different search gate"):
+        ss.reconstruct_ledger(pool)
+
+
+def test_a_pulled_pool_updates_incrementally_after_reconstruction(snap_env, monkeypatch):
+    """Issue #203's pulled checkout: reconstruct against the manifest it has, refresh,
+    and read only what is new, rewritten or was never established."""
+    pool = _pulled_pool(snap_env, ["2024-01-01", "2024-02-02"])
+    reads = _serve(monkeypatch, snap_env.tmp, _release(
+        "2026-01-01", {"2024-01-01": 100, "2024-02-02": 200, "2024-03-03": 300}))
+    ss.reconstruct_ledger(pool)
+    assert ss.scan_snapshot(survivor_pool=pool, max_files=0) == 0
+    assert ss.read_pool_provenance(pool)["source"] == "pull:them/pool", \
+        "a run that read nothing leaves the sidecar alone"
+
+    reads = _serve(monkeypatch, snap_env.tmp, _release(
+        "2026-02-02", {"2024-01-01": 100, "2024-02-02": 250, "2024-03-03": 300,
+                       "2026-02-02": 400}))
+    ss.scan_snapshot(survivor_pool=pool, refresh_manifest=True)
+
+    assert [u.split("/")[-2] for u in reads] == ["updated_date=2024-02-02",
+                                                 "updated_date=2024-03-03",
+                                                 "updated_date=2026-02-02"]
+    assert len(list(pool.glob("*.parquet"))) == 4
+    # A row count per fixture read, plus the one untouched file's two rows.
+    survivors = pq.ParquetFile(pool / _pool_name("2026-02-02")).metadata.num_rows
+    assert _rows(pool) == 2 + 3 * survivors
+    record = ss.read_pool_provenance(pool)
+    assert record["expected_files"] == 4 and ss.pool_fingerprint(pool)
+    assert record["search_gate_fingerprint"] == ss.search_gate_fingerprint()
+
+    _no_network(monkeypatch)
+    assert ss.scan_snapshot(survivor_pool=pool) == 0, "the second scan costs nothing"
+
+
+def test_a_rewrite_before_the_baseline_is_not_detected(snap_env, monkeypatch):
+    """The known limit of reconstruction, pinned so that it stays stated: the partition
+    changed before this manifest, its file is old, and nothing here can tell."""
+    pool = _pulled_pool(snap_env, ["2024-01-01"])
+    before = (pool / _pool_name("2024-01-01")).read_bytes()
+    reads = _serve(monkeypatch, snap_env.tmp, _release("2026-01-01", {"2024-01-01": 999}))
+    ss.reconstruct_ledger(pool)
+    ss.scan_snapshot(survivor_pool=pool)
+    assert reads == []
+    assert (pool / _pool_name("2024-01-01")).read_bytes() == before
+
+
+def test_a_rewrite_with_no_survivors_lowers_the_file_count(snap_env, monkeypatch):
+    """The file goes, so the count must follow, or the pool reads as partial for good."""
+    pool = snap_env.tmp / "pool"
+    _serve(monkeypatch, snap_env.tmp, _release("2026-01-01", {"2024-01-01": 100,
+                                                              "2024-02-02": 200}))
+    ss.scan_snapshot(survivor_pool=pool)
+    assert ss.read_pool_provenance(pool)["expected_files"] == 2
+
+    monkeypatch.setattr(ss.requests, "get", lambda *a, **kw: _Resp(_release(
+        "2026-02-02", {"2024-01-01": 100, "2024-02-02": 50})))
+    empty = _write_parquet(snap_env.tmp / "empty.parquet", [_POOL_RECORDS[-1]])
+    monkeypatch.setattr(ss, "_open_parquet", lambda u: pq.ParquetFile(empty))
+    ss.scan_snapshot(survivor_pool=pool, refresh_manifest=True)
+
+    assert [p.name for p in pool.glob("*.parquet")] == [_pool_name("2024-01-01")]
+    assert ss.read_pool_provenance(pool)["expected_files"] == 1
+    assert ss.pool_fingerprint(pool)
+
+
+def test_a_partition_gone_from_the_manifest_is_reported_and_kept(snap_env, monkeypatch, caplog):
+    """Deleting pool files is not this scan's call. It says what it found."""
+    pool = snap_env.tmp / "pool"
+    _serve(monkeypatch, snap_env.tmp, _release("2026-01-01", {"2024-01-01": 100,
+                                                              "2024-02-02": 200}))
+    ss.scan_snapshot(survivor_pool=pool)
+    rows = _rows(pool)
+
+    reads = _serve(monkeypatch, snap_env.tmp, _release("2026-02-02", {"2024-02-02": 200}))
+    with caplog.at_level("WARNING"):
+        ss.scan_snapshot(survivor_pool=pool, refresh_manifest=True)
+
+    assert reads == []
+    assert _rows(pool) == rows and len(list(pool.glob("*.parquet"))) == 2
+    assert f"1 ledger entries and 1 pool file(s) ({rows // 2} rows)" in caplog.text
+    assert ss.pool_fingerprint(pool)
+
+
+def test_run_search_passes_the_refresh_flag(monkeypatch, tmp_path):
+    from search import run_search
+    from shared import dashboard_cache
+
+    seen = {}
+    monkeypatch.setattr(ss, "scan_snapshot", lambda **kw: seen.update(kw) or 0)
+    monkeypatch.setattr(dashboard_cache, "refresh", lambda *a, **kw: None)
+    monkeypatch.setattr(sys, "argv", ["run_search", "--scan", "--refresh-manifest",
+                                      "--survivor-pool", str(tmp_path)])
+    run_search.main()
+    assert seen["refresh_manifest"] is True

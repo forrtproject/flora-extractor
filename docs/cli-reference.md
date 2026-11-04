@@ -126,6 +126,51 @@ but its gate enters the id as *unknown* and every run says so loudly. The name i
 underscore-prefixed so neither the `*.parquet` globs nor pyarrow's dataset
 discovery ever sees it.
 
+**Updating a pool with a new OpenAlex release.** The scan reads only partitions the
+ledger does not mark done at their current manifest size, so an update costs the
+changed partitions rather than 725 GB.
+
+```bash
+# See what changed without reading a partition, then read it.
+.venv/bin/python -m search.run_search --scan --refresh-manifest --snapshot-max-files 0
+.venv/bin/python -m search.run_search --scan --refresh-manifest
+```
+
+The first command replaces the cached manifest and logs how many partitions are new,
+rewritten, interrupted and unchanged, with the gigabytes each would cost. A later scan
+compares against the ledger, so the preview does not hide anything from it.
+
+A partition no longer in the manifest is reported and left alone: its pool file and its
+rows stay, and they may repeat works OpenAlex now holds in other partitions. An update
+mints a new release id, because `pool_fingerprint()` hashes every file, so the whole pool
+is re-routed. Routing is local and spends nothing.
+
+**A pulled pool needs its ledger rebuilt first.** `pool_sync` does not carry the ledger,
+so `--scan` refuses a pool whose files have no ledger entry rather than re-reading it all:
+
+```bash
+.venv/bin/python -m search.snapshot_scan --reconstruct-ledger
+.venv/bin/python -m search.run_search --scan --refresh-manifest --snapshot-max-files 0
+```
+
+Reconstruction transfers no pool data. What it can and cannot claim:
+
+- A pool file proves its partition was read in full under the gate in the sidecar. It
+  does not record the partition's size at that time, so the ledger takes the size from
+  the manifest. **A partition OpenAlex rewrote between the pool's scan and that manifest
+  is not detected and keeps its old file.** Only later rewrites are. Run it before
+  `--refresh-manifest`, because an older baseline can only cause extra reads, never
+  missed ones. A checkout with no cached manifest has to use the current one.
+- A pool file holding more rows than the manifest gives its partition was certainly
+  rewritten, so it gets no entry and is re-read.
+- A partition with no pool file may have had no survivors, been skipped as unreadable or
+  be new. These get no entry, so the next scan reads each once. A `--years` pull leaves
+  every other year in this state, so preview before scanning.
+
+It refuses a short pool (finish the pull), and a pool whose sidecar records no gate or
+another gate. Entries are marked `reconstructed_from: <manifest date>`, and a re-run adds
+nothing. For a true full re-read, scan into a fresh pool directory.
+
 There is no sample or pilot mode. To scan a few partitions for a look, run the
 same command against a scratch state directory — `FLORA_CACHE_DIR=/tmp/flora-sample
 .venv/bin/python -m search.run_search --scan --snapshot-max-files 3` moves the ledger and,
