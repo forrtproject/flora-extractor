@@ -140,13 +140,17 @@ The first command replaces the cached manifest and logs how many partitions are 
 rewritten, interrupted and unchanged, with the gigabytes each would cost. A later scan
 compares against the ledger, so the preview does not hide anything from it.
 
-A partition no longer in the manifest is reported and left alone: its pool file and its
-rows stay, and they may repeat works OpenAlex now holds in other partitions. An update
-mints a new release id, because `pool_fingerprint()` hashes every file, so the whole pool
+**An updated pool is not equivalent to a rescan.** A partition no longer in the manifest
+is reported and left alone, so its pool file and rows stay. Where OpenAlex moved a work
+from that partition to a newer one, the pool holds both copies and routing uses the
+older. Routing reads files in name order, names start with the partition's date, and the
+first row per work is kept. The same applies to a file kept through an undetected
+rewrite (below). An update mints a new release id, because `pool_fingerprint()` hashes every file, so the whole pool
 is re-routed. Routing is local and spends nothing.
 
 **A pulled pool needs its ledger rebuilt first.** `pool_sync` does not carry the ledger,
-so `--scan` refuses a pool whose files have no ledger entry rather than re-reading it all:
+so `--scan` refuses a pool whose files have no ledger entry rather than re-reading it all
+(a scan forced over a pool of another gate excepted). Rebuild the entries, then preview:
 
 ```bash
 .venv/bin/python -m search.snapshot_scan --reconstruct-ledger
@@ -164,8 +168,10 @@ Reconstruction transfers no pool data. What it can and cannot claim:
 - A pool file holding more rows than the manifest gives its partition was certainly
   rewritten, so it gets no entry and is re-read.
 - A partition with no pool file may have had no survivors, been skipped as unreadable or
-  be new. These get no entry, so the next scan reads each once. A `--years` pull leaves
-  every other year in this state, so preview before scanning.
+  be new. These get no entry, so the next scan reads each once. The report gives their
+  total as `no_pool_file_bytes`. A pool from an older release can share few partition
+  names with the current manifest, and a `--years` pull leaves every other year without
+  files, so this can approach a full read. Check the number before scanning.
 
 It refuses a short pool (finish the pull), and a pool whose sidecar records no gate or
 another gate. Entries are marked `reconstructed_from: <manifest date>`, and a re-run adds

@@ -608,7 +608,8 @@ def manifest_delta(all_files: list[tuple[str, dict]], ledger: dict,
                    pool_dir: Optional[Path] = None) -> dict:
     """What a scan would read against *ledger*, and what the manifest no longer lists.
 
-    A removed partition is reported and left alone: its pool file keeps its rows.
+    A removed partition is reported and left alone: its pool file keeps its rows, and
+    ``_log_delta`` states what those rows do downstream.
     """
     entries = ledger.get("files") or {}
     new, rewritten, interrupted, unchanged = [], [], [], 0
@@ -652,8 +653,9 @@ def _log_delta(delta: dict, previous_date: str, date: str) -> None:
              delta["unchanged"])
     if delta["removed_from_ledger"] or delta["orphan_pool_files"]:
         log.warning("%d ledger entries and %d pool file(s) (%d rows) name partitions this "
-                    "manifest no longer lists. Their rows stay in the pool and may repeat "
-                    "works now held in other partitions.",
+                    "manifest no longer lists. Their rows stay in the pool. Where OpenAlex "
+                    "moved a work to a newer partition, routing keeps this OLDER copy: it "
+                    "reads files in name order and keeps the first row per work.",
                     delta["removed_from_ledger"], delta["orphan_pool_files"],
                     delta["orphan_pool_rows"])
 
@@ -1115,7 +1117,8 @@ def scan_snapshot(max_files: Optional[int] = None,
 
     # A pool this ledger knows nothing about would otherwise be re-read in full: 725 GB
     # to rediscover files already on disk, with no sign of it until the bill arrives.
-    if files is None and survivor_pool is not None and not force_gate:
+    if files is None and survivor_pool is not None \
+            and not (pool_gate_mismatch or ledger_gate_mismatch):
         unledgered = _unledgered_pool_files(all_files, ledger, survivor_pool)
         if unledgered:
             raise RuntimeError(
