@@ -34,6 +34,43 @@ the command, pasteable from the project root, and what proves it worked.
       release 61f07fd07f19). Done when the next nightly run shows `retire_superseded`
       SUCCESS.
 
+- [ ] **Re-extract the `hdl.handle.net` works so `handle_landing` can reach them (issue
+      #188).** Run this after the admission-gate render above, because each ends in a
+      single-writer export. Nothing reopens these works by itself: most are resting
+      `target_pending`, and `--redo-status` cannot name a URL host, so the work list is
+      committed. The dry run prints the reach and the cost estimate; if it offers 0
+      works, check the release before going further. Works with no document fall through
+      to every other tier, and those retry delays have lapsed, so Scholar searches are
+      paid again. Run in this order from the project root:
+
+      ```bash
+      WORKS="$(cat analysis/repository_routes_2026-11/handle_works.txt)"
+      RELEASE=61f07fd07f19
+      .venv/bin/python -m extract.tier --release "$RELEASE" --mode validation --redo "$WORKS" --only "$WORKS"
+      LLM_DAILY_USD_BUDGET=5 .venv/bin/python -m extract.tier --run --release "$RELEASE" --mode validation --batch-label handle-landing-sandbox --redo "$WORKS" --only "$WORKS"
+      .venv/bin/python -m extract.export --release "$RELEASE" --mode validation --out data/extracted-test.csv
+      .venv/bin/python -c "import csv,sys; csv.field_size_limit(10**9); r=list(csv.DictReader(open('data/extracted-test.csv',encoding='utf-8-sig'))); h=[x for x in r if x['pdf_source']=='handle_landing']; print(len(h),'handle_landing rows'); [print(x['title_r'][:70],'|',x['pdf_url'][:70],'|',x['outcome']) for x in h[:15]]"
+      ```
+
+      Read the sandbox output before going on. Expect `handle_landing` on up to roughly
+      20% of the works that reach the tier (8 of 40 sampled, interval 10–35%); zero means
+      the tier did not fire. Open at least ten `pdf_url` values and confirm each is the
+      paper named by `title_r`, not a supplement or the original it replicates. Then
+      promote, which is near-free on cached calls, and render:
+
+      ```bash
+      WORKS="$(cat analysis/repository_routes_2026-11/handle_works.txt)"
+      RELEASE=61f07fd07f19
+      LLM_DAILY_USD_BUDGET=5 .venv/bin/python -m extract.tier --run --release "$RELEASE" --batch-label handle-landing --redo "$WORKS" --only "$WORKS"
+      .venv/bin/python -m extract.export --release "$RELEASE" --check
+      .venv/bin/python -m extract.export --release "$RELEASE"
+      ```
+
+      Use the newer id if a re-route has minted one since release `61f07fd07f19`. Done when
+      `data/extracted.csv` plus its set-asides carry `pdf_source = handle_landing` rows and
+      fewer of these works remain in `data/target_pending.csv`. Commit the render as the
+      entry above describes.
+
 ## Done
 
 - [x] **DONE 2026-10-05** — last batch 2026-10-04 night; 3 open works remain (retries). Timer stopped; final render 9,608 rows. Original entry:  **Finish the option-B campaign: nightly runs at 01:15 BST (after the midnight-UTC

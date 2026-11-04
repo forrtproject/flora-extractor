@@ -8,6 +8,7 @@ Acquisition order (the tier numbers acquire_pdf's comments use):
   0b. The OSF registration form
   0c. The row's own URL, downloaded directly (no index, no DOI needed)
   0d. The paper this DOI is a REVIEW of (Crossref `is-review-of`, e.g. PCI → preprint)
+  0e. A hdl.handle.net row's landing page, scraped for its file links (issue #188)
   1.  arXiv                              (DOI pattern, no API)
   2.  OSF preprint direct download       (DOI pattern, no API)
   2b. Zenodo record files, via its API   (10.5281/zenodo.* only)
@@ -109,6 +110,7 @@ _PMC_OA_RATE_SEC          = 0.2
 _HTML_RATE_SEC           = 0.5
 _SPRINGER_OA_RATE_SEC     = 1.0     # basic plan: 100 requests/min, 500 a day
 _WILEY_TDM_RATE_SEC       = 10.0    # documented: 60 requests per 10 minutes
+_HANDLE_LANDING_RATE_SEC  = 1.0     # per host: institutional repositories, no stated limit
 
 # The key is optional: without it you get the polite pool (mailto= parameter);
 # with it you get higher rate limits and access to content.openalex.org bulk
@@ -2346,6 +2348,34 @@ def _declared_pdf_urls(page_html: str) -> list[str]:
     return list(dict.fromkeys(found))
 
 
+def _landing_pdf_links(page: str, base_url: str) -> list[str]:
+    """Direct file links on a landing page, best candidate first."""
+    # The page's own statement of where its PDF is comes first: publishers and
+    # repositories emit it for Google Scholar, and it names a file whose URL often
+    # carries no ".pdf" (`cdr.lib.unc.edu/downloads/<id>`).
+    pdf_links: list[str] = [html.unescape(u) for u in _declared_pdf_urls(page)]
+    for pat in [
+        r'href=["\']([^"\']+\.pdf[^"\']*)["\']',          # direct .pdf href
+        r'href=["\']([^"\']+/document)["\']',              # HAL /document
+        r'href=["\']([^"\']+/bitstream/[^"\']+)["\']',     # DSpace bitstream
+        r'href=["\']([^"\']*download[^"\']*\.pdf[^"\']*)["\']',  # generic download
+    ]:
+        for m in re.finditer(pat, page, re.IGNORECASE):
+            pdf_links.append(m.group(1))
+
+    resolved: list[str] = []
+    seen:     set[str]  = set()
+    for link in pdf_links:
+        url = urljoin(base_url, link)
+        if url not in seen:
+            seen.add(url)
+            resolved.append(url)
+
+    main = [u for u in resolved
+            if not re.search(r"(?i)supplement|appendix|supp_|_s\d", u)]
+    return (main or resolved)[:_MAX_LANDING_CANDIDATES]
+
+
 def scrape_pdf_from_landing_page(landing_url: str) -> list[str]:
     """Direct PDF links found on a repository landing page, best candidate first.
 
@@ -2366,39 +2396,58 @@ def scrape_pdf_from_landing_page(landing_url: str) -> list[str]:
         )
         if r.status_code != 200:
             return []
-        page     = r.text
         # Relative links resolve against where the redirects ended, not where they
         # began: a doi.org landing is never the page's own host.
-        base_url = r.url or landing_url
-
-        # The page's own statement of where its PDF is comes first: publishers and
-        # repositories emit it for Google Scholar, and it names a file whose URL often
-        # carries no ".pdf" (`cdr.lib.unc.edu/downloads/<id>`).
-        pdf_links: list[str] = [html.unescape(u) for u in _declared_pdf_urls(page)]
-        for pat in [
-            r'href=["\']([^"\']+\.pdf[^"\']*)["\']',          # direct .pdf href
-            r'href=["\']([^"\']+/document)["\']',              # HAL /document
-            r'href=["\']([^"\']+/bitstream/[^"\']+)["\']',     # DSpace bitstream
-            r'href=["\']([^"\']*download[^"\']*\.pdf[^"\']*)["\']',  # generic download
-        ]:
-            for m in re.finditer(pat, page, re.IGNORECASE):
-                pdf_links.append(m.group(1))
-
-        resolved: list[str] = []
-        seen:     set[str]  = set()
-        for link in pdf_links:
-            url = urljoin(base_url, link)
-            if url not in seen:
-                seen.add(url)
-                resolved.append(url)
-
-        main = [u for u in resolved
-                if not re.search(r"(?i)supplement|appendix|supp_|_s\d", u)]
-        return (main or resolved)[:_MAX_LANDING_CANDIDATES]
+        return _landing_pdf_links(r.text, r.url or landing_url)
 
     except Exception as e:
         log.debug("Landing-page scrape failed (%s): %s", landing_url, e)
         return []
+
+
+def is_handle_url(url: str) -> bool:
+    """True for a hdl.handle.net URL that names a handle."""
+    parts = urlsplit(str(url or "").strip())
+    return parts.netloc.lower() == "hdl.handle.net" and len(parts.path) > 1
+
+
+def handle_landing_pdf_urls(url: str) -> tuple[list[str], str]:
+    """(file links on the page *url* resolves to, that page's URL). Tier 0e's lookup.
+
+    Asked under the declared identity only. Unlike the scraper above, it tells an
+    unanswered request from an empty page: a timeout, a connection failure, a 429 or a
+    5xx raises DocumentSourceUnavailable and nothing is cached. A 404/410 and a 200 are
+    answers and are cached. Any other refusal (a 403, a challenge's 202) is answered
+    with no links, uncached, since access can change.
+
+    An empty answer is reused only within PDF_RETRY_AFTER_DAYS. A challenge page can
+    answer 200 with no links, and a permanent entry would outlive the retry delay that
+    is meant to ask again.
+    """
+    cf = OA_CACHE_DIR / f"handlelanding_{cache_key(url)}.json"
+    if cache_exists(cf):
+        cached = read_json(cf)
+        if cached.get("links") or _retry_suppressed(cached, "fetched",
+                                                    PDF_RETRY_AFTER_DAYS):
+            return list(cached.get("links") or []), str(cached.get("page") or url)
+
+    # The handle proxy is the first hop of every call, so it is the one queue they share.
+    throttle("handle_landing:hdl.handle.net", _HANDLE_LANDING_RATE_SEC)
+    try:
+        r = requests.get(url, headers={**_polite_headers(),
+                                       "Accept": "text/html,application/xhtml+xml"},
+                         timeout=30, allow_redirects=True)
+    except Exception as e:
+        raise DocumentSourceUnavailable(f"Handle landing failed for {url}: {e}") from e
+    if r.status_code == 429 or r.status_code >= 500:
+        raise DocumentSourceUnavailable(f"Handle landing {url} → HTTP {r.status_code}")
+    page_url = r.url or url
+    if r.status_code != 200 and r.status_code not in _PERMANENT_HTTP_STATUS:
+        log.debug("Handle landing %s → HTTP %s", url, r.status_code)
+        return [], page_url
+    links = _landing_pdf_links(r.text, page_url) if r.status_code == 200 else []
+    write_json(cf, {"links": links, "page": page_url, "fetched": _now_iso()})
+    return links, page_url
 
 
 # ── Google Scholar (Serper.dev, else SerpAPI) ─────────────────────────────────
@@ -2900,7 +2949,8 @@ def _title_check(content: bytes, suffix: str, title: str) -> tuple[str, float]:
 
 def download_pdf(url: str, doi: str = "", min_bytes: int = _MIN_PDF_BYTES,
                  title: str = "", referer: str = "",
-                 auth_headers: "dict | None" = None) -> dict:
+                 auth_headers: "dict | None" = None,
+                 polite_only: bool = False) -> dict:
     """
     Download a document and save it to PDF_CACHE_DIR.
 
@@ -2912,6 +2962,8 @@ def download_pdf(url: str, doi: str = "", min_bytes: int = _MIN_PDF_BYTES,
     *auth_headers* is an API's credential. A request carrying one is asked once, as
     FLoRA: the browser identity exists for servers that judge the caller, and an API
     judges the token.
+
+    *polite_only* drops the browser identity, for a tier that must not present one.
 
     Cache key = MD5 of doi (or url if doi missing), so repeat calls skip download.
     A PDF and a Word file are both documents; anything else is refused, and a Word
@@ -2942,8 +2994,12 @@ def download_pdf(url: str, doi: str = "", min_bytes: int = _MIN_PDF_BYTES,
                   PDF_RETRY_AFTER_DAYS, url)
         return {"success": False, "path": None, "source": "", "reason": "url_gone"}
 
-    identities = ((_BROWSER_HEADERS, _polite_headers()) if not auth_headers
-                  else ({**_polite_headers(), **auth_headers},))
+    if auth_headers:
+        identities = ({**_polite_headers(), **auth_headers},)
+    elif polite_only:
+        identities = (_polite_headers(),)
+    else:
+        identities = (_BROWSER_HEADERS, _polite_headers())
     for attempt, headers in enumerate(identities):
         if referer:
             headers = {**headers, "Referer": referer}
@@ -3073,13 +3129,14 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
         return bool(tried) and all(r.startswith("download_error") for r in tried)
 
     def _try(url: str, label: str, referer: str = "", want_title: str = "",
-             name: str = "", auth_headers: "dict | None" = None) -> bool:
+             name: str = "", auth_headers: "dict | None" = None,
+             polite_only: bool = False) -> bool:
         nonlocal dl, pdf_url, pdf_src, pdf_name
         all_tried.append(url)
         # A tier fetching ANOTHER paper's document checks the bytes against that
         # paper's title, not the row's; everything else asks for the row's own.
         dl = download_pdf(url, doi=doi_r, title=want_title or title, referer=referer,
-                          auth_headers=auth_headers)
+                          auth_headers=auth_headers, polite_only=polite_only)
         if dl["success"]:
             pdf_url, pdf_src = url, label
             pdf_name = name or _url_file_name(url)
@@ -3311,6 +3368,29 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "",
                     return _result()
                 if not (outage or _only_transient("related_doi")):
                     _failed("related_doi")
+
+    # Tier 0e — the landing page of a hdl.handle.net row. Tier 8 never asks about url_r,
+    # and Tier 0c refuses the page as "not_a_pdf", so these file links were out of
+    # reach. Measured on 40 sampled handle and RePEc rows on 2026-11-04: 8 documents of
+    # the right paper, against 2 for legacy DSpace REST and 6 for OAI-PMH, whose
+    # documents were all among the 8 (analysis/repository_routes_2026-11/REPORT.md).
+    # Above every index because it is free and the row names the record. Handle rows
+    # only: the same scrape on EPrints rows found 3 of 26, under the bar it had to clear.
+    # The title check matters here: one record page linked its site's help PDF.
+    if not dl["success"] and is_handle_url(url_r) and not _held("handle_landing"):
+        try:
+            handle_links, handle_page = handle_landing_pdf_urls(url_r)
+        except DocumentSourceUnavailable as exc:
+            # Never recorded: a source that did not answer has said nothing.
+            log.info("  [%s] Handle landing unavailable: %s", doi_r or url_r, exc)
+        else:
+            for link in handle_links:
+                throttle(f"handle_landing:{urlsplit(link).netloc.lower()}",
+                         _HANDLE_LANDING_RATE_SEC)
+                if _try(link, "handle_landing", referer=handle_page, polite_only=True):
+                    return _result()
+            if not _only_transient("handle_landing"):
+                _failed("handle_landing")
 
     # Tier 1 — arXiv direct (before any API calls; the URL is a DOI pattern, so a
     # non-arXiv DOI is not a tier failure — there was nothing to ask.)
