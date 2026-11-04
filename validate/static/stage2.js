@@ -383,8 +383,9 @@ function renderScreen(d) {
           <tr><td>below <b>${esc(dc.discard_below ?? "—")}</b></td>
               <td><code>none</code></td></tr>
           <tr><td>at least <b>${esc(dc.confident_at ?? "—")}</b></td>
-              <td><code>confident</code> — the pre-PDF title search opens only when both
-              voters qualify and are confident</td></tr>
+              <td><code>confident</code> — the pre-PDF title search and a strict admission
+              rule need both voters qualifying and confident. A <code>none</code> is
+              confident at or below <b>${esc(dc.confident_at == null ? "—" : +(1 - dc.confident_at).toFixed(2))}</b></td></tr>
           <tr><td>one type holds at least <b>${esc(dc.type_share ?? "—")}</b> of it</td>
               <td>that type (replication or reproduction); otherwise <code>unclear</code></td></tr>
         </tbody></table></div>

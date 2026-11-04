@@ -26,6 +26,13 @@ probability per class and no text. `_decision_vote()` in
 P(qualifies) 0.7, confident at 0.9, and a type when one holds 0.7 of P(qualifies),
 otherwise `unclear`. Its weights are open (Apache-2.0, `respanai/span-02`).
 
+The strict admission gate reads these votes, so it is tighter under this pair than
+under two LLMs: among the same stored works, 18% of strict-rule proceeds defer under
+DeepSeek + Luna and an estimated 26–45% would under Luna + Span-02, according to how
+many of the works both old voters were sure of are real replications
+([score_strict_out.txt](../analysis/jev_eval_2026-10/score_strict_out.txt)). Settled
+verdicts keep the votes they were judged on, so this reaches new works only.
+
 The decision rule is `screen_gate()` in [shared/llm_client.py](../shared/llm_client.py):
 
 - **Discard:** both voters answer `none`, whatever their confidence.

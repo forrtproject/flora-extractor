@@ -247,6 +247,28 @@ SCREENING_MODEL_2 = "respan/span-02-20261015"
 # Models that answer through OpenRouter's /api/alpha/decisions (probabilities, no
 # text, output free) rather than chat completions.
 DECISION_MODELS = frozenset({SCREENING_MODEL_2})
+# The decision voter's probabilities become a vote with three cut-offs, measured for
+# Span-02 on 2,186 labelled works (analysis/jev_eval_2026-10/REPORT_open_weights.md).
+# P(qualifies) is P(replication) + P(reproduction) + P(both); "unclear" does not count.
+#   below DISCARD_BELOW  → "none", so the gate discards only if Luna also says none.
+#     Span-02 answers near 0 or 1: from 0.2 to 0.7 it loses the same 5 of 1,456
+#     positives, and 0.7 discards the most (76% / 80% of hard / curated negatives).
+#   at or above CONFIDENT_AT → "confident", which opens the pre-PDF title search
+#     together with a confident Luna (link_original.py) — when the vote also names a
+#     type (below), because an "unclear" vote does not qualify. Luna confident + such
+#     a vote allowed 1,284 positives and 15 hard negatives; Luna + DeepSeek allowed
+#     1,363 / 46.
+#   a type share at or above TYPE_SHARE → that type, which overrides Luna's type
+#     (_screen_record_type); below it the vote says "unclear" — qualifying for the
+#     gate, silent about the type. Typing by Luna with this override: 97.6% against
+#     the validators' type on 642 positives (Luna alone 97.0%), finding 38 of 43
+#     reproductions against Luna's 33.
+# All three decide what a stored vote SAYS, so all three are in the screening
+# generation (filter/engine/tiers.py); the raw probabilities are what is cached, so
+# moving a cut-off re-reads the cache rather than re-buying it.
+DECISION_DISCARD_BELOW = 0.7
+DECISION_CONFIDENT_AT = 0.9
+DECISION_TYPE_SHARE = 0.7
 # Retained two-LLM screens used the first qualifying voter to settle their type.
 # Preserve their call order when rebuilding votes under today's configuration.
 SCREENING_LEGACY_VOTER_PAIRS = (

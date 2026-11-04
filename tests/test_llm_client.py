@@ -1017,9 +1017,12 @@ def test_a_cached_decision_answer_is_validated_before_it_votes(monkeypatch, tmp_
     write_cache(tmp_path, key, {"probs": {**_probs(0.0)["probs"], "replication": -0.2,
                                           "none": 1.2}, "model": llm.SCREENING_MODEL_2})
     assert llm._screen_vote(*args, buy=False) is None
-    monkeypatch.setattr(llm, "_decide_once", lambda t, a, m: _probs(0.8))
+    calls = []
+    monkeypatch.setattr(llm, "_decide_once",
+                        lambda t, a, m: (calls.append(1), _probs(0.8))[1])
     assert llm._screen_vote(*args, buy=True)["classification"] == "replication"
-    assert llm._screen_vote(*args, buy=False)["classification"] == "replication"
+    assert llm._screen_vote(*args, buy=True)["classification"] == "replication"
+    assert len(calls) == 1
 
 
 def test_a_decision_vote_without_a_key_or_budget_sends_nothing(monkeypatch):

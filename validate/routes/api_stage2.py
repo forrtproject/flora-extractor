@@ -97,7 +97,6 @@ def _screen() -> dict:
     voter's three cut-offs are shown because they decide what its vote says.
     """
     from shared import config as C
-    from shared import llm_client as L
 
     record: dict[str, Any] = {
         "voters": [
@@ -107,9 +106,9 @@ def _screen() -> dict:
                 (1, C.SCREENING_MODEL_1, C.SCREENING_EFFORT_1),
                 (2, C.SCREENING_MODEL_2, C.SCREENING_EFFORT_2))
         ],
-        "decision": {"discard_below": L.DECISION_DISCARD_BELOW,
-                     "confident_at": L.DECISION_CONFIDENT_AT,
-                     "type_share": L.DECISION_TYPE_SHARE,
+        "decision": {"discard_below": C.DECISION_DISCARD_BELOW,
+                     "confident_at": C.DECISION_CONFIDENT_AT,
+                     "type_share": C.DECISION_TYPE_SHARE,
                      "prompt_version": None},
         "cheap_voters": [
             {"slot": 1, "model": C.PRESCREEN_MODEL_1},

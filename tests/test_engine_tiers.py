@@ -976,6 +976,28 @@ def test_a_strict_admission_gate_defers_a_proceed_unless_a_lenient_rule_matched(
     assert (released["rows"], released["deferred_by_admission_gate"]) == (1, 0)
 
 
+@pytest.mark.parametrize("stored_first", ["gpt-6-luna", "respan/span-02-20261015"])
+def test_a_decision_vote_below_its_confident_cut_off_defers_whatever_the_stored_order(
+        stored_first):
+    """Span-02 at P(qualifies) 0.8 is a typed, unconfident vote: the gate proceeds, a
+    strict rule defers, and neither depends on voter order; the type override is
+    separate from admission and still names Span-02's type."""
+    from shared import llm_client
+
+    luna, span = "gpt-6-luna", "respan/span-02-20261015"
+    vote = llm_client._decision_vote({"model": span, "probs": {
+        "replication": 0.0, "reproduction": 0.8, "both": 0.0, "none": 0.1, "unclear": 0.1}})
+    assert (vote["classification"], vote["confident"]) == ("reproduction", False)
+    rows = [{"work_id": 11, "verdict": "replication", "model": luna, "confidence": "confident"},
+            {"work_id": 11, "verdict": vote["classification"], "model": span,
+             "confidence": "unconfident"}]
+    rows.sort(key=lambda r: r["model"] != stored_first)
+    decision = tiers._expensive_decision(rows)
+    assert (decision["outcome"], decision["record_type"]) == ("proceed", "reproduction")
+    assert handoff_mod.deferred_works({11: decision}, {11: "strict"}, set()) == {11}
+    assert handoff_mod.deferred_works({11: decision}, {11: "lenient"}, set()) == set()
+
+
 def test_a_work_a_person_has_judged_is_never_deferred(tmp_path):
     """The validation judgment outranks two screen votes, and deferring the work
     would retire the record the judgment sits on."""

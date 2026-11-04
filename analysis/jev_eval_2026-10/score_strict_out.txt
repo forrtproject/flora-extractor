@@ -1,0 +1,68 @@
+## 1. Eval set, every rule treated as strict (2186 works with all three voters)
+| group | n | pair | discard | proceed | deferred | deferred/proceed |
+|---|--:|---|--:|--:|--:|--:|
+| positive | 1456 | DeepSeek + Luna | 8 | 1448 | 85 | 5.9% |
+| positive | 1456 | Luna + Span-02 | 5 | 1451 | 167 | 11.5% |
+| human negative | 161 | DeepSeek + Luna | 110 | 51 | 26 | 51.0% |
+| human negative | 161 | Luna + Span-02 | 109 | 52 | 38 | 73.1% |
+| pipeline negative | 183 | DeepSeek + Luna | 152 | 31 | 10 | 32.3% |
+| pipeline negative | 183 | Luna + Span-02 | 151 | 32 | 31 | 96.9% |
+| curated negative | 386 | DeepSeek + Luna | 329 | 57 | 44 | 77.2% |
+| curated negative | 386 | Luna + Span-02 | 309 | 77 | 68 | 88.3% |
+
+## 1b. Why Luna + Span-02 defers a work (first failing test, in this order)
+| group | Luna unqualified or unsure | Span P<0.7 (none) | Span P>=0.9, type share <0.7 (unclear) | Span 0.7<=P<0.9, unclear | Span 0.7<=P<0.9, typed | total |
+|---|--:|--:|--:|--:|--:|--:|
+| positive | 29 | 76 | 6 | 1 | 55 | 167 |
+| human negative | 20 | 14 | 1 | 0 | 3 | 38 |
+| pipeline negative | 3 | 26 | 0 | 0 | 2 | 31 |
+| curated negative | 49 | 13 | 0 | 0 | 6 | 68 |
+
+## 1c. A work the old pair admits that the new pair does not, and the reverse
+| group | admit->defer | admit->discard | defer->admit | defer->discard | discard->defer | discard->admit |
+|---|--:|--:|--:|--:|--:|--:|
+| positive | 125 | 0 | 46 | 2 | 5 | 0 |
+| human negative | 12 | 0 | 1 | 3 | 4 | 0 |
+| pipeline negative | 21 | 0 | 1 | 0 | 1 | 0 |
+| curated negative | 6 | 0 | 2 | 8 | 28 | 0 |
+
+## 1d. Exploratory, not the agreed design: the same gate if a typed Span-02 vote counted as sure from 0.7
+| group | deferred at 0.9 | deferred at 0.7 | admitted at 0.9 | admitted at 0.7 |
+|---|--:|--:|--:|--:|
+| positive | 167 | 112 | 1284 | 1339 |
+| human negative | 38 | 35 | 14 | 17 |
+| pipeline negative | 31 | 29 | 1 | 3 |
+| curated negative | 68 | 62 | 9 | 15 |
+
+## 2. Strict-gated works of release 61f07fd07f19 with a stored DeepSeek + Luna verdict: 19,837
+(left out: 5,217 strict-gated works whose stored pair is DeepSeek + gpt-5.4-mini, no Luna vote)
+Stored votes: discard 6,790, admit 10,700, defer 2,347; deferred/proceed 18.0%
+
+| share of real replications among works both old voters were sure of | discard | admit | defer | deferred/proceed |
+|---|--:|--:|--:|--:|
+| eval mix (97%) | 6,708 | 9,721 | 3,407 | 26.0% |
+| 92% (validated strict passes, 466 of 504) | 6,708 | 9,404 | 3,724 | 28.4% |
+| 75% | 6,708 | 8,266 | 4,862 | 37.0% |
+| 60% (about the strict rules' base rate over all their matches; a floor) | 6,708 | 7,262 | 5,867 | 44.7% |
+
+| stored DeepSeek, Luna pattern | works in release | stored ending | eval positives: new discard/admit/defer | eval hard negatives: new discard/admit/defer |
+|---|--:|---|---|---|
+| sure, sure | 10,700 | admit | 0/1238/125 | 0/13/33 |
+| none, none | 6,790 | discard | 3/0/5 | 257/0/5 |
+| sure, none | 510 | defer | 2/0/6 | 1/0/3 |
+| none, sure | 453 | defer | 0/3/5 | 0/2/12 |
+| sure, unsure | 348 | defer | 0/0/12 | 0/0/3 |
+| none, unsure | 238 | defer | – | 0/0/5 |
+| none, unclear | 174 | defer | – | 0/0/5 |
+| unsure, sure | 134 | defer | 0/1/3 | – |
+| unclear, sure | 97 | defer | 0/42/5 | 0/0/1 |
+| unclear, unclear | 89 | defer | 0/0/1 | 0/0/1 |
+| sure, unclear | 78 | defer | 0/0/1 | – |
+| unclear, unsure | 71 | defer | – | – |
+| unsure, unsure | 69 | defer | 0/0/2 | – |
+| unclear, none | 43 | defer | 0/0/1 | 1/0/1 |
+| unsure, none | 28 | defer | – | 1/0/0 |
+| unsure, unclear | 15 | defer | 0/0/1 | – |
+
+## 3. All rules: how much of the release the gate would reach
+Proceeds 24,170; strict-gated 17,685; of those with a Luna pair 13,252
