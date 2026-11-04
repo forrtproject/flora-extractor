@@ -1212,7 +1212,7 @@ def test_a_row_with_no_doi_reaches_the_crossref_search():
     patchers = _mock_all_tiers(crossref_title_matches=["10.1/mirror"])
     started = {name: p.start() for name, p in patchers.items()}
     try:
-        def _download(url, doi="", min_bytes=0, title="", referer="", auth_headers=None):
+        def _download(url, doi="", min_bytes=0, title="", referer="", **_):
             if url.endswith(".pdf"):
                 return {"success": True, "path": "/tmp/p.pdf", "source": "download",
                         "reason": ""}
@@ -1253,7 +1253,7 @@ def test_the_landing_tier_sends_a_referer_and_tries_the_second_candidate():
     repository that serves its own page's links refuses a request from nowhere."""
     calls: list[dict] = []
 
-    def _download(url, doi="", min_bytes=0, title="", referer="", auth_headers=None):
+    def _download(url, doi="", min_bytes=0, title="", referer="", **_):
         calls.append({"url": url, "referer": referer})
         if url.endswith("blocked.pdf"):
             return dict(_NO_PDF)
@@ -2104,3 +2104,110 @@ def test_an_api_redirect_is_followed_without_the_credential(tmp_path, monkeypatc
     assert first.kwargs["headers"]["Wiley-TDM-Client-Token"] == "T"
     assert second.args[0] == "https://alm.wiley.com/d/1"
     assert "Wiley-TDM-Client-Token" not in second.kwargs["headers"]
+
+
+# ── Tier 0e: a hdl.handle.net row's landing page ──────────────────────────────
+
+_HANDLE_URL = "http://hdl.handle.net/10419/57169"
+_HANDLE_PAGE = "https://www.econstor.eu/handle/10419/57169"
+_HANDLE_PDF = "https://www.econstor.eu/bitstream/10419/57169/1/paper.pdf"
+_HANDLE_HTML = f'<meta name="citation_pdf_url" content="{_HANDLE_PDF}">'.encode()
+
+
+def _handle_server(page: "_Resp", document: "_Resp | None" = None):
+    """Serve the landing page for the handle and *document* for anything else."""
+    seen: list[dict] = []
+
+    def _get(url, headers=None, **kwargs):
+        seen.append({"url": url, "headers": headers or {}})
+        return page if url == _HANDLE_URL else (document or _Resp(404))
+    return _get, seen
+
+
+def _acquire_handle_row(server) -> dict:
+    patchers = _mock_all_tiers()
+    for p in patchers.values():
+        p.start()
+    try:
+        with patch.object(ps.requests, "get", side_effect=server), \
+                patch.object(ps, "get_html_document", return_value=None), \
+                patch.object(ps, "get_pdf_via_playwright",
+                             return_value={"success": False, "reason": "no_doi"}):
+            return ps.acquire_pdf("", "A Title", url_r=_HANDLE_URL)
+    finally:
+        for p in patchers.values():
+            p.stop()
+
+
+def test_a_handle_rows_landing_page_supplies_the_document(_oa_cache_in_tmp):
+    server, seen = _handle_server(
+        _Resp(200, _HANDLE_HTML, url=_HANDLE_PAGE),
+        _Resp(200, b"%PDF-1.4" + b"x" * 10_000))
+    out = _acquire_handle_row(server)
+    assert (out["pdf_ok"], out["pdf_source"], out["pdf_url"]) == (
+        True, "handle_landing", _HANDLE_PDF)
+    # No request in this tier presents the browser identity. row_url's own fetch of the
+    # handle comes first and belongs to Tier 0c.
+    tier_requests = seen[2:]
+    assert tier_requests and all(
+        "FLoRA" in s["headers"]["User-Agent"] for s in tier_requests)
+    assert not [s for s in tier_requests if s["url"] == _HANDLE_PDF
+                and s["headers"].get("Referer") != _HANDLE_PAGE]
+
+
+def test_the_wrong_paper_on_a_handle_page_is_refused(_oa_cache_in_tmp):
+    server, _ = _handle_server(
+        _Resp(200, _HANDLE_HTML, url=_HANDLE_PAGE),
+        _Resp(200, b"%PDF-1.4" + b"x" * 10_000))
+    with patch.object(ps, "_title_check", return_value=("mismatch", 0.0)):
+        out = _acquire_handle_row(server)
+    assert out["pdf_ok"] is False
+    assert not list(ps.PDF_CACHE_DIR.glob("*.pdf"))
+    assert "handle_landing" in _retry_log(_HANDLE_URL)
+
+
+@pytest.mark.parametrize("page", [_Resp(503), _Resp(429), None])
+def test_an_unanswered_handle_page_is_neither_cached_nor_recorded(_oa_cache_in_tmp, page):
+    def _get(url, headers=None, **kwargs):
+        if page is None:
+            raise ps.requests.ConnectionError("reset")
+        return page
+    out = _acquire_handle_row(_get)
+    assert out["pdf_ok"] is False
+    assert "handle_landing" not in _retry_log(_HANDLE_URL)
+    assert not list(_oa_cache_in_tmp.glob("handlelanding_*"))
+
+
+def test_a_handle_page_with_no_links_is_cached_and_held(_oa_cache_in_tmp):
+    server, _ = _handle_server(_Resp(200, b"<html>record</html>", url=_HANDLE_PAGE))
+    assert _acquire_handle_row(server)["pdf_ok"] is False
+    assert "handle_landing" in _retry_log(_HANDLE_URL)
+    assert len(list(_oa_cache_in_tmp.glob("handlelanding_*"))) == 1
+
+
+def test_an_empty_handle_answer_expires_with_the_retry_window(_oa_cache_in_tmp):
+    def _lookup():
+        return ps.handle_landing_pdf_urls(_HANDLE_URL)[0]
+    empty = _Resp(200, b"<html>challenge</html>", url=_HANDLE_PAGE)
+    with patch.object(ps.requests, "get", return_value=empty) as get:
+        assert _lookup() == []
+        assert _lookup() == []
+        assert get.call_count == 1
+    entry = next(_oa_cache_in_tmp.glob("handlelanding_*"))
+    ps.write_json(entry, {"links": [], "page": _HANDLE_PAGE,
+                          "fetched": _ago(ps.PDF_RETRY_AFTER_DAYS + 1)})
+    found = _Resp(200, _HANDLE_HTML, url=_HANDLE_PAGE)
+    with patch.object(ps.requests, "get", return_value=found):
+        assert _lookup() == [_HANDLE_PDF]
+
+
+def test_a_challenge_status_on_a_handle_page_is_not_cached(_oa_cache_in_tmp):
+    with patch.object(ps.requests, "get", return_value=_Resp(403, url=_HANDLE_PAGE)):
+        assert ps.handle_landing_pdf_urls(_HANDLE_URL) == ([], _HANDLE_PAGE)
+    assert not list(_oa_cache_in_tmp.glob("handlelanding_*"))
+
+
+def test_a_row_that_is_not_a_handle_never_reaches_the_tier():
+    assert not ps.is_handle_url("https://doi.org/10.1/x")
+    assert not ps.is_handle_url("https://hdl.handle.net/")
+    assert ps.is_handle_url("HTTP://hdl.handle.net/10419/57169")
