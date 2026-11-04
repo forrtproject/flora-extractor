@@ -35,8 +35,8 @@ the command, pasteable from the project root, and what proves it worked.
       SUCCESS.
 
 - [ ] **Re-extract the `hdl.handle.net` works so `handle_landing` can reach them (issue
-      #188).** Run this after the admission-gate render above, because each ends in a
-      single-writer export. Nothing reopens these works by itself: most are resting
+      #188).** The live render at the end must follow the admission-gate render above,
+      because each writes `data/extracted.csv`; the sandbox steps can run earlier. Nothing reopens these works by itself: most are resting
       `target_pending`, and `--redo-status` cannot name a URL host, so the work list is
       committed. The dry run prints the reach and the cost estimate; if it offers 0
       works, check the release before going further. Works with no document fall through
@@ -49,7 +49,7 @@ the command, pasteable from the project root, and what proves it worked.
       .venv/bin/python -m extract.tier --release "$RELEASE" --mode validation --redo "$WORKS" --only "$WORKS"
       LLM_DAILY_USD_BUDGET=5 .venv/bin/python -m extract.tier --run --release "$RELEASE" --mode validation --batch-label handle-landing-sandbox --redo "$WORKS" --only "$WORKS"
       .venv/bin/python -m extract.export --release "$RELEASE" --mode validation --out data/extracted-test.csv
-      .venv/bin/python -c "import csv,sys; csv.field_size_limit(10**9); r=list(csv.DictReader(open('data/extracted-test.csv',encoding='utf-8-sig'))); h=[x for x in r if x['pdf_source']=='handle_landing']; print(len(h),'handle_landing rows'); [print(x['title_r'][:70],'|',x['pdf_url'][:70],'|',x['outcome']) for x in h[:15]]"
+      .venv/bin/python -c "import csv,glob; csv.field_size_limit(10**9); r=[x for f in ['data/extracted-test.csv']+glob.glob('data/extracted-test-set-aside/*.csv') for x in csv.DictReader(open(f,encoding='utf-8-sig'))]; h=[x for x in r if x.get('pdf_source')=='handle_landing']; print(len(h),'handle_landing rows'); [print(x['title_r'][:70],'|',x['pdf_url'][:70],'|',x['outcome']) for x in h[:15]]"
       ```
 
       Read the sandbox output before going on. Expect `handle_landing` on up to roughly
