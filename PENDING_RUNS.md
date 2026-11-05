@@ -50,6 +50,21 @@ merged on 2026-10-28 has run, not even in the sandbox. Each entry's PR carries t
       Read the sandbox rows, then repeat the two tier commands without `--mode validation`.
       Done when none of the 14 ships a `doi_o` that `non_article_doi()` names.
 
+- [ ] **Run the final AI check (PR #228) before this render reaches validators.** Skip
+      this entry until #228 is merged. It has coded no real row yet, and a render with no
+      check file holds every changed work. Run it on the box, which has the parse cache,
+      with `claude` or `codex` logged in there. Sandbox first; read
+      `data/extracted-test-set-aside/final_check.csv`:
+      ```bash
+      .venv/bin/python -m extract.final_check --release "$REL" --mode validation --out data/extracted-test.csv
+      .venv/bin/python -m extract.final_check --release "$REL" --run --limit 5 --mode validation --out data/extracted-test.csv
+      .venv/bin/python -m extract.final_check --release "$REL" --run
+      ```
+      Then fill `decision` on the `review` rows of `data/final_check.csv` and commit that
+      file with the render below. Done when the render's `final AI check:` line shows the
+      changed works cleared, held or rejected, and held works that had shipped kept their
+      committed rows with no matching retirement.
+
 - [ ] **Render the new release: the admission gate (PR #229), PR #223's discards, PR
       #222's corrections and PR #217's new works.** The flora-validation change that adds
       `screen_deferred` to `RETIRE_REASONS` is merged (flora-validation PR #16), so the
@@ -78,21 +93,6 @@ merged on 2026-10-28 has run, not even in the sandbox. Each entry's PR carries t
       the tier command live without `--mode validation` and `--limit`, and render again as
       in the entry above. Done when the live dry run offers 0 works and the render is
       pushed.
-
-- [ ] **Exercise the final AI check (PR #228) in the sandbox, then apply it to the next
-      render.** It coded no real row when it was built. Run after the entries above have
-      routed the new release, on the box, the only machine with the parse cache, and log
-      `claude` and `codex` in there first. Check the worklist, code five works in the
-      sandbox and read `data/extracted-test-set-aside/final_check.csv`:
-      `.venv/bin/python -m extract.final_check --release <newest> --mode validation --out data/extracted-test.csv`, then
-      `.venv/bin/python -m extract.final_check --release <newest> --run --limit 5 --mode validation --out data/extracted-test.csv`.
-      Then, before committing the next live render:
-      `.venv/bin/python -m extract.final_check --release <newest> --run`, fill `decision`
-      on the `review` rows of `data/final_check.csv`, and
-      `.venv/bin/python -m extract.export --release <newest>`; commit `data/final_check.csv`
-      with the render. Done when the render's `final AI check:` line shows the changed
-      works cleared, held or rejected, and held works that had shipped kept their
-      committed rows with no matching retirement.
 
 ## Done
 

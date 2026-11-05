@@ -13,8 +13,9 @@ else from this module, so it stays a pure render.
     .venv/bin/python -m extract.final_check --release <id> --run --limit 5 \\
         --mode validation --out data/extracted-test.csv                   # the sandbox
 
-**The review.** A work is `released` when its originals pair off one-to-one and every
-pair agrees on type and outcome with a confident blind coder (`compare_work()`).
+**The review.** A work is `released` when its originals pair off one-to-one, every
+pair agrees on type and outcome with a confident blind coder, and the coder does not
+read the record as a plan (`compare_work()`).
 Anything else is `review`: whoever runs the pipeline reads the two codings side by
 side in the CSV and fills `decision` with `ship`, `hold` or `reject`. A decision is
 bound to the work's fingerprint (`work_fingerprint()` in `extract/export.py`), so a
@@ -25,7 +26,8 @@ never the pipeline's answer. It runs headless on a subscription (`claude -p` or
 `codex exec`), with no tools and no user configuration. A coding during which any tool
 ran is refused, and a failed call raises and is not cached. Neither route falls back
 to the other. A work whose document is not in this machine's parse cache is skipped
-rather than coded from its abstract alone: run this where the parse cache lives.
+rather than coded from its abstract alone, and stays held with no entry in the file:
+run this where the parse cache lives.
 
 The codebook is the pipeline's own: the target rules are cut out of `_TARGET_TASK`
 and the outcome rules are `_OUTCOME_RULES` / `_REPRO_AXIS_RULES` /
@@ -52,7 +54,7 @@ from pathlib import Path
 
 from extract.export import (DEFAULT_OUT, FINAL_CHECK_NAME, _write_final_check,
                             admitted_work_ids, changed_works, previous_shipped,
-                            read_final_check, render, work_fingerprint)
+                            read_final_check, render, shipped_works, work_fingerprint)
 from filter.engine.claims import ClaimsClient, ClaimsNotConfigured
 from filter.engine.export import SPEC_DIR, StaleBundleError
 from filter.engine.store import StoreUnavailable
@@ -332,6 +334,16 @@ def recode(prompt: str, model: str = FINAL_CHECK_MODEL, cached_only: bool = Fals
     return record
 
 
+# A key in the child's environment could turn a subscription call into a metered one,
+# and `.env` puts OPENAI_API_KEY in this process. The CLIs get their stored login only.
+_API_KEY_VARS = ("OPENAI_API_KEY", "CODEX_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+
+
+def _subscription_env(**extra: str) -> dict[str, str]:
+    env = {k: v for k, v in os.environ.items() if k not in _API_KEY_VARS}
+    return {**env, **extra}
+
+
 def _call_claude(prompt: str, model: str) -> dict:
     """`claude -p` with no tools, no MCP servers and no settings: the text is all it has."""
     with tempfile.TemporaryDirectory(prefix="flora-final-check-") as cwd:
@@ -340,7 +352,8 @@ def _call_claude(prompt: str, model: str) -> dict:
              "--tools", "", "--strict-mcp-config", "--setting-sources", "",
              "--no-session-persistence", "--output-format", "json",
              "--json-schema", json.dumps(SCHEMA)],
-            input=prompt, capture_output=True, text=True, timeout=900, cwd=cwd)
+            input=prompt, capture_output=True, text=True, timeout=900, cwd=cwd,
+            env=_subscription_env())
     out = json.loads(proc.stdout) if proc.stdout.strip().startswith("{") else {}
     coding = out.get("structured_output")
     if proc.returncode or out.get("is_error") or not isinstance(coding, dict):
@@ -373,6 +386,12 @@ def _strict(schema: dict) -> dict:
 _CODEX_PASSIVE_ITEMS = {"agent_message", "reasoning"}
 
 
+_CODEX_NO_TOOLS = [flag for feature in (
+    "shell_tool", "unified_exec", "code_mode_host", "multi_agent", "apps", "plugins",
+    "image_generation", "computer_use", "browser_use", "goals", "view_image", "sleep_tool",
+) for flag in ("--disable", feature)]
+
+
 def _call_codex(prompt: str, model: str) -> dict:
     """`codex exec` in an empty directory, under an empty CODEX_HOME holding only the login.
 
@@ -394,14 +413,17 @@ def _call_codex(prompt: str, model: str) -> dict:
             ["codex", "exec", "--ignore-rules", "--ephemeral", "--skip-git-repo-check",
              "--sandbox", "read-only", "--cd", str(cwd), "--model", model,
              "-c", f"model_reasoning_effort={FINAL_CHECK_EFFORT}",
-             "-c", 'web_search="disabled"', "--disable", "shell_tool",
+             "-c", 'web_search="disabled"', *_CODEX_NO_TOOLS,
              "--output-schema", str(schema), "--json", "-"],
             input=prompt, capture_output=True, text=True, timeout=900, cwd=cwd,
-            env={**os.environ, "CODEX_HOME": str(home)})
+            env=_subscription_env(CODEX_HOME=str(home)))
     events = [json.loads(line) for line in proc.stdout.splitlines()
               if line.startswith("{")]
+    # Every item event, not only completed ones: a tool call that fails or is
+    # interrupted may never complete.
+    seen = [e["item"] for e in events if str(e.get("type")).startswith("item.")]
+    acted = sorted({str(i.get("type")) for i in seen} - _CODEX_PASSIVE_ITEMS)
     items = [e["item"] for e in events if e.get("type") == "item.completed"]
-    acted = sorted({str(i.get("type")) for i in items} - _CODEX_PASSIVE_ITEMS)
     if acted:
         raise RuntimeError(f"codex exec used tools ({', '.join(acted)}): not a blind coding")
     messages = [i.get("text", "") for i in items if i.get("type") == "agent_message"]
@@ -776,6 +798,13 @@ def _reasons(rows: list[dict], results: list[dict]) -> str:
     return "; ".join(reasons)
 
 
+def _acquired_document(row: dict) -> bool:
+    """Whether the pipeline got a document for this row. `none` is the columns' own
+    word for not getting one."""
+    return any(str(row.get(col) or "").strip().lower() not in ("", "none")
+               for col in ("pdf_source", "parse_method"))
+
+
 def check_work(label: str, rows: list[dict], model: str,
                now: datetime | None = None) -> dict | None:
     """One work's entry in the check file, or None when its document is not on this
@@ -783,7 +812,7 @@ def check_work(label: str, rows: list[dict], model: str,
     would be a weaker reading that looks the same in the file."""
     row = rows[0]
     text, _, texts = document_text(row)
-    if not text and str(row.get("parse_method") or "").strip():
+    if not text and _acquired_document(row):
         return None
     record = recode(build_prompt(row, text), model=model)
     coding = record["coding"]
@@ -808,7 +837,11 @@ def check_work(label: str, rows: list[dict], model: str,
 
 
 def worklist(changed: dict[str, list[dict]], entries: dict[str, dict]) -> dict[str, list[dict]]:
-    """The changed works no entry answers: a new fingerprint or an edited prompt."""
+    """The changed works no entry answers: a new fingerprint or an edited prompt.
+
+    The model is left out on purpose. Either listed model's answer clears a work, so
+    running again under the other one does not re-buy what is already answered.
+    """
     def answered(label: str, rows: list[dict]) -> bool:
         entry = entries.get(label) or {}
         return (entry.get("fingerprint") == work_fingerprint(rows)
@@ -868,7 +901,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--spec-dir", type=Path, default=SPEC_DIR,
                         help="The rule book the release is checked against, as for extract.export.")
     parser.add_argument("--run", action="store_true", help="Make the headless calls.")
-    parser.add_argument("--model", choices=FINAL_CHECK_MODELS, default=FINAL_CHECK_MODEL)
+    parser.add_argument("--model", choices=FINAL_CHECK_MODELS, default=FINAL_CHECK_MODEL,
+                        help="Who codes the unanswered works. An answer from either model "
+                             "stands, so changing this re-buys nothing.")
+    parser.add_argument("--include-unconfirmed-search", action="store_true",
+                        help="Pass this if the export will: those rows must be checked too.")
+    parser.add_argument("--current-generation-only", action="store_true",
+                        help="Pass this if the export will, so both render the same rows.")
     parser.add_argument("--limit", type=int, default=None, help="Code at most this many works.")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--mode", choices=("live", "validation"), default="live")
@@ -886,7 +925,9 @@ def main(argv: list[str] | None = None) -> int:
     production = args.mode == "live" and args.out.resolve() == DEFAULT_OUT.resolve()
     previous, baseline = previous_shipped(args.out, ["HEAD"]) if production else ({}, "none")
     report = render(client, mode=args.mode, admitted=admitted, gates=gates,
-                    shipped_before=frozenset())
+                    current_generation_only=args.current_generation_only,
+                    include_unconfirmed_search=args.include_unconfirmed_search,
+                    shipped_before=shipped_works(previous))
     path = set_aside_dir(args.out) / FINAL_CHECK_NAME
     entries = read_final_check(path)
     changed = changed_works(report["main"], previous)

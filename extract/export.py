@@ -101,7 +101,7 @@ and a render nobody committed was never offered to anyone. Works on the "already
 the validation tables" skip list are never written — their records are the reason they
 are suppressed. Design and order of operations: `docs/retiring-superseded-records.md`.
 
-**Only checked rows reach validators.** A work whose checked fields differ from the
+**A changed work reaches validators only after the final AI check.** A work whose checked fields differ from the
 committed file ships only once `data/final_check.csv` clears it
 (`apply_final_check()`). Unchanged works are out of the check's scope and ship as they
 are. A held work that had already shipped keeps its committed rows, so waiting for a
@@ -743,6 +743,12 @@ CHECKED_COLS = ("pair_id", "doi_r", "type", "doi_o", "title_o", "authors_o", "ye
                 "outcome_computational_quote", "outcome_robustness_quote")
 
 
+def shipped_works(previous: dict[str, dict]) -> frozenset[int]:
+    """The work ids the baseline shipped, preferred when two works render one pair_id."""
+    return frozenset(work for row in previous.values()
+                     if (work := _work_number(row.get("oa_work_id_r"))) is not None)
+
+
 def work_label(row: dict) -> str:
     """The work's name in the check file: its OpenAlex number, else its DOI."""
     work = _work_number(row.get("oa_work_id_r"))
@@ -1047,9 +1053,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if manifest_applies:
         previous, baseline = previous_shipped(args.out,
                                               args.retired_baseline or ["HEAD"])
-    shipped_before = frozenset(
-        work for row in previous.values()
-        if (work := _work_number(row.get("oa_work_id_r"))) is not None)
+    shipped_before = shipped_works(previous)
     report = render(client, mode=args.mode,
                     current_generation_only=args.current_generation_only,
                     admitted=admitted, gates=gates,

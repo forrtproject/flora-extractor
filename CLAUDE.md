@@ -61,15 +61,18 @@ new generation reopens it or `--redo`/`--redo-status` names it, because re-runni
 the same evidence re-buys the same answer. `api_error` retries immediately. The export applies the FLoRA/validated skip
 lists at render too, so a work that enters FLoRA after extraction stops shipping.
 
-**Only checked rows reach validators.** `python -m extract.final_check` renders what
+**A changed work reaches validators only after the final AI check.** `python -m extract.final_check` renders what
 the export would ship, finds the works whose checked fields (`CHECKED_COLS` in
 `extract/export.py`) differ from the file committed at `HEAD`, and has
 `FINAL_CHECK_MODEL` code each one blind through its vendor's CLI on a subscription
 (`claude -p` or `codex exec`, `--model` picks; no fallback). It writes one row per work
-to `data/final_check.csv`: `released` when the originals pair off one-to-one and every
-pair agrees on type and outcome with a confident coder, otherwise `review`, with both
-codings side by side and a blank `decision`. Whoever runs the pipeline fills it with
-`ship`, `hold` or `reject`. The export reads that file and nothing else from the step
+it could code to `data/final_check.csv`: `released` when the originals pair off
+one-to-one, every pair agrees on type and outcome with a confident coder and the coder
+does not read the record as a plan, otherwise `review`, with both codings side by side.
+A work that failed, or whose document is not in this machine's parse cache, gets no row
+and stays held until a run elsewhere or a retry codes it. Whoever runs the pipeline fills
+`decision` on the `review` rows with `ship`, `hold` or `reject`; a `released` row with a
+blank decision ships. The export reads that file and nothing else from the step
 (`apply_final_check()`): an unchanged work ships; a changed one ships only if an entry
 with its current fingerprint clears it. A later change voids a decision. A held work
 that had already shipped keeps its committed rows, so a pending review never retires a

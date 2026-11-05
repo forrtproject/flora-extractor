@@ -262,7 +262,7 @@ validated reproduction was available.
   version, model and effort.
 
 The scripts read `data/`, `work/` and the parse cache from a checkout that holds them.
-`pilot.py` writes only into this directory and touches no verdict, store or Supabase table. Merging
+`pilot.py` writes its results into this directory and its codings to `cache/final_check/`, and touches no verdict, store or Supabase table. Merging
 `main` left the prompt version at `58aa27a6c868`, and moving the module left it there too.
 
 To re-score the recorded samples, run these from a checkout on this branch that holds
