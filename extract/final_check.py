@@ -10,8 +10,16 @@ else from this module, so it stays a pure render.
     .venv/bin/python -m extract.final_check --release <id>                # the worklist
     .venv/bin/python -m extract.final_check --release <id> --run          # code it
     .venv/bin/python -m extract.final_check --release <id> --run --model gpt-6.1-sol
+    .venv/bin/python -m extract.final_check --release <id> --run --limit 50   # a trial
     .venv/bin/python -m extract.final_check --release <id> --run --limit 5 \\
         --mode validation --out data/extracted-test.csv                   # the sandbox
+
+**A trial is the start of the real run.** `--limit` draws a stable pseudo-random subset
+rather than the first works in file order, which cluster by DOI prefix, so the share
+landing in `review` estimates the whole worklist. The trial's entries stay in the check
+file and its codings in the cache, so the full run buys only the rest, and nothing
+reaches validators until the render is committed. The sandbox is not a trial of the
+same works: it renders only verdicts stored under `--mode validation`.
 
 **The review.** A work is `released` when its originals pair off one-to-one, every
 pair agrees on type and outcome with a confident blind coder, and the coder does not
@@ -855,6 +863,12 @@ def worklist(changed: dict[str, list[dict]], entries: dict[str, dict]) -> dict[s
     return {label: rows for label, rows in changed.items() if not answered(label, rows)}
 
 
+def draw(todo: dict[str, list[dict]], limit: int) -> dict[str, list[dict]]:
+    """*limit* works in hash order: unrelated to DOI prefix, and the same on a re-run."""
+    order = sorted(todo, key=lambda label: hashlib.sha256(label.encode()).hexdigest())
+    return {label: todo[label] for label in order[:limit]}
+
+
 # Three failures in a row is a subscription limit or a logged-out CLI, not three papers.
 MAX_CONSECUTIVE_FAILURES = 3
 _SAVE_EVERY = 25
@@ -914,7 +928,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="Pass this if the export will: those rows must be checked too.")
     parser.add_argument("--current-generation-only", action="store_true",
                         help="Pass this if the export will, so both render the same rows.")
-    parser.add_argument("--limit", type=int, default=None, help="Code at most this many works.")
+    parser.add_argument("--limit", type=int, default=None,
+                        help="Code a stable pseudo-random subset of this many works; what "
+                             "they answer stays answered for the full run.")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--mode", choices=("live", "validation"), default="live")
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT,
@@ -942,7 +958,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  {len(changed):,} work(s) differ from the baseline; "
           f"{len(todo):,} need a blind coding; prompt {PROMPT_VERSION}")
     if args.limit is not None:
-        todo = dict(list(todo.items())[:args.limit])
+        todo = draw(todo, args.limit)
     if not args.run:
         print(f"  dry run: --run would code {len(todo):,} with {args.model} "
               f"(about {len(todo) * 19 / max(args.workers, 1) / 60:,.0f} min at the "

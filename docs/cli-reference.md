@@ -507,7 +507,11 @@ and records, `extract.export` renders. Design: [`filter-engine.md`](filter-engin
 # `decision` (ship | hold | reject) on the `review` rows of data/final_check.csv
 .venv/bin/python -m extract.final_check --release <id> --run
 
-# The same in the sandbox: nothing counts as shipped, and the file sits beside the output
+# A trial: a stable pseudo-random 50 of the real worklist. It writes data/final_check.csv and
+# the codings are cached, so the full run buys only the rest; nothing ships until a commit
+.venv/bin/python -m extract.final_check --release <id> --run --limit 50
+
+# Over sandbox verdicts only: nothing counts as shipped, and the file sits beside the output
 .venv/bin/python -m extract.final_check --release <id> --run --limit 5 --mode validation --out data/extracted-test.csv
 
 # Render data/extracted.csv from the verdicts of the works this release admits. A changed
