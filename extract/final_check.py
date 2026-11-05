@@ -945,8 +945,8 @@ def main(argv: list[str] | None = None) -> int:
         todo = dict(list(todo.items())[:args.limit])
     if not args.run:
         print(f"  dry run: --run would code {len(todo):,} with {args.model} "
-              f"(about {len(todo) * 14 / max(args.workers, 1) / 60:,.0f} min at the "
-              f"pilot's 14 s per call and {args.workers} workers)")
+              f"(about {len(todo) * 19 / max(args.workers, 1) / 60:,.0f} min at the "
+              f"pilot's 19 s per call and {args.workers} workers)")
         return 0
     counts = run_check(todo, entries, path, args.model, args.workers)
     print(f"  {counts}  → {path}")
