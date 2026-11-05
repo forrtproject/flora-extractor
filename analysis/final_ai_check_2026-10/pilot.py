@@ -34,8 +34,8 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from extract.final_check import (ROOT, SourceIndex, build_prompt, compare_work,  # noqa: E402
-                                 document_text, recode)
+from extract.final_check import (ROOT, SourceIndex, _acquired_document,  # noqa: E402
+                                 build_prompt, compare_work, document_text, recode)
 from shared.utils import clean_doi  # noqa: E402
 
 # A worktree has no data/ or work/ of its own: the newest export and the validation
@@ -188,6 +188,9 @@ def _human_verdict(df: pd.DataFrame) -> pd.Series:
 def run_one(row: dict, cached_only: bool = False) -> dict:
     """Recode the work once and return this row's result within the work comparison."""
     text, method, texts = document_text(row)
+    if not text and _acquired_document(row):
+        raise SystemExit(f"{row['rid']}: its document is not in this parse cache; a "
+                         "re-score from the abstract would change the evidence")
     rec = recode(build_prompt(row, text), cached_only=cached_only)
     sources = [SourceIndex(f"{row.get('title_r', '')}\n{row.get('abstract_r', '')}")]
     sources += [SourceIndex(t) for t in texts.values()]
@@ -212,6 +215,8 @@ def main() -> None:
     batch_file = "pilot_results.csv" if args.batch == 1 else "pilot_results_batch2.csv"
     if args.draw:
         taken = recorded("pilot_results.csv") | recorded("pilot_results_batch2.csv")
+        if (OUT / "pilot_results_draw.csv").exists():
+            taken |= recorded("pilot_results_draw.csv")
         pilot = select(joined[~joined.rid.isin(taken)])
     else:
         pilot = recorded_rows(joined, batch_file)
@@ -228,7 +233,7 @@ def main() -> None:
     out = pilot[keep].merge(pd.DataFrame(results).drop(columns="pair_id"), on="rid")
     out["human_verdict"] = _human_verdict(out)
     name = "pilot_results_draw.csv" if args.draw else batch_file
-    out.to_csv(OUT / name, index=False)
+    out.to_csv(OUT / name, index=False, encoding="utf-8-sig")
     show = ["link_method", "type", "blind_type", "truth_type", "original_grade",
             "truth_original", "outcome", "blind_outcome", "outcome_grade", "truth_outcome",
             "quote_verdict", "work_n_shipped", "work_n_blind", "released", "human_verdict"]
