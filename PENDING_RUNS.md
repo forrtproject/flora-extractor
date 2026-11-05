@@ -79,6 +79,21 @@ merged on 2026-10-28 has run, not even in the sandbox. Each entry's PR carries t
       in the entry above. Done when the live dry run offers 0 works and the render is
       pushed.
 
+- [ ] **Exercise the final AI check (PR #228) in the sandbox, then apply it to the next
+      render.** It coded no real row when it was built. Run after the entries above have
+      routed the new release, on the box, the only machine with the parse cache, and log
+      `claude` and `codex` in there first. Check the worklist, code five works in the
+      sandbox and read `data/extracted-test-set-aside/final_check.csv`:
+      `.venv/bin/python -m extract.final_check --release <newest> --mode validation --out data/extracted-test.csv`, then
+      `.venv/bin/python -m extract.final_check --release <newest> --run --limit 5 --mode validation --out data/extracted-test.csv`.
+      Then, before committing the next live render:
+      `.venv/bin/python -m extract.final_check --release <newest> --run`, fill `decision`
+      on the `review` rows of `data/final_check.csv`, and
+      `.venv/bin/python -m extract.export --release <newest>`; commit `data/final_check.csv`
+      with the render. Done when the render's `final AI check:` line shows the changed
+      works cleared, held or rejected, and held works that had shipped kept their
+      committed rows with no matching retirement.
+
 ## Done
 
 - [x] **DONE 2026-10-05** — last batch 2026-10-04 night; 3 open works remain (retries). Timer stopped; final render 9,608 rows. Original entry:  **Finish the option-B campaign: nightly runs at 01:15 BST (after the midnight-UTC

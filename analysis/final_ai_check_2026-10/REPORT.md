@@ -1,4 +1,7 @@
-# Final AI check: blind Claude recode of Stage 3 rows (pilot, 2026-10-28)
+# Final AI check: the pilot behind the release rule (2026-10-28)
+
+This is the evaluation. The pipeline step itself is `extract/final_check.py`, with its
+gate in `apply_final_check()` in `extract/export.py`.
 
 The unit of FLoRA is the replication–original pair. The check therefore compares works,
 not single rows: it pairs the pipeline's originals with the blind coder's one-to-one,
@@ -89,12 +92,12 @@ compares each pair, and releases a row only when three conditions hold:
 8. **Quote heuristic: the 22 rows are not yet scored under the current check.** A quote
    now counts as present only when its 4-word sequences are found in one passage of the
    source, and each part of a `|`-joined quote is scored separately, with the quote
-   taking its worst part. The blind codings (`cache/`) and the parse cache are absent
-   from the machine where the check changed, so the rows could not be re-scored. The
+   taking its worst part. The blind codings are no longer held anywhere, so the rows
+   can be re-scored only by coding them again. The
    `quote_present_*` and `quote_verdict` columns in the two results files come from the
    earlier check, which counted sequences anywhere in the source and took a quote's best
    part. Those presence values are therefore upper bounds, and whether any quote is
-   fabricated remains open until the re-score under "Files and rerun". The check also
+   fabricated remains open until the re-coding under "Files and rerun". The check also
    runs only on paired rows, so the quotes of the 4 unpaired rows are unchecked.
 9. **Scaling to the ~200 validated records is worthwhile**: it costs $0 and takes about
    20 minutes with 4 parallel calls (40 minutes coded twice). With about 100 released
@@ -124,7 +127,7 @@ compares each pair, and releases a row only when three conditions hold:
   the body text, so the first run named only 3 of 12 originals with a title. Over the
   cap, the body is cut and the list kept (up to 50,000 characters). The longest pilot
   document is 128,825 characters, so the cap reached no pilot prompt.
-- **Original pairing** (`original_grade` and `pair_originals` in `final_check.py`).
+- **Original pairing** (`original_grade` and `pair_originals` in `extract/final_check.py`).
   Title similarity is the larger of the Jaccard index and the share of the shorter
   title's words found in the longer one. Three grades can form a pair:
   - `doi`: equal after `clean_doi()`;
@@ -162,7 +165,7 @@ compares each pair, and releases a row only when three conditions hold:
 
 ## Method
 
-`final_check.py` builds the prompt from the pipeline's own codebook, imported from
+`extract/final_check.py` builds the prompt from the pipeline's own codebook, imported from
 `shared/prompts.py`:
 - the target rules, cut verbatim out of `_TARGET_TASK`;
 - `_OUTCOME_RULES`, `_REPRO_AXIS_RULES` and `_MULTI_TARGET_SCOPE`;
@@ -177,7 +180,7 @@ parse cache. The parse is chosen as the ladder chooses it (the best-scoring pars
 has text), and its parsed reference list is appended.
 
 `claude -p` runs with no tools, no MCP servers, no settings and a JSON schema. Each
-response is cached in `cache/`, keyed on the prompt version, the model and effort, and
+response is cached in `cache/final_check/`, keyed on the prompt version, the model and effort, and
 the prompt.
 
 `compare_work()` takes every shipped row of a work and the blind coding of that work:
@@ -249,25 +252,24 @@ validated reproduction was available.
 
 ## Files and rerun
 
-- `final_check.py`: the prompt, the cached `claude -p` call, `pair_originals()`,
+- `extract/final_check.py`: the prompt, the cached headless call, `pair_originals()`,
   `compare_work()` and `quote_check()`.
 - `pilot.py`: builds the human truth (including sibling reassignments), joins records
   to `extracted.csv`, selects a batch, runs the check per work and writes
   `pilot_results.csv` or `pilot_results_batch2.csv`.
-- `cache/`: the 22 blind codings. It is gitignored and exists only on the machine that
-  ran the pilot; it is absent from the machine where these scripts were last changed.
+- The 22 blind codings are no longer on the Mac or the box, so re-scoring them means
+  coding them again. New codings go to `cache/final_check/`, keyed on the same prompt
+  version, model and effort.
 
 The scripts read `data/`, `work/` and the parse cache from a checkout that holds them.
-They write only into this directory and touch no verdict, store or Supabase table. Merging
-`main` left the prompt version at `58aa27a6c868`, and the changes since the pilot leave
-the prompts of documents within the cap unchanged, so the cached codings should still
-match; this has not been run against the cache.
+`pilot.py` writes only into this directory and touches no verdict, store or Supabase table. Merging
+`main` left the prompt version at `58aa27a6c868`, and moving the module left it there too.
 
-To re-score the recorded samples from a checkout on this branch that holds those files
-and `cache/`, with `--cached-only` stopping at any miss instead of calling `claude -p`.
+To re-score the recorded samples, run these from a checkout on this branch that holds
+those files. Without `--cached-only` they buy the codings again, on the subscription.
 Rows are selected by recorded rid, and a rid that no longer joins stops the run:
 
 ```bash
-.venv/bin/python analysis/final_ai_check_2026-10/pilot.py --batch 1 --cached-only
-.venv/bin/python analysis/final_ai_check_2026-10/pilot.py --batch 2 --cached-only
+.venv/bin/python analysis/final_ai_check_2026-10/pilot.py --batch 1
+.venv/bin/python analysis/final_ai_check_2026-10/pilot.py --batch 2
 ```
