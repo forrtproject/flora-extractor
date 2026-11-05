@@ -77,7 +77,7 @@ the `pending/no_text` rows for the abstract backfill that produces an overlay.
 
 ## The two LLM tiers
 
-The main classifier uses **DeepSeek V4 Flash + GPT-6 Luna, both at low effort**.
+The main classifier uses **GPT-6 Luna (low effort) + the Span-02 decision model**.
 Only two `none` votes discard; every other complete pair proceeds. Missing votes
 leave the work incomplete. See [models and screening](../models-and-screening.md)
 for exact IDs, API keys, evaluation evidence and per-vote caching.

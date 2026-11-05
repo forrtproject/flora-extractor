@@ -1,0 +1,25 @@
+bypassed (never pre-screened): pos 1420/1456, hard 172/344, curated 350/386
+| pre-screen (discard alone, after bypass) | positives lost raw | positives lost after bypass | hard neg discarded | curated neg discarded |
+|---|---|---|---|---|
+| cheap | 18 | 7 | 151/344 (44%) | 28/386 (7%) |
+| pplx_min<0.05 | 18 | 1 | 118/344 (34%) | 23/386 (6%) |
+| pplx_min<0.1 | 24 | 2 | 137/344 (40%) | 29/386 (8%) |
+| pplx_minfa<0.02 | 1 | 0 | 78/344 (23%) | 18/386 (5%) |
+| pplx_minfa<0.05 | 1 | 0 | 112/344 (33%) | 21/386 (5%) |
+| pplx_minfa<0.1 | 4 | 2 | 135/344 (39%) | 28/386 (7%) |
+| pplx_minfa<0.2 | 10 | 3 | 148/344 (43%) | 31/386 (8%) |
+| jev_min<0.1 | 11 | 2 | 72/344 (21%) | 15/386 (4%) |
+| pplx_full<0.1 | 3 | 0 | 100/344 (29%) | 24/386 (6%) |
+| pplx_full<0.3 | 4 | 0 | 134/344 (39%) | 31/386 (8%) |
+pplx_minfa pplx_minfa: AUC vs hard 0.981, vs curated 0.995
+| pplx_minfa<0.5 + luna | 8 (0.5%) | 254/344 (74%) | 325/386 (84%) |
+| voter | calls | | in tok/call | | | $ per 1k |
+| pplx_minfa | 2186 | 0 | 438 | 0 | 0% | $0.009 |
+cheap tier as run (mistral only after qwen 'no' = 21%): $0.032/1k
+| pplx_minfa<0.05 | 1 (0.1%) | 208/344 (60%) | 174/386 (45%) |
+| pplx_minfa<0.1 | 4 (0.3%) | 250/344 (73%) | 272/386 (70%) |
+| pplx_minfa<0.3 | 19 (1.3%) | 290/344 (84%) | 357/386 (92%) |
+| pplx_minfa<0.5 | 29 (2.0%) | 303/344 (88%) | 368/386 (95%) |
+| pplx_minfa<0.3 + luna | 6 (0.4%) | 249/344 (72%) | 320/386 (83%) |
+| pplx_minfa<0.8 + luna | 14 (1.0%) | 265/344 (77%) | 334/386 (87%) |
+| pplx_minfa<0.3 + pplx_full<0.3 | 4 (0.3%) | 254/344 (74%) | 301/386 (78%) |

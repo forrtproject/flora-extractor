@@ -25,8 +25,8 @@ Edit `.env` for the stages you will run:
 
 ```bash
 RESEARCHER_EMAIL=you@example.com   # for OpenAlex / Crossref politeness headers
-OPENROUTER_API_KEY=...            # Stage 2 voter 1; Stage 3 reference-list pick check
-OPENAI_API_KEY=...                # Stage 2 voter 2; Stage 3 linking and outcomes
+OPENROUTER_API_KEY=...            # Stage 2 voter 2 (Span-02); Stage 3 reference-list pick check
+OPENAI_API_KEY=...                # Stage 2 voter 1 (Luna); Stage 3 linking and outcomes
 GEMINI_API_KEY=...                # document reference-extraction fallback
 SUPABASE_SERVICE_KEY=...          # claims and permanent verdicts for --run
 HF_TOKEN=...                      # access to the private survivor-pool dataset
@@ -173,8 +173,8 @@ See `.env.example` for the full list with descriptions. Key variables:
 | `RESEARCHER_EMAIL` | Yes | Politeness header for APIs |
 | `GEMINI_API_KEY` | Stage 3 fallback | Document reference extraction |
 | `GEMINI_API_KEY_2..N` | No | Key failover; keys in one project share quota |
-| `OPENAI_API_KEY` | Stages 2 and 3 | Second voter of Stage 2's front-door screen with the default `SCREENING_MODEL_2`; also Stage 3's `LINKING_MODEL` and `OUTCOME_MODEL`, which codes every outcome |
-| `OPENROUTER_API_KEY` | Stages 2 and 3 | Screening voter 1 and reference-list pick check; dormant pre-screen if activated |
+| `OPENAI_API_KEY` | Stages 2 and 3 | First voter of Stage 2's front-door screen with the default `SCREENING_MODEL_1`; also Stage 3's `LINKING_MODEL` and `OUTCOME_MODEL`, which codes every outcome |
+| `OPENROUTER_API_KEY` | Stages 2 and 3 | Screening voter 2 (Span-02) and reference-list pick check; dormant pre-screen if activated |
 | `SUPABASE_URL` | Tier runs / validation tab | Shared URL supplied by `.env.defaults` |
 | `SUPABASE_SERVICE_KEY` | Tier runs / validation tab | Claims, permanent verdicts and validation monitoring |
 | `GROBID_URL` | No | PDF reference extraction. **Code default is the public server `https://kermitt2-grobid.hf.space`**; `.env.example` sets `http://localhost:8070`. See the GROBID section above |
