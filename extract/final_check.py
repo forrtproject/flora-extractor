@@ -381,9 +381,11 @@ def _strict(schema: dict) -> dict:
     return out
 
 
-# What a run with no tools emits. Anything else means the coder acted on something
-# beyond the prompt, so the coding is not blind and is refused.
-_CODEX_PASSIVE_ITEMS = {"agent_message", "reasoning"}
+# What a run with no tools emits. `error` is Codex reporting a problem, such as a warning
+# about a disabled feature, and a failed run still fails on its exit code and its missing
+# answer. Anything else means the coder acted on something beyond the prompt, so the
+# coding is not blind and is refused.
+_CODEX_PASSIVE_ITEMS = {"agent_message", "reasoning", "error"}
 
 
 _CODEX_NO_TOOLS = [flag for feature in (
@@ -397,7 +399,9 @@ def _call_codex(prompt: str, model: str) -> dict:
 
     `--ignore-user-config` alone still loads the global AGENTS.md (measured 2026-11-05:
     the coder quoted its paths), which would put this machine's instructions in front
-    of the coding. The shell and web search are off; the event log is the check.
+    of the coding. Shell, code execution, sub-agents and web search are off, and the
+    event log is a second check. It cannot be the only one: a refused code-execution
+    call shows in stderr, not as an item (measured 2026-11-05).
     """
     source = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "auth.json"
     if not source.exists():
