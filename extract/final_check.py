@@ -47,6 +47,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -328,7 +329,8 @@ def recode(prompt: str, model: str = FINAL_CHECK_MODEL, cached_only: bool = Fals
               "prompt_version": PROMPT_VERSION, "model": model,
               "effort": FINAL_CHECK_EFFORT}
     CACHE.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    # Per thread: two works with the same text can finish the same call together.
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     tmp.write_text(json.dumps(record, indent=1))
     os.replace(tmp, path)
     return record
