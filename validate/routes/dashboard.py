@@ -121,8 +121,9 @@ _SET_ASIDE_COPY: dict[str, dict] = {
                "has not cleared it: no blind coding yet, or a disagreement waiting for a "
                "decision. A work that had already shipped keeps its committed rows in the "
                "file meanwhile; these are its new rows.",
-        "action": "Run `.venv/bin/python -m extract.final_check --release <id> --run`, fill "
-                  "`decision` on the `review` rows of data/final_check.csv, then re-render.",
+        "action": "On the machine holding the parse cache, run `.venv/bin/python -m "
+                  "extract.final_check --release <id> --run`, fill `decision` on the `review` "
+                  "rows of data/final_check.csv, then re-render.",
     },
     "final_check_rejected.csv": {
         "title": "Final Check Rejected",

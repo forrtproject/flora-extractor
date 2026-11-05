@@ -262,3 +262,52 @@ def test_three_failures_in_a_row_stop_the_run_and_save_what_it_has(tmp_path):
         counts = fc.run_check(todo, {}, tmp_path / "final_check.csv", "claude-opus-5-5", 1)
     assert counts["failed"] == 3
     assert (tmp_path / "final_check.csv").exists()
+
+
+def test_a_subscription_call_carries_no_api_key(tmp_path, monkeypatch):
+    """A key in the child's environment could bill the API instead of the subscription."""
+    for var in fc._API_KEY_VARS:
+        monkeypatch.setenv(var, "secret")
+    (tmp_path / "auth.json").write_text("{}")
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    codex = subprocess.CompletedProcess([], 0, stdout=_codex_output(
+        {"type": "agent_message", "text": json.dumps(_coding())}), stderr="")
+    claude = subprocess.CompletedProcess([], 0, stdout=json.dumps(
+        {"structured_output": _coding()}), stderr="")
+    with patch.object(fc.subprocess, "run", side_effect=[codex, claude]) as run:
+        fc._call_codex("prompt", "gpt-6.1-sol")
+        fc._call_claude("prompt", "claude-opus-5-5")
+    for call in run.call_args_list:
+        assert not set(fc._API_KEY_VARS) & set(call.kwargs["env"])
+
+
+def test_a_codex_tool_call_that_never_completes_is_refused(tmp_path, monkeypatch):
+    started = json.dumps({"type": "item.started", "item": {"type": "command_execution"}})
+    out = started + "\n" + _codex_output(
+        {"type": "agent_message", "text": json.dumps(_coding())})
+    with pytest.raises(RuntimeError, match="not a blind coding"):
+        _run_codex(out, tmp_path, monkeypatch)
+
+
+def test_the_check_renders_with_the_flags_the_export_will_use(monkeypatch, tmp_path):
+    """Otherwise rows the export ships under the flag are held and never on the worklist."""
+    seen = {}
+
+    def _render(*a, **k):
+        seen.update(k)
+        return _report(_row())
+
+    monkeypatch.setattr(fc, "admitted_work_ids", lambda *a, **k: ("r" * 12, set(), {}))
+    monkeypatch.setattr(fc, "ClaimsClient", lambda *a, **k: None)
+    monkeypatch.setattr(fc, "render", _render)
+    out = tmp_path / "extracted-test.csv"
+    assert fc.main(["--include-unconfirmed-search", "--current-generation-only",
+                    "--out", str(out)]) == 0
+    assert seen["include_unconfirmed_search"] and seen["current_generation_only"]
+
+
+@pytest.mark.parametrize("fields, skipped", [
+    ({"pdf_source": "unpaywall"}, True), ({"parse_method": "grobid"}, True),
+    ({"pdf_source": "none", "parse_method": "none"}, False), ({}, False)])
+def test_only_a_row_that_acquired_a_document_needs_one(fields, skipped):
+    assert (_checked(_coding(), _row(**fields)) is None) is skipped
