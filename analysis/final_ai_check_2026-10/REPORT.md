@@ -14,19 +14,22 @@ compares each pair, and releases a row only when three conditions hold:
 
 1. **The check works and costs nothing extra.** Claude Opus 5.5 (`claude-opus-5-5`,
    effort `high`, via `claude -p` on the subscription) coded each row blind. A call
-   took a median of 14 s (range 8–49 s), with about 27k input and 2.3k output tokens.
+   took a median of 19 s (range 7–88 s), with about 24k input and 2.1k output tokens.
    At API list prices the first 12 calls would have cost $2.86; on the subscription
    the incremental cost is $0.
-2. **11 of the 22 rows were released: 7 correct, 3 errors and 1 undetermined.** The
-   check held 9 of the 12 rows humans judged wrong, and 2 of the 9 they judged correct.
+2. **12 of the 22 rows were released: 7 correct, 4 errors and 1 undetermined.** The
+   check held 8 of the 12 rows humans judged wrong, and 2 of the 9 they judged correct.
+   These are the current codings, made on 2026-11-05 under the current quote check.
 
    | Human verdict (pair unit) | Released | Held |
    | --- | ---: | ---: |
    | correct | 7 | 2 |
-   | error | 3 | 9 |
+   | error | 4 | 8 |
    | undetermined | 1 | 0 |
 
-3. **All three released errors are OSF records that validators rejected or doubted.**
+3. **Three of the four released errors are OSF records that validators rejected or
+   doubted, and they are likely validator errors.** The fourth is the directed-forgetting
+   paper (finding 6).
    - <https://osf.io/vk6d9>: a replication of Nurmsoo and Bloom (2008, Study 1), rejected
      as `not_validation`.
    - <https://osf.io/cxh8q>: a preregistration poster on fast mapping that also reports
@@ -36,14 +39,14 @@ compares each pair, and releases a row only when three conditions hold:
      Study 1). One validator rejected it and the other accepted type and original, so
      it is still `need_review`.
 
-   Under the codebook, all three read as completed replications that report a result.
-   A blanket hold on OSF records would not separate them, because two other released
-   OSF records are correct.
-4. **What held the 9 errors:**
-   - In six, the originals did not pair off: three genetic-association papers (6 vs 9,
-     2 vs 6, 11 vs 1), a psychological-distance RRR (3 vs 2), a paper where the pipeline
-     shipped a background citation as a second original (2 vs 1), and an fMRI study
-     (2 vs 3).
+   Under the codebook, all three read as completed replications that report a result,
+   and the maintainer's reading is that the rejections are likely wrong. No validation
+   record has been changed. If all three are corrected, the released rows become 10
+   correct, 1 error and 1 undetermined. A blanket hold on OSF records would not separate
+   them either, because two other released OSF records are correct.
+4. **What held the 8 errors:**
+   - In five, the originals did not pair off: three genetic-association papers (6 vs 9,
+     2 vs 6, 11 vs 1), a psychological-distance RRR (3 vs 2) and an fMRI study (2 vs 3).
    - In two, the blind coder was not confident of its outcome. Humans corrected both
      outcomes.
    - One, a reply to a commentary, the blind coder called `not_a_replication`; humans
@@ -58,12 +61,15 @@ compares each pair, and releases a row only when three conditions hold:
      risk; the replication found neither. Under the codebook ("no effect where the
      original also found none is success") the blind coder read this as `mixed` and
      marked itself unconfident. The pipeline and humans said `failed`.
-6. **The confidence flag helps, but it is unstable on borderline rows.** In the current
-   run it held two errors and no correct row. However, the fast-mapping poster switched
-   from unconfident to confident across the prompt revisions of this pilot, which
-   released it. The rule was added post hoc, after batch 2. The 200-record
-   run should code each row twice, to measure how often the flag (and the release
-   decision) flips.
+6. **Coding the same prompts twice changed 1 of 22 release decisions, and that one
+   released an error.** On the directed-forgetting paper the first coding named one
+   original, so the work was held (2 vs 1). The second named both and agreed with the
+   pipeline's `failed`, so it was released; humans corrected the outcome to `successful`.
+   The confidence flag held two errors and no correct row in both codings, but it is also
+   unstable on borderline rows: the fast-mapping poster switched from unconfident to
+   confident across the prompt revisions of this pilot, which released it. The rule was
+   added post hoc, after batch 2. The 200-record run should code each row twice, to
+   measure these flips on a larger sample.
 7. **Four fixes during the pilot. Together they took the released rows from 5 correct
    and 2 errors to 7 correct and 3 errors.** The title-matching fix came with batch 2, so
    its effect is already in that count. The metadata reference list then released one
@@ -89,27 +95,21 @@ compares each pair, and releases a row only when three conditions hold:
      - `identified_by` (`citation` / `description`) records how the original was found.
 
      Identification from a description does not block release.
-8. **Quote heuristic: the 22 rows are not yet scored under the current check.** A quote
-   now counts as present only when its 4-word sequences are found in one passage of the
-   source, and each part of a `|`-joined quote is scored separately, with the quote
-   taking its worst part. The blind codings are no longer held anywhere, so the rows
-   can be re-scored only by coding them again. The
-   `quote_present_*` and `quote_verdict` columns in the two results files come from the
-   earlier check, which counted sequences anywhere in the source and took a quote's best
-   part. Those presence values are therefore upper bounds, and whether any quote is
-   fabricated remains open until the re-coding under "Files and rerun". The check also
-   runs only on paired rows, so the quotes of the 4 unpaired rows are unchecked.
+8. **No quote scored as fabricated under the current check.** A quote counts as present
+   only when its 4-word sequences are found in one passage of the source, and each part
+   of a `|`-joined quote is scored separately, with the quote taking its worst part. All
+   19 paired rows scored at least 0.77 on both sides, against the 0.5 flag, with the
+   lowest on the reward fMRI paper. The check runs only on paired rows, so the quotes of
+   the 3 unpaired rows are unchecked.
 9. **Scaling to the ~200 validated records is worthwhile**: it costs $0 and takes about
    20 minutes with 4 parallel calls (40 minutes coded twice). With about 100 released
    rows, a 95% confidence interval on precision spans roughly ±4.5 percentage points.
    That is enough to tell 95% apart from 85%, but not from 92%.
 
-## Needs your decision
+## Open
 
-- **The OSF records (finding 3).** These are the only released errors. If the
-  rejections are right, what rule do they follow? If they are validator errors, they
-  should be corrected in the validation tables, and the check's precision rises
-  accordingly.
+- **The OSF records (finding 3).** The rejections are likely validator errors. Someone
+  still has to confirm that and correct the three records in the validation tables.
 
 ## Decisions to review
 
@@ -151,10 +151,10 @@ compares each pair, and releases a row only when three conditions hold:
   becomes `sibling` (counted correct), and its accompanying outcome verdict becomes
   `unscored` unless it was `correct`. That exception is asymmetric, and it affects one
   row: 429086a5 counts as correct. Unscoring it too would make the released rows 6
-  correct, 3 errors and 2 undetermined. Several rows are still `validation_inprogress`
+  correct, 4 errors and 2 undetermined. Several rows are still `validation_inprogress`
   or `need_review`, so their truth rests on one or two checks.
 
-  Two further rules could not be measured here, because `sb.json` is absent: a record
+  Two further rules have not been measured: a record
   with `final_type` set but `final_doi_o` or `final_outcome` empty counts that field as
   incorrect unless the shipped field is also blank (then correct), and a validated record whose outcome has since changed in `extracted.csv`
   is joined to the new row and scored against it.
@@ -241,7 +241,7 @@ validated reproduction was available.
 | 34f948b0 temporal framing | 1 | correct | released | — |
 | 7426ac06 Chandler et al. weight (OSF) | 2 | error: one validator rejects | released | blind coder: completed replication |
 | 561199ea default effects (OSF) | 2 | error: outcome → mixed | held | outcome not confident |
-| b6dad5a7 directed forgetting | 2 | error: outcome → successful | held | 2 vs 1: Sahakyan 2004 is background |
+| b6dad5a7 directed forgetting | 2 | error: outcome → successful | released | 2 vs 2, agrees on `failed`; held as 2 vs 1 in the first coding |
 | ed3eae6f reply to Williams | 2 | error: rejected | held | blind coder: `not_a_replication` |
 | 3d69a538 reward fMRI (OSF) | 2 | error: rejected | held | 2 vs 3 |
 | cadbfc8e religious cognition (OSF) | 2 | correct | released | — |
@@ -257,19 +257,20 @@ validated reproduction was available.
 - `pilot.py`: builds the human truth (including sibling reassignments), joins records
   to `extracted.csv`, selects a batch, runs the check per work and writes
   `pilot_results.csv` or `pilot_results_batch2.csv`.
-- The 22 blind codings are no longer on the Mac or the box, so re-scoring them means
-  coding them again. New codings go to `cache/final_check/`, keyed on the same prompt
-  version, model and effort.
+- `cache/final_check/` on the box: the 22 current blind codings, keyed on the prompt
+  version, model and effort. The first codings are gone; only the results they gave
+  survive, in this report's account of the first run and in git history.
 
 The scripts read `data/`, `work/` and the parse cache from a checkout that holds them.
 `pilot.py` writes its results into this directory and its codings to `cache/final_check/`, and touches no verdict, store or Supabase table. Merging
 `main` left the prompt version at `58aa27a6c868`, and moving the module left it there too.
 
-To re-score the recorded samples, run these from a checkout on this branch that holds
-those files. Without `--cached-only` they buy the codings again, on the subscription.
-Rows are selected by recorded rid, and a rid that no longer joins stops the run:
+To re-score the recorded samples from a checkout on this branch on the box, name the main
+checkout. `--cached-only` stops at any miss instead of coding again. Rows are selected by
+recorded rid, and a rid that no longer joins stops the run:
 
 ```bash
-.venv/bin/python analysis/final_ai_check_2026-10/pilot.py --batch 1
-.venv/bin/python analysis/final_ai_check_2026-10/pilot.py --batch 2
+export FLORA_MAIN_CHECKOUT=/home/lukas/flora-extractor FLORA_CACHE_DIR=/home/lukas/flora-extractor/cache
+/home/lukas/flora-extractor/.venv/bin/python analysis/final_ai_check_2026-10/pilot.py --batch 1 --cached-only
+/home/lukas/flora-extractor/.venv/bin/python analysis/final_ai_check_2026-10/pilot.py --batch 2 --cached-only
 ```
