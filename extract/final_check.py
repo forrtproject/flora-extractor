@@ -54,6 +54,7 @@ from extract.export import (DEFAULT_OUT, FINAL_CHECK_NAME, _write_final_check,
                             admitted_work_ids, changed_works, previous_shipped,
                             read_final_check, render, work_fingerprint)
 from filter.engine.claims import ClaimsClient, ClaimsNotConfigured
+from filter.engine.export import SPEC_DIR, StaleBundleError
 from filter.engine.store import StoreUnavailable
 from shared.cache import cache_exists, read_json
 from shared.config import (CACHE_DIR, FINAL_CHECK_EFFORT, FINAL_CHECK_MODEL,
@@ -864,6 +865,8 @@ def main(argv: list[str] | None = None) -> int:
         description="Code every work the next export would change, blind, and write the "
                     "review file the export gates on. Without --run, prints the worklist.")
     parser.add_argument("--release", default="", help="The routing release, as for extract.export.")
+    parser.add_argument("--spec-dir", type=Path, default=SPEC_DIR,
+                        help="The rule book the release is checked against, as for extract.export.")
     parser.add_argument("--run", action="store_true", help="Make the headless calls.")
     parser.add_argument("--model", choices=FINAL_CHECK_MODELS, default=FINAL_CHECK_MODEL)
     parser.add_argument("--limit", type=int, default=None, help="Code at most this many works.")
@@ -874,9 +877,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        release_id, admitted, gates = admitted_work_ids(args.release or None)
+        release_id, admitted, gates = admitted_work_ids(args.release or None,
+                                                        spec_dir=args.spec_dir)
         client = ClaimsClient()
-    except (StoreUnavailable, ClaimsNotConfigured, ValueError) as exc:
+    except (StoreUnavailable, ClaimsNotConfigured, StaleBundleError, ValueError) as exc:
         raise SystemExit(str(exc))
     # A sandbox render has no validation queue behind it, so nothing counts as shipped.
     production = args.mode == "live" and args.out.resolve() == DEFAULT_OUT.resolve()
