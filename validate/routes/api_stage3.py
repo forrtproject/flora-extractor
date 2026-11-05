@@ -81,6 +81,13 @@ _SET_ASIDE_COPY = {
         "A pooled-search link whose confirmation grade was short of clearly_target. "
         "The grade sets link_confidence and is appended to link_evidence; the row is "
         "held back rather than dropped."),
+    "final_check_held.csv": (
+        "A work that changed since the committed file and has not been cleared by the "
+        "final AI check. A work that had already shipped keeps its committed rows in "
+        "extracted.csv meanwhile; these are its new rows."),
+    "final_check_rejected.csv": (
+        "A changed work the person running the pipeline declined after reading the "
+        "final AI check's two codings side by side."),
     "prospective_registration.csv": (
         "A replication that has not been run yet: an OSF preregistration, a Stage 1 "
         "registered report, an analysis plan. It names an original and reports no "

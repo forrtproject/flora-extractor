@@ -399,6 +399,12 @@ SET_ASIDE_DESTINATIONS = {
     # extract/export.py's, because --include-unconfirmed-search can switch it off and
     # a row the export deliberately shipped must not read as drift to sanity_check.
     "search_link_unconfirmed": "search_link_unconfirmed.csv",
+    # Two more buckets classify_row does not decide, for the same reason: the final AI
+    # check's gate is extract/export.py's, and --skip-final-check can switch it off.
+    # Held: changed since the committed file and not yet cleared by the check.
+    "final_check_held": "final_check_held.csv",
+    # Rejected: the person running the pipeline read the check and declined the work.
+    "final_check_rejected": "final_check_rejected.csv",
 }
 
 # The two destinations whose verdicts do not settle, so resume must not count them as

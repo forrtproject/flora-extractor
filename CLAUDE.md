@@ -28,7 +28,8 @@ python -m filter.engine route       # Stage 2 → routing release in the DuckDB 
 python -m filter.engine screen --tier screen_expensive --run   # the claimed LLM tier
 python -m filter.engine export-csv --out <file>     # optional: a release's screened rows as a record CSV
 python -m extract.tier --run        # Stage 3 → claimed extraction, verdicts in Postgres
-python -m extract.export --release <id>   # the verdicts → data/extracted.csv
+python -m extract.final_check --release <id> --run   # blind-code what changed → data/final_check.csv
+python -m extract.export --release <id>   # the verdicts, gated on the check → data/extracted.csv
 python -m validate.app              # Stage 4 dashboard → http://localhost:5001
 ```
 
@@ -59,6 +60,23 @@ worklist subtracts every work whose latest current-generation result SETTLES it.
 new generation reopens it or `--redo`/`--redo-status` names it, because re-running
 the same evidence re-buys the same answer. `api_error` retries immediately. The export applies the FLoRA/validated skip
 lists at render too, so a work that enters FLoRA after extraction stops shipping.
+
+**Only checked rows reach validators.** `python -m extract.final_check` renders what
+the export would ship, finds the works whose checked fields (`CHECKED_COLS` in
+`extract/export.py`) differ from the file committed at `HEAD`, and has
+`FINAL_CHECK_MODEL` code each one blind through its vendor's CLI on a subscription
+(`claude -p` or `codex exec`, `--model` picks; no fallback). It writes one row per work
+to `data/final_check.csv`: `released` when the originals pair off one-to-one and every
+pair agrees on type and outcome with a confident coder, otherwise `review`, with both
+codings side by side and a blank `decision`. Whoever runs the pipeline fills it with
+`ship`, `hold` or `reject`. The export reads that file and nothing else from the step
+(`apply_final_check()`): an unchanged work ships; a changed one ships only if an entry
+with its current fingerprint clears it. A later change voids a decision. A held work
+that had already shipped keeps its committed rows, so a pending review never retires a
+record a validator may be working on; a held new work goes to `final_check_held.csv`.
+The already-imported backlog is deliberately out of scope, because it is reaching
+validators anyway. `--skip-final-check` renders without the gate, for reading the
+record. The evaluation behind the release rule is `analysis/final_ai_check_2026-10/`.
 
 **Two ways to reopen, and the ladder is not one of them.** `--redo W1,W2` re-extracts
 named works; `--redo-status unidentified_original,no_original_found` names a
@@ -139,7 +157,7 @@ never been independently validated. Discuss shared changes with all stage teams.
 | `filter/` | `phrase_detection.py` — the token/stem vocabulary the **search gate** is built from. It is Stage 1's only keyword logic; Stage 2 does not call it. The old `rule_filter.py`/`run_filter.py` path is retired (#146) |
 | `filter/engine/` | The issue #146 filter engine, which IS Stage 2: declarative JSON specs in `filter/spec/` routed by precedence into piles (`discard` / `screen_expensive` / `screen_cheap` / `needs_human` / `pending`) over the survivor pool; claimed, budget-gated LLM tiers; Stage 3 reads the screen verdicts from the store, and `export-csv` writes a release's screened rows as an ad-hoc record CSV. Rules route and discard; only LLMs admit. Design: [`docs/filter-engine.md`](docs/filter-engine.md); policy (precedence, pile→status mapping, measurement levels): `filter/spec/CONVENTIONS.md`. CLI: `python -m filter.engine specs\|route\|diagnose\|worklist\|screen\|export\|reconcile\|export-csv\|release-claim\|status` |
 | `db/migrations/` | The engine's Postgres state authority (claims, permanent verdicts, audit, validation lineage) — SQL the maintainer runs in Supabase |
-| `extract/` | `tier.py` (**the entry point**: Stage 3 as a claimed, budget-gated engine tier — worklist, claim + lease heartbeat, the judge, the stored result payload, `--redo`, and `supersede_targets()` for retroactive corrections), `export.py` (**the only writer of `data/extracted.csv`**: renders the stored payloads, sorted, atomic, partitioned into the set-aside CSVs, with a generation fallback and `--check`), `run_extract.py` (the per-row pipeline as a LIBRARY — `_process_row` and everything under it; its CLI is retired and parked on `wip/csv-runner`), `link_original.py` (resolution ladder), `code_outcome.py` (outcome coding; reproductions use the computation/robustness axes), `sanity_check.py` (the integrity REPORT over the exported CSV, plus the two `--deep` network buckets; it moves nothing), `audit_dois.py`, `audit_extracted.py` (read-only pre-validation audit), `backfill_authors.py` (retroactive `authors_o`/`ref_o` from OpenAlex), `clean_parse_cache.py` |
+| `extract/` | `final_check.py` (the blind recode of changed works before release: comparison, the headless `claude -p` / `codex exec` call and the worklist; the gate itself is `apply_final_check()` in `export.py`), `tier.py` (**the entry point**: Stage 3 as a claimed, budget-gated engine tier — worklist, claim + lease heartbeat, the judge, the stored result payload, `--redo`, and `supersede_targets()` for retroactive corrections), `export.py` (**the only writer of `data/extracted.csv`**: renders the stored payloads, sorted, atomic, partitioned into the set-aside CSVs, with a generation fallback and `--check`), `run_extract.py` (the per-row pipeline as a LIBRARY — `_process_row` and everything under it; its CLI is retired and parked on `wip/csv-runner`), `link_original.py` (resolution ladder), `code_outcome.py` (outcome coding; reproductions use the computation/robustness axes), `sanity_check.py` (the integrity REPORT over the exported CSV, plus the two `--deep` network buckets; it moves nothing), `audit_dois.py`, `audit_extracted.py` (read-only pre-validation audit), `backfill_authors.py` (retroactive `authors_o`/`ref_o` from OpenAlex), `clean_parse_cache.py` |
 | `validate/` | Read-only Flask dashboard: `app.py` registers the `dashboard` and `check` blueprints only. The `batch` blueprint is parked on `wip/batch-blueprint` |
 | `misc/` | Reference examples and small sample CSVs — do not import |
 
@@ -778,8 +796,8 @@ a definitive miss.
 **One model per call site, and no fallback.** Every model the pipeline calls is a
 constant in `shared/config.py`, named for the QUESTION it answers rather than the
 vendor serving it: `PRESCREEN_MODEL_1`/`_2`, `SCREENING_MODEL_1`/`_2`, `LINKING_MODEL`,
-`OUTCOME_MODEL`, `PDF_PARSE_MODEL`. That constant is the only model that can answer
-its call. Retries are against the same model; when they are exhausted the row records
+`OUTCOME_MODEL`, `PDF_PARSE_MODEL`, `FINAL_CHECK_MODEL`. That constant is the only model
+that can answer its call. Retries are against the same model; when they are exhausted the row records
 the failure. A provider ladder used to run Gemini → OpenAI → OpenRouter, which made an
 outage invisible — the row got an answer from a model no evaluation covered, and the
 cache key had to over-name every model that might have produced it. Any fallback is
@@ -793,7 +811,10 @@ call fails. Nothing may hardcode "this call site goes to Gemini", or swapping a
 constant across vendors becomes a 404 from the wrong API. The one exception is
 `PDF_PARSE_MODEL`: the document calls build a Gemini request body with no
 OpenAI-compatible equivalent, and `llm_client` refuses to import if that constant
-routes elsewhere.
+routes elsewhere. `FINAL_CHECK_MODELS` also sits outside `provider_for()`: they run
+through their vendor's CLI on a subscription, and the operator picks one with `--model`
+because they may hold only one subscription. Each entry in the check file records its
+model.
 
 **Never let a swallowed error become an empty result.** A rate-limit 429 caught and
 turned into `return []` is indistinguishable downstream from a genuine "no

@@ -266,6 +266,18 @@ OUTCOME_MODEL = "gpt-6-luna"
 PICK_CHECK_MODEL = "deepseek/deepseek-v4.1-flash"
 PICK_CHECK_EFFORT = "low"
 
+# The final AI check (extract/final_check.py) — a blind recode of each changed work,
+# compared with the pipeline's row before the export may ship it. These run headless on
+# a subscription through their vendor's CLI (`claude -p`, `codex exec`), so unlike every
+# other model here they do not go through `provider_for()`. Whoever runs the pipeline
+# picks one with --model, because they may hold only one subscription; each entry in
+# data/final_check.csv records the model that coded it. The default is the only one
+# evaluated (analysis/final_ai_check_2026-10/REPORT.md): gpt-6.1-sol has passed a smoke
+# test of the call, not an evaluation of its coding. There is no fallback between them.
+FINAL_CHECK_MODELS = ("claude-opus-5-5", "gpt-6.1-sol")
+FINAL_CHECK_MODEL = "claude-opus-5-5"
+FINAL_CHECK_EFFORT = "high"
+
 # Reference extraction from a document (shared/grobid.py) — the only call that is sent
 # a PDF or page images rather than text. Its answers are cached under filenames that
 # name this id and the effort, so changing either re-parses rather than mis-reads.

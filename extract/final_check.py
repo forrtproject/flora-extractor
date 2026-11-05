@@ -1,52 +1,73 @@
-"""Final AI check: a blind Claude recode of a Stage 3 row, compared with the row.
+"""The final AI check: a blind recode of every changed work before it can ship.
 
-Claude Opus 5.5 (`claude -p`, on the subscription) reads the record — title, abstract
-and, where the pipeline acquired one, the parsed full text — WITHOUT the pipeline's
-answer, and codes type, original(s) and outcome. `compare_work()` then pairs the
-work's originals one-to-one and grades each pair. A row may be released as a
-preliminary AI code when its pair agrees on type and outcome, the blind coder was
-confident of that outcome, and the whole work pairs off; anything else goes to a human
-first.
+Stage 3 writes verdicts and `extract/export.py` renders them, but validators should
+only receive rows a second, independent reading has agreed with. This is that reading.
+`python -m extract.final_check --release <id>` renders what the export would ship,
+finds the works whose checked fields differ from the file committed at HEAD, codes each
+one blind and writes `data/final_check.csv`. The export reads that file and nothing
+else from this module, so it stays a pure render.
+
+    .venv/bin/python -m extract.final_check --release <id>                # the worklist
+    .venv/bin/python -m extract.final_check --release <id> --run          # code it
+    .venv/bin/python -m extract.final_check --release <id> --run --model gpt-6.1-sol
+    .venv/bin/python -m extract.final_check --release <id> --run --limit 5 \\
+        --mode validation --out data/extracted-test.csv                   # the sandbox
+
+**The review.** A work is `released` when its originals pair off one-to-one and every
+pair agrees on type and outcome with a confident blind coder (`compare_work()`).
+Anything else is `review`: whoever runs the pipeline reads the two codings side by
+side in the CSV and fills `decision` with `ship`, `hold` or `reject`. A decision is
+bound to the work's fingerprint (`work_fingerprint()` in `extract/export.py`), so a
+later change to the work voids it and the work is checked again.
+
+**Blind.** The coder sees the title, abstract, parsed document and reference list, and
+never the pipeline's answer. It runs headless on a subscription (`claude -p` or
+`codex exec`), with no tools and no user configuration. A coding during which any tool
+ran is refused, and a failed call raises and is not cached. Neither route falls back
+to the other. A work whose document is not in this machine's parse cache is skipped
+rather than coded from its abstract alone: run this where the parse cache lives.
 
 The codebook is the pipeline's own: the target rules are cut out of `_TARGET_TASK`
 and the outcome rules are `_OUTCOME_RULES` / `_REPRO_AXIS_RULES` /
 `_MULTI_TARGET_SCOPE`, imported from `shared/prompts.py`. Only the wrapper differs:
-there is no keyed candidate list (the recode is blind), so the original is named as
-authors, year, title and DOI, and the record type is asked first instead of being
-assumed.
+there is no keyed candidate list, so the original is named as authors, year, title and
+DOI, and the record type is asked first instead of being assumed.
 
-Read-only towards the pipeline: reads the row CSV and the parse cache, writes only
-under this directory (`cache/`). `pilot.py` is the entry point; its docstring has the
-command.
+The evaluation that set the release rule is `analysis/final_ai_check_2026-10/`.
 """
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-ROOT = HERE.parents[1]
-sys.path.insert(0, str(ROOT))
+from extract.export import (DEFAULT_OUT, FINAL_CHECK_NAME, _write_final_check,
+                            admitted_work_ids, changed_works, previous_shipped,
+                            read_final_check, render, work_fingerprint)
+from filter.engine.claims import ClaimsClient, ClaimsNotConfigured
+from filter.engine.store import StoreUnavailable
+from shared.cache import cache_exists, read_json
+from shared.config import (CACHE_DIR, FINAL_CHECK_EFFORT, FINAL_CHECK_MODEL,
+                           FINAL_CHECK_MODELS, OA_CACHE_DIR)
+from shared.disambiguation import jaccard_similarity, token_coverage
+from shared.pdf_parsing import read_parse_cache, score_parse_result
+from shared.prompts import (EVIDENCE_POLICY, _MULTI_TARGET_SCOPE, _OUTCOME_RULES,
+                            _REPRO_AXIS_RULES, _TARGET_TASK)
+from shared.row_key import primary_key
+from shared.schema import OUTCOME_LABELS, set_aside_dir
+from shared.utils import cache_key, clean_doi
 
-from shared.cache import cache_exists, read_json  # noqa: E402
-from shared.config import OA_CACHE_DIR  # noqa: E402
-from shared.disambiguation import jaccard_similarity, token_coverage  # noqa: E402
-from shared.pdf_parsing import read_parse_cache, score_parse_result  # noqa: E402
-from shared.prompts import (  # noqa: E402
-    EVIDENCE_POLICY, _MULTI_TARGET_SCOPE, _OUTCOME_RULES, _REPRO_AXIS_RULES,
-    _TARGET_TASK)
-from shared.row_key import primary_key  # noqa: E402
-from shared.schema import OUTCOME_LABELS  # noqa: E402
-from shared.utils import cache_key, clean_doi  # noqa: E402
-
-MODEL = "claude-opus-5-5"
-EFFORT = "high"
-CACHE = HERE / "cache"
+ROOT = Path(__file__).resolve().parent.parent
+CACHE = CACHE_DIR / "final_check"
 # Opus reads 1M tokens; 150k characters (~40k tokens) holds a whole article with its
 # reference list, which is where the original's title and DOI are read from.
 FULLTEXT_CHARS = 150_000
@@ -283,43 +304,117 @@ def build_prompt(row: dict, fulltext: str) -> str:
 
 # ── The call ─────────────────────────────────────────────────────────────────
 
-def recode(prompt: str, cached_only: bool = False) -> dict:
-    """The blind coding for *prompt*, cached on prompt version + model + prompt.
+def recode(prompt: str, model: str = FINAL_CHECK_MODEL, cached_only: bool = False) -> dict:
+    """The blind coding for *prompt*, cached on prompt version + model@effort + prompt.
 
-    `claude -p` with no tools, no MCP servers and no settings: the text is all it
-    has. A failed call raises and is not cached. With *cached_only*, a miss raises
-    instead of calling, so a re-score cannot buy a new coding by accident.
+    With *cached_only*, a miss raises instead of calling, so a re-score cannot buy a
+    new coding by accident. A failed or tool-using call raises and is not cached.
     """
+    if model not in FINAL_CHECK_MODELS:
+        raise ValueError(f"unknown model: {model} (expected one of {FINAL_CHECK_MODELS})")
     key = hashlib.sha256(
-        f"{PROMPT_VERSION}|{MODEL}@{EFFORT}|{prompt}".encode()).hexdigest()[:24]
+        f"{PROMPT_VERSION}|{model}@{FINAL_CHECK_EFFORT}|{prompt}".encode()).hexdigest()[:24]
     path = CACHE / f"recode_{key}.json"
     if path.exists():
         return json.loads(path.read_text())
     if cached_only:
         raise RuntimeError(f"no cached coding at {path}")
     t0 = time.time()
-    proc = subprocess.run(
-        ["claude", "-p", "--model", MODEL, "--effort", EFFORT, "--tools", "", "--strict-mcp-config",
-         "--setting-sources", "", "--no-session-persistence",
-         "--output-format", "json", "--json-schema", json.dumps(SCHEMA)],
-        input=prompt, capture_output=True, text=True, timeout=900, cwd="/tmp")
-    seconds = time.time() - t0
+    call = _call_claude if model.startswith("claude-") else _call_codex
+    record = {**call(prompt, model), "seconds": round(time.time() - t0, 1),
+              "prompt_version": PROMPT_VERSION, "model": model,
+              "effort": FINAL_CHECK_EFFORT}
+    CACHE.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(record, indent=1))
+    os.replace(tmp, path)
+    return record
+
+
+def _call_claude(prompt: str, model: str) -> dict:
+    """`claude -p` with no tools, no MCP servers and no settings: the text is all it has."""
+    with tempfile.TemporaryDirectory(prefix="flora-final-check-") as cwd:
+        proc = subprocess.run(
+            ["claude", "-p", "--model", model, "--effort", FINAL_CHECK_EFFORT,
+             "--tools", "", "--strict-mcp-config", "--setting-sources", "",
+             "--no-session-persistence", "--output-format", "json",
+             "--json-schema", json.dumps(SCHEMA)],
+            input=prompt, capture_output=True, text=True, timeout=900, cwd=cwd)
     out = json.loads(proc.stdout) if proc.stdout.strip().startswith("{") else {}
     coding = out.get("structured_output")
     if proc.returncode or out.get("is_error") or not isinstance(coding, dict):
         raise RuntimeError(f"claude -p failed ({proc.returncode}): "
                            f"{(proc.stderr or proc.stdout)[:500]}")
-    usage = out.get("modelUsage", {}).get(MODEL, {})
-    record = {"coding": coding, "seconds": round(seconds, 1),
-              "prompt_version": PROMPT_VERSION, "model": MODEL, "effort": EFFORT,
-              "input_tokens": usage.get("inputTokens", 0)
-                              + usage.get("cacheCreationInputTokens", 0)
-                              + usage.get("cacheReadInputTokens", 0),
-              "output_tokens": usage.get("outputTokens", 0),
-              "list_price_usd": out.get("total_cost_usd")}
-    CACHE.mkdir(exist_ok=True)
-    path.write_text(json.dumps(record, indent=1))
-    return record
+    usage = out.get("modelUsage", {}).get(model, {})
+    return {"coding": coding,
+            "input_tokens": usage.get("inputTokens", 0)
+                            + usage.get("cacheCreationInputTokens", 0)
+                            + usage.get("cacheReadInputTokens", 0),
+            "output_tokens": usage.get("outputTokens", 0),
+            "list_price_usd": out.get("total_cost_usd")}
+
+
+def _strict(schema: dict) -> dict:
+    """*schema* in the form OpenAI's structured output demands: every property required
+    and no others. Local to this call, because `SCHEMA` is part of `PROMPT_VERSION`."""
+    out = dict(schema)
+    if "properties" in out:
+        out["properties"] = {k: _strict(v) for k, v in out["properties"].items()}
+        out["required"] = list(out["properties"])
+        out["additionalProperties"] = False
+    if "items" in out:
+        out["items"] = _strict(out["items"])
+    return out
+
+
+# What a run with no tools emits. Anything else means the coder acted on something
+# beyond the prompt, so the coding is not blind and is refused.
+_CODEX_PASSIVE_ITEMS = {"agent_message", "reasoning"}
+
+
+def _call_codex(prompt: str, model: str) -> dict:
+    """`codex exec` in an empty directory, under an empty CODEX_HOME holding only the login.
+
+    `--ignore-user-config` alone still loads the global AGENTS.md (measured 2026-11-05:
+    the coder quoted its paths), which would put this machine's instructions in front
+    of the coding. The shell and web search are off; the event log is the check.
+    """
+    source = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "auth.json"
+    if not source.exists():
+        raise RuntimeError(f"codex exec needs a login at {source}")
+    with tempfile.TemporaryDirectory(prefix="flora-final-check-") as tmp:
+        home, cwd = Path(tmp) / "home", Path(tmp) / "work"
+        home.mkdir()
+        cwd.mkdir()
+        (home / "auth.json").symlink_to(source)
+        schema = Path(tmp) / "schema.json"
+        schema.write_text(json.dumps(_strict(SCHEMA)))
+        proc = subprocess.run(
+            ["codex", "exec", "--ignore-rules", "--ephemeral", "--skip-git-repo-check",
+             "--sandbox", "read-only", "--cd", str(cwd), "--model", model,
+             "-c", f"model_reasoning_effort={FINAL_CHECK_EFFORT}",
+             "-c", 'web_search="disabled"', "--disable", "shell_tool",
+             "--output-schema", str(schema), "--json", "-"],
+            input=prompt, capture_output=True, text=True, timeout=900, cwd=cwd,
+            env={**os.environ, "CODEX_HOME": str(home)})
+    events = [json.loads(line) for line in proc.stdout.splitlines()
+              if line.startswith("{")]
+    items = [e["item"] for e in events if e.get("type") == "item.completed"]
+    acted = sorted({str(i.get("type")) for i in items} - _CODEX_PASSIVE_ITEMS)
+    if acted:
+        raise RuntimeError(f"codex exec used tools ({', '.join(acted)}): not a blind coding")
+    messages = [i.get("text", "") for i in items if i.get("type") == "agent_message"]
+    try:
+        coding = json.loads(messages[-1])
+    except (IndexError, ValueError):
+        coding = None
+    if proc.returncode or not isinstance(coding, dict):
+        raise RuntimeError(f"codex exec failed ({proc.returncode}): "
+                           f"{(proc.stderr or proc.stdout)[-500:]}")
+    usage = next((e.get("usage", {}) for e in reversed(events)
+                  if e.get("type") == "turn.completed"), {})
+    return {"coding": coding, "input_tokens": usage.get("input_tokens", 0),
+            "output_tokens": usage.get("output_tokens", 0), "list_price_usd": None}
 
 
 # ── Comparison ───────────────────────────────────────────────────────────────
@@ -630,3 +725,186 @@ def compare_work(work_rows: list[dict], coding: dict,
                                and work["work_pairs_off"])
         out.append(res)
     return out
+
+
+# ── The pipeline step ────────────────────────────────────────────────────────
+
+def _pipeline_text(rows: list[dict]) -> str:
+    """What the pipeline shipped, one block per original, for the reviewer."""
+    blocks = []
+    for r in rows:
+        verdict = r.get("outcome") or (f"{r.get('outcome_computation', '')}, "
+                                       f"{r.get('outcome_robustness', '')}")
+        quote = " | ".join(filter(None, _quotes(r, {})[:1]))
+        blocks.append(f"{r.get('authors_o', '')} ({r.get('year_o', '')}) "
+                      f"{r.get('title_o', '')} {r.get('doi_o', '')}\n"
+                      f"{r.get('type', '')}: {verdict}\n{quote}".strip())
+    return "\n\n".join(blocks)
+
+
+def _blind_text(coding: dict) -> str:
+    """What the blind coder found, in the same shape as `_pipeline_text`."""
+    blocks = []
+    for t in coding.get("targets") or []:
+        verdict = t.get("outcome") or (f"{t.get('outcome_computation', '')}, "
+                                       f"{t.get('outcome_robustness', '')}")
+        quote = t.get("outcome_quote") or " | ".join(filter(None, (
+            t.get("outcome_computational_quote"), t.get("outcome_robustness_quote"))))
+        sure = "confident" if t.get("outcome_confident") is True else "not confident"
+        blocks.append(f"{t.get('authors', '')} ({t.get('year', '')}) {t.get('title', '')} "
+                      f"{t.get('doi', '')}\n{verdict} ({sure})\n{quote}".strip())
+    return "\n\n".join(blocks) or f"{coding.get('record_type')}: no original named"
+
+
+def _reasons(rows: list[dict], results: list[dict]) -> str:
+    """Why a work is held, in the terms the reviewer will check."""
+    first = results[0]
+    reasons = []
+    if first["blind_status"] == "prospective":
+        reasons.append("blind: prospective")
+    if not all(r["type_agrees"] for r in results):
+        reasons.append(f"type: {rows[0].get('type', '')} vs {first['blind_type']}")
+    if not first["work_pairs_off"]:
+        reasons.append(f"originals: {first['work_n_shipped']} vs {first['work_n_blind']}")
+    for row, res in zip(rows, results):
+        if res["original_agrees"] and not res["outcome_agrees"]:
+            reasons.append(f"outcome {row.get('doi_o', '')}: {row.get('outcome', '')} "
+                           f"vs {res['blind_outcome']}")
+        elif res["original_agrees"] and res["blind_confident"] is not True:
+            reasons.append(f"not confident {row.get('doi_o', '')}")
+    return "; ".join(reasons)
+
+
+def check_work(label: str, rows: list[dict], model: str,
+               now: datetime | None = None) -> dict | None:
+    """One work's entry in the check file, or None when its document is not on this
+    machine. A row that acquired a document must be coded from it: the abstract alone
+    would be a weaker reading that looks the same in the file."""
+    row = rows[0]
+    text, _, texts = document_text(row)
+    if not text and str(row.get("parse_method") or "").strip():
+        return None
+    record = recode(build_prompt(row, text), model=model)
+    coding = record["coding"]
+    sources = [SourceIndex(f"{row.get('title_r', '')}\n{row.get('abstract_r', '')}")]
+    sources += [SourceIndex(t) for t in texts.values()]
+    results = compare_work(rows, coding, sources)
+    released = all(r["released"] for r in results)
+    fabricated = sorted({r["quote_verdict"] for r in results
+                         if "fabricated" in str(r["quote_verdict"])})
+    return {"work": label, "doi_r": row.get("doi_r", ""), "title_r": row.get("title_r", ""),
+            "fingerprint": work_fingerprint(rows),
+            "status": "released" if released else "review",
+            "reason": "" if released else _reasons(rows, results),
+            "quotes": "; ".join(fabricated),
+            "pipeline": _pipeline_text(rows), "blind": _blind_text(coding),
+            "blind_reasoning": str(coding.get("reasoning") or ""),
+            "blind_coding": json.dumps(coding, ensure_ascii=False, sort_keys=True),
+            "model": record["model"], "effort": record["effort"],
+            "prompt_version": record["prompt_version"],
+            "checked_at": (now or datetime.now(timezone.utc)).isoformat(timespec="seconds"),
+            "decision": "", "note": ""}
+
+
+def worklist(changed: dict[str, list[dict]], entries: dict[str, dict]) -> dict[str, list[dict]]:
+    """The changed works no entry answers: a new fingerprint or an edited prompt."""
+    def answered(label: str, rows: list[dict]) -> bool:
+        entry = entries.get(label) or {}
+        return (entry.get("fingerprint") == work_fingerprint(rows)
+                and entry.get("prompt_version") == PROMPT_VERSION)
+    return {label: rows for label, rows in changed.items() if not answered(label, rows)}
+
+
+# Three failures in a row is a subscription limit or a logged-out CLI, not three papers.
+MAX_CONSECUTIVE_FAILURES = 3
+_SAVE_EVERY = 25
+
+
+def run_check(todo: dict[str, list[dict]], entries: dict[str, dict], path: Path,
+              model: str, workers: int) -> dict:
+    """Code *todo*, saving as it goes. A work that fails stays unanswered, so the export
+    holds it and the next run retries it."""
+    counts = {"released": 0, "review": 0, "skipped_no_document": 0, "failed": 0}
+    consecutive = 0
+    done = 0
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(check_work, label, rows, model): label
+                   for label, rows in todo.items()}
+        for future in as_completed(futures):
+            label = futures[future]
+            try:
+                entry = future.result()
+            except Exception as exc:  # noqa: BLE001 — one work must not cost the others
+                counts["failed"] += 1
+                consecutive += 1
+                print(f"  {label}: {exc}")
+                if consecutive >= MAX_CONSECUTIVE_FAILURES:
+                    print(f"  stopping after {consecutive} failures in a row")
+                    for pending in futures:
+                        pending.cancel()
+                    break
+                continue
+            consecutive = 0
+            if entry is None:
+                counts["skipped_no_document"] += 1
+                continue
+            entries[label] = entry
+            counts[entry["status"]] += 1
+            done += 1
+            if done % _SAVE_EVERY == 0:
+                _write_final_check(path, entries)
+                print(f"  {done:,} of {len(todo):,} coded")
+    _write_final_check(path, entries)
+    return counts
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="python -m extract.final_check",
+        description="Code every work the next export would change, blind, and write the "
+                    "review file the export gates on. Without --run, prints the worklist.")
+    parser.add_argument("--release", default="", help="The routing release, as for extract.export.")
+    parser.add_argument("--run", action="store_true", help="Make the headless calls.")
+    parser.add_argument("--model", choices=FINAL_CHECK_MODELS, default=FINAL_CHECK_MODEL)
+    parser.add_argument("--limit", type=int, default=None, help="Code at most this many works.")
+    parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--mode", choices=("live", "validation"), default="live")
+    parser.add_argument("--out", type=Path, default=DEFAULT_OUT,
+                        help="The CSV the export will write; the check file sits beside it.")
+    args = parser.parse_args(argv)
+
+    try:
+        release_id, admitted, gates = admitted_work_ids(args.release or None)
+        client = ClaimsClient()
+    except (StoreUnavailable, ClaimsNotConfigured, ValueError) as exc:
+        raise SystemExit(str(exc))
+    # A sandbox render has no validation queue behind it, so nothing counts as shipped.
+    production = args.mode == "live" and args.out.resolve() == DEFAULT_OUT.resolve()
+    previous, baseline = previous_shipped(args.out, ["HEAD"]) if production else ({}, "none")
+    report = render(client, mode=args.mode, admitted=admitted, gates=gates,
+                    shipped_before=frozenset())
+    path = set_aside_dir(args.out) / FINAL_CHECK_NAME
+    entries = read_final_check(path)
+    changed = changed_works(report["main"], previous)
+    todo = worklist(changed, entries)
+    print(f"release {release_id[:12]}  baseline {baseline}  mode {args.mode}")
+    print(f"  {len(changed):,} work(s) differ from the baseline; "
+          f"{len(todo):,} need a blind coding; prompt {PROMPT_VERSION}")
+    if args.limit is not None:
+        todo = dict(list(todo.items())[:args.limit])
+    if not args.run:
+        print(f"  dry run: --run would code {len(todo):,} with {args.model} "
+              f"(about {len(todo) * 14 / max(args.workers, 1) / 60:,.0f} min at the "
+              f"pilot's 14 s per call and {args.workers} workers)")
+        return 0
+    counts = run_check(todo, entries, path, args.model, args.workers)
+    print(f"  {counts}  → {path}")
+    if counts["failed"]:
+        print("  failed works stay held; re-running retries them from the cache onwards")
+    print("  next: fill `decision` (ship | hold | reject) on the `review` rows, then "
+          "run extract.export")
+    return 1 if counts["failed"] else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

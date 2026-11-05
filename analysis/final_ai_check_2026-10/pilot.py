@@ -1,6 +1,7 @@
 """Pilot of the final AI check on human-validated Stage 3 rows.
 
-Selects rows from the 207 records validated since August
+The evaluation behind the release rule in `extract/final_check.py`. Selects rows from
+the 207 records validated since August
 (`work/stage3_removal/tier_features.csv` in the main checkout), joins each to its row
 in the newest `data/extracted.csv` on doi_r + doi_o, attaches the human verdict per
 field, runs the blind recode (`final_check.py`) and writes `pilot_results.csv`.
@@ -11,7 +12,7 @@ Human truth per field, from `sb.json`:
   - otherwise the human checks: correct / incorrect when they agree, split when not.
 
 `--batch 1` and `--batch 2` re-score the recorded samples; `--cached-only` refuses to
-buy a coding the cache does not hold. `--draw` draws a new informative sample. Run from
+buy a coding the cache (`cache/final_check/`) does not hold. `--draw` draws a new informative sample. Run from
 a checkout holding `data/`, `work/` and `cache/`; from a worktree, name that checkout:
 
     FLORA_MAIN_CHECKOUT=/path/to/checkout FLORA_CACHE_DIR=/path/to/checkout/cache \
@@ -24,15 +25,18 @@ import collections
 import json
 import os
 import re
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from pathlib import Path
 
 import pandas as pd
 
-from final_check import (ROOT, SourceIndex, build_prompt, compare_work,  # noqa: E402
-                         document_text, recode)
-from shared.utils import clean_doi
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from extract.final_check import (ROOT, SourceIndex, build_prompt, compare_work,  # noqa: E402
+                                 document_text, recode)
+from shared.utils import clean_doi  # noqa: E402
 
 # A worktree has no data/ or work/ of its own: the newest export and the validation
 # dump live in the main checkout, uncommitted.
