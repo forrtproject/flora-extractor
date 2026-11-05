@@ -50,6 +50,23 @@ merged on 2026-10-28 has run, not even in the sandbox. Each entry's PR carries t
       Read the sandbox rows, then repeat the two tier commands without `--mode validation`.
       Done when none of the 14 ships a `doi_o` that `non_article_doi()` names.
 
+- [ ] **Run the final AI check (PR #228) before this render reaches validators.** Skip
+      this entry until #228 is merged. It has coded no real row yet, and a render with no
+      check file holds every changed work. Run it on the box, which has the parse cache,
+      with `claude` or `codex` logged in there. Start with a 50-work trial of the real
+      worklist and read the share of `review` rows in `data/final_check.csv`, which says
+      how many decisions the full run will need. The full run keeps the trial's entries
+      and codings and buys only the rest:
+      ```bash
+      .venv/bin/python -m extract.final_check --release "$REL"
+      .venv/bin/python -m extract.final_check --release "$REL" --run --limit 50
+      .venv/bin/python -m extract.final_check --release "$REL" --run
+      ```
+      Then fill `decision` on the `review` rows of `data/final_check.csv` and commit that
+      file with the render below. Done when the render's `final AI check:` line shows the
+      changed works cleared, held or rejected, and held works that had shipped kept their
+      committed rows with no matching retirement.
+
 - [ ] **Render the new release: the admission gate (PR #229), PR #223's discards, PR
       #222's corrections and PR #217's new works.** The flora-validation change that adds
       `screen_deferred` to `RETIRE_REASONS` is merged (flora-validation PR #16), so the

@@ -100,10 +100,19 @@ downloads `data/extracted.csv` from GitHub, so a commit is what can have been im
 and a render nobody committed was never offered to anyone. Works on the "already in
 the validation tables" skip list are never written — their records are the reason they
 are suppressed. Design and order of operations: `docs/retiring-superseded-records.md`.
+
+**A changed work reaches validators only after the final AI check.** A work whose checked fields differ from the
+committed file ships only once `data/final_check.csv` clears it
+(`apply_final_check()`). Unchanged works are out of the check's scope and ship as they
+are. A held work that had already shipped keeps its committed rows, so waiting for a
+review never retires a record a validator may be working on; a held new work goes to
+`final_check_held.csv`. The file comes from `extract/final_check.py`, and reading it is
+all this module does: no model, no cache. `--skip-final-check` renders without the gate.
 """
 
 import argparse
 import csv
+import hashlib
 import os
 import re
 import subprocess
@@ -716,6 +725,159 @@ def append_manifest(path: Path, entries: list[dict]) -> int:
     return len(fresh)
 
 
+# ---------------------------------------------------------------------------
+# The final AI check's gate — extract/final_check.py writes the file, this reads it
+# ---------------------------------------------------------------------------
+
+FINAL_CHECK_NAME = "final_check.csv"
+FINAL_CHECK_COLS = ["work", "doi_r", "title_r", "fingerprint", "status", "reason", "quotes",
+                    "decision", "note", "pipeline", "blind", "blind_reasoning",
+                    "model", "effort", "prompt_version", "checked_at", "blind_coding"]
+FINAL_CHECK_DECISIONS = ("", "ship", "hold", "reject")
+
+# Exactly what `compare_work()` reads off a row, plus the two ids. A change to any other
+# column (a link_evidence note, a dashboard field) cannot change the check's answer, so
+# it does not reopen the work.
+CHECKED_COLS = ("pair_id", "doi_r", "type", "doi_o", "title_o", "authors_o", "year_o",
+                "outcome", "outcome_computation", "outcome_robustness", "outcome_phrase",
+                "outcome_computational_quote", "outcome_robustness_quote")
+
+
+def shipped_works(previous: dict[str, dict]) -> frozenset[int]:
+    """The work ids the baseline shipped, preferred when two works render one pair_id."""
+    return frozenset(work for row in previous.values()
+                     if (work := _work_number(row.get("oa_work_id_r"))) is not None)
+
+
+def work_label(row: dict) -> str:
+    """The work's name in the check file: its OpenAlex number, else its DOI."""
+    work = _work_number(row.get("oa_work_id_r"))
+    return f"W{work}" if work is not None else clean_doi(row.get("doi_r", ""))
+
+
+def work_fingerprint(rows: list[dict]) -> str:
+    """One hash over a work's shipped rows, because the release rule is per work: a
+    changed sibling must reopen all of them."""
+    lines = sorted("\x1f".join(str(_normalise(row).get(col, "")) for col in CHECKED_COLS)
+                   for row in rows)
+    return hashlib.sha256("\n".join(lines).encode()).hexdigest()[:16]
+
+
+def _baseline_index(previous: dict[str, dict]) -> dict[tuple, dict[str, dict]]:
+    """Baseline rows by work key, so a work that changed alias still finds them by DOI."""
+    index: dict[tuple, dict[str, dict]] = defaultdict(dict)
+    for pair, row in previous.items():
+        for key in _keys(_work_number(row.get("oa_work_id_r")), clean_doi(row.get("doi_r", ""))):
+            index[key][pair] = row
+    return index
+
+
+def _baseline_rows(row: dict, index: dict[tuple, dict[str, dict]]) -> list[dict]:
+    found: dict[str, dict] = {}
+    for key in _keys(_work_number(row.get("oa_work_id_r")), clean_doi(row.get("doi_r", ""))):
+        found.update(index.get(key, {}))
+    return list(found.values())
+
+
+def changed_works(main: list[dict], previous: dict[str, dict]) -> dict[str, list[dict]]:
+    """`work label → shipped rows` for each work whose checked fields differ from the
+    baseline, including a work that gained or lost an original."""
+    works: dict[str, list[dict]] = defaultdict(list)
+    for row in main:
+        if shipped(row):
+            works[work_label(row)].append(row)
+    index = _baseline_index(previous)
+    return {label: rows for label, rows in works.items()
+            if work_fingerprint(rows) != work_fingerprint(_baseline_rows(rows[0], index))}
+
+
+def read_final_check(path: Path) -> dict[str, dict]:
+    """`work label → entry`. A missing file is no entries: everything changed is held.
+
+    An unknown decision refuses the render. It is a person's typing, and reading it as
+    blank could either ship or hold a work against what they meant.
+    """
+    path = Path(path)
+    if not path.exists():
+        return {}
+    with path.open(newline="", encoding="utf-8-sig") as handle:
+        entries = {row["work"]: row for row in csv.DictReader(handle)}
+    for label, entry in entries.items():
+        entry["decision"] = str(entry.get("decision") or "").strip().lower()
+        if entry["decision"] not in FINAL_CHECK_DECISIONS:
+            raise SystemExit(f"{path}: {label} has decision {entry['decision']!r}; "
+                             f"expected one of ship, hold, reject or blank")
+    return entries
+
+
+def _write_final_check(path: Path, entries: dict[str, dict]) -> None:
+    """The whole file, sorted and atomic. Entries are never dropped: the gate compares
+    fingerprints, so an old entry is harmless and stays as the record of the check."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        with tmp.open("w", newline="", encoding="utf-8-sig") as handle:
+            writer = csv.DictWriter(handle, fieldnames=FINAL_CHECK_COLS, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(entries[label] for label in sorted(entries))
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def apply_final_check(report: dict, previous: dict[str, dict],
+                      entries: dict[str, dict],
+                      shipped_before: frozenset[int] = frozenset()) -> dict:
+    """Move every changed work the check has not cleared out of the main rows.
+
+    Cleared means an entry with this work's fingerprint and either `decision = ship` or
+    `status = released` with no decision. `reject` sets the work aside and lets its old
+    pairs retire. Anything else, including an entry for an older fingerprint, is held,
+    and a held work that had shipped keeps its committed rows in place.
+    """
+    changed = changed_works(report["main"], previous)
+    index = _baseline_index(previous)
+    counts = Counter(unchanged=len({work_label(r) for r in report["main"] if shipped(r)})
+                     - len(changed), changed=len(changed))
+    fate: dict[str, str] = {}
+    for label, rows in changed.items():
+        entry = entries.get(label)
+        current = bool(entry) and entry.get("fingerprint") == work_fingerprint(rows)
+        decision = entry.get("decision", "") if current else ""
+        if entry and not current and entry.get("decision"):
+            counts["decisions_voided"] += 1
+        if decision == "ship" or (current and not decision and entry.get("status") == "released"):
+            counts["cleared"] += 1
+        elif decision == "reject":
+            fate[label] = "reject"
+            counts["rejected"] += 1
+        else:
+            fate[label] = "hold"
+            counts["held"] += 1
+            counts["held_new" if not _baseline_rows(rows[0], index) else "held_shipped"] += 1
+
+    main: list[dict] = []
+    emitted: set[str] = set()
+    for row in report["main"]:
+        label = work_label(row)
+        if label not in fate or not shipped(row):
+            main.append(row)
+            continue
+        name = "final_check_held" if fate[label] == "hold" else "final_check_rejected"
+        report["aside"].setdefault(SET_ASIDE_DESTINATIONS[name], []).append(row)
+        if fate[label] == "hold" and label not in emitted:
+            # In the held work's own position, so the file's order does not move.
+            main.extend(_normalise(old) for old in _baseline_rows(row, index))
+            emitted.add(label)
+    # A kept row can collide with a pair another work now renders.
+    report["main"], duplicates = collapse_duplicate_pairs(main, set(shipped_before))
+    report["duplicate_pairs"] = report.get("duplicate_pairs", []) + duplicates
+    report["final_check"] = dict(counts)
+    return report["final_check"]
+
+
 def write(report: dict, out_csv: Path) -> dict:
     """Publish the main CSV and every set-aside file it partitioned rows into.
 
@@ -829,6 +991,10 @@ def main(argv: Optional[list[str]] = None) -> int:
                              "likely_target, unlikely_target or clearly_not_target "
                              "in extracted.csv, instead of setting them aside in "
                              "search_link_unconfirmed.csv.")
+    parser.add_argument("--skip-final-check", action="store_true",
+                        help="Render without the final AI check's gate. Changed works "
+                             "then ship unchecked, so this is for reading the record, "
+                             "not for the file validators receive.")
     parser.add_argument("--spec-dir", type=Path, default=SPEC_DIR,
                         help="The rule book the release is checked against "
                              "(bundle and aliases). Ignored under --all-releases.")
@@ -887,13 +1053,17 @@ def main(argv: Optional[list[str]] = None) -> int:
     if manifest_applies:
         previous, baseline = previous_shipped(args.out,
                                               args.retired_baseline or ["HEAD"])
+    shipped_before = shipped_works(previous)
     report = render(client, mode=args.mode,
                     current_generation_only=args.current_generation_only,
                     admitted=admitted, gates=gates,
                     include_unconfirmed_search=args.include_unconfirmed_search,
-                    shipped_before=frozenset(
-                        work for row in previous.values()
-                        if (work := _work_number(row.get("oa_work_id_r"))) is not None))
+                    shipped_before=shipped_before)
+    check_file = set_aside_dir(args.out) / FINAL_CHECK_NAME
+    gate = None
+    if not args.skip_final_check:
+        gate = apply_final_check(report, previous, read_final_check(check_file),
+                                 shipped_before)
     print(f"generation {extract_generation()}  mode {args.mode}")
     print(f"  {report['works']:,} work(s) → {report['rows']:,} row(s)")
     for ending, count in sorted(report["endings"].items()):
@@ -925,6 +1095,19 @@ def main(argv: Optional[list[str]] = None) -> int:
     for dropped, kept in report["duplicate_pairs"]:
         print(f"    {dropped.get('pair_id', '')}  dropped {dropped.get('oa_work_id_r', '')}"
               f"  kept {kept.get('oa_work_id_r', '')}")
+
+    if gate is None:
+        print("  --skip-final-check: changed works ship without the final AI check")
+    else:
+        # Printed at zero too, like the other drops.
+        print(f"  final AI check: {gate.get('changed', 0):,} work(s) changed "
+              f"({gate.get('unchanged', 0):,} unchanged) — {gate.get('cleared', 0):,} cleared, "
+              f"{gate.get('held', 0):,} held ({gate.get('held_shipped', 0):,} keep their "
+              f"committed rows), {gate.get('rejected', 0):,} rejected, "
+              f"{gate.get('decisions_voided', 0):,} decision(s) voided by a later change")
+        if gate.get("held"):
+            print(f"    code or review them: .venv/bin/python -m extract.final_check "
+                  f"--release {release_id[:12] or '<id>'}")
 
     # Between what would be rendered and what is done with it, so every path prints it
     # once — the render, the --check diff and the write alike.
