@@ -61,6 +61,13 @@ disagreeing about what had been consumed.
 
 Progress of a running scan (read-only, safe to run concurrently):
     python -m search.snapshot_scan --status
+
+Updating a pool
+---------------
+``--scan --refresh-manifest`` re-fetches the manifest and reports what changed before
+reading anything; the scan then reads only new, rewritten and interrupted partitions.
+A pulled pool has no ledger, so it first needs ``--reconstruct-ledger``. What that can
+and cannot claim is in ``reconstruct_ledger``'s docstring.
 """
 
 import argparse
@@ -155,7 +162,8 @@ def fetch_manifest(refresh: bool = False) -> dict:
     URLs are rewritten to their HTTPS form on the way in, so every consumer sees
     one address scheme. A manifest without a file list raises rather than
     yielding zero files: an empty scan that reports success would silently look
-    like "the snapshot is fully consumed".
+    like "the snapshot is fully consumed". The cache is replaced atomically and only
+    after that check, so a failed refresh leaves the previous manifest in place.
     """
     if _MANIFEST_PATH.exists() and not refresh:
         with open(_MANIFEST_PATH, encoding="utf-8") as f:
@@ -178,15 +186,22 @@ def fetch_manifest(refresh: bool = False) -> dict:
             time.sleep(wait)
 
     key = "entries" if isinstance(manifest.get("entries"), list) else "files"
-    if not isinstance(manifest.get(key), list):
+    if not isinstance(manifest.get(key), list) or not manifest[key]:
         raise ValueError(f"Malformed OpenAlex manifest at {url}: no files/entries list")
     for entry in manifest[key]:
         if isinstance(entry, dict) and entry.get("url"):
             entry["url"] = _https_url(entry["url"])
 
-    with open(_MANIFEST_PATH, "w", encoding="utf-8") as f:
+    tmp = _MANIFEST_PATH.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(manifest, f)
+    tmp.replace(_MANIFEST_PATH)
     return manifest
+
+
+def _manifest_date(manifest: dict) -> str:
+    """The release date a manifest states: top-level ``date`` on the live manifest."""
+    return manifest.get("date") or (manifest.get("meta") or {}).get("updated_date") or ""
 
 
 def _manifest_files(manifest: dict) -> list[tuple[str, dict]]:
@@ -428,9 +443,10 @@ def load_ledger() -> dict:
                 f"The snapshot ledger at {_LEDGER_PATH} exists but cannot be read ({exc}). "
                 "It is the record of which partitions have been consumed, so this run "
                 "will not guess. Restore it from a backup, or move it aside "
-                f"(mv {_LEDGER_PATH} {_LEDGER_PATH}.broken) to start a fresh scan — "
-                "which will re-read every partition and overwrite the pool file of "
-                "each one it re-reads.") from exc
+                f"(mv {_LEDGER_PATH} {_LEDGER_PATH}.broken). With the ledger gone, a scan "
+                "refuses a pool that already holds files until you either rebuild the "
+                "ledger with `python -m search.snapshot_scan --reconstruct-ledger` or "
+                "move the pool aside for a full re-read.") from exc
         if not isinstance(ledger, dict):
             raise RuntimeError(
                 f"The snapshot ledger at {_LEDGER_PATH} is not a JSON object. See above: "
@@ -462,6 +478,189 @@ def _needs_scan(url: str, meta: dict, ledger: dict) -> bool:
         return True
     old, new = entry.get("content_length"), meta.get("content_length")
     return old is not None and new is not None and old != new
+
+
+def _unledgered_pool_files(all_files: list[tuple[str, dict]], ledger: dict,
+                           pool_dir: Path) -> list[str]:
+    """Manifest partitions that have a pool file but no ledger entry.
+
+    A scan writes the ledger entry before the pool file, so its own files always have
+    one. These came from elsewhere, normally ``pool_sync --pull``.
+    """
+    entries = ledger.get("files") or {}
+    return [url for url, _ in all_files
+            if url not in entries and (pool_dir / _pool_file_name(url)).exists()]
+
+
+def reconstruct_ledger(pool_dir: Optional[Path] = None) -> dict:
+    """Rebuild ledger entries for a pool this machine did not scan.
+
+    What the evidence supports:
+
+    * **A pool file proves its partition was read in full** — ``commit()`` only puts a
+      complete file in place — under the gate the sidecar records, at whatever size
+      the partition had THEN. Its name does not record that size.
+    * **The size written here is the manifest's, a baseline and not an observation.**
+      A partition OpenAlex rewrote between the pool's scan and this manifest keeps its
+      old pool file and is never re-read. Only a rewrite AFTER this baseline is
+      detected, so use the oldest manifest available: the cached one is used when there
+      is one, and this should run before ``--refresh-manifest``. The one disproof the
+      pool can offer is applied: a file with more rows than the manifest says its
+      partition holds was certainly rewritten. It gets an ``unverified`` entry, which
+      the next scan re-reads, as does a partition whose manifest entry states no size.
+    * **A missing pool file proves nothing.** It means no survivors, or an unreadable
+      partition the scan skipped, or a partition new since the pool. Those partitions
+      get no entry, so the next scan reads them once and records what it finds.
+
+    Entries carry ``reconstructed_from`` and no ``scanned_at``. Existing entries are
+    never overwritten, so a re-run adds nothing. It refuses a short pool, because a
+    file the pull has not delivered would be read from the snapshot instead, and a pool
+    with no recorded gate or another gate, because the entries would claim a gate that
+    nothing establishes.
+    """
+    pool_dir = SNAPSHOT_POOL_DIR if pool_dir is None else Path(pool_dir)
+    files = sorted(pool_dir.glob("*.parquet")) if pool_dir.is_dir() else []
+    if not files:
+        raise RuntimeError(f"No pool parquet files under {pool_dir} — nothing to reconstruct from.")
+
+    gate = search_gate_fingerprint()
+    provenance = read_pool_provenance(pool_dir) or {}
+    pool_gate = provenance.get("search_gate_fingerprint") or None
+    if pool_gate is None:
+        raise RuntimeError(
+            f"The pool at {pool_dir} records no search gate, so a ledger rebuilt from it "
+            "would claim a gate nothing establishes. Stamp it first: `python -m "
+            "search.snapshot_scan --stamp-pool --gate <fingerprint>`. Nothing was written.")
+    if pool_gate != gate:
+        raise RuntimeError(
+            f"The pool at {pool_dir} was admitted under a DIFFERENT search gate (pool "
+            f"{pool_gate[:12]}, this checkout {gate[:12]}). Its partitions have not been "
+            "read under this gate, so they cannot be marked consumed. Nothing was written.")
+    expected = provenance.get("expected_files")
+    if isinstance(expected, int) and len(files) < expected:
+        raise RuntimeError(
+            f"The pool at {pool_dir} is short: {len(files)} of {expected} file(s). Finish "
+            "the transfer first with `python -m search.pool_sync --pull` (it resumes). "
+            "Nothing was written.")
+
+    ledger = load_ledger()
+    theirs = ledger_gate_fingerprint(ledger)
+    if theirs not in (None, gate):
+        raise RuntimeError(
+            f"The ledger at {_LEDGER_PATH} names a different search gate ({str(theirs)[:12]}). "
+            "Move it aside first. Nothing was written.")
+
+    manifest = fetch_manifest()
+    all_files = _manifest_files(manifest)
+    baseline = _manifest_date(manifest) or "undated"
+    entries = ledger["files"]
+    on_disk = {p.name for p in files}
+    added = rows_added = 0
+    no_file: list[dict] = []
+    no_size: list[str] = []
+    disproved: list[str] = []
+    for url, meta in all_files:
+        name = _pool_file_name(url)
+        if url in entries:
+            continue
+        if name not in on_disk:
+            no_file.append(meta)
+            continue
+        if meta.get("content_length") is None:
+            # `_needs_scan` reads a null size as "never changed", so writing one would
+            # switch off rewrite detection for this partition for good.
+            no_size.append(url)
+            entries[url] = {**meta, "status": "unverified", "reconstructed_from": baseline}
+            continue
+        rows = pq.ParquetFile(pool_dir / name).metadata.num_rows
+        stated = meta.get("record_count")
+        if stated is not None and rows > stated:
+            disproved.append(url)
+            entries[url] = {**meta, "status": "unverified", "reconstructed_from": baseline}
+            continue
+        entries[url] = {**meta, "status": "done", "kept": rows, "reconstructed_from": baseline}
+        added += 1
+        rows_added += rows
+
+    if added or disproved or no_size:
+        if theirs is None:
+            ledger[_GATE_KEY] = pool_gate
+        save_ledger(ledger)
+
+    report = {
+        "baseline": baseline,
+        "added": added,
+        "rows": rows_added,
+        "no_pool_file": len(no_file),
+        "no_pool_file_bytes": sum(int(m.get("content_length") or 0) for m in no_file),
+        "disproved": len(disproved),
+        "no_size": len(no_size),
+    }
+    log.info("Reconstructed %d ledger entries (%d pool rows) against manifest %s. %d partition(s) "
+             "have no pool file and will be read once (%.1f GB); %d file(s) hold more rows than "
+             "their partition and will be re-read; %d partition(s) state no size and will be read.",
+             added, rows_added, baseline, report["no_pool_file"],
+             report["no_pool_file_bytes"] / 1e9, report["disproved"], report["no_size"])
+    log.warning("A reconstructed entry assumes the partition has not changed since the pool was "
+                "scanned. A rewrite before manifest %s cannot be detected; only later ones can.",
+                baseline)
+    return report
+
+
+def manifest_delta(all_files: list[tuple[str, dict]], ledger: dict,
+                   pool_dir: Optional[Path] = None) -> dict:
+    """What a scan would read against *ledger*, and what the manifest no longer lists.
+
+    A removed partition is reported and left alone: its pool file keeps its rows, and
+    ``_log_delta`` states what those rows do downstream.
+    """
+    entries = ledger.get("files") or {}
+    new, rewritten, interrupted, unchanged = [], [], [], 0
+    for url, meta in all_files:
+        entry = entries.get(url)
+        if not entry:
+            new.append(meta)
+        elif entry.get("status") != "done":
+            interrupted.append(meta)
+        elif _needs_scan(url, meta, ledger):
+            rewritten.append(meta)
+        else:
+            unchanged += 1
+
+    listed = {url for url, _ in all_files}
+    names = {_pool_file_name(url) for url in listed}
+    orphans = [p for p in sorted(pool_dir.glob("*.parquet")) if p.name not in names] \
+        if pool_dir is not None and pool_dir.is_dir() else []
+
+    def size(metas: list[dict]) -> int:
+        return sum(int(m.get("content_length") or 0) for m in metas)
+
+    return {
+        "new": len(new), "new_bytes": size(new),
+        "rewritten": len(rewritten), "rewritten_bytes": size(rewritten),
+        "interrupted": len(interrupted), "interrupted_bytes": size(interrupted),
+        "unchanged": unchanged,
+        "removed_from_ledger": len(set(entries) - listed),
+        "orphan_pool_files": len(orphans),
+        "orphan_pool_rows": sum(pq.ParquetFile(p).metadata.num_rows for p in orphans),
+    }
+
+
+def _log_delta(delta: dict, previous_date: str, date: str) -> None:
+    log.info("Snapshot manifest %s (ledger: %s): %d new (%.1f GB), %d rewritten (%.1f GB), "
+             "%d interrupted or unverified (%.1f GB), %d unchanged.",
+             date or "undated", previous_date or "undated",
+             delta["new"], delta["new_bytes"] / 1e9,
+             delta["rewritten"], delta["rewritten_bytes"] / 1e9,
+             delta["interrupted"], delta["interrupted_bytes"] / 1e9,
+             delta["unchanged"])
+    if delta["removed_from_ledger"] or delta["orphan_pool_files"]:
+        log.warning("%d ledger entries and %d pool file(s) (%d rows) name partitions this "
+                    "manifest no longer lists. Their rows stay in the pool. Where OpenAlex "
+                    "moved a work to a newer partition, routing keeps this OLDER copy: it "
+                    "reads files in name order and keeps the first row per work.",
+                    delta["removed_from_ledger"], delta["orphan_pool_files"],
+                    delta["orphan_pool_rows"])
 
 
 # ---------------------------------------------------------------------------
@@ -700,6 +899,7 @@ class _PoolWriter:
         self.tmp = self.final.with_suffix(".tmp")
         self._writer: Optional[pq.ParquetWriter] = None
         self.rows = 0
+        self.removed_file = False
 
     def reset(self) -> None:
         """Start the file over — a retried partition re-reads from row zero."""
@@ -726,8 +926,9 @@ class _PoolWriter:
         self._close()
         if self.tmp.exists():
             self.tmp.replace(self.final)
-        else:
-            self.final.unlink(missing_ok=True)
+        elif self.final.exists():
+            self.final.unlink()
+            self.removed_file = True
         return self.rows
 
     def abandon(self) -> None:
@@ -820,7 +1021,8 @@ def _batch_rows(batch: pa.RecordBatch, counters: dict,
 def scan_snapshot(max_files: Optional[int] = None,
                   files: Optional[list[str]] = None,
                   survivor_pool: Optional[Path] = None,
-                  force_gate: bool = False) -> int:
+                  force_gate: bool = False,
+                  refresh_manifest: bool = False) -> int:
     """Scan OpenAlex snapshot partitions and write every survivor to the pool.
 
     One mode, ledger-backed: it scans every manifest file not already marked done
@@ -850,12 +1052,17 @@ def scan_snapshot(max_files: Optional[int] = None,
     carrying this checkout's gate, so the ledger check alone would wave through
     exactly the case that matters.
 
+    *refresh_manifest* re-fetches the manifest once those refusals have passed, so a
+    refused scan leaves the cached one as it found it. The delta is logged before any
+    partition is read; ``max_files=0`` stops there.
+
     Returns the number of rows admitted.
     """
     # An explicit file list is self-sufficient: fetching the manifest for it would be
     # a network call the caller did not ask for (and the unit tests never allow one).
     manifest: dict = {}
     all_files: list[tuple[str, dict]] = []
+    had_cached_manifest = _MANIFEST_PATH.exists()
     if files is None:
         manifest = fetch_manifest()
         all_files = _manifest_files(manifest)
@@ -911,20 +1118,55 @@ def scan_snapshot(max_files: Optional[int] = None,
                     "becomes UNKNOWN rather than either of the two.",
                     search_gate_fingerprint()[:12], POOL_PROVENANCE, str(pool_gate)[:12])
 
+    # A pool this ledger knows nothing about would otherwise be re-read in full: 725 GB
+    # to rediscover files already on disk, with no sign of it until the bill arrives.
+    def _refuse_unledgered_pool_files() -> None:
+        if survivor_pool is None or pool_gate_mismatch or ledger_gate_mismatch:
+            return
+        unledgered = _unledgered_pool_files(all_files, ledger, survivor_pool)
+        if unledgered:
+            raise RuntimeError(
+                f"{len(unledgered)} pool file(s) in {survivor_pool} have no entry in the "
+                f"ledger at {_LEDGER_PATH}, as on a pool obtained by `pool_sync --pull`, so "
+                "this scan would re-read them all. Rebuild the entries first: `python -m "
+                f"search.snapshot_scan --reconstruct-ledger --pool-dir {survivor_pool}`. For "
+                "a true full re-read, scan into a fresh pool directory instead.")
+
     if files is None:
-        ledger["snapshot_date"] = (manifest.get("meta") or {}).get("updated_date", "") \
-            or ledger.get("snapshot_date", "")
+        _refuse_unledgered_pool_files()
+
+    if files is None:
+        # Fetched only here, and only if the call above did not just fetch it, so a
+        # reconstructed ledger's baseline is never moved by a refused run.
+        if refresh_manifest and had_cached_manifest:
+            manifest = fetch_manifest(refresh=True)
+            all_files = _manifest_files(manifest)
+            source_files = all_files
+            n_available = len(all_files)
+            # A cached manifest older than the pool does not name its newer files.
+            _refuse_unledgered_pool_files()
+        previous_date = ledger.get("snapshot_date", "") or ""
+        ledger["snapshot_date"] = _manifest_date(manifest) or previous_date
+        _log_delta(manifest_delta(all_files, ledger, survivor_pool),
+                   previous_date, ledger["snapshot_date"])
     targets = [(u, m) for u, m in source_files if _needs_scan(u, m, ledger)]
+    # Nothing left to read means the ledger is current with this release, so its date
+    # has to be saved here: the loop below is what normally saves it. A preview (max 0)
+    # reads nothing by choice and claims nothing.
+    if files is None and not targets and max_files != 0:
+        save_ledger(ledger)
     if max_files is not None:
         targets = targets[:max_files]
 
-    log.info("Snapshot scan: %d of %d manifest files to read",
-             len(targets), n_available)
+    log.info("Snapshot scan: %d of %d manifest files to read (%.1f GB)",
+             len(targets), n_available,
+             sum(int(m.get("content_length") or 0) for _, m in targets) / 1e9)
 
     counters = {"scanned": 0, "gate_survivors": 0, "gate_token": 0, "gate_concept": 0,
                 "admitted": 0, "no_abstract": 0, "pooled": 0, "row_errors": 0}
     total_merged = 0
     skipped: list[str] = []
+    files_removed = 0
 
     for i, (url, meta) in enumerate(targets, 1):
         # What the ledger said about this partition before this attempt. A partition is
@@ -991,6 +1233,7 @@ def scan_snapshot(max_files: Optional[int] = None,
         # crash can leave a partition unscanned but never scanned-without-its-pool.
         if pool is not None and url not in skipped:
             counters["pooled"] += pool.commit()
+            files_removed += pool.removed_file
         if url not in skipped:
             ledger["files"][url] = {**meta, "status": "done", "kept": file_merged,
                                     "scanned_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")}
@@ -1027,11 +1270,15 @@ def scan_snapshot(max_files: Optional[int] = None,
         #   another gate) records no gate at all: no single fingerprint is true of its
         #   rows any more, and naming either one would be a claim the pool cannot
         #   support. `source` says "scan:mixed" so the operator can see why.
-        # * expected_files never falls. A pull records how many files COMPLETE the
-        #   pool; counting what is on disk after a scan that added a partition to a
-        #   half-pulled pool would erase that claim and make a partial pool
-        #   fingerprint as whole.
-        if survivor_pool.exists():
+        # * expected_files follows what this run did and nothing else: it rises with the
+        #   files on disk and falls only by the files this run itself deleted (a rewrite
+        #   that left no survivors). A pull records how many files COMPLETE the pool;
+        #   counting what is on disk instead would erase a half-pulled pool's evidence
+        #   that it is short and let it fingerprint as whole. Without the deletions,
+        #   such a rewrite would leave the pool "partial" for good.
+        # * a run that read nothing changes nothing, so a preview or an up-to-date scan
+        #   leaves a stamped sidecar, and its source, alone.
+        if survivor_pool.exists() and (targets or pool_provenance is None):
             on_disk = len(list(survivor_pool.glob("*.parquet")))
             expected_before = (pool_provenance or {}).get("expected_files")
             gate_to_record: Optional[str] = pool_gate if pool_provenance is not None else (
@@ -1041,8 +1288,8 @@ def scan_snapshot(max_files: Optional[int] = None,
                 gate_to_record, source = None, "scan:mixed"
             write_pool_provenance(
                 survivor_pool, gate_to_record,
-                max(on_disk, expected_before) if isinstance(expected_before, int)
-                else on_disk,
+                max(on_disk, expected_before - files_removed)
+                if isinstance(expected_before, int) else on_disk,
                 source)
         log.info("Snapshot survivor pool: %d rows, %.1f MB at %s (gate=%s)",
                  counters["pooled"], _pool_size_bytes(survivor_pool) / 1e6, survivor_pool,
@@ -1297,8 +1544,9 @@ def main() -> None:
                     "run at any time, including against a scan in flight — it reads the "
                     "ledger, the cached manifest and the pool directory, and writes "
                     "nothing. The scan itself is started from "
-                    "`python -m search.run_search --scan`. The one exception is "
-                    "--stamp-pool, which writes the pool's provenance sidecar.")
+                    "`python -m search.run_search --scan`. The exceptions are "
+                    "--stamp-pool, which writes the pool's provenance sidecar, and "
+                    "--reconstruct-ledger, which writes the ledger.")
     parser.add_argument("--status", action="store_true",
                         help="Print progress (the default action).")
     parser.add_argument("--json", action="store_true", help="Emit the status as JSON.")
@@ -1317,7 +1565,23 @@ def main() -> None:
                              "pool_manifest.json — or the literal 'local' to claim this "
                              "checkout's gate. Anything else is rejected rather than "
                              "stamped.")
+    parser.add_argument("--reconstruct-ledger", action="store_true",
+                        help="Rebuild ledger entries for a pulled pool from its files and "
+                             "the manifest, so --scan need not re-read it. Run before "
+                             "--refresh-manifest: a partition rewritten before the manifest "
+                             "used here cannot be detected. Partitions with no pool file "
+                             "get no entry and are read by the next scan.")
     args = parser.parse_args()
+
+    if args.reconstruct_ledger:
+        if args.stamp_pool:
+            parser.error("--reconstruct-ledger and --stamp-pool are separate steps")
+        try:
+            report = reconstruct_ledger(Path(args.pool_dir) if args.pool_dir else None)
+        except RuntimeError as exc:  # an operator instruction, not a stack trace
+            raise SystemExit(str(exc))
+        print(json.dumps(report, indent=1))
+        return
 
     if args.gate and not args.stamp_pool:
         parser.error("--gate applies to --stamp-pool only")
