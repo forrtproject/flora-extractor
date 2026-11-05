@@ -256,6 +256,20 @@ def test_openai_schema_requires_every_property_without_moving_the_prompt_version
     assert fc.PROMPT_VERSION == version
 
 
+def test_a_limited_trial_is_a_stable_mixed_draw_the_full_run_does_not_repeat():
+    """File order clusters by DOI prefix, so the first works would misstate the review
+    share; and the trial's works must not be coded again by the run that follows."""
+    rows = {f"10.17605/osf.io/{i}" if i < 50 else f"10.1002/{i}": [_row(work=i, pair=f"p{i}")]
+            for i in range(100)}
+    trial = fc.draw(rows, 20)
+    assert list(trial) == list(fc.draw(dict(reversed(list(rows.items()))), 20))
+    assert len({label.split("/")[0] for label in trial}) == 2
+    entries = {label: {"fingerprint": ex.work_fingerprint(rows[label]),
+                       "prompt_version": fc.PROMPT_VERSION} for label in trial}
+    remaining = fc.worklist(rows, entries)
+    assert len(remaining) == 80 and not set(trial) & set(remaining)
+
+
 def test_three_failures_in_a_row_stop_the_run_and_save_what_it_has(tmp_path):
     todo = {f"W{i}": [_row(work=i, pair=f"p{i}")] for i in range(1, 6)}
     with patch.object(fc, "check_work", side_effect=RuntimeError("limit reached")):
