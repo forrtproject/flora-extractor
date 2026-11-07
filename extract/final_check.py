@@ -27,8 +27,10 @@ read the record as a plan (`compare_work()`). One side settling an outcome the o
 called `cannot_be_determined` counts as agreeing. A work held only because the coder was
 not confident is coded a second time (`--fallback`, by default the other model) and
 released if that coding alone would release it. `other` needs both CLIs logged in; with
-one subscription, pass `--fallback repeat`. A second coding that fails leaves the work in
-`review` with the error in `fallback`, rather than failing it.
+one subscription, pass `--fallback repeat`. Before coding anything, the run checks that
+every route it may call is logged in on a subscription and exits if one is not
+(`require_subscriptions()`). A second coding that fails mid-run fails the work like a
+first one: it stays unanswered, and the next run retries it from the cache.
 Anything else is `review`: whoever runs the pipeline reads the two codings side by
 side in the CSV and fills `decision` with `ship`, `hold` or `reject`. A decision is
 bound to the work's fingerprint (`work_fingerprint()` in `extract/export.py`), so a
@@ -363,6 +365,44 @@ _API_KEY_VARS = ("OPENAI_API_KEY", "CODEX_API_KEY", "ANTHROPIC_API_KEY", "ANTHRO
 def _subscription_env(**extra: str) -> dict[str, str]:
     env = {k: v for k, v in os.environ.items() if k not in _API_KEY_VARS}
     return {**env, **extra}
+
+
+def _subscription_problem(model: str) -> str:
+    """Why *model*'s CLI cannot code on a subscription here, or "" when it can.
+
+    An API-key login is refused as well as none: it would bill per call.
+    """
+    cli = (["claude", "auth", "status"] if model.startswith("claude-")
+           else ["codex", "login", "status"])
+    try:
+        out = subprocess.run(cli, capture_output=True, text=True, timeout=60,
+                             env=_subscription_env())
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return f"`{' '.join(cli)}` did not run ({exc})"
+    if model.startswith("claude-"):
+        try:
+            status = json.loads(out.stdout)
+        except json.JSONDecodeError:
+            status = {}
+        if status.get("loggedIn") and status.get("authMethod") == "claude.ai":
+            return ""
+        return (f"claude is not logged in on a subscription (authMethod "
+                f"{status.get('authMethod', 'unknown')!r}); run `claude auth login`")
+    if out.returncode == 0 and "ChatGPT" in out.stdout + out.stderr:
+        return ""
+    said = (out.stdout + out.stderr).strip().splitlines()
+    return (f"codex is not logged in with ChatGPT ({said[-1] if said else 'no output'}); "
+            "run `codex login`")
+
+
+def require_subscriptions(model: str, fallback: str) -> None:
+    """Exit before the first call unless every route this run may use is logged in."""
+    models = {model} | ({_fallback_model(model, fallback)} if fallback == "other" else set())
+    problems = [p for m in sorted(models) if (p := _subscription_problem(m))]
+    if problems:
+        hint = ("; or pass --fallback repeat to use only " + model
+                if fallback == "other" and not _subscription_problem(model) else "")
+        raise SystemExit("final check cannot run: " + "; ".join(problems) + hint)
 
 
 def _call_claude(prompt: str, model: str) -> dict:
@@ -879,21 +919,14 @@ def check_work(label: str, rows: list[dict], model: str, fallback: str = "other"
     if fallback != "none" and _held_only_for_confidence(results):
         model_2 = _fallback_model(model, fallback)
         name = f"{model_2}{' (repeat)' if model_2 == model else ''}"
-        try:
-            record_2 = recode(prompt, model=model_2, attempt=2 if model_2 == model else 1)
-        except Exception as exc:  # noqa: BLE001 — the first coding still stands
-            # Held for a person rather than failed: a missing login on the second route
-            # would otherwise fail every such work and stop the run.
-            second = f"{name}: error — {exc}"
-            reason += f"; fallback {name}: error"
-        else:
-            results_2 = compare_work(rows, record_2["coding"], sources)
-            released = all(r["released"] for r in results_2)
-            reason_2 = "" if released else _reasons(rows, results_2)
-            reason = "" if released else f"{reason}; fallback {name}: {reason_2}"
-            second = (f"{name}: {'released' if released else 'review'}\n"
-                      + _blind_text(record_2["coding"]))
-            second_coding = json.dumps(record_2["coding"], ensure_ascii=False, sort_keys=True)
+        record_2 = recode(prompt, model=model_2, attempt=2 if model_2 == model else 1)
+        results_2 = compare_work(rows, record_2["coding"], sources)
+        released = all(r["released"] for r in results_2)
+        reason_2 = "" if released else _reasons(rows, results_2)
+        reason = "" if released else f"{reason}; fallback {name}: {reason_2}"
+        second = (f"{name}: {'released' if released else 'review'}\n"
+                  + _blind_text(record_2["coding"]))
+        second_coding = json.dumps(record_2["coding"], ensure_ascii=False, sort_keys=True)
     fabricated = sorted({r["quote_verdict"] for r in results
                          if "fabricated" in str(r["quote_verdict"])})
     return {"work": label, "doi_r": row.get("doi_r", ""), "title_r": row.get("title_r", ""),
@@ -1025,6 +1058,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.limit < 0:
             raise SystemExit("--limit must be zero or more")
         todo = draw(todo, args.limit)
+    if todo:
+        require_subscriptions(args.model, args.fallback)
     if not args.run:
         print(f"  dry run: --run would code {len(todo):,} with {args.model} "
               f"(about {len(todo) * 19 / max(args.workers, 1) / 60:,.0f} min at the "

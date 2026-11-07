@@ -818,7 +818,9 @@ routes elsewhere. `FINAL_CHECK_MODELS` also sits outside `provider_for()`: they 
 through their vendor's CLI on a subscription, and the operator picks one with `--model`
 because they may hold only one subscription. A work held only for the coder's low
 confidence gets a second coding from the other model, or with `--fallback repeat` from the
-same one. Each entry in the check file records its model and any second coding.
+same one. A run exits before its first call unless every route it may use is logged in
+on a subscription (an API-key login is refused too). Each entry in the check file records
+its model and any second coding.
 
 **Never let a swallowed error become an empty result.** A rate-limit 429 caught and
 turned into `return []` is indistinguishable downstream from a genuine "no
