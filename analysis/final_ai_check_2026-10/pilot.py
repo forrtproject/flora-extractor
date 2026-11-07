@@ -213,14 +213,21 @@ def main() -> None:
     joined = join_rows(human_truth())
     print(f"{len(joined)} validated records joined to extracted.csv")
     batch_file = "pilot_results.csv" if args.batch == 1 else "pilot_results_batch2.csv"
+    draws = sorted(OUT.glob("pilot_results_draw*.csv"))
     if args.draw:
         taken = recorded("pilot_results.csv") | recorded("pilot_results_batch2.csv")
-        if (OUT / "pilot_results_draw.csv").exists():
-            taken |= recorded("pilot_results_draw.csv")
+        for done in draws:
+            taken |= recorded(done.name)
         pilot = select(joined[~joined.rid.isin(taken)])
     else:
         pilot = recorded_rows(joined, batch_file)
     print(f"{len(pilot)} pilot rows")
+    missing = [r["rid"] for _, r in pilot.iterrows()
+               if not document_text(r.to_dict())[0] and _acquired_document(r.to_dict())]
+    if missing:
+        raise SystemExit(f"{len(missing)} row(s) have a document that is not in this parse "
+                         f"cache; a re-score from the abstract would change the evidence: "
+                         f"{', '.join(missing)}")
     with ThreadPoolExecutor(args.workers) as pool:
         results = list(pool.map(lambda r: run_one(r, args.cached_only),
                                 [r.to_dict() for _, r in pilot.iterrows()]))
@@ -232,7 +239,7 @@ def main() -> None:
             "human_corrections", "human_named_dois"]
     out = pilot[keep].merge(pd.DataFrame(results).drop(columns="pair_id"), on="rid")
     out["human_verdict"] = _human_verdict(out)
-    name = "pilot_results_draw.csv" if args.draw else batch_file
+    name = f"pilot_results_draw{len(draws) + 1}.csv" if args.draw else batch_file
     out.to_csv(OUT / name, index=False, encoding="utf-8-sig")
     show = ["link_method", "type", "blind_type", "truth_type", "original_grade",
             "truth_original", "outcome", "blind_outcome", "outcome_grade", "truth_outcome",

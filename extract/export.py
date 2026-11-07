@@ -733,7 +733,8 @@ FINAL_CHECK_NAME = "final_check.csv"
 FINAL_CHECK_COLS = ["work", "doi_r", "title_r", "fingerprint", "status", "reason", "fallback",
                     "quotes",
                     "decision", "note", "pipeline", "blind", "blind_reasoning",
-                    "model", "effort", "prompt_version", "checked_at", "blind_coding"]
+                    "model", "effort", "prompt_version", "checked_at", "blind_coding",
+                    "fallback_coding"]
 FINAL_CHECK_DECISIONS = ("", "ship", "hold", "reject")
 
 # Exactly what `compare_work()` reads off a row, plus the two ids. A change to any other

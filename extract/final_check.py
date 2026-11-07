@@ -26,7 +26,9 @@ pair agrees on type and outcome with a confident blind coder, and the coder does
 read the record as a plan (`compare_work()`). One side settling an outcome the other
 called `cannot_be_determined` counts as agreeing. A work held only because the coder was
 not confident is coded a second time (`--fallback`, by default the other model) and
-released if that coding alone would release it.
+released if that coding alone would release it. `other` needs both CLIs logged in; with
+one subscription, pass `--fallback repeat`. A second coding that fails leaves the work in
+`review` with the error in `fallback`, rather than failing it.
 Anything else is `review`: whoever runs the pipeline reads the two codings side by
 side in the CSV and fills `decision` with `ship`, `hold` or `reject`. A decision is
 bound to the work's fingerprint (`work_fingerprint()` in `extract/export.py`), so a
@@ -352,8 +354,10 @@ def recode(prompt: str, model: str = FINAL_CHECK_MODEL, cached_only: bool = Fals
 
 
 # A key in the child's environment could turn a subscription call into a metered one,
-# and `.env` puts OPENAI_API_KEY in this process. The CLIs get their stored login only.
-_API_KEY_VARS = ("OPENAI_API_KEY", "CODEX_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+# and `.env` puts OPENAI_API_KEY in this process; a base URL would send the paper and the
+# login to another endpoint. The CLIs get their stored login and their own endpoint only.
+_API_KEY_VARS = ("OPENAI_API_KEY", "CODEX_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
+                 "ANTHROPIC_BASE_URL", "OPENAI_BASE_URL")
 
 
 def _subscription_env(**extra: str) -> dict[str, str]:
@@ -535,7 +539,7 @@ def outcome_grade(row: dict, target: dict) -> str:
     differ = [(a, b) for a, b in pairs if a != b]
     if not differ:
         return "exact"
-    if all((a == UNDETERMINED) != (b == UNDETERMINED) for a, b in differ):
+    if all({a, b} & {UNDETERMINED} and not {a, b} & {""} for a, b in differ):
         return "undetermined"
     return "soft" if len(differ) == 1 and frozenset(differ[0]) in SOFT_PAIRS else "different"
 
@@ -870,22 +874,34 @@ def check_work(label: str, rows: list[dict], model: str, fallback: str = "other"
     sources += [SourceIndex(t) for t in texts.values()]
     results = compare_work(rows, coding, sources)
     released = all(r["released"] for r in results)
-    second = ""
+    reason = "" if released else _reasons(rows, results)
+    second, second_coding = "", ""
     if fallback != "none" and _held_only_for_confidence(results):
         model_2 = _fallback_model(model, fallback)
-        record_2 = recode(prompt, model=model_2, attempt=2 if model_2 == model else 1)
-        results_2 = compare_work(rows, record_2["coding"], sources)
-        released = all(r["released"] for r in results_2)
-        second = (f"{model_2}{' (repeat)' if model_2 == model else ''}: "
-                  + ("released" if released else _reasons(rows, results_2))
-                  + "\n" + _blind_text(record_2["coding"]))
+        name = f"{model_2}{' (repeat)' if model_2 == model else ''}"
+        try:
+            record_2 = recode(prompt, model=model_2, attempt=2 if model_2 == model else 1)
+        except Exception as exc:  # noqa: BLE001 — the first coding still stands
+            # Held for a person rather than failed: a missing login on the second route
+            # would otherwise fail every such work and stop the run.
+            second = f"{name}: error — {exc}"
+            reason += f"; fallback {name}: error"
+        else:
+            results_2 = compare_work(rows, record_2["coding"], sources)
+            released = all(r["released"] for r in results_2)
+            reason_2 = "" if released else _reasons(rows, results_2)
+            reason = "" if released else f"{reason}; fallback {name}: {reason_2}"
+            second = (f"{name}: {'released' if released else 'review'}\n"
+                      + _blind_text(record_2["coding"]))
+            second_coding = json.dumps(record_2["coding"], ensure_ascii=False, sort_keys=True)
     fabricated = sorted({r["quote_verdict"] for r in results
                          if "fabricated" in str(r["quote_verdict"])})
     return {"work": label, "doi_r": row.get("doi_r", ""), "title_r": row.get("title_r", ""),
             "fingerprint": work_fingerprint(rows),
             "status": "released" if released else "review",
-            "reason": "" if released else _reasons(rows, results),
+            "reason": reason,
             "quotes": "; ".join(fabricated), "fallback": second,
+            "fallback_coding": second_coding,
             "pipeline": _pipeline_text(rows), "blind": _blind_text(coding),
             "blind_reasoning": str(coding.get("reasoning") or ""),
             "blind_coding": json.dumps(coding, ensure_ascii=False, sort_keys=True),
@@ -1006,6 +1022,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  {len(changed):,} work(s) differ from the baseline; "
           f"{len(todo):,} need a blind coding; prompt {PROMPT_VERSION}")
     if args.limit is not None:
+        if args.limit < 0:
+            raise SystemExit("--limit must be zero or more")
         todo = draw(todo, args.limit)
     if not args.run:
         print(f"  dry run: --run would code {len(todo):,} with {args.model} "

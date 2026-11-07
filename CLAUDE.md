@@ -816,8 +816,9 @@ constant across vendors becomes a 404 from the wrong API. The one exception is
 OpenAI-compatible equivalent, and `llm_client` refuses to import if that constant
 routes elsewhere. `FINAL_CHECK_MODELS` also sits outside `provider_for()`: they run
 through their vendor's CLI on a subscription, and the operator picks one with `--model`
-because they may hold only one subscription. Each entry in the check file records its
-model.
+because they may hold only one subscription. A work held only for the coder's low
+confidence gets a second coding from the other model, or with `--fallback repeat` from the
+same one. Each entry in the check file records its model and any second coding.
 
 **Never let a swallowed error become an empty result.** A rate-limit 429 caught and
 turned into `return []` is indistinguishable downstream from a genuine "no
