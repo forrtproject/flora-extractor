@@ -45,7 +45,7 @@ merged on 2026-10-28 has run, not even in the sandbox. Each entry's PR carries t
       W=2055766296,2911411325,4212792994,4220947390,4225910309,4283783155,4361272113,4387293767,4388904550,4388904615,4391787029,4391898252,4399984952,6962756304
       .venv/bin/python -m extract.tier --release "$REL" --mode validation --redo "$W" --only "$W"
       .venv/bin/python -m extract.tier --release "$REL" --mode validation --redo "$W" --only "$W" --run
-      .venv/bin/python -m extract.export --release "$REL" --mode validation --out data/extracted-test.csv
+      .venv/bin/python -m extract.export --release "$REL" --mode validation --skip-final-check --out data/extracted-test.csv
       ```
       Read the sandbox rows, then repeat the two tier commands without `--mode validation`.
       Done when none of the 14 ships a `doi_o` that `non_article_doi()` names.
@@ -53,9 +53,11 @@ merged on 2026-10-28 has run, not even in the sandbox. Each entry's PR carries t
 - [ ] **Run the final AI check (PR #228) before this render reaches validators.** Skip
       this entry until #228 is merged. It has coded no real row yet, and a render with no
       check file holds every changed work. Run it on the box, which has the parse cache,
-      with `claude` or `codex` logged in there. Start with a 50-work trial of the real
-      worklist and read the share of `review` rows in `data/final_check.csv`, which says
-      how many decisions the full run will need. The full run keeps the trial's entries
+      with both `claude` and `codex` logged in there (the second coding of a low-confidence
+      work uses the other model; with one, add `--fallback repeat`). Start with a 50-work
+      trial of the real worklist and read the share of `review` rows in
+      `data/final_check.csv`, an estimate of how many decisions the full run will need (a
+      trial on 2026-11-07 put 19 of 50 in review). The full run keeps the trial's entries
       and codings and buys only the rest:
       ```bash
       .venv/bin/python -m extract.final_check --release "$REL"
@@ -89,7 +91,7 @@ merged on 2026-10-28 has run, not even in the sandbox. Each entry's PR carries t
       S=target_pending,unidentified_original,no_original_found
       .venv/bin/python -m extract.tier --release "$REL" --mode validation --redo-status "$S"
       .venv/bin/python -m extract.tier --release "$REL" --mode validation --redo-status "$S" --limit 50 --run
-      .venv/bin/python -m extract.export --release "$REL" --mode validation --out data/extracted-test.csv
+      .venv/bin/python -m extract.export --release "$REL" --mode validation --skip-final-check --out data/extracted-test.csv
       ```
       Decide from that sample whether to run all three statuses or narrow them, then run
       the tier command live without `--mode validation` and `--limit`, and render again as

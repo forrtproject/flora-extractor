@@ -6,9 +6,13 @@ gate in `apply_final_check()` in `extract/export.py`.
 The unit of FLoRA is the replication–original pair. The check therefore compares works,
 not single rows: it pairs the pipeline's originals with the blind coder's one-to-one,
 compares each pair, and releases a row only when three conditions hold:
-- its pair agrees on type and outcome;
-- the blind coder was confident of that outcome;
+- its pair agrees on type and outcome, where one side settling an outcome the other
+  called `cannot_be_determined` counts as agreeing;
+- the blind coder was confident of that outcome, or, when that was the only obstacle,
+  a second coding (by default the other model) would release the work on its own;
 - its whole work pairs off, with no original left over on either side.
+
+The two relaxations were added after the trial below, on the maintainer's decision.
 
 ## Findings (22 human-validated rows, two batches)
 
@@ -59,8 +63,8 @@ compares each pair, and releases a row only when three conditions hold:
      errors (stroke loci, reward fMRI), so holding the whole work is the better rule.
    - **Antidepressants and autism/ADHD.** The original found ADHD risk and no autism
      risk; the replication found neither. Under the codebook ("no effect where the
-     original also found none is success") the blind coder read this as `mixed` and
-     marked itself unconfident. The pipeline and humans said `failed`.
+     original also found none is success") the blind coder read this as `mixed`, confidently.
+     The pipeline and humans said `failed`, so the outcome disagreement held the row.
 6. **Coding the same prompts twice changed 1 of 22 release decisions, and that one
    released an error.** On the directed-forgetting paper the first coding named one
    original, so the work was held (2 vs 1). The second named both and agreed with the
@@ -105,6 +109,29 @@ compares each pair, and releases a row only when three conditions hold:
    20 minutes with 4 parallel calls (40 minutes coded twice). With about 100 released
    rows, a 95% confidence interval on precision spans roughly ±4.5 percentage points.
    That is enough to tell 95% apart from 85%, but not from 92%.
+
+## Trial on the live worklist (2026-11-07)
+
+A stable pseudo-random 50 of the 1,753 works that release `61f07fd07f19` would change,
+coded by Opus on the box. The release predates the current rule book, so its binding
+check was skipped for this trial only; nothing was written to the live check file.
+
+| Rule | Released | Review |
+| --- | ---: | ---: |
+| Pilot rule | 22 | 28 |
+| Plus: one side `cannot_be_determined` agrees; low confidence gets a second coding (Sol) | 31 | 19 |
+
+Under the pilot rule, review reasons (a work can have several) were: blind coder not
+confident 10, originals differ 7, one side `cannot_be_determined` 7, outcomes differ 5,
+type differs 2, no original named 2, prospective 1. Under the relaxed rule, Sol coded the
+13 works held only for confidence and released 9 of them. 19 of 50 puts the full run at
+roughly 450 to 900 review decisions (95% interval). Sol calls took a median of 21 s.
+
+These works have no human verdict, so the trial measures load, not accuracy. On the
+pilot's 22 validated rows, the `cannot_be_determined` rule changes nothing: no pair has
+that disagreement. One row was held only for confidence (azoospermia, Japanese
+populations), and Sol released it confidently as `failed`; humans corrected it to
+`mixed`. With the relaxed rule the pilot releases 13 rows: 7 correct, 5 errors, 1 undetermined.
 
 ## Open
 
@@ -245,7 +272,7 @@ validated reproduction was available.
 | ed3eae6f reply to Williams | 2 | error: rejected | held | blind coder: `not_a_replication` |
 | 3d69a538 reward fMRI (OSF) | 2 | error: rejected | held | 2 vs 3 |
 | cadbfc8e religious cognition (OSF) | 2 | correct | released | — |
-| dd021dfc antidepressants and autism | 2 | correct | held | `failed` vs unconfident `mixed` |
+| dd021dfc antidepressants and autism | 2 | correct | held | `failed` vs confident `mixed` |
 | e3361013 representative bureaucracy | 2 | correct | released | original named by DOI from the reference list |
 | 54c1c5b5 translation and vocabulary | 2 | correct | released | Prince 1996 named from the description, by DOI |
 | 80269c6d Wilkins & Kaiser (OSF) | 2 | correct | released | (matching bug, fixed) |

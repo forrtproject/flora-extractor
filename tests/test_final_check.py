@@ -236,6 +236,31 @@ def test_a_work_held_only_for_confidence_is_released_by_a_confident_second_codin
         entry = fc.check_work("W1", [_row()], "claude-opus-5-5", fallback)
     assert entry["status"] == "released" and entry["fallback"].startswith(model)
     assert recode.call_args_list[1].kwargs == {"model": model, "attempt": attempt}
+    assert json.loads(entry["fallback_coding"])["targets"][0]["outcome_confident"] is True
+
+
+def test_a_failed_second_coding_leaves_the_work_in_review_instead_of_failing_it():
+    with patch.object(fc, "document_text", return_value=("", "", {})), \
+            patch.object(fc, "metadata_references", return_value=[]), \
+            patch.object(fc, "recode", side_effect=[
+                _recoded(_coding(confident=False))[0], RuntimeError("not logged in")]):
+        entry = fc.check_work("W1", [_row()], "claude-opus-5-5")
+    assert entry["status"] == "review" and "not logged in" in entry["fallback"]
+    assert "fallback gpt-6.1-sol: error" in entry["reason"]
+
+
+def test_a_second_coding_that_disagrees_says_why_in_the_reason():
+    with patch.object(fc, "document_text", return_value=("", "", {})), \
+            patch.object(fc, "metadata_references", return_value=[]), \
+            patch.object(fc, "recode", side_effect=_recoded(
+                _coding(confident=False), _coding("failed"))):
+        entry = fc.check_work("W1", [_row()], "claude-opus-5-5")
+    assert entry["status"] == "review"
+    assert "fallback gpt-6.1-sol: outcome" in entry["reason"]
+
+
+def test_a_blank_outcome_does_not_settle_an_undetermined_one():
+    assert fc.outcome_grade(_row(outcome="cannot_be_determined"), {"outcome": ""}) == "different"
 
 
 @pytest.mark.parametrize("first, second, fallback, calls", [
