@@ -239,14 +239,49 @@ def test_a_work_held_only_for_confidence_is_released_by_a_confident_second_codin
     assert json.loads(entry["fallback_coding"])["targets"][0]["outcome_confident"] is True
 
 
-def test_a_failed_second_coding_leaves_the_work_in_review_instead_of_failing_it():
+def test_a_failed_second_coding_fails_the_work_so_the_next_run_retries_it():
     with patch.object(fc, "document_text", return_value=("", "", {})), \
             patch.object(fc, "metadata_references", return_value=[]), \
             patch.object(fc, "recode", side_effect=[
-                _recoded(_coding(confident=False))[0], RuntimeError("not logged in")]):
-        entry = fc.check_work("W1", [_row()], "claude-opus-5-5")
-    assert entry["status"] == "review" and "not logged in" in entry["fallback"]
-    assert "fallback gpt-6.1-sol: error" in entry["reason"]
+                _recoded(_coding(confident=False))[0], RuntimeError("quota")]), \
+            pytest.raises(RuntimeError, match="quota"):
+        fc.check_work("W1", [_row()], "claude-opus-5-5")
+
+
+def _status(claude: dict | None, codex: tuple[int, str]):
+    def run(cli, **kwargs):
+        if cli[0] == "claude":
+            if claude is None:
+                raise FileNotFoundError("claude")
+            return subprocess.CompletedProcess(cli, 0 if claude.get("loggedIn") else 1,
+                                               stdout=json.dumps(claude), stderr="")
+        return subprocess.CompletedProcess(cli, codex[0], stdout=codex[1], stderr="")
+    return run
+
+
+_CLAUDE_OK = {"loggedIn": True, "authMethod": "claude.ai"}
+_CODEX_OK = (0, "Logged in using ChatGPT")
+
+
+@pytest.mark.parametrize("claude, codex, fallback, refused", [
+    (_CLAUDE_OK, (1, "Not logged in"), "other", "codex"),
+    (_CLAUDE_OK, (0, "Logged in using an API key"), "other", "codex"),
+    ({"loggedIn": False, "authMethod": "none"}, _CODEX_OK, "repeat", "claude"),
+    ({"loggedIn": True, "authMethod": "apiKey"}, _CODEX_OK, "none", "claude"),
+    (None, _CODEX_OK, "other", "claude"),
+])
+def test_a_route_without_a_subscription_login_stops_the_run_before_any_call(
+        claude, codex, fallback, refused):
+    with patch.object(fc.subprocess, "run", side_effect=_status(claude, codex)), \
+            pytest.raises(SystemExit, match=refused):
+        fc.require_subscriptions("claude-opus-5-5", fallback)
+
+
+def test_one_subscription_is_enough_without_the_other_model():
+    with patch.object(fc.subprocess, "run", side_effect=_status(_CLAUDE_OK, (1, "Not logged in"))):
+        fc.require_subscriptions("claude-opus-5-5", "repeat")
+        with pytest.raises(SystemExit, match="--fallback repeat"):
+            fc.require_subscriptions("claude-opus-5-5", "other")
 
 
 def test_a_second_coding_that_disagrees_says_why_in_the_reason():
