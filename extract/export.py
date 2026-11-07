@@ -730,7 +730,8 @@ def append_manifest(path: Path, entries: list[dict]) -> int:
 # ---------------------------------------------------------------------------
 
 FINAL_CHECK_NAME = "final_check.csv"
-FINAL_CHECK_COLS = ["work", "doi_r", "title_r", "fingerprint", "status", "reason", "quotes",
+FINAL_CHECK_COLS = ["work", "doi_r", "title_r", "fingerprint", "status", "reason", "fallback",
+                    "quotes",
                     "decision", "note", "pipeline", "blind", "blind_reasoning",
                     "model", "effort", "prompt_version", "checked_at", "blind_coding"]
 FINAL_CHECK_DECISIONS = ("", "ship", "hold", "reject")
