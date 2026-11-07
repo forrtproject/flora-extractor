@@ -277,10 +277,15 @@ def test_a_route_without_a_subscription_login_stops_the_run_before_any_call(
         fc.require_subscriptions("claude-opus-5-5", fallback)
 
 
-def test_one_subscription_is_enough_without_the_other_model():
+def test_either_subscription_alone_is_enough_and_the_refusal_names_it():
     with patch.object(fc.subprocess, "run", side_effect=_status(_CLAUDE_OK, (1, "Not logged in"))):
         fc.require_subscriptions("claude-opus-5-5", "repeat")
-        with pytest.raises(SystemExit, match="--fallback repeat"):
+        with pytest.raises(SystemExit, match="--model claude-opus-5-5 --fallback repeat"):
+            fc.require_subscriptions("claude-opus-5-5", "other")
+    codex_only = _status({"loggedIn": False, "authMethod": "none"}, _CODEX_OK)
+    with patch.object(fc.subprocess, "run", side_effect=codex_only):
+        fc.require_subscriptions("gpt-6.1-sol", "repeat")
+        with pytest.raises(SystemExit, match="--model gpt-6.1-sol --fallback repeat"):
             fc.require_subscriptions("claude-opus-5-5", "other")
 
 

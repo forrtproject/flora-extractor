@@ -54,7 +54,8 @@ merged on 2026-10-28 has run, not even in the sandbox. Each entry's PR carries t
       this entry until #228 is merged. It has coded no real row yet, and a render with no
       check file holds every changed work. Run it on the box, which has the parse cache,
       with both `claude` and `codex` logged in there (the second coding of a low-confidence
-      work uses the other model; with one, add `--fallback repeat`). The dry run below exits
+      work uses the other model; with only one, add `--fallback repeat`, plus
+      `--model gpt-6.1-sol` if that one is `codex`). The dry run below exits
 with the reason if a route it needs is not logged in on a subscription. Start with a 50-work
       trial of the real worklist and read the share of `review` rows in
       `data/final_check.csv`, an estimate of how many decisions the full run will need (a

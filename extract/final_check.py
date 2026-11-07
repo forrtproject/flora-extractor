@@ -397,12 +397,16 @@ def _subscription_problem(model: str) -> str:
 
 def require_subscriptions(model: str, fallback: str) -> None:
     """Exit before the first call unless every route this run may use is logged in."""
-    models = {model} | ({_fallback_model(model, fallback)} if fallback == "other" else set())
-    problems = [p for m in sorted(models) if (p := _subscription_problem(m))]
-    if problems:
-        hint = ("; or pass --fallback repeat to use only " + model
-                if fallback == "other" and not _subscription_problem(model) else "")
-        raise SystemExit("final check cannot run: " + "; ".join(problems) + hint)
+    other = _fallback_model(model, "other")
+    problems = {m: _subscription_problem(m) for m in {model, other}}
+    needed = [model] + ([other] if fallback == "other" else [])
+    refused = [problems[m] for m in needed if problems[m]]
+    if refused:
+        # Either model may code alone: point at the one that is logged in.
+        usable = [m for m in (model, other) if not problems[m]]
+        hint = (f"; or pass --model {usable[0]} --fallback repeat to use only {usable[0]}"
+                if usable else "")
+        raise SystemExit("final check cannot run: " + "; ".join(refused) + hint)
 
 
 def _call_claude(prompt: str, model: str) -> dict:
