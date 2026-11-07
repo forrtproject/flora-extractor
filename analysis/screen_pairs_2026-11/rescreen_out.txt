@@ -1,0 +1,11 @@
+Corpus: 33,603 screened works, 8,112 discards. Evaluation: main discards 599, passes 1587.
+
+| combination | screen: discards only $ | screen: all works $ | rescued (rate, real in eval) | ~rescued works | ~real | Stage 3 $ | if passes re-screened: works dropped (real in eval) |
+|---|--:|--:|--:|--:|--:|--:|--:|
+| Luna + Span-02 < 0.7 | 0.25–0.40 | 1.47–3.03 | 6.3% (5 of 38) | ~515 | ~68 | 0.46–0.93 | ~209 (2 of 13) |
+| Luna + Liquid d1.1 < 0.5 | 0.41–0.56 | 2.13–3.69 | 8.7% (5 of 52) | ~704 | ~68 | 0.63–1.27 | ~193 (0 of 12) |
+| Luna + Clef < 0.5 | 1.05–1.21 | 4.79–6.35 | 5.3% (5 of 32) | ~433 | ~68 | 0.39–0.78 | ~177 (0 of 11) |
+| Luna + Span-02 + Clef | 1.23–1.38 | 5.53–7.09 | 8.7% (6 of 52) | ~704 | ~81 | 0.63–1.27 | ~128 (0 of 8) |
+| Luna + Span-02 + d1.1 | 0.59–0.74 | 2.87–4.43 | 12.0% (6 of 72) | ~975 | ~81 | 0.88–1.76 | ~145 (0 of 9) |
+
+For comparison, re-screening all works with main (DS4 + Luna, both cached for the current generation): $1.67–3.23.

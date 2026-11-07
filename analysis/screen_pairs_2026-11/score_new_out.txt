@@ -1,0 +1,264 @@
+cases 2186: positives 1456, human-labelled negatives 161, pipeline-labelled 569
+
+| gate | lost /1456 | human neg disc. | pipeline neg disc. | $/1k | evidence text |
+|---|--:|--:|--:|--:|---|
+| kev4b<0.5 + pplx11*<0.4 | 1 | 62% | 72% | 0.130 | probs only |
+| kev4b<0.5 + pplx11*<0.4 + span01lite<0.5 | 1 | 62% | 69% | 0.130 | probs only |
+| kev4b<0.5 + pplx11*<0.4 + span01lite<0.7 | 1 | 62% | 70% | 0.130 | probs only |
+| kev4b<0.5 + pplx11*<0.4 + span01lite<0.9 | 1 | 62% | 72% | 0.130 | probs only |
+| pplx11*<0.4 + joey1<0.3 | 1 | 50% | 51% | 0.064 | probs only |
+| joey1<0.3 + d11<0.3 + span01lite<0.3 | 1 | 41% | 44% | 0.063 | probs only |
+| joey1<0.3 + d11<0.3 + span01lite<0.5 | 1 | 41% | 45% | 0.063 | probs only |
+| joey1<0.3 + d11<0.3 + span01lite<0.7 | 1 | 41% | 46% | 0.063 | probs only |
+| pplx11*<0.4 + pplx12f<0.4 | 2 | 68% | 78% | 0.064 | probs only |
+| pplx12f<0.4 + d11<0.3 + span01lite<0.5 | 2 | 53% | 70% | 0.063 | probs only |
+| pplx12f<0.4 + d11<0.3 + span01lite<0.7 | 2 | 53% | 72% | 0.063 | probs only |
+| ds4 + pplx11*<0.4 + mammoth1<0.3 [2-of-3] | 3 | 72% | 86% | 0.349 | text |
+| ds4 + pplx11*<0.4 | 3 | 70% | 84% | 0.134 | text |
+| luna + clef<0.5 | 3 | 68% | 82% | 0.191 | text |
+| luna + pplx11*<0.4 + elephant1<0.3 [2-of-3] | 4 | 75% | 87% | 0.188 | text |
+| pplx11*<0.4 | 4 | 75% | 86% | 0.043 | probs only |
+| d11<0.3 + span01lite<0.5 | 4 | 55% | 72% | 0.042 | probs only |
+| d11<0.3 + span01lite<0.7 | 4 | 55% | 74% | 0.042 | probs only |
+| luna + clef<0.5 + pplx11*<0.4 [2-of-3] | 5 | 78% | 89% | 0.234 | text |
+| luna + pplx11*<0.4 + pplx12f<0.4 [2-of-3] | 5 | 76% | 88% | 0.134 | text |
+| luna + span02<0.7 | 5 | 68% | 81% | 0.092 | text |
+| luna + drex15<0.7 + pplx11*<0.4 [2-of-3] | 6 | 78% | 89% | 0.196 | text |
+| pplx12f<0.4 + joey1<0.5 + span01lite<0.3 | 6 | 63% | 72% | 0.042 | probs only |
+| d11<0.3 + span01lite<0.9 | 6 | 55% | 75% | 0.042 | probs only |
+| ds4 + pplx11*<0.4 + span01lite<0.5 [2-of-3] | 7 | 78% | 90% | 0.134 | text |
+| luna + pplx11*<0.4 + span01lite<0.3 [2-of-3] | 7 | 76% | 88% | 0.113 | text |
+| pplx12f<0.4 + span01lite<0.3 | 7 | 65% | 77% | 0.021 | probs only |
+| clef<0.5 + pplx11*<0.4 + msd1<0.3 [2-of-3] | 8 | 81% | 92% | 0.252 | probs only |
+| luna + pplx11*<0.4 + span01lite<0.5 [2-of-3] | 8 | 77% | 89% | 0.113 | text |
+| pplx11*<0.4 + joey1<0.7 + d11<0.3 [2-of-3] | 8 | 76% | 89% | 0.106 | probs only |
+| pplx11*<0.4 + joey1<0.9 + d11<0.3 [2-of-3] | 8 | 76% | 89% | 0.106 | probs only |
+| pplx12f<0.4 + span01lite<0.5 | 8 | 68% | 79% | 0.021 | probs only |
+| ds4 + pplx11*<0.4 + span01lite<0.7 [2-of-3] | 9 | 79% | 91% | 0.134 | text |
+| pplx11*<0.4 + d11<0.5 + span01lite<0.7 [2-of-3] | 9 | 78% | 90% | 0.085 | probs only |
+| clef<0.5 + pplx11*<0.4 + msd1<0.5 [2-of-3] | 10 | 82% | 93% | 0.252 | probs only |
+| luna + span02<0.9 + pplx11*<0.4 [2-of-3] | 10 | 80% | 90% | 0.135 | text |
+| pplx11*<0.4 + pplx12f<0.4 + span01lite<0.5 [2-of-3] | 10 | 76% | 88% | 0.064 | probs only |
+| pplx12f<0.4 + span01lite<0.7 | 10 | 69% | 81% | 0.021 | probs only |
+| ds4 + pplx11*<0.4 + msd1<0.5 [2-of-3] | 11 | 81% | 93% | 0.222 | text |
+| pplx11*<0.4 + d11<0.5 + span01<0.9 [2-of-3] | 11 | 79% | 91% | 0.128 | probs only |
+| pplx11*<0.4 + d11<0.7 + span01<0.3 [2-of-3] | 11 | 79% | 89% | 0.128 | probs only |
+| d11<0.7 + span01lite<0.3 | 11 | 71% | 83% | 0.042 | probs only |
+| pplx11*<0.4 + pplx12f<0.4 + span01lite<0.7 [2-of-3] | 12 | 78% | 89% | 0.064 | probs only |
+| clef<0.5 + pplx11*<0.4 + span01<0.9 [2-of-3] | 13 | 81% | 92% | 0.208 | probs only |
+| clef<0.5 + pplx11*<0.4 + span01lite<0.9 [2-of-3] | 13 | 81% | 93% | 0.164 | probs only |
+| pplx11*<0.4 + d11<0.7 + span01lite<0.5 [2-of-3] | 13 | 80% | 91% | 0.085 | probs only |
+| d11<0.7 + span01lite<0.5 | 13 | 74% | 85% | 0.042 | probs only |
+| luna + mammoth1<0.7 + jev114<0.3 [2-of-3] | 14 | 83% | 89% | 0.387 | text |
+| pplx11*<0.4 + joey1<0.3 + span01lite<0.7 [2-of-3] | 14 | 79% | 89% | 0.064 | probs only |
+| span02<0.5 + pplx11*<0.4 + mammoth1<0.7 [2-of-3] | 15 | 83% | 91% | 0.280 | probs only |
+| clef<0.5 + pplx11*<0.4 + joey1<0.5 [2-of-3] | 15 | 82% | 92% | 0.185 | probs only |
+| ds4 + pplx11*<0.4 + joey1<0.5 [2-of-3] | 15 | 81% | 93% | 0.155 | text |
+| span02<0.5 + span01lite<0.3 | 15 | 70% | 81% | 0.022 | probs only |
+| clef<0.5 + pplx11*<0.4 + msd1<0.9 [2-of-3] | 16 | 83% | 94% | 0.252 | probs only |
+| clef<0.5 + pplx12<0.4 + msd1<0.7 [2-of-3] | 16 | 83% | 93% | 0.252 | probs only |
+| pplx12<0.6 + pplx12f<0.4 + span01lite<0.7 [2-of-3] | 16 | 81% | 92% | 0.064 | probs only |
+| span02<0.5 + span01lite<0.5 | 16 | 73% | 83% | 0.022 | probs only |
+| joey1<0.5 + span01lite<0.3 | 16 | 70% | 78% | 0.021 | probs only |
+| ds4 + mammoth1<0.7 + drex20<0.5 [2-of-3] | 17 | 84% | 94% | 0.430 | text |
+| clef<0.5 + pplx11*<0.4 + joey1<0.7 [2-of-3] | 17 | 83% | 94% | 0.185 | probs only |
+| clef<0.5 + pplx12<0.6 + msd1<0.3 [2-of-3] | 18 | 84% | 94% | 0.252 | probs only |
+| pplx11*<0.4 + d11<0.7 + span01<0.7 [2-of-3] | 18 | 82% | 92% | 0.128 | probs only |
+| pplx12<0.6 | 18 | 78% | 93% | 0.043 | probs only |
+| pplx11*<0.4 + d11<0.7 + span01lite<0.7 [2-of-3] | 19 | 82% | 92% | 0.085 | probs only |
+| d11<0.7 + span01lite<0.7 | 19 | 76% | 88% | 0.042 | probs only |
+| joey1<0.5 + span01lite<0.5 | 19 | 74% | 81% | 0.021 | probs only |
+| pplx12f<0.4 + span01lite<0.9 | 19 | 72% | 83% | 0.021 | probs only |
+| clef<0.5 + pplx12<0.6 + msd1<0.5 [2-of-3] | 20 | 84% | 95% | 0.252 | probs only |
+| clef<0.5 + pplx12<0.4 + joey1<0.7 [2-of-3] | 20 | 83% | 93% | 0.185 | probs only |
+| pplx12<0.6 + d11<0.7 + span01lite<0.5 [2-of-3] | 20 | 83% | 93% | 0.085 | probs only |
+| span02<0.7 + span01lite<0.5 | 20 | 75% | 85% | 0.022 | probs only |
+| luna + span02<0.9 + pplx12<0.6 [2-of-3] | 21 | 84% | 93% | 0.135 | text |
+| mammoth1<0.7 + joey1<0.7 + msd1<0.5 | 22 | 85% | 91% | 0.325 | probs only |
+| span01lite<0.3 | 22 | 73% | 84% | 0.000 | probs only |
+| clef<0.5 + pplx12<0.6 + msd1<0.7 [2-of-3] | 23 | 85% | 95% | 0.252 | probs only |
+| clef<0.5 + pplx12<0.6 + joey1<0.5 [2-of-3] | 23 | 84% | 95% | 0.185 | probs only |
+| pplx12<0.6 + d11<0.7 + span01<0.7 [2-of-3] | 23 | 84% | 94% | 0.128 | probs only |
+| clef<0.6 + pplx12<0.6 + msd1<0.3 [2-of-3] | 24 | 86% | 95% | 0.252 | probs only |
+| pplx12<0.6 + d11<0.7 + span01lite<0.7 [2-of-3] | 24 | 84% | 94% | 0.085 | probs only |
+| span02<0.9 + span01lite<0.5 | 24 | 76% | 87% | 0.022 | probs only |
+| luna + pplx12<0.6 + joey1<0.5 [2-of-3] | 25 | 84% | 93% | 0.134 | text |
+| pplx11*<0.4 + joey1<0.5 + span01lite<0.7 [2-of-3] | 25 | 83% | 93% | 0.064 | probs only |
+| pplx12<0.6 + joey1<0.5 + span01lite<0.3 [2-of-3] | 25 | 83% | 94% | 0.064 | probs only |
+| joey1<0.5 + span01lite<0.7 | 25 | 77% | 84% | 0.021 | probs only |
+| pplx12f<0.4 + mammoth1<0.7 + span01lite<0.7 [2-of-3] | 26 | 86% | 92% | 0.236 | probs only |
+| luna + pplx12<0.6 + d11<0.9 [2-of-3] | 26 | 85% | 94% | 0.155 | text |
+| pplx12<0.6 + pplx12f<0.4 + span01lite<0.9 [2-of-3] | 27 | 82% | 93% | 0.064 | probs only |
+| pplx12<0.6 + mammoth1<0.7 + msd1<0.3 [2-of-3] | 28 | 87% | 94% | 0.346 | probs only |
+| clef<0.6 + pplx12<0.6 + msd1<0.5 [2-of-3] | 28 | 86% | 96% | 0.252 | probs only |
+| luna + pplx12<0.6 + joey1<0.7 [2-of-3] | 28 | 85% | 94% | 0.134 | text |
+| luna + pplx12<0.6 + joey1<0.9 [2-of-3] | 28 | 85% | 94% | 0.134 | text |
+| pplx12<0.6 + joey1<0.5 + span01lite<0.5 [2-of-3] | 28 | 84% | 94% | 0.064 | probs only |
+| joey1<0.5 + d11<0.3 + span01lite<0.7 [2-of-3] | 29 | 81% | 91% | 0.063 | probs only |
+| span01lite<0.5 | 29 | 77% | 87% | 0.000 | probs only |
+| mammoth1<0.7 + joey1<0.7 | 30 | 86% | 92% | 0.236 | probs only |
+| pplx12<0.6 + msd1<0.7 + span01lite<0.5 [2-of-3] | 30 | 84% | 95% | 0.131 | probs only |
+| mammoth1<0.7 | 31 | 86% | 92% | 0.215 | probs only |
+| pplx12<0.6 + mammoth1<0.7 + msd1<0.7 [2-of-3] | 32 | 88% | 95% | 0.346 | probs only |
+| pplx12<0.6 + mammoth1<0.7 + joey1<0.5 [2-of-3] | 32 | 88% | 94% | 0.279 | probs only |
+| clef<0.6 + pplx12<0.6 + msd1<0.7 [2-of-3] | 33 | 88% | 96% | 0.252 | probs only |
+| pplx12<0.6 + joey1<0.5 + span01<0.7 [2-of-3] | 33 | 86% | 95% | 0.108 | probs only |
+| pplx12<0.6 + d11<0.9 + span01lite<0.5 [2-of-3] | 33 | 85% | 95% | 0.085 | probs only |
+| span02<0.9 + joey1<0.7 + span01lite<0.7 | 33 | 79% | 89% | 0.043 | probs only |
+| clef<0.6 + pplx12<0.6 + joey1<0.5 [2-of-3] | 34 | 87% | 96% | 0.185 | probs only |
+| pplx12<0.6 + joey1<0.5 + span01lite<0.7 [2-of-3] | 34 | 85% | 95% | 0.064 | probs only |
+| pplx12f<0.4 + d11<0.5 + span01lite<0.9 [2-of-3] | 34 | 80% | 91% | 0.063 | probs only |
+| span02<0.9 + span01lite<0.7 | 34 | 79% | 90% | 0.022 | probs only |
+| pplx12<0.6 + mammoth1<0.7 + d11<0.9 [2-of-3] | 36 | 88% | 95% | 0.299 | probs only |
+| pplx12<0.6 + msd1<0.7 + span01<0.7 [2-of-3] | 36 | 86% | 96% | 0.175 | probs only |
+| d11<0.9 + span01lite<0.7 | 36 | 80% | 91% | 0.042 | probs only |
+| pplx12<0.6 + mammoth1<0.7 + joey1<0.7 [2-of-3] | 37 | 88% | 95% | 0.279 | probs only |
+| pplx12<0.6 + msd1<0.7 + span01lite<0.7 [2-of-3] | 38 | 86% | 96% | 0.131 | probs only |
+| span01<0.7 | 39 | 81% | 91% | 0.044 | probs only |
+| span01<0.7 + span01lite<0.9 | 39 | 81% | 91% | 0.044 | probs only |
+| clef<0.6 + pplx12<0.6 + d11<0.9 [2-of-3] | 40 | 88% | 97% | 0.206 | probs only |
+| joey1<0.7 + span01lite<0.7 | 40 | 80% | 91% | 0.021 | probs only |
+| clef<0.6 + pplx12<0.6 + joey1<0.7 [2-of-3] | 41 | 88% | 97% | 0.185 | probs only |
+| pplx12<0.6 + d11<0.9 + span01<0.7 [2-of-3] | 41 | 86% | 96% | 0.128 | probs only |
+| span01lite<0.7 | 41 | 80% | 91% | 0.000 | probs only |
+| pplx12<0.6 + d11<0.9 + span01lite<0.7 [2-of-3] | 42 | 86% | 96% | 0.085 | probs only |
+| joey1<0.5 + d11<0.5 + span01lite<0.7 [2-of-3] | 43 | 82% | 95% | 0.063 | probs only |
+| joey1<0.7 + d11<0.3 + span01lite<0.7 [2-of-3] | 44 | 83% | 93% | 0.063 | probs only |
+| pplx12f<0.4 + d11<0.7 + span01lite<0.3 [2-of-3] | 44 | 82% | 92% | 0.063 | probs only |
+| pplx12f<0.4 + d11<0.7 + span01lite<0.5 [2-of-3] | 45 | 83% | 93% | 0.063 | probs only |
+| pplx12<0.6 + msd1<0.3 + span01<0.9 [2-of-3] | 46 | 87% | 95% | 0.175 | probs only |
+| pplx12<0.6 + joey1<0.7 + span01lite<0.7 [2-of-3] | 46 | 86% | 96% | 0.064 | probs only |
+| pplx12f<0.4 + d11<0.7 + span01lite<0.7 [2-of-3] | 49 | 84% | 94% | 0.063 | probs only |
+| span02<0.5 + pplx12f<0.4 + span01lite<0.9 [2-of-3] | 51 | 82% | 92% | 0.043 | probs only |
+| pplx12f<0.4 + joey1<0.3 + span01lite<0.9 [2-of-3] | 52 | 82% | 90% | 0.042 | probs only |
+| mammoth1<0.7 + msd1<0.3 + span01<0.9 [2-of-3] | 54 | 89% | 95% | 0.347 | probs only |
+| span02<0.9 + joey1<0.7 + span01lite<0.9 | 54 | 83% | 92% | 0.043 | probs only |
+| span02<0.9 + span01lite<0.9 | 56 | 83% | 92% | 0.022 | probs only |
+| joey1<0.5 + span01lite<0.9 | 56 | 81% | 88% | 0.021 | probs only |
+| pplx12<0.6 + msd1<0.7 + span01<0.9 [2-of-3] | 59 | 89% | 97% | 0.175 | probs only |
+| ds4 + joey1<0.5 + span01<0.9 [2-of-3] | 60 | 87% | 96% | 0.156 | text |
+| pplx12f<0.4 + joey1<0.5 + span01lite<0.5 [2-of-3] | 60 | 84% | 93% | 0.042 | probs only |
+| pplx12<0.6 + joey1<0.5 + span01<0.9 [2-of-3] | 61 | 88% | 96% | 0.108 | probs only |
+| pplx12<0.6 + joey1<0.5 + span01lite<0.9 [2-of-3] | 63 | 88% | 96% | 0.064 | probs only |
+| mammoth1<0.7 + joey1<0.5 + span01<0.9 [2-of-3] | 65 | 89% | 96% | 0.280 | probs only |
+| pplx12f<0.4 + joey1<0.5 + span01lite<0.7 [2-of-3] | 66 | 86% | 94% | 0.042 | probs only |
+| pplx12<0.6 + d11<0.9 + span01<0.9 [2-of-3] | 67 | 89% | 97% | 0.128 | probs only |
+| d11<0.9 + span01lite<0.9 | 68 | 84% | 95% | 0.042 | probs only |
+| pplx12<0.6 + d11<0.9 + span01lite<0.9 [2-of-3] | 72 | 88% | 97% | 0.085 | probs only |
+| pplx12f<0.4 + d11<0.9 + span01lite<0.7 [2-of-3] | 77 | 87% | 96% | 0.063 | probs only |
+| pplx12f<0.4 + mammoth1<0.9 + span01<0.9 [2-of-3] | 80 | 89% | 97% | 0.280 | probs only |
+| pplx12f<0.4 + joey1<0.7 + span01lite<0.7 [2-of-3] | 80 | 88% | 96% | 0.042 | probs only |
+| pplx12<0.6 + joey1<0.7 + span01<0.9 [2-of-3] | 86 | 89% | 97% | 0.108 | probs only |
+| joey1<0.7 + span01lite<0.9 | 86 | 84% | 94% | 0.021 | probs only |
+| pplx12f<0.4 + joey1<0.5 + span01lite<0.9 [2-of-3] | 88 | 88% | 96% | 0.042 | probs only |
+| pplx12f<0.4 + joey1<0.5 + span01<0.9 [2-of-3] | 89 | 89% | 96% | 0.086 | probs only |
+| pplx12<0.6 + mammoth1<0.9 + msd1<0.5 [2-of-3] | 94 | 90% | 98% | 0.346 | probs only |
+| span02<0.9 + pplx12<0.6 + mammoth1<0.9 [2-of-3] | 95 | 91% | 98% | 0.280 | probs only |
+| span01lite<0.9 | 95 | 85% | 95% | 0.000 | probs only |
+| pplx12<0.6 + joey1<0.9 + span01<0.9 [2-of-3] | 96 | 89% | 97% | 0.108 | probs only |
+| pplx12<0.6 + joey1<0.9 + span01lite<0.9 [2-of-3] | 99 | 89% | 97% | 0.064 | probs only |
+| joey1<0.5 + d11<0.7 + span01<0.9 [2-of-3] | 103 | 89% | 98% | 0.107 | probs only |
+| joey1<0.5 + d11<0.7 + span01lite<0.9 [2-of-3] | 104 | 89% | 98% | 0.063 | probs only |
+| span02<0.9 + pplx12<0.6 + msd1<0.7 [2-of-3] | 106 | 91% | 98% | 0.153 | probs only |
+| pplx12<0.6 + mammoth1<0.9 + msd1<0.7 [2-of-3] | 111 | 91% | 99% | 0.346 | probs only |
+| mammoth1<0.9 + d11<0.7 + msd1<0.5 [2-of-3] | 112 | 91% | 99% | 0.345 | probs only |
+| pplx12f<0.4 + mammoth1<0.9 + msd1<0.7 [2-of-3] | 113 | 91% | 98% | 0.324 | probs only |
+| pplx12f<0.4 + joey1<0.7 + span01<0.9 [2-of-3] | 116 | 89% | 97% | 0.086 | probs only |
+| pplx12f<0.4 + joey1<0.7 + span01lite<0.9 [2-of-3] | 117 | 89% | 98% | 0.042 | probs only |
+| mammoth1<0.9 + d11<0.9 + msd1<0.9 | 118 | 92% | 99% | 0.345 | probs only |
+| d11<0.9 + msd1<0.3 + span01lite<0.7 [2-of-3] | 118 | 90% | 98% | 0.130 | probs only |
+| pplx11*<0.4 + mammoth1<0.9 + joey1<0.5 [2-of-3] | 119 | 92% | 98% | 0.279 | probs only |
+| span02<0.9 + pplx12<0.6 + joey1<0.5 [2-of-3] | 121 | 91% | 97% | 0.086 | probs only |
+| ds4 + mammoth1<0.9 + joey1<0.5 [2-of-3] | 122 | 93% | 99% | 0.327 | text |
+| mammoth1<0.9 + joey1<0.5 + d11<0.5 [2-of-3] | 122 | 91% | 98% | 0.278 | probs only |
+| mammoth1<0.9 + joey1<0.5 + span01lite<0.3 [2-of-3] | 123 | 92% | 98% | 0.236 | probs only |
+| pplx12f<0.4 + mammoth1<0.9 + joey1<0.5 [2-of-3] | 125 | 93% | 98% | 0.257 | probs only |
+| pplx12<0.6 + jev114<0.9 + msd1<0.7 [2-of-3] | 125 | 91% | 99% | 0.234 | probs only |
+| pplx12f<0.4 + joey1<0.9 + span01<0.9 [2-of-3] | 126 | 90% | 98% | 0.086 | probs only |
+| pplx12f<0.4 + joey1<0.9 + span01lite<0.9 [2-of-3] | 126 | 89% | 98% | 0.042 | probs only |
+| span02<0.9 + pplx12<0.6 + msd1<0.9 [2-of-3] | 127 | 91% | 98% | 0.153 | probs only |
+| mammoth1<0.9 + joey1<0.5 + span01<0.7 [2-of-3] | 131 | 93% | 99% | 0.280 | probs only |
+| mammoth1<0.9 + joey1<0.5 + span01lite<0.7 [2-of-3] | 132 | 93% | 99% | 0.236 | probs only |
+| mammoth1<0.9 + d11<0.9 + span01lite<0.7 [2-of-3] | 138 | 93% | 99% | 0.256 | probs only |
+| d11<0.7 + jev114<0.9 + msd1<0.7 [2-of-3] | 140 | 92% | 99% | 0.232 | probs only |
+| pplx12<0.6 + joey1<0.5 + msd1<0.7 [2-of-3] | 141 | 91% | 98% | 0.153 | probs only |
+| joey1<0.9 + d11<0.7 + span01lite<0.9 [2-of-3] | 142 | 90% | 99% | 0.063 | probs only |
+| joey1<0.5 + jev114<0.5 + msd1<0.7 [2-of-3] | 143 | 92% | 98% | 0.212 | probs only |
+| mammoth1<0.9 + drex20<0.7 + msd1<0.9 [2-of-3] | 145 | 94% | 100% | 0.428 | probs only |
+| mammoth1<0.9 | 145 | 93% | 99% | 0.215 | probs only |
+| span02<0.9 + pplx12<0.6 + joey1<0.7 [2-of-3] | 145 | 91% | 98% | 0.086 | probs only |
+| luna + joey1<0.5 + jev114<0.9 [2-of-3] | 146 | 92% | 98% | 0.194 | text |
+| mammoth1<0.9 + joey1<0.5 + span01lite<0.9 [2-of-3] | 147 | 93% | 99% | 0.236 | probs only |
+| span02<0.9 | 149 | 88% | 95% | 0.022 | probs only |
+| pplx12<0.6 + d11<0.9 + msd1<0.7 [2-of-3] | 152 | 92% | 99% | 0.173 | probs only |
+| joey1<0.5 + jev114<0.7 + msd1<0.7 [2-of-3] | 153 | 93% | 99% | 0.212 | probs only |
+| joey1<0.5 + msd1<0.7 + span01<0.7 [2-of-3] | 154 | 92% | 98% | 0.154 | probs only |
+| mammoth1<0.9 + joey1<0.3 + d11<0.9 [2-of-3] | 159 | 94% | 100% | 0.278 | probs only |
+| pplx12<0.4 + d11<0.9 + jev114<0.9 [2-of-3] | 159 | 93% | 99% | 0.187 | probs only |
+| joey1<0.5 + d11<0.7 + msd1<0.7 [2-of-3] | 159 | 92% | 99% | 0.151 | probs only |
+| d11<0.9 + msd1<0.7 + span01lite<0.7 [2-of-3] | 162 | 92% | 99% | 0.130 | probs only |
+| joey1<0.5 + msd1<0.7 + span01lite<0.9 [2-of-3] | 172 | 92% | 99% | 0.110 | probs only |
+| pplx12<0.4 + joey1<0.7 + jev114<0.9 [2-of-3] | 176 | 93% | 99% | 0.167 | probs only |
+| pplx12<0.6 + joey1<0.7 + jev114<0.9 [2-of-3] | 176 | 93% | 99% | 0.167 | probs only |
+| joey1<0.7 + d11<0.7 + jev114<0.9 [2-of-3] | 180 | 93% | 100% | 0.165 | probs only |
+| joey1<0.3 + d11<0.9 + jev114<0.9 [2-of-3] | 184 | 93% | 99% | 0.165 | probs only |
+| span02<0.9 + joey1<0.5 + msd1<0.7 [2-of-3] | 184 | 93% | 99% | 0.132 | probs only |
+| mammoth1<0.9 + joey1<0.9 + span01lite<0.9 [2-of-3] | 188 | 94% | 100% | 0.236 | probs only |
+| pplx12f<0.4 + joey1<0.5 + msd1<0.9 [2-of-3] | 188 | 93% | 98% | 0.131 | probs only |
+| joey1<0.7 + d11<0.9 + msd1<0.9 | 189 | 93% | 99% | 0.151 | probs only |
+| joey1<0.5 + msd1<0.9 + span01lite<0.3 [2-of-3] | 190 | 93% | 98% | 0.110 | probs only |
+| pplx11*<0.4 + joey1<0.5 + d11<0.9 [2-of-3] | 192 | 93% | 99% | 0.106 | probs only |
+| pplx11*<0.4 + d11<0.9 + msd1<0.9 [2-of-3] | 193 | 94% | 99% | 0.173 | probs only |
+| pplx12<0.4 + d11<0.9 + msd1<0.9 [2-of-3] | 193 | 94% | 99% | 0.173 | probs only |
+| pplx12f<0.4 + joey1<0.5 + d11<0.9 [2-of-3] | 194 | 93% | 98% | 0.084 | probs only |
+| luna + joey1<0.5 + d11<0.9 [2-of-3] | 196 | 94% | 98% | 0.133 | text |
+| joey1<0.5 + d11<0.9 + span01lite<0.3 [2-of-3] | 196 | 93% | 98% | 0.063 | probs only |
+| d11<0.9 + msd1<0.9 + span01lite<0.5 [2-of-3] | 198 | 94% | 99% | 0.130 | probs only |
+| joey1<0.5 + d11<0.9 + span01lite<0.5 [2-of-3] | 198 | 93% | 99% | 0.063 | probs only |
+| joey1<0.5 + d11<0.9 + span01<0.7 [2-of-3] | 203 | 94% | 99% | 0.107 | probs only |
+| joey1<0.5 + d11<0.9 + span01lite<0.9 [2-of-3] | 212 | 94% | 99% | 0.063 | probs only |
+| pplx12<0.6 + elephant1<0.9 + d11<0.9 [2-of-3] | 220 | 94% | 100% | 0.160 | probs only |
+| joey1<0.3 + d11<0.9 + msd1<0.9 [2-of-3] | 222 | 94% | 100% | 0.151 | probs only |
+| pplx11*<0.4 + joey1<0.7 + d11<0.9 [2-of-3] | 257 | 95% | 100% | 0.106 | probs only |
+| pplx12<0.4 + joey1<0.7 + d11<0.9 [2-of-3] | 257 | 95% | 100% | 0.106 | probs only |
+| joey1<0.7 + d11<0.9 | 257 | 94% | 99% | 0.063 | probs only |
+| joey1<0.7 + d11<0.9 + span01lite<0.5 [2-of-3] | 262 | 95% | 100% | 0.063 | probs only |
+| d11<0.9 | 265 | 94% | 100% | 0.042 | probs only |
+| joey1<0.9 + d11<0.9 + span01lite<0.9 [2-of-3] | 292 | 96% | 100% | 0.063 | probs only |
+| joey1<0.5 | 501 | 91% | 92% | 0.021 | probs only |
+| joey1<0.7 | 1079 | 98% | 99% | 0.021 | probs only |
+| joey1<0.9 | 1452 | 100% | 100% | 0.021 | probs only |
+
+37283 gates scored, 226 shown (Pareto on lost/human-discard/cost + references)
+Luna says none on 625 works (17 positives)
+
+| voter | $/1k | AUC in Luna-none | undecided negs | lost / human / pipeline at 0.3 | 0.5 | 0.7 | 0.9 |
+|---|--:|--:|--:|---|---|---|---|
+| span02 | 0.022 | 0.910 | 16% | 5 / 61% / 77% | 5 / 65% / 79% | 5 / 68% / 81% | 8 / 70% / 84% |
+| clef | 0.121 | 0.914 | 71% | 3 / 57% / 73% | 3 / 68% / 82% | 10 / 70% / 85% | 17 / 71% / 86% |
+| mammoth1 | 0.215 | 0.921 | 57% | 2 / 54% / 68% | 4 / 67% / 79% | 8 / 72% / 85% | 15 / 73% / 86% |
+| elephant1 | 0.075 | 0.902 | 51% | 3 / 57% / 76% | 7 / 65% / 83% | 13 / 70% / 86% | 16 / 71% / 86% |
+| joey1 | 0.021 | 0.695 | 92% | 5 / 50% / 52% | 13 / 69% / 80% | 17 / 73% / 86% | 17 / 73% / 86% |
+| d11 | 0.042 | 0.933 | 46% | 2 / 53% / 73% | 3 / 63% / 80% | 8 / 68% / 84% | 15 / 72% / 86% |
+| drex20 | 0.125 | 0.895 | 45% | 3 / 57% / 72% | 6 / 63% / 82% | 12 / 67% / 85% | 15 / 71% / 86% |
+| jev114 | 0.102 | 0.884 | 18% | 4 / 65% / 81% | 9 / 67% / 85% | 12 / 70% / 86% | 16 / 71% / 86% |
+| msd1 | 0.088 | 0.856 | 8% | 10 / 70% / 85% | 12 / 71% / 86% | 15 / 73% / 86% | 16 / 73% / 86% |
+| span01 | 0.044 | 0.906 | 14% | 5 / 63% / 79% | 6 / 67% / 80% | 7 / 69% / 83% | 11 / 70% / 85% |
+| span01lite | 0.000 | 0.908 | 14% | 5 / 64% / 78% | 6 / 67% / 80% | 7 / 68% / 83% | 11 / 70% / 85% |
+
+Best third voter for Luna + span02<0.7 (unanimous):
+
+| third | lost | human | pipeline | $/1k |
+|---|--:|--:|--:|--:|
+| joey1<0.3 | 1 | 48% | 49% | 0.113 |
+| clef<0.5 | 2 | 66% | 78% | 0.213 |
+| joey1<0.5 | 2 | 65% | 76% | 0.113 |
+| d11<0.5 | 2 | 62% | 76% | 0.134 |
+| tev1<0.6 | 2 | 60% | 76% | 0.184 |
+| kev4b<0.5 | 2 | 58% | 69% | 0.179 |
+| elephant1<0.3 | 2 | 57% | 73% | 0.167 |
+| mammoth1<0.3 | 2 | 54% | 66% | 0.307 |
+| d11<0.3 | 2 | 53% | 71% | 0.134 |
+| d11<0.7 | 3 | 66% | 80% | 0.134 |
+| mammoth1<0.5 | 3 | 65% | 76% | 0.307 |
+| drex20<0.7 | 3 | 65% | 80% | 0.217 |
