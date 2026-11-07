@@ -23,7 +23,10 @@ same works: it renders only verdicts stored under `--mode validation`.
 
 **The review.** A work is `released` when its originals pair off one-to-one, every
 pair agrees on type and outcome with a confident blind coder, and the coder does not
-read the record as a plan (`compare_work()`).
+read the record as a plan (`compare_work()`). One side settling an outcome the other
+called `cannot_be_determined` counts as agreeing. A work held only because the coder was
+not confident is coded a second time (`--fallback`, by default the other model) and
+released if that coding alone would release it.
 Anything else is `review`: whoever runs the pipeline reads the two codings side by
 side in the CSV and fills `decision` with `ship`, `hold` or `reject`. A decision is
 bound to the work's fingerprint (`work_fingerprint()` in `extract/export.py`), so a
@@ -316,16 +319,20 @@ def build_prompt(row: dict, fulltext: str) -> str:
 
 # ── The call ─────────────────────────────────────────────────────────────────
 
-def recode(prompt: str, model: str = FINAL_CHECK_MODEL, cached_only: bool = False) -> dict:
+def recode(prompt: str, model: str = FINAL_CHECK_MODEL, cached_only: bool = False,
+           attempt: int = 1) -> dict:
     """The blind coding for *prompt*, cached on prompt version + model@effort + prompt.
 
+    *attempt* 2 is a second, independent call of the same model, cached on its own.
     With *cached_only*, a miss raises instead of calling, so a re-score cannot buy a
     new coding by accident. A failed or tool-using call raises and is not cached.
     """
     if model not in FINAL_CHECK_MODELS:
         raise ValueError(f"unknown model: {model} (expected one of {FINAL_CHECK_MODELS})")
+    repeat = f"|attempt {attempt}" if attempt > 1 else ""
     key = hashlib.sha256(
-        f"{PROMPT_VERSION}|{model}@{FINAL_CHECK_EFFORT}|{prompt}".encode()).hexdigest()[:24]
+        f"{PROMPT_VERSION}|{model}@{FINAL_CHECK_EFFORT}|{prompt}{repeat}".encode()
+    ).hexdigest()[:24]
     path = CACHE / f"recode_{key}.json"
     if path.exists():
         return json.loads(path.read_text())
@@ -513,16 +520,24 @@ _GRADE_RANK = ["doi", "title", "author_year", "title_only", "partial", "differen
 SOFT_PAIRS = {frozenset({"failed", "mixed"})}
 
 
+UNDETERMINED = "cannot_be_determined"
+
+
 def outcome_grade(row: dict, target: dict) -> str:
-    """exact | soft (failed vs mixed) | different, on the row's own vocabulary."""
+    """exact | undetermined | soft (failed vs mixed) | different, on the row's own
+    vocabulary. `undetermined`: every difference is one side settling what the other
+    could not, which the release rule accepts."""
     if row.get("type") == "reproduction":
         pairs = [(row.get("outcome_computation", ""), target.get("outcome_computation", "")),
                  (row.get("outcome_robustness", ""), target.get("outcome_robustness", ""))]
-        return "exact" if all(a == b for a, b in pairs) else "different"
-    a, b = row.get("outcome", ""), target.get("outcome", "")
-    if a == b:
+    else:
+        pairs = [(row.get("outcome", ""), target.get("outcome", ""))]
+    differ = [(a, b) for a, b in pairs if a != b]
+    if not differ:
         return "exact"
-    return "soft" if frozenset({a, b}) in SOFT_PAIRS else "different"
+    if all((a == UNDETERMINED) != (b == UNDETERMINED) for a, b in differ):
+        return "undetermined"
+    return "soft" if len(differ) == 1 and frozenset(differ[0]) in SOFT_PAIRS else "different"
 
 
 # ── Quote heuristic ──────────────────────────────────────────────────────────
@@ -704,7 +719,9 @@ def compare_work(work_rows: list[dict], coding: dict,
     """Agreement for every shipped row of one work, keyed by pair_id.
 
     Each row is compared with the blind target it is paired with
-    (`pair_originals`). A row is released when its pair agrees on type and outcome,
+    (`pair_originals`). A row is released when its pair agrees on type and outcome
+    (where one side settling what the other called `cannot_be_determined` counts as
+    agreeing),
     the blind coder was confident of that outcome (an outcome it would not stake was,
     in the pilot, the kind humans corrected), and the whole work pairs off. The rule
     holds every row of a work whose two sides do not pair off completely, whichever
@@ -754,7 +771,7 @@ def compare_work(work_rows: list[dict], coding: dict,
                                   f"{t.get('outcome_robustness', '')}"),
                    blind_confident=t.get("outcome_confident"),
                    blind_identified_by=t.get("identified_by"),
-                   outcome_grade=og, outcome_agrees=og == "exact",
+                   outcome_grade=og, outcome_agrees=og in ("exact", "undetermined"),
                    outcome_agrees_soft=og in ("exact", "soft"), blind_quote=q_blind)
         res.update({f"quote_{k}": v for k, v in quote_check(q_pipe, q_blind, sources).items()})
         res["released"] = bool(res["type_agrees"] and res["outcome_agrees"]
@@ -812,6 +829,19 @@ def _reasons(rows: list[dict], results: list[dict]) -> str:
     return "; ".join(reasons)
 
 
+def _held_only_for_confidence(results: list[dict]) -> bool:
+    """Whether a confident coder with the same answers would have released the work."""
+    return (not all(r["released"] for r in results)
+            and all(r["type_agrees"] and r["outcome_agrees"] and r["work_pairs_off"]
+                    for r in results))
+
+
+def _fallback_model(model: str, fallback: str) -> str:
+    if fallback == "repeat":
+        return model
+    return next(m for m in FINAL_CHECK_MODELS if m != model)
+
+
 def _acquired_document(row: dict) -> bool:
     """Whether the pipeline got a document for this row. `none` is the columns' own
     word for not getting one."""
@@ -819,28 +849,43 @@ def _acquired_document(row: dict) -> bool:
                for col in ("pdf_source", "parse_method"))
 
 
-def check_work(label: str, rows: list[dict], model: str,
+def check_work(label: str, rows: list[dict], model: str, fallback: str = "other",
                now: datetime | None = None) -> dict | None:
     """One work's entry in the check file, or None when its document is not on this
     machine. A row that acquired a document must be coded from it: the abstract alone
-    would be a weaker reading that looks the same in the file."""
+    would be a weaker reading that looks the same in the file.
+
+    A work held only because the coder was not confident gets a second coding
+    (*fallback*: `other` = the other listed model, `repeat` = the same model again,
+    `none`), and is released when that coding alone would release it.
+    """
     row = rows[0]
     text, _, texts = document_text(row)
     if not text and _acquired_document(row):
         return None
-    record = recode(build_prompt(row, text), model=model)
+    prompt = build_prompt(row, text)
+    record = recode(prompt, model=model)
     coding = record["coding"]
     sources = [SourceIndex(f"{row.get('title_r', '')}\n{row.get('abstract_r', '')}")]
     sources += [SourceIndex(t) for t in texts.values()]
     results = compare_work(rows, coding, sources)
     released = all(r["released"] for r in results)
+    second = ""
+    if fallback != "none" and _held_only_for_confidence(results):
+        model_2 = _fallback_model(model, fallback)
+        record_2 = recode(prompt, model=model_2, attempt=2 if model_2 == model else 1)
+        results_2 = compare_work(rows, record_2["coding"], sources)
+        released = all(r["released"] for r in results_2)
+        second = (f"{model_2}{' (repeat)' if model_2 == model else ''}: "
+                  + ("released" if released else _reasons(rows, results_2))
+                  + "\n" + _blind_text(record_2["coding"]))
     fabricated = sorted({r["quote_verdict"] for r in results
                          if "fabricated" in str(r["quote_verdict"])})
     return {"work": label, "doi_r": row.get("doi_r", ""), "title_r": row.get("title_r", ""),
             "fingerprint": work_fingerprint(rows),
             "status": "released" if released else "review",
             "reason": "" if released else _reasons(rows, results),
-            "quotes": "; ".join(fabricated),
+            "quotes": "; ".join(fabricated), "fallback": second,
             "pipeline": _pipeline_text(rows), "blind": _blind_text(coding),
             "blind_reasoning": str(coding.get("reasoning") or ""),
             "blind_coding": json.dumps(coding, ensure_ascii=False, sort_keys=True),
@@ -875,14 +920,14 @@ _SAVE_EVERY = 25
 
 
 def run_check(todo: dict[str, list[dict]], entries: dict[str, dict], path: Path,
-              model: str, workers: int) -> dict:
+              model: str, workers: int, fallback: str = "other") -> dict:
     """Code *todo*, saving as it goes. A work that fails stays unanswered, so the export
     holds it and the next run retries it."""
     counts = {"released": 0, "review": 0, "skipped_no_document": 0, "failed": 0}
     consecutive = 0
     done = 0
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(check_work, label, rows, model): label
+        futures = {pool.submit(check_work, label, rows, model, fallback): label
                    for label, rows in todo.items()}
         for future in as_completed(futures):
             label = futures[future]
@@ -924,6 +969,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model", choices=FINAL_CHECK_MODELS, default=FINAL_CHECK_MODEL,
                         help="Who codes the unanswered works. An answer from either model "
                              "stands, so changing this re-buys nothing.")
+    parser.add_argument("--fallback", choices=("other", "repeat", "none"), default="other",
+                        help="Second coding for a work held only because the coder was not "
+                             "confident: the other model, the same model again, or none.")
     parser.add_argument("--include-unconfirmed-search", action="store_true",
                         help="Pass this if the export will: those rows must be checked too.")
     parser.add_argument("--current-generation-only", action="store_true",
@@ -964,7 +1012,7 @@ def main(argv: list[str] | None = None) -> int:
               f"(about {len(todo) * 19 / max(args.workers, 1) / 60:,.0f} min at the "
               f"pilot's 19 s per call and {args.workers} workers)")
         return 0
-    counts = run_check(todo, entries, path, args.model, args.workers)
+    counts = run_check(todo, entries, path, args.model, args.workers, args.fallback)
     print(f"  {counts}  → {path}")
     if counts["failed"]:
         print("  failed works stay held; re-running retries them from the cache onwards")

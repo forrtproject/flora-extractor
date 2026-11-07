@@ -204,6 +204,53 @@ def test_each_disagreement_goes_to_review_and_says_why(coding, reason):
     assert entry["status"] == "review" and reason in entry["reason"]
 
 
+@pytest.mark.parametrize("pipeline, blind", [
+    ("cannot_be_determined", "successful"), ("successful", "cannot_be_determined")])
+def test_one_side_settling_what_the_other_could_not_is_released(pipeline, blind):
+    entry = _checked(_coding(blind), _row(outcome=pipeline))
+    assert entry["status"] == "released"
+
+
+def test_a_reproduction_axis_left_undetermined_still_needs_the_other_axis_to_agree():
+    row = {"type": "reproduction", "outcome_computation": "computationally reproducible",
+           "outcome_robustness": "cannot_be_determined"}
+    agree = {"outcome_computation": "computationally reproducible", "outcome_robustness": "robust"}
+    assert fc.outcome_grade(row, agree) == "undetermined"
+    assert fc.outcome_grade(row, {**agree, "outcome_computation": "computational issues"}) \
+        == "different"
+
+
+def _recoded(*codings: dict) -> list[dict]:
+    return [{"coding": c, "model": "claude-opus-5-5", "effort": "high",
+             "prompt_version": fc.PROMPT_VERSION} for c in codings]
+
+
+@pytest.mark.parametrize("fallback, model, attempt", [
+    ("other", "gpt-6.1-sol", 1), ("repeat", "claude-opus-5-5", 2)])
+def test_a_work_held_only_for_confidence_is_released_by_a_confident_second_coding(
+        fallback, model, attempt):
+    with patch.object(fc, "document_text", return_value=("", "", {})), \
+            patch.object(fc, "metadata_references", return_value=[]), \
+            patch.object(fc, "recode", side_effect=_recoded(
+                _coding(confident=False), _coding())) as recode:
+        entry = fc.check_work("W1", [_row()], "claude-opus-5-5", fallback)
+    assert entry["status"] == "released" and entry["fallback"].startswith(model)
+    assert recode.call_args_list[1].kwargs == {"model": model, "attempt": attempt}
+
+
+@pytest.mark.parametrize("first, second, fallback, calls", [
+    (_coding(confident=False), _coding(confident=False), "other", 2),
+    (_coding(confident=False), _coding(), "none", 1),
+    (_coding("failed", confident=False), _coding("failed"), "other", 1),
+])
+def test_no_second_coding_releases_what_it_should_not(first, second, fallback, calls):
+    with patch.object(fc, "document_text", return_value=("", "", {})), \
+            patch.object(fc, "metadata_references", return_value=[]), \
+            patch.object(fc, "recode", side_effect=_recoded(first, second)) as recode:
+        entry = fc.check_work("W1", [_row()], "claude-opus-5-5", fallback)
+    assert entry["status"] == "review" and recode.call_count == calls
+
+
 def test_a_work_whose_document_is_not_on_this_machine_is_not_coded():
     assert _checked(_coding(), _row(parse_method="grobid")) is None
 
