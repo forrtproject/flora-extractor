@@ -118,6 +118,8 @@ def test_structural_discards_and_text_gate_still_apply(specs):
         "This study has investigated computational reproducibility.",
         "This report undertook a computational reproduction.",
         "This paper tests computational reproducibility.",
+        "We tested the computational reproducibility of published results.",
+        "We assess the extent of computational reproducibility.",
     ],
 )
 def test_inflected_computational_claims(specs, claim):
@@ -132,6 +134,8 @@ def test_inflected_computational_claims(specs, claim):
     [
         "We present a framework to improve computational reproducibility.",
         "We provide computational reproducibility materials.",
+        "We tested a framework to improve computational reproducibility.",
+        "This paper assesses a tool for computational reproducibility.",
     ],
 )
 def test_tooling_is_not_a_computational_reproduction_claim(specs, claim):

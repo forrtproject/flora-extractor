@@ -9,9 +9,12 @@ reproduction of a target in the title, bounded active self-reproduction claims i
 a comment/reply/reanalysis/replication genre, and explicit self-claims to assess
 or conduct computational reproduction, including past-tense and third-person
 forms. Generic `present`/`provide` claims are excluded from this arm so tooling
-announcements do not qualify on that wording alone. The closed auxiliary/adverb
-list excludes
-passive copyright boilerplate and “species which reproduce” grammar. Broad
+announcements do not qualify on that wording alone. Arm 4 also excludes explicit
+action clauses whose direct object is a tool,
+framework or similar software/method artifact, such as “We tested a framework to
+improve computational reproducibility.” This bounded exclusion does not claim to
+recognise every possible tooling statement. The closed auxiliary/adverb list
+excludes passive copyright boilerplate and “species which reproduce” grammar. Broad
 reproduction and reanalysis wording alone does not activate this rule.
 
 The rule yields to structural discards and narrower replication-claim rules. It
@@ -36,6 +39,9 @@ state changes.
 | Existing discards newly routed to screening | **0 works** |
 | Candidate matches still deferred for missing text | 20 works |
 | Pending I4R DPs newly screenable | **69 of 189 DPs** |
+
+A subsequent tool-object exclusion was checked against all 350 saved canonical
+candidate rows and changed no matches or routing counts.
 
 The other candidate matches were already screened or remain discarded. The 69 is
 a gain in admission, not a count of confirmed reproductions. Compared with the

@@ -275,7 +275,10 @@ def test_bad_detail_cache_is_evicted_and_retried(tmp_path: Path) -> None:
     url = i4r.SERIES + "30.htm"
     cached = tmp_path / (hashlib.sha256(url.encode()).hexdigest() + ".txt")
     response = Mock(text="<html>Challenge</html>")
-    validate = lambda text: i4r.parse_detail(30, text)
+
+    def validate(text: str) -> dict:
+        return i4r.parse_detail(30, text)
+
     with (
         patch.object(i4r.requests, "get", return_value=response),
         patch.object(i4r, "throttle"),

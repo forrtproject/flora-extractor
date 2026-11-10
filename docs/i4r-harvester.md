@@ -99,8 +99,12 @@ The service targets the box's canonical checkout at
 at 2 GB. Adjust the two checkout paths before installing elsewhere. The timer is
 supplied for deployment; the PR dry run does not install or start it.
 
-After all intake and rule changes are present, route once and use its release for
-all later steps. `PENDING_RUNS.md` consolidates this with the other owed changes:
+After all initial intake and rule changes are present, route once and use its
+release for every step of that campaign. Each later weekly harvest that adds pool
+shards requires a new routing release before its new papers can be screened; the
+timer only harvests and does not route or screen. Reuse that new release throughout
+its downstream campaign. `PENDING_RUNS.md` consolidates this with the other owed
+changes:
 
 ```bash
 .venv/bin/python -m filter.engine route
