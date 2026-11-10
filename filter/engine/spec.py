@@ -75,7 +75,7 @@ _NESTED_KEYS = ("any_of", "all_of", "none_of")
 _WORK_ID_RE = re.compile(r"^(?:https?://openalex\.org/)?[Ww]?(\d+)$")
 _REGEX_KEYS = ("doi_regex", "title_regex", "abstract_regex", "text_regex",
                "url_regex")
-_FIELD_KEYS = frozenset({"type", "publication_year", "concept_ids"})
+_FIELD_KEYS = frozenset({"type", "publication_year", "concept_ids", "source"})
 _MEASURED_KEYS = frozenset({"level", "precision", "n", "sample", "date",
                             "owner", "rationale"})
 

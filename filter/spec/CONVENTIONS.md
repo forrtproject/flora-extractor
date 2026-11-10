@@ -111,7 +111,7 @@ lenient gate still ships ~90% real replications, given the screen's measured
 hard-negative pass rate. Record the reason in the table below, and in a new rule's
 `description` when it is written. Changing an existing rule's `description` or
 `measured` mints a release, which a gate change alone does not, so the table is the
-gate's record. Assignments on 2026-10-28:
+gate's record. Gate assignments (dates refer to the evidence in each row):
 
 | rule | gate | base-rate evidence |
 | --- | --- | --- |
@@ -121,7 +121,9 @@ gate's record. Assignments on 2026-10-28:
 | `replication-claim-extend-prior` | lenient | 71.4%, 95% CI 59–81% (gpt-6.1-sol, n = 140) — the closest call |
 | `replication-claim-cited-abstract` | strict | 59.8% (gpt-6.1-sol, n = 311) |
 | `replication-claim-general` | strict | ~50% clear (human, 9 of 18 screen proceeds) |
+| `reproduction-claim` | strict | independent precision unmeasured; offline replay adds 221 pending works, including 69 I4R DPs (2026-11-10) |
 | `replication-claim-title-broad` | strict | unmeasured as a rule; arms 5–90% |
+| `curated-i4r` | strict | official partner intake; series-level eligibility precision unmeasured (comments, replies and metaresearch included) |
 | `curated-observatory` | strict | unmeasured (another pipeline's LLM-extracted list) |
 | `osf-registration-completed` | strict | heuristic only; 31% of its extractions are prospective |
 | every shadow screen rule | strict | unmeasured as an admission |

@@ -23,21 +23,39 @@ the command, pasteable from the project root, and what proves it worked.
 
 ## Open
 
+- [ ] **Prepare I4R intake after merge, before the shared routing release.** From
+      the updated canonical checkout run `.venv/bin/python -m search.i4r --write`,
+      then repeat it and verify `to_ingest: 0`. Install the weekly systemd timer
+      as described in `docs/i4r-harvester.md`. This prepares the corpus for the
+      single `$REL` minted below; screening, extraction and export all use that
+      same release. Done when the second harvest adds zero and
+      `systemctl --user list-timers flora-i4r.timer` shows the next run.
+
 The entries below run in this order on the box, the only machine with the routing
 store. On 2026-11-05 its newest stored extract verdict was from 2026-10-18, so nothing
 merged on 2026-10-28 has run, not even in the sandbox. Each entry's PR carries the
 `run pending` label; remove the label when the entry is ticked.
 
-- [ ] **Route a new release carrying PR #223's discards.** Every entry below depends on
-      it: the export and the extract tier both refuse release `61f07fd07f19`, because the
-      specs have changed since it was routed. Discards reach the CSV at the render entry.
-      `git pull --ff-only`, then `.venv/bin/python -m filter.engine route`; the id it
-      prints is `REL` below. Then
-      `.venv/bin/python -m filter.engine screen --tier screen_expensive --release "$REL"`
-      (dry run). Expect `peer-review-record` to discard at least the 167 works measured on
-      `61f07fd07f19`; the reach of the PCI arm of `not-a-paper-doi` was not measured.
-      Done when the route report shows both and the screen dry run offers nothing it
-      should not.
+- [ ] **Route one release carrying I4R intake, reproduction-claim and PR #223's
+      discards.** Every later entry uses this same `$REL`. The export and extract
+      tier refuse old release `61f07fd07f19` because the specs have changed.
+      After the intake above, run:
+      ```bash
+      .venv/bin/python -m filter.engine route
+      read -r -p "Release ID printed by route: " REL
+      .venv/bin/python -m filter.engine diagnose --spec reproduction-claim
+      .venv/bin/python -m filter.engine diagnose --spec curated-i4r
+      .venv/bin/python -m filter.engine screen --tier screen_expensive --release "$REL"
+      ```
+      The screen command is a dry run. Done when the live bundle and diagnoses
+      expose both admission rules, their match populations and routed piles, and
+      the screen worklist offers no structurally discarded work. The frozen
+      replay in `docs/i4r-rule-promotion.md` measures the reproduction rule's
+      marginal gain; current skip lists and changed inputs may reduce the
+      actual screen worklist. Strict admission remains required. The existing
+      sandbox/run sequence below handles paid screening, extraction and export.
+      Expect `peer-review-record` to discard at least the 167 works measured on
+      `61f07fd07f19`; the PCI arm of `not-a-paper-doi` remains unmeasured.
 
 - [ ] **Re-extract the 14 works linked to a record about the original (PR #222).** Run
       the sandbox first, because this is also the first exercise of ladders 32 and 33:
