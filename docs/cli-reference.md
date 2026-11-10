@@ -500,8 +500,26 @@ and records, `extract.export` renders. Design: [`filter-engine.md`](filter-engin
 .venv/bin/python -m extract.tier --run --only 2741809807,2884670852
 .venv/bin/python -m extract.tier --run --redo 2741809807
 
-# Render data/extracted.csv from the verdicts of the works this release admits
+# What the next render changes: the works that need a blind coding (no calls)
+.venv/bin/python -m extract.final_check --release <id>
+
+# Code them on a subscription (--model claude-opus-5-5 | gpt-6.1-sol), then fill
+# `decision` (ship | hold | reject) on the `review` rows of data/final_check.csv
+.venv/bin/python -m extract.final_check --release <id> --run
+
+# A trial: a stable pseudo-random 50 of the real worklist. It writes data/final_check.csv and
+# the codings are cached, so the full run buys only the rest; nothing ships until a commit
+.venv/bin/python -m extract.final_check --release <id> --run --limit 50
+
+# Over sandbox verdicts only: nothing counts as shipped, and the file sits beside the output
+.venv/bin/python -m extract.final_check --release <id> --run --limit 5 --mode validation --out data/extracted-test.csv
+
+# Render data/extracted.csv from the verdicts of the works this release admits. A changed
+# work ships only once data/final_check.csv clears it
 .venv/bin/python -m extract.export --release <id>
+
+# Read the record without the gate; changed works then ship unchecked
+.venv/bin/python -m extract.export --release <id> --skip-final-check --out data/extracted-test.csv
 
 # Every stored verdict, whatever routing now says about its work
 .venv/bin/python -m extract.export --all-releases
