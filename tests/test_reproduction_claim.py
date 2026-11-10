@@ -143,3 +143,20 @@ def test_tooling_is_not_a_computational_reproduction_claim(specs, claim):
     assert eval_spec_rows(
         spec, [_row(title="A new software framework", abstract=claim)]
     ) == [False]
+
+
+@pytest.mark.parametrize("separator", [". ", "; ", "\n"])
+@pytest.mark.parametrize("tooling_first", [True, False])
+def test_tooling_clause_does_not_cancel_a_genuine_claim(
+    specs, separator: str, tooling_first: bool
+) -> None:
+    clauses = [
+        "We tested a framework to improve computational reproducibility",
+        "We assessed the computational reproducibility of the published findings",
+    ]
+    if not tooling_first:
+        clauses.reverse()
+    spec = next(s for s in specs if s.id == "reproduction-claim")
+    assert eval_spec_rows(
+        spec, [_row(title="Checking published results", abstract=separator.join(clauses))]
+    ) == [True]

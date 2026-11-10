@@ -8,14 +8,15 @@ Four arms recognise explicit reproduction-report titles, computational/robustnes
 reproduction of a target in the title, bounded active self-reproduction claims in
 a comment/reply/reanalysis/replication genre, and explicit self-claims to assess
 or conduct computational reproduction, including past-tense and third-person
-forms. Generic `present`/`provide` claims are excluded from this arm so tooling
-announcements do not qualify on that wording alone. Arm 4 also excludes explicit
-action clauses whose direct object is a tool,
-framework or similar software/method artifact, such as “We tested a framework to
-improve computational reproducibility.” This bounded exclusion does not claim to
-recognise every possible tooling statement. The closed auxiliary/adverb list
-excludes passive copyright boilerplate and “species which reproduce” grammar. Broad
-reproduction and reanalysis wording alone does not activate this rule.
+forms. Arm 4 permits up to five determiners, qualifiers or assessment words
+between the action verb and computational reproduction/reproducibility. It does
+not treat testing a framework or tool as testing computational reproducibility.
+Each matching clause stands on its own: a tooling sentence cannot cancel a genuine
+claim elsewhere in the same abstract. The positive pattern uses RE2-compatible
+syntax; the engine does not support negative lookahead. Its closed grammar is
+conservative and can miss indirect claims. Generic `present`/`provide` announcements,
+passive copyright boilerplate and “species which reproduce” grammar do not activate
+this arm. Broad reproduction or reanalysis wording alone is insufficient.
 
 The rule yields to structural discards and narrower replication-claim rules. It
 outranks the fallible study-type crosswalk, consistently with the other claim
@@ -34,24 +35,37 @@ state changes.
 | Replay quantity | Works / DPs |
 |-----------------|-------------|
 | Canonical first rows replayed (original/reviewed candidate union) | 350 works |
-| Reviewed-rule matches on canonical first rows | 346 works |
-| Formerly pending works newly routed to expensive screening | **228 works** |
+| Reviewed-rule matches on canonical first rows | 336 works |
+| Formerly pending works newly routed to expensive screening | **221 works** |
 | Existing discards newly routed to screening | **0 works** |
 | Candidate matches still deferred for missing text | 20 works |
 | Pending I4R DPs newly screenable | **69 of 189 DPs** |
 
-A subsequent tool-object exclusion was checked against all 350 saved canonical
-candidate rows and changed no matches or routing counts.
+The frozen inputs are committed as
+[`misc/i4r-rule-candidates-2026-11-10.jsonl.gz`](../misc/i4r-rule-candidates-2026-11-10.jsonl.gz).
+They contain the 350 canonical candidate rows, including the effective text overlay
+and DP-to-work associations. Their SHA256 is
+`e10e9d9ace9003c564f3955d3a08c3932ef0a7dbb0ec675a031f95c6347d053a`.
+Replay them without the operational pool, store or API access:
 
-The other candidate matches were already screened or remain discarded. The 69 is
-a gain in admission, not a count of confirmed reproductions. Compared with the
-original 217-work/68-DP prototype, the reviewed action-verb
-forms add 15 work IDs and removing generic `present`/`provide` drops four, for a
-net gain of 11 work IDs. Two I4R DPs (48 and 202) are added; DP228 drops from the
-general rule and remains eligible through the partner-source intake. Independent
-precision
-has **not** been measured; strict admission is retained. The curated I4R corpus
-suggested the patterns, so its recovery is not an independent precision test.
+```bash
+.venv/bin/python -m analysis.i4r_rule_replay
+```
+
+The command routes the frozen rows with and without the current reproduction rule;
+[`misc/i4r-rule-replay-2026-11-10.json`](../misc/i4r-rule-replay-2026-11-10.json)
+records its output. The input cohort is the union selected by earlier broad claim
+patterns, rather than a new scan of the full pool. The final clause grammar narrows
+the broad positive arm used to select that union. The current book and aliases are
+read from `filter/spec`; later changes there can change the replay results.
+
+The final clause-level rule admits 221 pending works, seven fewer than the earlier
+228-work review version, while retaining the same 69 I4R DPs. It does not let an
+unrelated tooling sentence veto a genuine claim. The other candidate matches were
+already screened or remain discarded. The 69 is a gain in admission, not a count
+of confirmed reproductions. Independent precision has **not** been measured;
+strict admission is retained. The curated I4R corpus suggested the patterns, so its
+recovery is not an independent precision test.
 
 Activation of the JSON rule occurs when this branch is merged. A new routing
 release is then required; `PENDING_RUNS.md` records the command and evidence to
