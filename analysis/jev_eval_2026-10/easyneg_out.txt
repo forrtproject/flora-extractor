@@ -1,0 +1,30 @@
+| gate | positives lost | hard neg discarded | curated neg discarded |
+|---|---|---|---|
+| ds4 + luna | 8 (0.5%) | 262/344 (76%) | 329/386 (85%) |
+| luna + pplx_full<0.3 | 2 (0.1%) | 254/344 (74%) | 298/386 (77%) |
+| luna + pplx_full<0.4 | 2 (0.1%) | 258/344 (75%) | 309/386 (80%) |
+| luna + pplx_full<0.5 | 4 (0.3%) | 261/344 (76%) | 317/386 (82%) |
+| luna + pplx_full<0.6 | 4 (0.3%) | 262/344 (76%) | 324/386 (84%) |
+| luna + pplx_full<0.7 | 8 (0.5%) | 264/344 (77%) | 330/386 (85%) |
+| luna + pplx_full2<0.3 | 2 (0.1%) | 254/344 (74%) | 303/386 (78%) |
+| luna + pplx_full2<0.4 | 2 (0.1%) | 258/344 (75%) | 314/386 (81%) |
+| luna + pplx_full2<0.5 | 4 (0.3%) | 261/344 (76%) | 320/386 (83%) |
+| luna + pplx_full2<0.6 | 6 (0.4%) | 263/344 (76%) | 330/386 (85%) |
+| luna + pplx_full2<0.7 | 10 (0.7%) | 263/344 (76%) | 335/386 (87%) |
+pplx_full: AUC vs hard 0.984, vs curated 0.997
+pplx_full2: AUC vs hard 0.984, vs curated 0.997
+NC012 full=0.68 full2=0.55
+NC065 full=0.80 full2=0.58
+NC075 full=0.45 full2=0.23
+NC061 full=0.69 full2=0.65
+NC145 full=0.48 full2=0.25
+NC328 full=0.87 full2=0.85
+NC166 full=0.61 full2=0.56
+NC172 full=0.77 full2=0.69
+NC175 full=0.73 full2=0.47
+NC178 full=0.58 full2=0.45
+NC008 full=0.48 full2=0.46
+NC037 full=0.52 full2=0.54
+NC109 full=0.50 full2=0.51
+NC363 full=0.75 full2=0.76
+full2 tok/call 2174.175205855444 $/1k 0.04348350411710888
