@@ -9,8 +9,11 @@ reproduction of a target in the title, bounded active self-reproduction claims i
 a comment/reply/reanalysis/replication genre, and explicit self-claims to assess
 or conduct computational reproduction, including past-tense and third-person
 forms. Arm 4 permits up to five determiners, qualifiers or assessment words
-between the action verb and computational reproduction/reproducibility. It does
-not treat testing a framework or tool as testing computational reproducibility.
+between the action verb and computational reproduction/reproducibility. This
+excludes tooling objects placed before that phrase, such as “We tested a framework
+to improve computational reproducibility.” The exclusion is bounded: “We tested a
+computational reproducibility framework” still matches and must be assessed by
+the eligibility screen.
 Each matching clause stands on its own: a tooling sentence cannot cancel a genuine
 claim elsewhere in the same abstract. The positive pattern uses RE2-compatible
 syntax; the engine does not support negative lookahead. Its closed grammar is
@@ -37,7 +40,7 @@ state changes.
 | Canonical first rows replayed (original/reviewed candidate union) | 350 works |
 | Reviewed-rule matches on canonical first rows | 336 works |
 | Formerly pending works newly routed to expensive screening | **221 works** |
-| Existing discards newly routed to screening | **0 works** |
+| Previously discarded works whose pile changes (including to pending) | **0 works** |
 | Candidate matches still deferred for missing text | 20 works |
 | Pending I4R DPs newly screenable | **69 of 189 DPs** |
 

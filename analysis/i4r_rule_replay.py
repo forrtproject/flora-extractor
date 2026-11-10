@@ -40,8 +40,8 @@ def replay(candidates: Path, specs_dir: Path) -> dict:
         "candidate_rows": len(rows),
         "rule_matches": sum(eval_spec_rows(spec, rows)),
         "new_screen_work_ids": len({current["work_id"] for _, current in gains}),
-        "new_discard_to_screen": sum(
-            previous["pile"] == "discard" and current["pile"] == "screen_expensive"
+        "discard_pile_changes": sum(
+            previous["pile"] == "discard" and current["pile"] != "discard"
             for previous, current in zip(before, after)
         ),
         "still_no_text": sum(r["pending_reason"] == "no_text" for r in after),

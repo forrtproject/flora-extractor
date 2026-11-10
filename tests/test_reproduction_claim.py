@@ -160,3 +160,35 @@ def test_tooling_clause_does_not_cancel_a_genuine_claim(
     assert eval_spec_rows(
         spec, [_row(title="Checking published results", abstract=separator.join(clauses))]
     ) == [True]
+
+
+def test_tooling_after_the_computational_phrase_remains_ambiguous(specs) -> None:
+    spec = next(s for s in specs if s.id == "reproduction-claim")
+    assert eval_spec_rows(
+        spec,
+        [_row(
+            title="A new software framework",
+            abstract="We tested a computational reproducibility framework.",
+        )],
+    ) == [True]
+
+
+def test_replay_counts_discard_to_pending_downgrades(tmp_path: Path) -> None:
+    import gzip
+    import json
+
+    from analysis.i4r_rule_replay import replay
+
+    candidates = tmp_path / "candidates.jsonl.gz"
+    with gzip.open(candidates, "wt", encoding="utf-8") as stream:
+        stream.write(json.dumps({
+            "id": "https://openalex.org/W1",
+            "title": "Reproduction Report",
+            "abstract_text": "",
+            "type": "grant",
+            "i4r_numbers": [],
+        }) + "\n")
+    result = replay(candidates, Path(__file__).resolve().parents[1] / "filter/spec")
+    assert result["new_screen_work_ids"] == 0
+    assert result["still_no_text"] == 1
+    assert result["discard_pile_changes"] == 1
