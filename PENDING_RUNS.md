@@ -23,6 +23,16 @@ the command, pasteable from the project root, and what proves it worked.
 
 ## Open
 
+- [ ] **Activate I4R harvesting after merge.** The dry inventory and isolated-pool
+      resume check do not modify the operational pool. From the updated canonical
+      checkout run `.venv/bin/python -m search.i4r --write`, then route a new release
+      with `.venv/bin/python -m filter.engine route`. Install the weekly systemd
+      timer as described in `docs/i4r-harvester.md`. Done when a second harvest
+      reports `to_ingest: 0`, new rows route under `curated-i4r`, and
+      `systemctl --user list-timers flora-i4r.timer` shows the next run. Screen,
+      extract and export through the existing pipeline before flora-validation
+      imports anything; production records were intentionally not written by this PR.
+
 The entries below run in this order on the box, the only machine with the routing
 store. On 2026-11-05 its newest stored extract verdict was from 2026-10-18, so nothing
 merged on 2026-10-28 has run, not even in the sandbox. Each entry's PR carries the

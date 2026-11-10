@@ -1,0 +1,9 @@
+{
+  "id": "curated-i4r",
+  "description": "I4R Discussion Papers are curated candidates, including comments, replies and methods papers. Bypass keyword and repository-object discards, but retain the expensive screen and all Stage 3 target/outcome checks.",
+  "match": {"fields": {"source": ["i4r"]}},
+  "pile": "screen_expensive",
+  "precedence": 10000,
+  "shadow": false,
+  "admission": "strict"
+}

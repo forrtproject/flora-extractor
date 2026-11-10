@@ -331,11 +331,13 @@ OPENROUTER_API_KEY    = os.getenv("OPENROUTER_API_KEY",    "")
 # Rows from these sources were put on a curated replication/reproduction list by a
 # human, so Stage 2's keyword discovery can only lose them: an I4R reproduction
 # titled "A comment on Smith et al. (2023)" carries no replication vocabulary at
-# all. They bypass phrase matching and go straight to needs_review for Stage 3's
-# screen — the validated decider — to settle.
+# all. They bypass discovery rules and reach the expensive screen; Stage 3
+# still resolves and verifies originals and outcomes.
 # A closed vocabulary: these strings are written by Stage 1's own source tags, so the
 # set is a fact about the corpus, not a setting. Adding one is a code change.
 CURATED_SOURCES = frozenset({"i4r", "bob_reed", "backfill_old_pipeline"})
+# Concurrent I4R metadata lookups; requests still share a per-service rate limit.
+I4R_WORKERS = int(os.getenv("I4R_WORKERS", "4"))
 
 # ── OpenAlex snapshot (bulk parquet) ──────────────────────────────────────────
 # The public S3 bucket holding the whole corpus as column-projectable parquet.

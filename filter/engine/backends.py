@@ -43,6 +43,7 @@ from shared.utils import clean_doi
 # exactly these, so a row dict reaches the same code as a pool batch.
 _ROW_SCHEMA = pa.schema([
     ("doi", pa.string()),
+    ("source", pa.string()),
     ("title", pa.string()),
     ("display_name", pa.string()),
     ("abstract_text", pa.string()),

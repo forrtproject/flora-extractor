@@ -24,6 +24,7 @@ SPEC_DIR = Path(__file__).resolve().parent.parent / "filter" / "spec"
 #
 EXPECTED = {
     # id: (pile, precedence, vocabulary, shadow)
+    "curated-i4r": ("screen_expensive", 10000, None, False),
     "not-a-paper-doi": ("discard", 960, None, False),
     "doi-registry-twin": ("discard", 950, None, False),
     "deposit-registrant": ("discard", 958, None, False),
@@ -117,7 +118,7 @@ def test_the_expensive_screen_uses_the_declared_admission_routes():
     family's band, below the strong title tier: measured, outranking the discards
     bought one work."""
     expensive = [s.id for s in load_specs(SPEC_DIR) if s.pile == "screen_expensive"]
-    assert expensive == ["osf-registration-completed",
+    assert expensive == ["curated-i4r", "osf-registration-completed",
                          "replication-claim-cited-title",
                          "replication-claim-title-strong",
                          "curated-observatory",

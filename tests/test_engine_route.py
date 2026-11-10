@@ -74,6 +74,7 @@ def _batch(rows: list[dict]) -> pa.RecordBatch:
 _CITE = "as reported by Smith et al. (2019)"
 
 CORPUS = [
+    {**_row(work="i4r:30", title="A comment on Smith (2020)"), "source": "i4r"},
     # definitional discards (960 / 955 / 940)
     _row(work="https://openalex.org/W1", type_="dataset",
          title="Replication Data for: Bees", abstract="A direct replication of Smith (2019)."),

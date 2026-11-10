@@ -348,10 +348,8 @@ class Work:
 
     *source* is the discovery source, and it is here for one reason: the cheap tier
     must not let a 3B model discard a row a human put on a curated replication list
-    (`prescreen_bypass`). The pool schema carries no source column today — every pool
-    row came from the OpenAlex snapshot — so it defaults to empty and the bypass
-    simply never fires; a pool that later carries curated rows must add the column in
-    `_pool_record()`/`_POOL_SCHEMA` (`search/snapshot_scan.py`) for this to bite.
+    (`prescreen_bypass`). The pool's optional source column carries curated provenance;
+    legacy snapshot shards without it default to empty.
     """
     work_id: int
     doi: str
@@ -471,8 +469,10 @@ def pile_works(con, release_id: str, pile: str, pool_dir: Path = SNAPSHOT_POOL_D
             # screened on it, and the classify prompt renders the absent abstract as
             # "(not available)". Any OTHER textless work here means the pool and
             # the routing disagree, which is a bug rather than a row to skip.
-            assert abstract.strip() or (title.strip() and osf_identifier(
-                clean_doi(record.get("doi") or ""), row_url(record)) is not None), (
+            title_screenable = title.strip() and (
+                record.get("source") == "i4r" or osf_identifier(
+                    clean_doi(record.get("doi") or ""), row_url(record)) is not None)
+            assert abstract.strip() or title_screenable, (
                 f"work {wid} is routed to {pile} with no abstract text: the "
                 "routing table and the pool disagree, re-run `route`")
             # `clean_doi` and `display_name or title` are not cosmetic here: they

@@ -18,6 +18,7 @@ dated campaign notes and evaluation reports record the configuration used at the
 
 | Document | Use it for |
 |----------|------------|
+| [i4r-harvester.md](i4r-harvester.md) | Incremental curated I4R harvesting and weekly timer |
 | [filter-engine.md](filter-engine.md) | Routing, claims, verdict storage and engine contracts |
 | [../filter/spec/CONVENTIONS.md](../filter/spec/CONVENTIONS.md) | Rule precedence, pile meanings and evidence requirements |
 | [aws-snapshot-scan.md](aws-snapshot-scan.md) | Full OpenAlex snapshot scan on EC2 and pool publication |
