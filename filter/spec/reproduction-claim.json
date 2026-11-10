@@ -1,0 +1,33 @@
+{
+  "id": "reproduction-claim",
+  "description": "REPRODUCTION CLAIM: routes explicit reproduction claims to the expensive two-voter screen. Four arms: (1) a title beginning Replication Report or Reproduction Report; (2) computational/robustness reproduction or reproducibility OF a target in the title; (3) an active first-person or this-paper reproduce claim with a prior-work cue within 100 characters, together with a comment/reply/reanalysis/replication/reproduction title; (4) an explicit self-claim to conduct, assess or test computational reproduction/reproducibility within 80 characters. The bounded auxiliary/adverb list avoids species-that-reproduce and passive copyright boilerplate. The prior-work cue is syntactic, not proof that a named original was re-tested; report titles can also describe deposits or protocols. It assigns no vocabulary or eligibility verdict. Strict admission is required: population precision has not been independently measured. The 2026-11-10 offline canonical replay of the 5,146,160-row pool with its overlay, aliases, first-row order and text gate adds 217 formerly pending works to screening, including 68 pending I4R DPs; no current discard changes pile. Precedence 734 yields to the narrower live replication claims (735-760) and structural discards (935-960), outranks the fallible not-a-study-type crosswalk (500), and leaves the broad reproduction-signal rule in shadow. See docs/i4r-rule-promotion.md for the replay and scope limits.",
+  "match": {
+    "any_of": [
+      {
+        "title_regex": "^(?:a\\s+)?(?:replication|reproduction)\\s+reports?\\b"
+      },
+      {
+        "title_regex": "\\b(?:computational|robustness)\\s+(?:(?:and|&)\\s+(?:computational|robustness)\\s+)?reproduc(?:tion|ibility)\\s+of\\b"
+      },
+      {
+        "all_of": [
+          {
+            "text_regex": "\\b(?:we|i|this\\s+(?:paper|study|report|comment))\\s+(?:(?:have\\s+)?(?:(?:successfully|fully|exactly|first|also|computationally|independently|partially|directly)\\s+){0,2}|(?:were|are)\\s+able\\s+to\\s+(?:(?:fully|successfully)\\s+)?|(?:first\\s+)?attempt(?:ed)?\\s+to\\s+)reproduc(?:e|ed|es)\\b[^.;\\n]{0,100}\\b(?:original|published|reported|previous|prior|their|authors|paper|study)\\b"
+          },
+          {
+            "title_regex": "^(?:(?:a|the)\\s+)?(?:comment|reply|response|rejoinder)\\b|[:–—]\\s*(?:a\\s+)?(?:comment|reply|response|rejoinder)\\b|\\bre-?analys[ie]s\\b|\\b(?:replication|reproduction)\\b"
+          }
+        ]
+      },
+      {
+        "text_regex": "\\b(?:we|i|this\\s+(?:paper|study|report|comment))\\s+(?:(?:have\\s+)?(?:(?:successfully|fully|exactly|first|also|computationally|independently|partially|directly)\\s+){0,2}|(?:were|are)\\s+able\\s+to\\s+(?:(?:fully|successfully)\\s+)?|(?:first\\s+)?attempt(?:ed)?\\s+to\\s+)(?:conduct|perform|present|undertake|provide|test|assess|examine|check|investigate|attempt)\\b[^.;\\n]{0,80}\\bcomputational\\s+reproduc\\w*"
+      }
+    ]
+  },
+  "pile": "screen_expensive",
+  "admission": "strict",
+  "precedence": 734,
+  "shadow": false,
+  "vocabulary": null,
+  "measured": []
+}

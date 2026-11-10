@@ -43,6 +43,7 @@ EXPECTED = {
     "replication-claim-cited-abstract": ("screen_expensive", 737, None, False),
     "replication-claim-failure-prior": ("screen_expensive", 736, None, False),
     "replication-claim-general": ("screen_expensive", 735, None, False),
+    "reproduction-claim": ("screen_expensive", 734, None, False),
     "replication-claim-text": ("screen_expensive", 730, None, True),
     "replication-claim-residual": ("screen_expensive", 710, None, True),
     "not-a-study-type": ("discard", 500, None, False),
@@ -58,7 +59,7 @@ _CLAIM_TIERS = ("replication-claim-cited-title", "replication-claim-title-strong
                 "replication-claim-cited-abstract", "replication-claim-failure-prior",
                 "replication-claim-general",
                 "replication-claim-text", "replication-claim-residual")
-_ADMISSION = _CLAIM_TIERS
+_ADMISSION = _CLAIM_TIERS + ("reproduction-claim",)
 _ABOVE_ADMISSION = ("not-a-paper-doi", "doi-registry-twin", "deposit-registrant",
                     "not-a-paper-title", "not-a-paper-abstract", "peer-review-record",
                     "not-a-report-type")
@@ -127,6 +128,7 @@ def test_the_expensive_screen_uses_the_declared_admission_routes():
                          "replication-claim-cited-abstract",
                          "replication-claim-failure-prior",
                          "replication-claim-general",
+                         "reproduction-claim",
                          "replication-claim-text", "replication-claim-residual"]
 
 

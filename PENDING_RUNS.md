@@ -23,6 +23,17 @@ the command, pasteable from the project root, and what proves it worked.
 
 ## Open
 
+- [ ] **Route the live reproduction-claim rule after merge.** From the updated
+      canonical checkout run `.venv/bin/python -m filter.engine route`, then
+      `.venv/bin/python -m filter.engine screen --tier screen_expensive` (dry run).
+      Done when `reproduction-claim` appears in the live bundle and the route
+      report credits its marginal works to the expensive screen. The frozen
+      offline replay adds 217 formerly pending works, including 68 I4R DPs;
+      current skip lists and any changed inputs may reduce the screen worklist.
+      Strict admission remains required. This promotion does not start paid
+      screening, extraction, or production export; those use the existing run
+      sequence below. Evidence: `docs/i4r-rule-promotion.md`.
+
 - [ ] **Activate I4R harvesting after merge.** The dry inventory and isolated-pool
       resume check do not modify the operational pool. From the updated canonical
       checkout run `.venv/bin/python -m search.i4r --write`, then route a new release

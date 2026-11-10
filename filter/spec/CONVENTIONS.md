@@ -121,6 +121,7 @@ gate's record. Assignments on 2026-10-28:
 | `replication-claim-extend-prior` | lenient | 71.4%, 95% CI 59–81% (gpt-6.1-sol, n = 140) — the closest call |
 | `replication-claim-cited-abstract` | strict | 59.8% (gpt-6.1-sol, n = 311) |
 | `replication-claim-general` | strict | ~50% clear (human, 9 of 18 screen proceeds) |
+| `reproduction-claim` | strict | independent precision unmeasured; offline replay adds 217 pending works, including 68 I4R DPs (2026-11-10) |
 | `replication-claim-title-broad` | strict | unmeasured as a rule; arms 5–90% |
 | `curated-observatory` | strict | unmeasured (another pipeline's LLM-extracted list) |
 | `osf-registration-completed` | strict | heuristic only; 31% of its extractions are prospective |

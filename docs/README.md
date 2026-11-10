@@ -18,6 +18,7 @@ dated campaign notes and evaluation reports record the configuration used at the
 
 | Document | Use it for |
 |----------|------------|
+| [i4r-rule-promotion.md](i4r-rule-promotion.md) | Live reproduction-claim rule, replay and the 39 search-gate misses |
 | [i4r-harvester.md](i4r-harvester.md) | Incremental curated I4R harvesting and weekly timer |
 | [filter-engine.md](filter-engine.md) | Routing, claims, verdict storage and engine contracts |
 | [../filter/spec/CONVENTIONS.md](../filter/spec/CONVENTIONS.md) | Rule precedence, pile meanings and evidence requirements |
