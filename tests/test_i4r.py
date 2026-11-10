@@ -376,3 +376,31 @@ def test_flora_doi_match_is_separate_from_url_match(tmp_path: Path) -> None:
         )
     assert result["in_flora"] == 1
     assert result["records"][0]["doi_o"] == "10.1234/original"
+
+
+@pytest.mark.parametrize("body", ["url_r,doi_r\nhttps://example.org\n", "url_r,doi_r\na,b,c\n"])
+def test_malformed_flora_rows_are_rejected(body: str) -> None:
+    with pytest.raises(ValueError, match="Malformed FLoRA CSV row"):
+        i4r._flora_rows(body)
+
+
+@pytest.mark.parametrize("originals", [[""], ["10.1234/one", "10.1234/two"]])
+def test_published_rows_without_unique_original_do_not_count_as_hints(
+    tmp_path: Path, originals: list[str]
+) -> None:
+    flora = tmp_path / "flora.csv"
+    flora.write_text(
+        "url_r,doi_r,doi_o\n"
+        + "".join(f"https://hdl.handle.net/10419/270965,,{doi}\n" for doi in originals)
+    )
+    with (
+        patch.object(i4r, "catalogue", return_value={30: "detail"}),
+        patch.object(i4r, "fetch", return_value=DETAIL),
+    ):
+        result = i4r.harvest(
+            tmp_path / "cache", tmp_path / "pool", flora, tmp_path / "report.json"
+        )
+    assert result["in_flora"] == 1
+    assert result["doi_o_from_flora"] == 0
+    assert result["records"][0]["doi_o"] == ""
+    assert result["records"][0]["original_status"] == "published_flora_no_unique_original"

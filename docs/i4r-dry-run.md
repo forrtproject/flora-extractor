@@ -13,6 +13,15 @@ published reports; together with DP190 (SSRN) and DP208 (OSF), version-aware
 published coverage is at least 39. These 312 are unmatched primary identifiers,
 not 312 previously undiscovered or unscreened papers.
 
+The earlier broad-field audit retained the following published-original metadata.
+These annotations describe known coverage; they do not change the reproducible
+primary-identifier inventory or supply automatic ingestion hints.
+
+| Report | Published status | Original DOI recorded in the earlier audit |
+|--------|------------------|--------------------------------------------|
+| DP118 | Known published report; primary identifier unmatched | `10.1093/qje/qjac034` |
+| DP163 | Known published report; primary identifier unmatched | `10.1093/ej/ueab096` |
+
 The count includes the entire series, including replies and methods papers;
 screening determines which are eligible reproductions/replications.
 

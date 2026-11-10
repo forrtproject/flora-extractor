@@ -1,6 +1,6 @@
 {
   "id": "curated-i4r",
-  "description": "Official-partner I4R Discussion Papers are curated candidates, including comments, replies and methods papers. Precedence 10000 guarantees consideration by outranking keyword rules and the structural not-a-paper-doi, not-a-paper-title, not-a-paper-abstract, deposit-registrant, figshare-attachment, peer-review-record and not-a-report-type discards: repository identifiers, genres and registry types do not decide eligibility for this partner series. All rows still reach the expensive two-voter screen and Stage 3 target/outcome checks. Strict admission is required because the series-level eligible-reproduction base rate is unmeasured and includes responses and metaresearch.",
+  "description": "Official-partner I4R Discussion Papers are curated candidates, including comments, replies and methods papers. Precedence 10000 guarantees consideration by outranking keyword rules and the structural not-a-paper-doi, not-a-paper-title, not-a-paper-abstract, deposit-registrant, figshare-attachment, peer-review-record and not-a-report-type discards: repository identifiers, genres and registry types do not decide eligibility for this partner series. Rows enter the expensive two-voter screen; only admitted screen proceeds then reach Stage 3 target/outcome checks. Strict admission is required because the series-level eligible-reproduction base rate is unmeasured and includes responses and metaresearch.",
   "match": {
     "fields": {
       "source": [

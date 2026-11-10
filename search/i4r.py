@@ -110,8 +110,11 @@ def _flora_rows(text: str) -> list[dict]:
         if not {"url_r", "doi_r"}.issubset(reader.fieldnames or []):
             raise ValueError("FLoRA CSV must contain url_r and doi_r columns")
         rows = list(reader)
-        if any(None in row for row in rows):
-            raise ValueError("FLoRA CSV row has more fields than its header")
+        if any(
+            None in row or any(value is None for value in row.values())
+            for row in rows
+        ):
+            raise ValueError("Malformed FLoRA CSV row")
         return rows
     except csv.Error as exc:
         raise ValueError("Malformed FLoRA CSV") from exc
@@ -339,9 +342,10 @@ def harvest(
                 clean_doi(flora_rows[i].get("doi_o", "")) for i in matching
             } - {""}
             record["original_dois"] = sorted(originals)
-            record["original_status"] = "published_flora"
+            record["original_status"] = "published_flora_no_unique_original"
             if len(originals) == 1:
                 record["doi_o"] = originals.pop()
+                record["original_status"] = "published_flora"
         shard = pool / f"curated-i4r-{number:06d}.parquet"
         record["in_pool"] = shard.exists()
         if record["in_pool"] and not record["in_flora"]:
@@ -433,9 +437,11 @@ def main() -> None:
     with FileLock(str(args.cache / "harvest.lock"), timeout=0):
         flora = args.flora_csv or args.cache / "flora.csv"
         if args.flora_csv is None:
-            flora.write_text(
+            flora_tmp = flora.with_suffix(".tmp")
+            flora_tmp.write_text(
                 fetch(FLORA_URL, args.cache, refresh=True, validate=_flora_rows)
             )
+            _durable_replace(flora_tmp, flora)
         result = harvest(args.cache, args.pool, flora, args.report, args.write)
     print(json.dumps({k: v for k, v in result.items() if k != "records"}, indent=2))
 
