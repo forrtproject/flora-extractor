@@ -8,8 +8,11 @@ The committed pool shard is the checkpoint, so a failed run can safely resume.
 import argparse
 import csv
 import hashlib
+import io
 import json
+import os
 import re
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import unquote, urljoin
@@ -18,7 +21,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import requests
 from filelock import FileLock
-from lxml import html
+from lxml import etree, html
 
 from search.snapshot_scan import _POOL_SCHEMA
 from shared.config import CACHE_DIR, I4R_WORKERS, RESEARCHER_EMAIL, SNAPSHOT_POOL_DIR
@@ -31,13 +34,36 @@ FLORA_URL = (
 )
 
 
-def fetch(url: str, cache: Path, refresh: bool = False) -> str:
-    """Cache only successful responses, before interpreting them."""
+def _durable_replace(tmp: Path, destination: Path) -> None:
+    """Publish a complete file, syncing its bytes and renamed directory entry."""
+    with tmp.open("rb") as stream:
+        os.fsync(stream.fileno())
+    tmp.replace(destination)
+    directory = os.open(destination.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+
+
+def fetch(
+    url: str,
+    cache: Path,
+    refresh: bool = False,
+    validate: Callable[[str], object] | None = None,
+) -> str:
+    """Cache before parsing; evict invalid bodies so transient errors can recover."""
     path = cache / (hashlib.sha256(url.encode()).hexdigest() + ".txt")
     cache.mkdir(parents=True, exist_ok=True)
     with FileLock(str(path) + ".lock"):
         if path.exists() and not refresh:
-            return path.read_text()
+            body = path.read_text()
+            try:
+                if validate:
+                    validate(body)
+                return body
+            except ValueError:
+                path.unlink()
         throttle("i4r_crossref" if "api.crossref.org" in url else "i4r_econpapers", 0.5)
         response = requests.get(
             url,
@@ -48,9 +74,47 @@ def fetch(url: str, cache: Path, refresh: bool = False) -> str:
         )
         response.raise_for_status()
         response.encoding = "utf-8"
-        path.with_suffix(".tmp").write_text(response.text)
-        path.with_suffix(".tmp").replace(path)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(response.text)
+        _durable_replace(tmp, path)
+        try:
+            if validate:
+                validate(response.text)
+        except ValueError:
+            path.unlink()
+            raise
         return response.text
+
+
+def _crossref_items(text: str) -> list[dict]:
+    """Reject challenge pages and malformed JSON instead of caching false misses."""
+    try:
+        items = json.loads(text)["message"]["items"]
+        if not isinstance(items, list) or any(
+            not isinstance(item, dict)
+            or not isinstance(item.get("DOI", ""), str)
+            or not isinstance(item.get("title", []), list)
+            or any(not isinstance(title, str) for title in item.get("title", []))
+            for item in items
+        ):
+            raise ValueError("Malformed Crossref items")
+        return items
+    except (KeyError, TypeError) as exc:
+        raise ValueError("Malformed Crossref response") from exc
+
+
+def _flora_rows(text: str) -> list[dict]:
+    """Require identifier columns so an HTTP-200 error page cannot erase overlap."""
+    try:
+        reader = csv.DictReader(io.StringIO(text.lstrip("\ufeff")), strict=True)
+        if not {"url_r", "doi_r"}.issubset(reader.fieldnames or []):
+            raise ValueError("FLoRA CSV must contain url_r and doi_r columns")
+        rows = list(reader)
+        if any(None in row for row in rows):
+            raise ValueError("FLoRA CSV row has more fields than its header")
+        return rows
+    except csv.Error as exc:
+        raise ValueError("Malformed FLoRA CSV") from exc
 
 
 def catalogue(cache: Path) -> dict[int, str]:
@@ -79,7 +143,11 @@ def catalogue(cache: Path) -> dict[int, str]:
 
 
 def parse_detail(number: int, text: str) -> dict:
-    page = html.fromstring(text)
+    """Require citation metadata for this exact DP before using a detail page."""
+    try:
+        page = html.fromstring(text)
+    except (etree.ParserError, etree.XMLSyntaxError) as exc:
+        raise ValueError(f"Unparseable I4R detail: {number}") from exc
     meta: dict[str, list[str]] = {}
     for node in page.xpath("//meta[@name][@content]"):
         meta.setdefault(node.get("name").lower(), []).append(node.get("content"))
@@ -135,8 +203,8 @@ def resolve_original(record: dict, cache: Path) -> None:
         + requests.utils.quote(RESEARCHER_EMAIL)
     )
     try:
-        items = json.loads(fetch(url, cache))["message"]["items"]
-    except requests.RequestException:
+        items = _crossref_items(fetch(url, cache, validate=_crossref_items))
+    except (requests.RequestException, ValueError):
         record["original_status"] = "crossref_unavailable_stage3_required"
         return
 
@@ -227,20 +295,17 @@ def harvest(
 ) -> dict:
     """Inventory all DPs; ingest only unseen records absent from published FLoRA."""
     papers = catalogue(cache)
-    with flora_csv.open(encoding="utf-8-sig", newline="") as stream:
-        flora_rows = list(csv.DictReader(stream))
-    flora_keys = [
-        set().union(
-            *(identity_keys(v or "") for k, v in row.items() if k.endswith("_r"))
-        )
-        for row in flora_rows
-    ]
+    flora_rows = _flora_rows(flora_csv.read_text(encoding="utf-8-sig"))
+    flora_keys = [identity_keys(row.get("url_r") or "") for row in flora_rows]
     known = set().union(*flora_keys)
     flora_dois = {clean_doi(row.get("doi_r", "")) for row in flora_rows} - {""}
 
     def detail(item: tuple[int, str]) -> dict:
+        """Validate cached citation metadata before it becomes a checkpoint input."""
         number, url = item
-        return parse_detail(number, fetch(url, cache))
+        return parse_detail(
+            number, fetch(url, cache, validate=lambda text: parse_detail(number, text))
+        )
 
     with ThreadPoolExecutor(max_workers=I4R_WORKERS) as executor:
         records = list(executor.map(detail, papers.items()))
@@ -274,12 +339,12 @@ def harvest(
                 clean_doi(flora_rows[i].get("doi_o", "")) for i in matching
             } - {""}
             record["original_dois"] = sorted(originals)
+            record["original_status"] = "published_flora"
             if len(originals) == 1:
                 record["doi_o"] = originals.pop()
-                record["original_status"] = "published_flora"
         shard = pool / f"curated-i4r-{number:06d}.parquet"
         record["in_pool"] = shard.exists()
-        if record["in_pool"]:
+        if record["in_pool"] and not record["in_flora"]:
             hint = (pq.read_metadata(shard).metadata or {}).get(b"original_hint")
             if hint:
                 record.update(json.loads(hint))
@@ -294,6 +359,7 @@ def harvest(
         rows.append(record)
 
     def original(record: dict) -> None:
+        """Fetch original-title hints only for new, unpublished records."""
         resolve_original(record, cache)
 
     with ThreadPoolExecutor(max_workers=I4R_WORKERS) as executor:
@@ -318,7 +384,7 @@ def harvest(
             pq.write_table(
                 pa.Table.from_pylist([pool_record(record)], schema=schema), tmp
             )
-            tmp.replace(shard)
+            _durable_replace(tmp, shard)
     result = {
         "series": SERIES,
         "flora_csv_sha256": hashlib.sha256(flora_csv.read_bytes()).hexdigest(),
@@ -340,11 +406,14 @@ def harvest(
         "records": rows,
     }
     report.parent.mkdir(parents=True, exist_ok=True)
-    report.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
+    report_tmp = report.with_suffix(".tmp")
+    report_tmp.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
+    _durable_replace(report_tmp, report)
     return result
 
 
 def main() -> None:
+    """Run a locked inventory or incremental pool import and report its accounting."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--write",
@@ -364,7 +433,9 @@ def main() -> None:
     with FileLock(str(args.cache / "harvest.lock"), timeout=0):
         flora = args.flora_csv or args.cache / "flora.csv"
         if args.flora_csv is None:
-            flora.write_text(fetch(FLORA_URL, args.cache, refresh=True))
+            flora.write_text(
+                fetch(FLORA_URL, args.cache, refresh=True, validate=_flora_rows)
+            )
         result = harvest(args.cache, args.pool, flora, args.report, args.write)
     print(json.dumps({k: v for k, v in result.items() if k != "records"}, indent=2))
 

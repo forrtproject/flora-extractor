@@ -13,20 +13,26 @@ The source is the complete [EconPapers series](https://econpapers.repec.org/pape
 metadata supplies the title, authors, publication year, RePEc handle and any report
 DOI, plus the EconStor download and persistent handle. Successful responses are
 cached before parsing; a failed detail fetch fails the run without marking that DP
-done. A missing/changed catalogue or malformed detail is an error, not a zero result.
+done. Empty/unparseable catalogue pages and malformed details raise errors.
+A nonempty truncated catalogue cannot be proven complete by this scraper; the
+nonempty-page guard is not a guarantee against source-side omissions. Invalid
+detail/Crossref cache bodies are evicted; a bad legacy entry is refetched in the
+same call. Malformed/unavailable Crossref data leaves Stage 3 to resolve the target.
 
 ```bash
 # Read-only inventory against today's fred-data output/flora.csv:
 .venv/bin/python -m search.i4r
-# Optional reproducible comparison with a frozen input:
+# Optional comparison with the checkout's local FLoRA copy (which may be older):
 .venv/bin/python -m search.i4r --flora-csv data/flora.csv
+# Exact pinned-input reproduction commands: see docs/i4r-dry-run.md.
 # Write only new candidates to the configured survivor pool:
 .venv/bin/python -m search.i4r --write
 ```
 
 The report is `logs/i4r.json`: full metadata, overlap and new counts, original-title
 and DOI hints, and the SHA256 of the compared FLoRA CSV. FLoRA overlap uses exact
-report DOI, RePEc DP number, or EconStor handle extracted from landing/PDF URLs,
+report DOI from `doi_r`, or RePEc DP number/EconStor handle extracted only from
+`url_r` landing/PDF URLs,
 including URL-encoded links. Multiple FLoRA target rows can belong to one DP.
 Counts do not include title-only matches or external published versions with no
 shared report identifier.
@@ -37,7 +43,8 @@ explicitly labelled in the pool text. Missing, ambiguous or unavailable matches
 remain `stage3_required`, never a guessed DOI. Stage 3's existing target/outcome
 ladder handles titles, references and full text (including the first page), multiple
 originals, and DOI verification. The harvest inventory is therefore not a fully
-linked extraction artifact.
+linked extraction artifact. Current published FLoRA target metadata takes priority
+over an older shard hint; cached hints are restored only for unpublished records.
 
 ## Identity, checkpoint and provenance
 
@@ -49,7 +56,9 @@ Exact DOI/handle matches already in the pool reuse its existing identity. The
 readers use its curated metadata once per work. Existing alias resolution still
 applies. No fuzzy title merge is performed.
 
-Each shard is published atomically; its existence is the incremental checkpoint.
+Each shard is published atomically after syncing its file, then syncing the pool
+directory; its existence is the incremental checkpoint. Cache and report writes
+use the same durable replacement protocol.
 Reruns fetch the catalogue but reuse details and skip completed shards. A crash
 before publication retries that paper. Requests use four workers by default (`I4R_WORKERS`), with a shared limit of two
 requests per second per service and locks around individual response-cache files.
@@ -63,12 +72,19 @@ shards need no rewrite. Shards carry curated provenance in their `source` column
 pool fingerprint and pool sync; a snapshot's gate provenance continues to describe
 the snapshot portion. A pool containing only curated shards has no snapshot gate
 and routes with the existing UNKNOWN-gate warning. Engine version 3 binds the
-new identity/routing behavior to routing releases.
+new identity/routing behavior to routing releases. The pool fingerprint hashes
+only the recorded gate and each file's name, byte size and row count. It does
+not hash footer metadata, source values, hints or other file contents: a same-size
+rewrite can retain a release ID. Curated source/hint provenance is stored in the
+parquet, but is not itself a content fingerprint.
 
 ## Weekly scheduling and downstream flow
 
 The box runs pipeline jobs through user systemd units. The supplied weekly timer
-runs Monday at 06:00 UTC (plus up to 15 minutes jitter), with persistent catch-up:
+runs Monday at 06:00 UTC (plus up to 15 minutes jitter), with persistent catch-up.
+The user service retries failures every 15 minutes, including failures before
+network connectivity is available; it does not depend on a system-only network
+target in the user manager:
 
 ```bash
 mkdir -p ~/.config/systemd/user
@@ -83,9 +99,26 @@ The service targets the box's canonical checkout at
 at 2 GB. Adjust the two checkout paths before installing elsewhere. The timer is
 supplied for deployment; the PR dry run does not install or start it.
 
-After ingestion, route a new release with `.venv/bin/python -m filter.engine route`.
-The existing `scripts/night_run.sh` screens and extracts that release. Export with
-`.venv/bin/python -m extract.export`; that remains the only writer of
-`data/extracted.csv`. The separate **flora-validation** repository's `csv_to_db.py`
-imports the resolved export for human validation. Neither the harvester nor the
-scheduled job writes validation tables or production FLoRA records.
+After all intake and rule changes are present, route once and use its release for
+all later steps. `PENDING_RUNS.md` consolidates this with the other owed changes:
+
+```bash
+.venv/bin/python -m filter.engine route
+read -r -p "Release ID printed by route: " REL
+.venv/bin/python -m filter.engine diagnose --spec curated-i4r
+.venv/bin/python -m filter.engine diagnose --spec reproduction-claim
+.venv/bin/python -m filter.engine screen --tier screen_expensive --release "$REL"
+```
+
+The last command is a dry run. When the existing sandbox/run checks are satisfied,
+the night runner takes that same release argument, under the required memory cap:
+
+```bash
+systemd-run --user --unit="flora-night-$REL" -p MemoryMax=8G -p MemorySwapMax=0 "$(pwd)/scripts/night_run.sh" "$REL"
+```
+
+`scripts/night_run.sh` screens and extracts. Then use
+`.venv/bin/python -m extract.export --release "$REL"`; this remains the only writer
+of `data/extracted.csv`. The separate **flora-validation** repository's
+`csv_to_db.py` imports the resolved export for human validation. Neither the
+harvester nor its scheduled job writes validation tables or production FLoRA records.

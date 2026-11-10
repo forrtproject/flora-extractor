@@ -1,13 +1,16 @@
 # Live reproduction-claim admission
 
-`filter/spec/reproduction-claim.json` promotes the measured prototype unchanged:
+`filter/spec/reproduction-claim.json` enables the reviewed reproduction-claim rule:
 `shadow: false`, `pile: screen_expensive`, `admission: strict`, precedence **734**.
 It assigns no `vocabulary`: the screen decides replication/reproduction eligibility.
 
 Four arms recognise explicit reproduction-report titles, computational/robustness
 reproduction of a target in the title, bounded active self-reproduction claims in
 a comment/reply/reanalysis/replication genre, and explicit self-claims to assess
-or conduct computational reproduction. The closed auxiliary/adverb list excludes
+or conduct computational reproduction, including past-tense and third-person
+forms. Generic `present`/`provide` claims are excluded from this arm so tooling
+announcements do not qualify on that wording alone. The closed auxiliary/adverb
+list excludes
 passive copyright boilerplate and “species which reproduce” grammar. Broad
 reproduction and reanalysis wording alone does not activate this rule.
 
@@ -27,14 +30,20 @@ state changes.
 
 | Replay quantity | Works / DPs |
 |-----------------|-------------|
-| Candidate-matching canonical work IDs | 332 works |
-| Formerly pending works newly routed to expensive screening | **217 works** |
+| Canonical first rows replayed (original/reviewed candidate union) | 350 works |
+| Reviewed-rule matches on canonical first rows | 346 works |
+| Formerly pending works newly routed to expensive screening | **228 works** |
 | Existing discards newly routed to screening | **0 works** |
 | Candidate matches still deferred for missing text | 20 works |
-| Pending I4R DPs newly screenable | **68 of 189 DPs** |
+| Pending I4R DPs newly screenable | **69 of 189 DPs** |
 
-The other candidate matches were already screened or remain discarded. The 68 is
-a gain in admission, not a count of confirmed reproductions. Independent precision
+The other candidate matches were already screened or remain discarded. The 69 is
+a gain in admission, not a count of confirmed reproductions. Compared with the
+original 217-work/68-DP prototype, the reviewed action-verb
+forms add 15 work IDs and removing generic `present`/`provide` drops four, for a
+net gain of 11 work IDs. Two I4R DPs (48 and 202) are added; DP228 drops from the
+general rule and remains eligible through the partner-source intake. Independent
+precision
 has **not** been measured; strict admission is retained. The curated I4R corpus
 suggested the patterns, so its recovery is not an independent precision test.
 

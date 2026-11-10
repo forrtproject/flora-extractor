@@ -337,7 +337,7 @@ OPENROUTER_API_KEY    = os.getenv("OPENROUTER_API_KEY",    "")
 # set is a fact about the corpus, not a setting. Adding one is a code change.
 CURATED_SOURCES = frozenset({"i4r", "bob_reed", "backfill_old_pipeline"})
 # Concurrent I4R metadata lookups; requests still share a per-service rate limit.
-I4R_WORKERS = int(os.getenv("I4R_WORKERS", "4"))
+I4R_WORKERS = max(1, int(os.getenv("I4R_WORKERS", "4")))
 
 # ── OpenAlex snapshot (bulk parquet) ──────────────────────────────────────────
 # The public S3 bucket holding the whole corpus as column-projectable parquet.

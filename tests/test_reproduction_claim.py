@@ -12,7 +12,7 @@ from tests.test_engine_route import _batch, _row
 
 @pytest.fixture(scope="module")
 def specs():
-    return load_specs(Path("filter/spec"))
+    return load_specs(Path(__file__).resolve().parents[1] / "filter" / "spec")
 
 
 @pytest.mark.parametrize(
@@ -108,3 +108,34 @@ def test_structural_discards_and_text_gate_still_apply(specs):
         "screen_expensive",
         "reproduction-claim",
     )
+
+
+@pytest.mark.parametrize(
+    "claim",
+    [
+        "We conducted a computational reproduction.",
+        "This paper assessed computational reproducibility.",
+        "This study has investigated computational reproducibility.",
+        "This report undertook a computational reproduction.",
+        "This paper tests computational reproducibility.",
+    ],
+)
+def test_inflected_computational_claims(specs, claim):
+    spec = next(s for s in specs if s.id == "reproduction-claim")
+    assert eval_spec_rows(
+        spec, [_row(title="Checking published results", abstract=claim)]
+    ) == [True]
+
+
+@pytest.mark.parametrize(
+    "claim",
+    [
+        "We present a framework to improve computational reproducibility.",
+        "We provide computational reproducibility materials.",
+    ],
+)
+def test_tooling_is_not_a_computational_reproduction_claim(specs, claim):
+    spec = next(s for s in specs if s.id == "reproduction-claim")
+    assert eval_spec_rows(
+        spec, [_row(title="A new software framework", abstract=claim)]
+    ) == [False]
