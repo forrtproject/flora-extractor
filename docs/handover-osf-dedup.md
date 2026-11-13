@@ -1,8 +1,13 @@
 # Handover: deduplicate OpenAlex works that name one OSF record (issue #200)
 
-**Nothing is implemented.** The prerequisite is committed and the decision is made;
-the derivation script, the alias entries and the re-route are all still to do. This
-brief is what you need to start without re-deriving any of it.
+**Implemented and applied.** Commit `3fb6efe` added `analysis/build_osf_aliases.py` and
+14,744 same-guid aliases to `filter/spec/aliases.json`, and release `16d370746b45`
+applied them. On that release's export, OSF records reached by more than one work id
+fell from 92 (223 rows) to 6 (13 rows). The 405 groups excluded as OpenAlex mis-located
+works are explained in the commit message.
+
+The sections below are the brief as it was written, kept for the rule and the reasoning
+behind it. The steps they describe have been carried out.
 
 ## The defect
 
