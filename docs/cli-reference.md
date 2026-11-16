@@ -126,6 +126,63 @@ but its gate enters the id as *unknown* and every run says so loudly. The name i
 underscore-prefixed so neither the `*.parquet` globs nor pyarrow's dataset
 discovery ever sees it.
 
+**Updating a pool with a new OpenAlex release.** The scan reads only partitions the
+ledger does not mark done at their current manifest size, so an update costs the
+changed partitions rather than 725 GB.
+
+```bash
+# See what changed without reading a partition, then read it.
+.venv/bin/python -m search.run_search --scan --refresh-manifest --snapshot-max-files 0
+.venv/bin/python -m search.run_search --scan --refresh-manifest
+```
+
+These use the default pool. For a pool elsewhere, add `--survivor-pool <path>` to the scan
+and `--pool-dir <path>` to `snapshot_scan`, including `--reconstruct-ledger` below.
+
+The first command replaces the cached manifest and logs how many partitions are new,
+rewritten, interrupted or unverified, and unchanged, with the gigabytes each would cost. A later scan
+compares against the ledger, so the preview does not hide anything from it.
+
+**An updated pool is not equivalent to a rescan.** A partition no longer in the manifest
+is reported and left alone, so its pool file and rows stay. Where OpenAlex moved a work
+from that partition to a newer one, the pool holds both copies and routing uses the
+older. Routing reads files in name order, names start with the partition's date, and the
+first row per work is kept. The same applies to a file kept through an undetected
+rewrite (below). An update that changes a pool file's name, size or row count mints a new
+release id, because `pool_fingerprint()` hashes those, so the whole pool is re-routed.
+Routing is local and spends nothing. An update that changes none of them, such as a new
+partition with no survivors, keeps the release id.
+
+**A pulled pool needs its ledger rebuilt first.** `pool_sync` does not carry the ledger,
+so `--scan` refuses a pool whose files have no ledger entry rather than re-reading it all
+(a scan forced over a pool of another gate excepted). Rebuild the entries, then preview:
+
+```bash
+.venv/bin/python -m search.snapshot_scan --reconstruct-ledger
+.venv/bin/python -m search.run_search --scan --refresh-manifest --snapshot-max-files 0
+```
+
+Reconstruction transfers no pool data. What it can and cannot claim:
+
+- A pool file proves its partition was read in full under the gate in the sidecar. It
+  does not record the partition's size at that time, so the ledger takes the size from
+  the manifest. **A partition OpenAlex rewrote between the pool's scan and that manifest
+  is not detected and keeps its old file.** Only later rewrites are. Run it before
+  `--refresh-manifest`, because an older baseline can only cause extra reads, never
+  missed ones. A checkout with no cached manifest has to use the current one.
+- A pool file holding more rows than the manifest gives its partition was certainly
+  rewritten, so it gets an `unverified` entry and is re-read. So does a partition whose
+  manifest entry states no size.
+- A partition with no pool file may have had no survivors, been skipped as unreadable or
+  be new. These get no entry, so the next scan reads each once. The report gives their
+  total as `no_pool_file_bytes`. A pool from an older release can share few partition
+  names with the current manifest, and a `--years` pull leaves every other year without
+  files, so this can approach a full read. Check the number before scanning.
+
+It refuses a short pool (finish the pull), and a pool whose sidecar records no gate or
+another gate. Entries are marked `reconstructed_from: <manifest date>`, and a re-run adds
+nothing. For a true full re-read, scan into a fresh pool directory.
+
 There is no sample or pilot mode. To scan a few partitions for a look, run the
 same command against a scratch state directory — `FLORA_CACHE_DIR=/tmp/flora-sample
 .venv/bin/python -m search.run_search --scan --snapshot-max-files 3` moves the ledger and,
