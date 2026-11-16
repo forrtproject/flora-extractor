@@ -1,0 +1,12 @@
+[Unit]
+Description=Harvest new I4R Discussion Papers into FLoRA's candidate pool
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+Restart=on-failure
+RestartSec=15m
+WorkingDirectory=%h/Documents/Coding/flora-extractor
+ExecStart=%h/Documents/Coding/flora-extractor/.venv/bin/python -m search.i4r --write
+MemoryMax=2G
+MemorySwapMax=0

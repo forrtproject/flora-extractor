@@ -53,13 +53,19 @@ def _screenable_on_its_title(ctx: BatchContext, index: int) -> bool:
     voters to judge from the title and abstract below — and Stage 3's document
     waterfall, which already reads OSF file storage, is what these rows need reaching.
 
-    Narrow on purpose, in two ways. It is the population `osf_identifier()` accepts —
+    Curated I4R reports also reach the screen on their title when no abstract is
+    supplied; the source tag is the recall prior, not a verdict about eligibility.
+
+    The OSF exemption is narrow on purpose, in two ways. It is the population `osf_identifier()` accepts —
     a DOI on the OSF registrant, or an osf.io URL on a row with NO DOI, which is what
     keeps a published article whose OA copy sits on OSF out of it. And a row with no
     title either is still downgraded: there is no evidence to read.
     """
     if not str(ctx.title[index].as_py() or "").strip():
         return False
+    source = ctx.column("source")
+    if source is not None and source[index].as_py() == "i4r":
+        return True
     return osf_identifier(str(ctx.doi[index].as_py() or ""),
                           str(ctx.url[index].as_py() or "")) is not None
 

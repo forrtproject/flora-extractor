@@ -1,4 +1,4 @@
-"""Work identity: the int64 OpenAlex id, and the alias map that canonicalises it.
+"""Work identity: positive OpenAlex ids, negative I4R DP numbers, and aliases.
 
 Everything the engine keys — routing rows, evaluations, claims — is keyed by the
 alias-resolved id, so one article does not appear twice under two ids across
@@ -23,7 +23,9 @@ _ID_RE = re.compile(r"^(?:https?://openalex\.org/)?[Ww]?(\d+)$")
 
 
 def work_id(openalex_id: str) -> int:
-    """`https://openalex.org/W123`, `W123` or `123` as the int64 work id."""
+    """OpenAlex ids map to positive int64s; `i4r:N` reserves `-N`."""
+    if re.fullmatch(r"i4r:[1-9]\d*", (openalex_id or "").strip()):
+        return -int(openalex_id.strip().split(":")[1])
     match = _ID_RE.match((openalex_id or "").strip())
     if not match:
         raise ValueError(f"not an OpenAlex work id: {openalex_id!r}")

@@ -23,16 +23,79 @@ the command, pasteable from the project root, and what proves it worked.
 
 ## Open
 
-- [ ] **Render the admission gate (PR #229) into `data/extracted.csv`.** First merge the
-      flora-validation change that adds `screen_deferred` to `RETIRE_REASONS`
-      (`csv_to_db.py`): until then its retire step refuses the whole manifest. Then
-      refresh the exemption list, check, render, and commit the three files together:
+- [ ] **Prepare I4R intake after merge, before the shared routing release.** From
+      the updated canonical checkout run `.venv/bin/python -m search.i4r --write`,
+      then repeat it and verify `to_ingest: 0`. Install the weekly systemd timer
+      as described in `docs/i4r-harvester.md`. This prepares the corpus for the
+      single `$REL` minted below; screening, extraction and export all use that
+      same release. Done when the second harvest adds zero and
+      `systemctl --user list-timers flora-i4r.timer` shows the next run.
+
+The entries below run in this order on the box, the only machine with the routing
+store. On 2026-11-05 its newest stored extract verdict was from 2026-10-18, so nothing
+merged on 2026-10-28 has run, not even in the sandbox. Each entry's PR carries the
+`run pending` label; remove the label when the entry is ticked.
+
+- [ ] **Route one release carrying I4R intake, reproduction-claim and PR #223's
+      discards.** Every later entry uses this same `$REL`. The export and extract
+      tier refuse old release `61f07fd07f19` because the specs have changed.
+      After the intake above, run:
+      ```bash
+      .venv/bin/python -m filter.engine route
+      read -r -p "Release ID printed by route: " REL
+      .venv/bin/python -m filter.engine diagnose --spec reproduction-claim
+      .venv/bin/python -m filter.engine diagnose --spec curated-i4r
+      .venv/bin/python -m filter.engine screen --tier screen_expensive --release "$REL"
+      ```
+      The screen command is a dry run. Done when the live bundle and diagnoses
+      expose both admission rules, their match populations and routed piles, and
+      the screen worklist offers no structurally discarded work. The frozen
+      replay in `docs/i4r-rule-promotion.md` measures the reproduction rule's
+      marginal gain; current skip lists and changed inputs may reduce the
+      actual screen worklist. Strict admission remains required. The existing
+      sandbox/run sequence below handles paid screening, extraction and export.
+      Expect `peer-review-record` to discard at least the 167 works measured on
+      `61f07fd07f19`; the PCI arm of `not-a-paper-doi` remains unmeasured.
+
+- [ ] **Re-extract the 14 works linked to a record about the original (PR #222).** Run
+      the sandbox first, because this is also the first exercise of ladders 32 and 33:
+      ```bash
+      W=2055766296,2911411325,4212792994,4220947390,4225910309,4283783155,4361272113,4387293767,4388904550,4388904615,4391787029,4391898252,4399984952,6962756304
+      .venv/bin/python -m extract.tier --release "$REL" --mode validation --redo "$W" --only "$W"
+      .venv/bin/python -m extract.tier --release "$REL" --mode validation --redo "$W" --only "$W" --run
+      .venv/bin/python -m extract.export --release "$REL" --mode validation --out data/extracted-test.csv
+      ```
+      Read the sandbox rows, then repeat the two tier commands without `--mode validation`.
+      Done when none of the 14 ships a `doi_o` that `non_article_doi()` names.
+
+- [ ] **Render the new release: the admission gate (PR #229), PR #223's discards, PR
+      #222's corrections and PR #217's new works.** The flora-validation change that adds
+      `screen_deferred` to `RETIRE_REASONS` is merged (flora-validation PR #16), so the
+      retire step accepts this manifest. Refresh the exemption list, check, render, and
+      commit together:
       `.venv/bin/python -m analysis.build_human_judged --apply`, then
-      `.venv/bin/python -m extract.export --release <newest> --check`, then without
+      `.venv/bin/python -m extract.export --release "$REL" --check`, then without
       `--check`; commit `data/human_judged.csv`, `data/extracted.csv` (+ set-asides) and
       `data/retired_pairs.csv`, push. Expect ~850 `screen_deferred` retirements (857 on
-      release 61f07fd07f19). Done when the next nightly run shows `retire_superseded`
-      SUCCESS.
+      release 61f07fd07f19). PR #217's works were extracted by 2026-10-18 and rendered on
+      the box only: its uncommitted `data/extracted.csv` holds 11,688 rows, git 9,608. This
+      render replaces that file, so do not commit the 2026-10-18 render separately. Done
+      when the next nightly run shows `retire_superseded` SUCCESS.
+
+- [ ] **Re-ask the works with no linked original under ladder 33 (PR #225).** This is a
+      campaign, not a top-up: the 2026-10-18 render holds 8,091 `target_pending`, 660
+      `no_original_found` and 620 `unidentified_original` works. Price it on a sandbox
+      sample before buying the whole population:
+      ```bash
+      S=target_pending,unidentified_original,no_original_found
+      .venv/bin/python -m extract.tier --release "$REL" --mode validation --redo-status "$S"
+      .venv/bin/python -m extract.tier --release "$REL" --mode validation --redo-status "$S" --limit 50 --run
+      .venv/bin/python -m extract.export --release "$REL" --mode validation --out data/extracted-test.csv
+      ```
+      Decide from that sample whether to run all three statuses or narrow them, then run
+      the tier command live without `--mode validation` and `--limit`, and render again as
+      in the entry above. Done when the live dry run offers 0 works and the render is
+      pushed.
 
 ## Done
 

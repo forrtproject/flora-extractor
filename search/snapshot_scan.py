@@ -4,8 +4,8 @@ Stage 1 source: the OpenAlex bulk-parquet snapshot, scanned end to end.
 A phrase search can only find works whose title or abstract matches a phrase we
 thought to write down. The snapshot is the whole corpus, so this scanner reads
 every work once and decides locally what to keep.
-Stage 1 IS this scan: every API-harvest source has been removed, and the
-survivor pool this writes is Stage 2's input.
+This scan writes the survivor pool Stage 2 reads. Curated I4R ingestion
+(search/i4r.py) adds source-tagged rows to that same pool without this gate.
 
 One gate, recall-oriented — **the search gate** (vectorized, pyarrow): a broad
 token regex over title and the RAW abstract inverted-index JSON, OR membership of
@@ -123,6 +123,7 @@ _POOL_SCHEMA = pa.schema([
     ("open_access", pa.string()),
     ("concepts", pa.string()),
     ("abstract_text", pa.string()),
+    ("source", pa.string()),
     ("hit_token_title", pa.bool_()),
     ("hit_token_abstract", pa.bool_()),
     ("hit_concept", pa.bool_()),
@@ -620,8 +621,8 @@ def _row_from_snapshot(rec: dict, abstract: Optional[str] = None) -> dict:
         "authors_r":     authors,
         "journal_r":     journal,
         "url_r":         open_access.get("oa_url") or location.get("landing_page_url"),
-        "openalex_id_r": rec.get("id"),
-        "source":        SOURCE_TAG_SNAPSHOT,
+        "openalex_id_r": rec.get("id") if not str(rec.get("id") or "").startswith("i4r:") else "",
+        "source":        rec.get("source") or SOURCE_TAG_SNAPSHOT,
         "ref_r":         _build_ref(authors, year, journal),
     }
 
@@ -665,6 +666,7 @@ def _pool_record(rec: dict, abstract: str, title_hit: bool,
         "type":               rec.get("type"),
         **{c: _json_str(rec.get(c)) for c in _POOL_NESTED_COLUMNS},
         "abstract_text":      abstract,
+        "source":             rec.get("source") or SOURCE_TAG_SNAPSHOT,
         "hit_token_title":    title_hit,
         "hit_token_abstract": abstract_hit,
         "hit_concept":        concept_hit,

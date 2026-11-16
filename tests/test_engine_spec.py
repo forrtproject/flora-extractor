@@ -24,6 +24,7 @@ SPEC_DIR = Path(__file__).resolve().parent.parent / "filter" / "spec"
 #
 EXPECTED = {
     # id: (pile, precedence, vocabulary, shadow)
+    "curated-i4r": ("screen_expensive", 10000, None, False),
     "not-a-paper-doi": ("discard", 960, None, False),
     "doi-registry-twin": ("discard", 950, None, False),
     "deposit-registrant": ("discard", 958, None, False),
@@ -42,6 +43,7 @@ EXPECTED = {
     "replication-claim-cited-abstract": ("screen_expensive", 737, None, False),
     "replication-claim-failure-prior": ("screen_expensive", 736, None, False),
     "replication-claim-general": ("screen_expensive", 735, None, False),
+    "reproduction-claim": ("screen_expensive", 734, None, False),
     "replication-claim-text": ("screen_expensive", 730, None, True),
     "replication-claim-residual": ("screen_expensive", 710, None, True),
     "not-a-study-type": ("discard", 500, None, False),
@@ -57,7 +59,7 @@ _CLAIM_TIERS = ("replication-claim-cited-title", "replication-claim-title-strong
                 "replication-claim-cited-abstract", "replication-claim-failure-prior",
                 "replication-claim-general",
                 "replication-claim-text", "replication-claim-residual")
-_ADMISSION = _CLAIM_TIERS
+_ADMISSION = _CLAIM_TIERS + ("reproduction-claim",)
 _ABOVE_ADMISSION = ("not-a-paper-doi", "doi-registry-twin", "deposit-registrant",
                     "not-a-paper-title", "not-a-paper-abstract", "peer-review-record",
                     "not-a-report-type")
@@ -117,7 +119,7 @@ def test_the_expensive_screen_uses_the_declared_admission_routes():
     family's band, below the strong title tier: measured, outranking the discards
     bought one work."""
     expensive = [s.id for s in load_specs(SPEC_DIR) if s.pile == "screen_expensive"]
-    assert expensive == ["osf-registration-completed",
+    assert expensive == ["curated-i4r", "osf-registration-completed",
                          "replication-claim-cited-title",
                          "replication-claim-title-strong",
                          "curated-observatory",
@@ -126,6 +128,7 @@ def test_the_expensive_screen_uses_the_declared_admission_routes():
                          "replication-claim-cited-abstract",
                          "replication-claim-failure-prior",
                          "replication-claim-general",
+                         "reproduction-claim",
                          "replication-claim-text", "replication-claim-residual"]
 
 

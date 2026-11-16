@@ -760,13 +760,9 @@ def outcome_categories_for(record_type: str) -> set:
 # paper is, and the pipeline records that rather than defaulting to replication.
 TYPE_VALUES = {"replication", "reproduction"}
 
-# Sources actually produced by the pipeline. bob_reed / i4r are not in the enum:
-# their fetchers were retired with the API-harvest Stage 1 (PR #158, parked on
-# wip/api-harvest-sources); a curated harvester is issue #150. Both names remain in
-# shared.config.CURATED_SOURCES, so such rows would bypass the pre-screen if a
-# harvester lands.
+# I4R's curated harvester writes pool rows; bob_reed remains retired.
 SOURCE_VALUES = {"openalex", "openalex_concept", "openalex_snapshot", "semantic_scholar",
-                 "backfill_old_pipeline"}
+                 "backfill_old_pipeline", "i4r"}
 
 
 # ── Year columns ──────────────────────────────────────────────────────────────
