@@ -39,5 +39,7 @@ for name, g in GATES:
     n_drop = (CUR_PASS + OLD_PASS) * len(nd) / len(M)
     print(f"| {name} | {s_disc[0]:.2f}–{s_disc[1]:.2f} | {s_all[0]:.2f}–{s_all[1]:.2f} | {100*len(res)/len(D):.1f}% ({real(res)} of {len(res)}) "
           f"| ~{n_res:,.0f} | ~{n_real:,.0f} | {n_res*0.0009:.2f}–{n_res*0.0018:.2f} | ~{n_drop:,.0f} ({real(nd)} of {len(nd)}) |")
+print("\nRescued and Stage 3 columns are before #229's admission gate. A rescued work carries Luna's `none`, "
+      "so a `strict` routing rule defers it; only works routed by lenient rules reach Stage 3.")
 main_all = [(OLD_PASS + OLD_DISC) * (C.USD["ds4"] + l) / 1000 for l in LUNA]
 print(f"\nFor comparison, re-screening all works with main (DS4 + Luna, both cached for the current generation): ${main_all[0]:.2f}–{main_all[1]:.2f}.")

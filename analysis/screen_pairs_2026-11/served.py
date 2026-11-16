@@ -3,7 +3,7 @@ import combos as C
 avail = [r for r in C.rows if "pplx11" not in r[0]]
 txt = [r for r in avail if r[5] == "text"]
 dom = lambda r, pool: any(o[1] <= r[1] and o[2] >= r[2] and o[4] <= r[4] and (o[1], -o[2], o[4]) != (r[1], -r[2], r[4]) for o in pool)
-named = {"ds4 + luna", "luna + span02<0.7", "luna + span02<0.5", "luna + clef<0.5", "luna + clef<0.6", "ds4 + span02<0.5", "ds4 + span02<0.7",
+named = {"luna + ds4", "luna + span02<0.7", "luna + span02<0.5", "luna + clef<0.5", "luna + clef<0.6", "ds4 + span02<0.5", "ds4 + span02<0.7",
          "luna + ds4 + span02<0.7", "luna + span02<0.7 + clef<0.5", "luna + span02<0.7 + clefflash<0.6", "luna + clefflash<0.6", "span02<0.7 + clef<0.5"}
 print("\n\n=== AVAILABLE ONLY, text voter required (Pareto) + named ===")
 print("| gate | lost | human neg | pipeline neg | $/1k | text |\n|---|--:|--:|--:|--:|---|")

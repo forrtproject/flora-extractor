@@ -6,6 +6,5 @@ import run_open as R
 R.MODELS.update({"mammoth1": "baseten/mammoth-1-20261021", "elephant1": "baseten/elephant-1-20261021",
                  "joey1": "baseten/joey-1-20261029", "d11": "liquid/d1.1-20261027",
                  "drex20": "nace-ai/drex-v2.0-20261009", "jev114": "typesafe/jev-1.14-20261014",
-                 "msd1": "microsoft/microsoft-decision-1-20261009",
-                 "span01": "respan/span-01-20260925", "span01lite": "respan/span-01-lite-20260925"})
+                 "msd1": "microsoft/microsoft-decision-1-20261009"})  # Span-01s answer yes/no: run_span01.py
 R.run(sys.argv[1], int(sys.argv[2]) if len(sys.argv) > 2 else 0)

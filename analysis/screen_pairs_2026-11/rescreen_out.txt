@@ -8,4 +8,6 @@ Corpus: 33,603 screened works, 8,112 discards. Evaluation: main discards 599, pa
 | Luna + Span-02 + Clef | 1.23–1.38 | 5.53–7.09 | 8.7% (6 of 52) | ~704 | ~81 | 0.63–1.27 | ~128 (0 of 8) |
 | Luna + Span-02 + d1.1 | 0.59–0.74 | 2.87–4.43 | 12.0% (6 of 72) | ~975 | ~81 | 0.88–1.76 | ~145 (0 of 9) |
 
+Rescued and Stage 3 columns are before #229's admission gate. A rescued work carries Luna's `none`, so a `strict` routing rule defers it; only works routed by lenient rules reach Stage 3.
+
 For comparison, re-screening all works with main (DS4 + Luna, both cached for the current generation): $1.67–3.23.

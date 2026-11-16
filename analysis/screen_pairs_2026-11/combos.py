@@ -71,14 +71,14 @@ def dec_type(k, i):  # a type only when one holds >= 0.7 of P(qualifies) (DECISI
 
 def type_score(vs):
     """Production rule (_screen_record_type): the LLM voters in order, first type wins; a decision
-    voter naming a DIFFERENT type overrides it (the first such). -> (correct, typed, repros found)."""
+    voter naming a type overrides it (the first such). -> (correct, typed, repros found)."""
     ok = typed = rp = 0
     for i, truth in TRUTH.items():
         if i not in R["luna"]:
             continue
         t = next((llm_type(v, i) for v in vs if isinstance(v, str) and llm_type(v, i)), "")
-        for v in vs:
-            if not isinstance(v, str) and (d := dec_type(v[0], i)) and d != t:
+        for v in vs:  # the first decision voter that names a type wins, as in production
+            if not isinstance(v, str) and (d := dec_type(v[0], i)):
                 t = d
                 break
         if t:
@@ -94,7 +94,7 @@ def strict_ok(vs, i):
                 return False
         else:
             k, t = v; p = R[k][i]["probs"]; qq = q(k, i); rep = p["replication"] + p["both"]
-            if R[k][i].get("notype") or qq < t or qq < 0.9 or max(rep, p["reproduction"]) / qq < 0.7:
+            if qq < t or qq < 0.9 or max(rep, p["reproduction"]) / qq < 0.7:
                 return False
     return True
 
@@ -132,7 +132,13 @@ print("|---|--:|--:|--:|--:|---|")
 # Pareto front on (lost, -human discard, cost); plus anything named in #219 for reference
 def dominated(r):
     return any(o[1] <= r[1] and o[2] >= r[2] and o[4] <= r[4] and (o[1], -o[2], o[4]) != (r[1], -r[2], r[4]) for o in rows)
-keep = [r for r in rows if not dominated(r) or r[0] in ("ds4 + luna", "luna + span02<0.7", "luna + clef<0.5")]
+keep = [r for r in rows if not dominated(r) or r[0] in ("luna + ds4", "luna + span02<0.7", "luna + clef<0.5")]
 for r in sorted(keep, key=lambda r: (r[1], -r[2])):
     print(f"| {r[0]} | {r[1]} | {100*r[2]:.0f}% | {100*r[3]:.0f}% | {r[4]:.3f} | {r[5]} |")
 print(f"\n{len(rows)} gates scored, {len(keep)} shown (Pareto on lost/human-discard/cost + references)")
+
+print("\n| reference gate | strict: replications deferred | strict: non-replications admitted, human / pipeline (screen alone) | type correct / typed | reproductions found |")
+print("|---|--:|--:|--:|--:|")
+for vs in (("luna", "ds4"), ("luna", ("span02", 0.7)), ("luna", ("clef", 0.5))):
+    pr, (ok, typed, rp) = precision(vs), type_score(vs)
+    print(f"| {' + '.join(map(name, vs))} | {pr['pos'][0] - pr['pos'][1]} | {pr['hn'][1]} / {pr['pn'][1]} | {ok} / {typed} | {rp} |")
