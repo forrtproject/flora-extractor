@@ -115,6 +115,23 @@ _SET_ASIDE_COPY: dict[str, dict] = {
                   "links can be shipped with `python -m extract.export --release <id> "
                   "--include-unconfirmed-search`.",
     },
+    "final_check_held.csv": {
+        "title": "Final Check Held",
+        "why": "This work changed since the committed extracted.csv and the final AI check "
+               "has not cleared it: no blind coding yet, or a disagreement waiting for a "
+               "decision. A work that had already shipped keeps its committed rows in the "
+               "file meanwhile; these are its new rows.",
+        "action": "On the machine holding the parse cache, run `.venv/bin/python -m "
+                  "extract.final_check --release <id> --run`, fill `decision` on the `review` "
+                  "rows of data/final_check.csv, then re-render.",
+    },
+    "final_check_rejected.csv": {
+        "title": "Final Check Rejected",
+        "why": "The person running the pipeline read this changed work's two codings in "
+               "data/final_check.csv and declined it. Its earlier pairs retire.",
+        "action": "Blank the `decision` in data/final_check.csv to reconsider it; a re-extraction "
+                  "that changes the work voids the decision by itself.",
+    },
     "api_error.csv": {
         "title": "API Error",
         "why": "The row carries no verdict at all: a provider or registry call failed after its "
