@@ -58,8 +58,8 @@ codebase and makes the export a place a row can silently change shape.
 them usually are. None is derivable in general: `make_pair_id()`'s multi-original
 fallback hashes the TARGET RECORD's OpenAlex id, which is not on the row;
 `oa_work_id_r` falls back to an OpenAlex lookup when `openalex_id_r` is blank;
-`bibtex_ref_r` is built from FILTERED_COLS values the row may have rewritten
-(`_base_row` fills a blank `title_r` from `study_r`); and `screen_categories` is
+`bibtex_ref_r` is built from FILTERED_COLS values the row may have rewritten; and
+`screen_categories` is
 blank rather than copied on a row that reached no screen dict. They are stored.
 What IS copied from `input` at export is every FILTERED_COLS value the row did not
 change, which is the bulk of it. `render_payload()`'s `_repair_pair_id()` and
