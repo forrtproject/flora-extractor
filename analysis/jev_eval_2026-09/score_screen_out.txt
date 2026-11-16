@@ -1,0 +1,27 @@
+{'ds4': 390, 'ds41': 390, 'luna': 390, 'jev': 390} cases: 389
+
+--- single voters ---
+ds4                              misses  7/319 ['H002', 'H014', 'F005', 'F045', 'F130', 'F144']  hard-neg discard 67/70 (96%)  confident-none on positives 6
+ds41                             misses  5/319 ['H002', 'H009', 'F005', 'F045', 'F155']  hard-neg discard 60/70 (86%)  confident-none on positives 3
+luna                             misses  6/319 ['H002', 'H009', 'F005', 'F045', 'F130', 'F259']  hard-neg discard 58/70 (83%)  confident-none on positives 5
+jev:p7:0.2                       misses  0/319 []  hard-neg discard 21/70 (30%)
+jev:p7:0.3                       misses  2/319 ['H003', 'H006']  hard-neg discard 29/70 (41%)
+jev:p7:0.5                       misses  2/319 ['H003', 'H006']  hard-neg discard 43/70 (61%)
+jev:p7:0.7                       misses  6/319 ['HU37', 'HU52', 'H003', 'H006', 'H009', 'H026']  hard-neg discard 58/70 (83%)
+jev:direct:0.05                  misses  0/319 []  hard-neg discard 19/70 (27%)
+jev:direct:0.1                   misses  1/319 ['H003']  hard-neg discard 40/70 (57%)
+jev:direct:0.2                   misses  9/319 ['HU50', 'HU56', 'HU57', 'H004', 'H003', 'H006']  hard-neg discard 62/70 (89%)
+
+--- G-unanimous pairs ---
+ds4 + luna                       misses  4/319 ['H002', 'F005', 'F045', 'F130']  hard-neg discard 58/70 (83%)
+ds41 + luna                      misses  4/319 ['H002', 'H009', 'F005', 'F045']  hard-neg discard 55/70 (79%)
+ds4 + ds41                       misses  4/319 ['H002', 'F005', 'F045', 'F155']  hard-neg discard 60/70 (86%)
+jev:p7:0.3 + luna                misses  0/319 []  hard-neg discard 28/70 (40%)
+jev:p7:0.5 + luna                misses  0/319 []  hard-neg discard 38/70 (54%)
+jev:direct:0.1 + luna            misses  0/319 []  hard-neg discard 34/70 (49%)
+ds4 + jev:p7:0.5                 misses  0/319 []  hard-neg discard 43/70 (61%)
+ds41 + jev:p7:0.5                misses  0/319 []  hard-neg discard 38/70 (54%)
+
+--- hosts that served the DeepSeek votes ---
+ds4 {'StreamLake': 378, 'GMICloud': 12}
+ds41 {'DeepInfra': 390}

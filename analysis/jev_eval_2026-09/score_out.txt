@@ -1,0 +1,106 @@
+voters loaded: {'qwen': 1151, 'mistral': 1151, 'gpt5nano': 1151, 'gpt41nano': 1151, 'jev': 1151}
+
+--- single voters (after the shipped bypasses) ---
+qwen                               screen-neg 106/184  58%  curated-neg  29/400   7%  pos lost raw  6 / after bypass  0 of 567 (CI 0.7%)
+mistral                            screen-neg 117/184  64%  curated-neg  33/400   8%  pos lost raw 13 / after bypass  0 of 567 (CI 0.7%)
+gpt5nano                           screen-neg 104/184  57%  curated-neg  32/400   8%  pos lost raw 157 / after bypass  3 of 567 (CI 1.5%)
+gpt41nano                          screen-neg 115/184  62%  curated-neg  36/400   9%  pos lost raw 88 / after bypass  1 of 567 (CI 1.0%)
+  jev p7: AUC vs screen-neg 0.999  vs curated-neg 0.991
+jev p7 P<0.02                      screen-neg   0/184   0%  curated-neg   0/400   0%  pos lost raw  0 / after bypass  0 of 567 (CI 0.7%)
+jev p7 P<0.05                      screen-neg  15/184   8%  curated-neg   4/400   1%  pos lost raw  0 / after bypass  0 of 567 (CI 0.7%)
+jev p7 P<0.10                      screen-neg  37/184  20%  curated-neg  13/400   3%  pos lost raw  0 / after bypass  0 of 567 (CI 0.7%)
+jev p7 P<0.15                      screen-neg  55/184  30%  curated-neg  16/400   4%  pos lost raw  0 / after bypass  0 of 567 (CI 0.7%)
+jev p7 P<0.20                      screen-neg  65/184  35%  curated-neg  16/400   4%  pos lost raw  0 / after bypass  0 of 567 (CI 0.7%)
+jev p7 P<0.30                      screen-neg  86/184  47%  curated-neg  22/400   6%  pos lost raw  0 / after bypass  0 of 567 (CI 0.7%)
+jev p7 P<0.50                      screen-neg 103/184  56%  curated-neg  28/400   7%  pos lost raw  0 / after bypass  0 of 567 (CI 0.7%)
+  jev direct: AUC vs screen-neg 0.998  vs curated-neg 0.995
+jev direct P<0.02                  screen-neg   1/184   1%  curated-neg   0/400   0%  pos lost raw  0 / after bypass  0 of 567 (CI 0.7%)
+jev direct P<0.05                  screen-neg  48/184  26%  curated-neg  17/400   4%  pos lost raw  0 / after bypass  0 of 567 (CI 0.7%)
+jev direct P<0.10                  screen-neg  85/184  46%  curated-neg  25/400   6%  pos lost raw  2 / after bypass  0 of 567 (CI 0.7%)
+jev direct P<0.15                  screen-neg 105/184  57%  curated-neg  31/400   8%  pos lost raw  3 / after bypass  0 of 567 (CI 0.7%)
+jev direct P<0.20                  screen-neg 109/184  59%  curated-neg  34/400   8%  pos lost raw  4 / after bypass  0 of 567 (CI 0.7%)
+jev direct P<0.30                  screen-neg 114/184  62%  curated-neg  34/400   8%  pos lost raw  8 / after bypass  0 of 567 (CI 0.7%)
+jev direct P<0.50                  screen-neg 115/184  62%  curated-neg  35/400   9%  pos lost raw 16 / after bypass  0 of 567 (CI 0.7%)
+
+--- AND pairs ---
+qwen + mistral                     screen-neg 106/184  58%  curated-neg  27/400   7%  pos lost raw  4 / after bypass  0 of 567 (CI 0.7%)
+qwen + gpt5nano                    screen-neg  96/184  52%  curated-neg  27/400   7%  pos lost raw  6 / after bypass  0 of 567 (CI 0.7%)
+qwen + gpt41nano                   screen-neg 104/184  57%  curated-neg  29/400   7%  pos lost raw  5 / after bypass  0 of 567 (CI 0.7%)
+qwen + jev:p7:0.10                 screen-neg  35/184  19%  curated-neg  12/400   3%  pos lost raw  0 / after bypass  0 of 567 (CI 0.7%)
+qwen + jev:p7:0.20                 screen-neg  62/184  34%  curated-neg  15/400   4%  pos lost raw  0 / after bypass  0 of 567 (CI 0.7%)
+qwen + jev:direct:0.05             screen-neg  46/184  25%  curated-neg  15/400   4%  pos lost raw  0 / after bypass  0 of 567 (CI 0.7%)
+qwen + jev:direct:0.10             screen-neg  81/184  44%  curated-neg  20/400   5%  pos lost raw  2 / after bypass  0 of 567 (CI 0.7%)
+mistral + gpt5nano                 screen-neg 104/184  57%  curated-neg  30/400   8%  pos lost raw  7 / after bypass  0 of 567 (CI 0.7%)
+mistral + gpt41nano                screen-neg 115/184  62%  curated-neg  33/400   8%  pos lost raw 10 / after bypass  0 of 567 (CI 0.7%)
+mistral + jev:p7:0.10              screen-neg  37/184  20%  curated-neg  13/400   3%  pos lost raw  0 / after bypass  0 of 567 (CI 0.7%)
+mistral + jev:p7:0.20              screen-neg  65/184  35%  curated-neg  16/400   4%  pos lost raw  0 / after bypass  0 of 567 (CI 0.7%)
+mistral + jev:direct:0.05          screen-neg  48/184  26%  curated-neg  16/400   4%  pos lost raw  0 / after bypass  0 of 567 (CI 0.7%)
+mistral + jev:direct:0.10          screen-neg  85/184  46%  curated-neg  24/400   6%  pos lost raw  2 / after bypass  0 of 567 (CI 0.7%)
+gpt5nano + gpt41nano               screen-neg 104/184  57%  curated-neg  32/400   8%  pos lost raw 42 / after bypass  0 of 567 (CI 0.7%)
+gpt5nano + jev:p7:0.10             screen-neg  34/184  18%  curated-neg  13/400   3%  pos lost raw  0 / after bypass  0 of 567 (CI 0.7%)
+gpt5nano + jev:p7:0.20             screen-neg  61/184  33%  curated-neg  16/400   4%  pos lost raw  0 / after bypass  0 of 567 (CI 0.7%)
+gpt5nano + jev:direct:0.05         screen-neg  43/184  23%  curated-neg  17/400   4%  pos lost raw  0 / after bypass  0 of 567 (CI 0.7%)
+gpt5nano + jev:direct:0.10         screen-neg  77/184  42%  curated-neg  24/400   6%  pos lost raw  2 / after bypass  0 of 567 (CI 0.7%)
+gpt41nano + jev:p7:0.10            screen-neg  37/184  20%  curated-neg  13/400   3%  pos lost raw  0 / after bypass  0 of 567 (CI 0.7%)
+gpt41nano + jev:p7:0.20            screen-neg  65/184  35%  curated-neg  16/400   4%  pos lost raw  0 / after bypass  0 of 567 (CI 0.7%)
+gpt41nano + jev:direct:0.05        screen-neg  48/184  26%  curated-neg  17/400   4%  pos lost raw  0 / after bypass  0 of 567 (CI 0.7%)
+gpt41nano + jev:direct:0.10        screen-neg  83/184  45%  curated-neg  25/400   6%  pos lost raw  2 / after bypass  0 of 567 (CI 0.7%)
+
+--- error overlap on gold positives (raw 'no', before bypass) ---
+qwen                 6 no  mistral             13 no  both  4
+qwen                 6 no  gpt5nano           157 no  both  6
+qwen                 6 no  gpt41nano           88 no  both  5
+qwen                 6 no  jev:p7:0.10          0 no  both  0
+qwen                 6 no  jev:p7:0.20          0 no  both  0
+qwen                 6 no  jev:direct:0.05      0 no  both  0
+qwen                 6 no  jev:direct:0.10      2 no  both  2
+mistral             13 no  gpt5nano           157 no  both  7
+mistral             13 no  gpt41nano           88 no  both 10
+mistral             13 no  jev:p7:0.10          0 no  both  0
+mistral             13 no  jev:p7:0.20          0 no  both  0
+mistral             13 no  jev:direct:0.05      0 no  both  0
+mistral             13 no  jev:direct:0.10      2 no  both  2
+gpt5nano           157 no  gpt41nano           88 no  both 42
+gpt5nano           157 no  jev:p7:0.10          0 no  both  0
+gpt5nano           157 no  jev:p7:0.20          0 no  both  0
+gpt5nano           157 no  jev:direct:0.05      0 no  both  0
+gpt5nano           157 no  jev:direct:0.10      2 no  both  2
+gpt41nano           88 no  jev:p7:0.10          0 no  both  0
+gpt41nano           88 no  jev:p7:0.20          0 no  both  0
+gpt41nano           88 no  jev:direct:0.05      0 no  both  0
+gpt41nano           88 no  jev:direct:0.10      2 no  both  2
+
+--- agreement on screen-confirmed negatives (both 'no' vs independence) ---
+qwen                86%  mistral             97%  both  85% (independent  84%)
+qwen                86%  gpt5nano            88%  both  78% (independent  76%)
+qwen                86%  gpt41nano           97%  both  85% (independent  84%)
+qwen                86%  jev:p7:0.10         33%  both  32% (independent  29%)
+qwen                86%  jev:p7:0.20         58%  both  56% (independent  50%)
+qwen                86%  jev:direct:0.05     44%  both  42% (independent  38%)
+qwen                86%  jev:direct:0.10     77%  both  70% (independent  66%)
+mistral             97%  gpt5nano            88%  both  85% (independent  85%)
+mistral             97%  gpt41nano           97%  both  96% (independent  95%)
+mistral             97%  jev:p7:0.10         33%  both  33% (independent  32%)
+mistral             97%  jev:p7:0.20         58%  both  58% (independent  57%)
+mistral             97%  jev:direct:0.05     44%  both  43% (independent  43%)
+mistral             97%  jev:direct:0.10     77%  both  75% (independent  75%)
+gpt5nano            88%  gpt41nano           97%  both  86% (independent  85%)
+gpt5nano            88%  jev:p7:0.10         33%  both  32% (independent  29%)
+gpt5nano            88%  jev:p7:0.20         58%  both  55% (independent  51%)
+gpt5nano            88%  jev:direct:0.05     44%  both  41% (independent  39%)
+gpt5nano            88%  jev:direct:0.10     77%  both  69% (independent  67%)
+gpt41nano           97%  jev:p7:0.10         33%  both  33% (independent  32%)
+gpt41nano           97%  jev:p7:0.20         58%  both  58% (independent  57%)
+gpt41nano           97%  jev:direct:0.05     44%  both  43% (independent  43%)
+gpt41nano           97%  jev:direct:0.10     77%  both  75% (independent  75%)
+
+--- cost (OpenRouter-reported, all 4 buckets) ---
+qwen       rows  1151  $0.0316  $0.0274/1k rows  448 in-tokens/row  errors 0
+mistral    rows  1151  $0.0356  $0.0309/1k rows  602 in-tokens/row  errors 0
+gpt5nano   rows  1151  $0.0365  $0.0317/1k rows  433 in-tokens/row  errors 0
+gpt41nano  rows  1151  $0.0541  $0.0470/1k rows  434 in-tokens/row  errors 0
+jev        rows  1151  $0.0420  $0.0364/1k rows  868 in-tokens/row  errors 0
+
+--- Jev threshold chosen on dev (max discard, 0 positives lost), reported on test ---
+jev p7 dev-picked P<0.59 [test]    screen-neg  56/97   58%  curated-neg  15/208   7%  pos lost raw  0 / after bypass  0 of 269 (CI 1.4%)
+jev direct dev-picked P<0.59 [test] screen-neg  62/97   64%  curated-neg  18/208   9%  pos lost raw  9 / after bypass  0 of 269 (CI 1.4%)

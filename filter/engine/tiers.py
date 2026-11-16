@@ -87,14 +87,16 @@ from filter.engine.pool_reader import iter_pool_batches
 from filter.engine.release import read_release
 from filter.engine.workids import resolve, work_id
 from shared import token_counter
-from shared.config import (ENGINE_CACHE_DIR, ENGINE_TIER_HF_UPLOAD,
+from shared.config import (DECISION_MODELS, ENGINE_CACHE_DIR, ENGINE_TIER_HF_UPLOAD,
                            ENGINE_TIER_WORKERS, FLORA_HF_COMMIT_BATCH,
                            FLORA_POOL_REPO, PRESCREEN_MODEL_1, PRESCREEN_MODEL_2,
                            SCREENING_EFFORT_1, SCREENING_EFFORT_2,
+                           SCREENING_LEGACY_VOTER_PAIRS,
                            SCREENING_MODEL_1, SCREENING_MODEL_2, SNAPSHOT_POOL_DIR)
 from shared.cache import content_key
-from shared.llm_client import (SCREEN_EVIDENCE_SEP, classify_replication,
-                               screen_gate, screen_voters)
+from shared.llm_client import (DECISION_CONFIDENT_AT, DECISION_DISCARD_BELOW,
+                               DECISION_TYPE_SHARE, SCREEN_EVIDENCE_SEP,
+                               classify_replication, screen_gate, screen_voters)
 from shared.prompts import prompt_version
 from shared.prescreen import prescreen_bypass, prescreen_vote, prescreen_voters
 from shared.token_usage import TokenBudgetExhausted, check_openai_budget
@@ -110,23 +112,24 @@ log = logging.getLogger(__name__)
 # cost is read from cache/token_usage.json afterwards. They live here, next to the
 # estimate() that is their only reader, and move only when a price or a voter model
 # does: update them in the same commit as the change they describe.
-# The expensive tier uses approximate standard rates for DeepSeek V4 Flash on
-# OpenRouter plus GPT-6 Luna; flex and prompt-cache savings are not assumed.
+# The expensive tier uses GPT-6 Luna at standard rates ($0.10/M in, $0.50/M out — flex
+# and prompt-cache savings are not assumed) plus Span-02 ($0.01/M in, output free).
 TIER_PRICE_PER_1K_IN = {
     "screen_cheap":     0.00014,
-    "screen_expensive": 0.00017,
+    "screen_expensive": 0.00011,
 }
 TIER_PRICE_PER_1K_OUT = {
     "screen_cheap":     0.00045,
-    "screen_expensive": 0.00067,
+    "screen_expensive": 0.00050,
 }
 # Output tokens one row costs a tier. The cheap tier answers with one field; the
-# expensive tier returns the five-field v3.3 schema with a quote and a reasoning.
+# expensive tier's LLM voter returns the five-field v3.3 schema with a quote and a
+# reasoning, and its decision voter returns no billed output.
 TIER_OUTPUT_TOKENS = {
     "screen_cheap":     20,
-    # 2026-09-25: measured ~775 DeepSeek v4-flash output incl. reasoning + ~300
-    # gpt-6-luna per work; analysis/llm_costs_2026-09/REPORT.md
-    "screen_expensive": 1_075,
+    # 2026-10-06: measured 174 gpt-6-luna output tokens per work over 2,186 works;
+    # analysis/jev_eval_2026-10/REPORT.md
+    "screen_expensive": 175,
 }
 # Characters per token for the estimate. Nothing is tokenized to produce a number
 # nobody will be billed on; 4.0 is the usual English-prose approximation.
@@ -209,19 +212,38 @@ def screening_generation(tier: str) -> str:
 
     voters = sorted(f"{m}@{eff}" for m, eff
                     in zip(_tier_models(tier), _tier_efforts(tier)))
-    payload = json.dumps({"voters": voters,
-                          "prompt": prompt_version(_TIER_PROMPT[tier])},
-                         sort_keys=True, separators=(",", ":"))
+    fields = {"voters": voters, "prompt": prompt_version(_TIER_PROMPT[tier])}
+    # A decision voter is asked its own question, and its probabilities become a vote
+    # through three cut-offs; moving any of them changes what a stored vote says. Added
+    # only when the tier has such a voter, so the cheap tier's generation is unmoved.
+    if set(_tier_models(tier)) & DECISION_MODELS:
+        fields["decision"] = {"prompt": prompt_version("build_screen_decision"),
+                              "discard_below": DECISION_DISCARD_BELOW,
+                              "confident_at": DECISION_CONFIDENT_AT,
+                              "type_share": DECISION_TYPE_SHARE}
+    payload = json.dumps(fields, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 def _expensive_equivalent_generations() -> tuple[str, ...]:
-    """Keep settled mini-era screens while new work uses Luna.
+    """Keep settled earlier screens while new work uses the current pair.
 
-    Key the declaration to the exact Luna generation: a later prompt, effort or
-    voter change stops accepting the older result until reviewed separately.
+    `d1a64d65a6d66c50` (2026-10, gpt-6-luna + Span-02) accepts the settled
+    deepseek-v4-flash + gpt-6-luna screens (`3b93ecf06901e653`) and the
+    gpt-5.4-mini-era ones that generation already accepted (`98bcab0eff366d1d`), so
+    the switch does not re-screen the backlog; new and incomplete works use the new
+    pair. Measured on the same 2,186 works the new pair loses fewer positives (5 vs
+    8), so the residue it would recover sits in the old DISCARDS — dropping this
+    declaration re-screens everything instead (≈ $0.09 per 1,000 works, Luna's votes
+    being cached).
+
+    Keyed to the exact generation: a later prompt, effort, cut-off or voter change
+    stops accepting the older results until reviewed separately.
     """
-    if screening_generation(TIER_EXPENSIVE) == "3b93ecf06901e653":
+    current = screening_generation(TIER_EXPENSIVE)
+    if current == "d1a64d65a6d66c50":
+        return ("3b93ecf06901e653", "98bcab0eff366d1d")
+    if current == "3b93ecf06901e653":
         return ("98bcab0eff366d1d",)
     return ()
 
@@ -1269,12 +1291,10 @@ def _votes_from_rows(rows: list[dict]) -> list[dict]:
     counts, is `_answer_rows()`'s question — the deduplication has to happen
     BEFORE the sort, or a retried voter 1 would occupy both call-order slots.
 
-    The surviving rows are then re-sorted into CALL order by their model, because
-    `_screen_record_type()` breaks a replication/reproduction split by taking the
-    first qualifying voter and the database returns rows in id order, which is
-    not the order they were asked in. The sort is by voter identity, not by time,
-    so keeping a voter's LATEST answer does not move it out of its slot: voter 1
-    re-answered on the second attempt is still voter 1, and still breaks the split.
+    The surviving rows are re-sorted into their pair's CALL order by model. Retained
+    two-LLM pairs keep their historical order and first-qualifier type rule; today's
+    decision voter overrides by identity. Database id order is not call order, and
+    keeping a voter's LATEST answer must not move it out of its original slot.
     An unattributed row sorts last, behind both named voters.
 
     **A vote with no recorded model is UNATTRIBUTED, not attributed to nothing.**
@@ -1288,7 +1308,13 @@ def _votes_from_rows(rows: list[dict]) -> list[dict]:
     screen whose answer we hold.
     """
     order = [m for _, m, _, _ in screen_voters()]
-    ordered = sorted(_answer_rows(rows),
+    answers = _answer_rows(rows)
+    named = {r["model"] for r in answers
+             if r.get("model") and r["model"] not in _NON_MODEL_MARKERS}
+    if not named & DECISION_MODELS:
+        order = next((list(pair) for pair in SCREENING_LEGACY_VOTER_PAIRS
+                      if pair[0] in named and named <= set(pair)), order)
+    ordered = sorted(answers,
                      key=lambda r: (order.index(r["model"])
                                     if r.get("model") in order else len(order)))
     return [{"classification": str(r.get("verdict", "")),
