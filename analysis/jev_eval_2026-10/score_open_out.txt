@@ -1,0 +1,139 @@
+pplx v1.1: 2186 valid of 2186
+pplx v1.2: 2186 valid of 2186
+clef: 2186 valid of 2186
+span02: 2186 valid of 2186
+clefflash: 2186 valid of 2186
+drex15: 2186 valid of 2186
+tev1: 2186 valid of 2186
+kev4b: 2186 valid of 2186
+scored on 2186 cases valid for every voter (positives 1456, hard 344, curated 386)
+## Gate with Luna (discard only when both say none)
+| gate | positives lost /1456 | hard discarded /344 | curated discarded /386 |
+|---|--:|--:|--:|
+| ds4 + luna (production) | 8 | 262 (76%) | 329 (85%) |
+| luna alone | 17 | 269 (78%) | 339 (88%) |
+| luna + pplx v1.1 < 0.1 | 2 | 207 (60%) | 253 (66%) |
+| luna + pplx v1.1 < 0.2 | 2 | 238 (69%) | 288 (75%) |
+| luna + pplx v1.1 < 0.3 | 2 | 254 (74%) | 303 (78%) |
+| luna + pplx v1.1 < 0.4 | 2 | 258 (75%) | 314 (81%) |
+| luna + pplx v1.1 < 0.5 | 4 | 261 (76%) | 320 (83%) |
+| luna + pplx v1.1 < 0.6 | 6 | 263 (76%) | 330 (85%) |
+| luna + pplx v1.1 < 0.7 | 10 | 263 (76%) | 335 (87%) |
+| luna + pplx v1.1 < 0.8 | 14 | 268 (78%) | 338 (88%) |
+| luna + pplx v1.1 < 0.9 | 16 | 268 (78%) | 339 (88%) |
+| luna + pplx v1.2 < 0.1 | 1 | 184 (53%) | 222 (58%) |
+| luna + pplx v1.2 < 0.2 | 2 | 222 (65%) | 260 (67%) |
+| luna + pplx v1.2 < 0.3 | 3 | 239 (69%) | 291 (75%) |
+| luna + pplx v1.2 < 0.4 | 5 | 252 (73%) | 309 (80%) |
+| luna + pplx v1.2 < 0.5 | 6 | 257 (75%) | 321 (83%) |
+| luna + pplx v1.2 < 0.6 | 7 | 258 (75%) | 331 (86%) |
+| luna + pplx v1.2 < 0.7 | 10 | 263 (76%) | 336 (87%) |
+| luna + pplx v1.2 < 0.8 | 13 | 268 (78%) | 338 (88%) |
+| luna + pplx v1.2 < 0.9 | 17 | 269 (78%) | 339 (88%) |
+| luna + clef < 0.1 | 0 | 117 (34%) | 57 (15%) |
+| luna + clef < 0.2 | 2 | 208 (60%) | 213 (55%) |
+| luna + clef < 0.3 | 3 | 234 (68%) | 273 (71%) |
+| luna + clef < 0.4 | 3 | 250 (73%) | 298 (77%) |
+| luna + clef < 0.5 | 3 | 259 (75%) | 316 (82%) |
+| luna + clef < 0.6 | 8 | 265 (77%) | 328 (85%) |
+| luna + clef < 0.7 | 10 | 265 (77%) | 332 (86%) |
+| luna + clef < 0.8 | 13 | 265 (77%) | 336 (87%) |
+| luna + clef < 0.9 | 17 | 267 (78%) | 339 (88%) |
+| luna + span02 < 0.1 | 4 | 233 (68%) | 261 (68%) |
+| luna + span02 < 0.2 | 5 | 242 (70%) | 283 (73%) |
+| luna + span02 < 0.3 | 5 | 245 (71%) | 292 (76%) |
+| luna + span02 < 0.4 | 5 | 248 (72%) | 298 (77%) |
+| luna + span02 < 0.5 | 5 | 253 (74%) | 302 (78%) |
+| luna + span02 < 0.6 | 5 | 257 (75%) | 304 (79%) |
+| luna + span02 < 0.7 | 5 | 260 (76%) | 309 (80%) |
+| luna + span02 < 0.8 | 6 | 263 (76%) | 318 (82%) |
+| luna + span02 < 0.9 | 8 | 265 (77%) | 324 (84%) |
+| luna + clefflash < 0.1 | 0 | 30 (9%) | 8 (2%) |
+| luna + clefflash < 0.2 | 0 | 101 (29%) | 73 (19%) |
+| luna + clefflash < 0.3 | 2 | 181 (53%) | 164 (42%) |
+| luna + clefflash < 0.4 | 3 | 218 (63%) | 214 (55%) |
+| luna + clefflash < 0.5 | 3 | 236 (69%) | 258 (67%) |
+| luna + clefflash < 0.6 | 4 | 247 (72%) | 288 (75%) |
+| luna + clefflash < 0.7 | 7 | 255 (74%) | 315 (82%) |
+| luna + clefflash < 0.8 | 11 | 261 (76%) | 331 (86%) |
+| luna + clefflash < 0.9 | 16 | 268 (78%) | 336 (87%) |
+| luna + drex15 < 0.1 | 2 | 207 (60%) | 197 (51%) |
+| luna + drex15 < 0.2 | 2 | 225 (65%) | 236 (61%) |
+| luna + drex15 < 0.3 | 2 | 231 (67%) | 264 (68%) |
+| luna + drex15 < 0.4 | 3 | 237 (69%) | 273 (71%) |
+| luna + drex15 < 0.5 | 3 | 243 (71%) | 282 (73%) |
+| luna + drex15 < 0.6 | 4 | 250 (73%) | 296 (77%) |
+| luna + drex15 < 0.7 | 4 | 253 (74%) | 304 (79%) |
+| luna + drex15 < 0.8 | 8 | 257 (75%) | 311 (81%) |
+| luna + drex15 < 0.9 | 11 | 261 (76%) | 325 (84%) |
+| luna + tev1 < 0.1 | 1 | 191 (56%) | 142 (37%) |
+| luna + tev1 < 0.2 | 3 | 208 (60%) | 191 (49%) |
+| luna + tev1 < 0.3 | 3 | 224 (65%) | 224 (58%) |
+| luna + tev1 < 0.4 | 3 | 232 (67%) | 254 (66%) |
+| luna + tev1 < 0.5 | 4 | 239 (69%) | 274 (71%) |
+| luna + tev1 < 0.6 | 4 | 246 (72%) | 296 (77%) |
+| luna + tev1 < 0.7 | 6 | 251 (73%) | 307 (80%) |
+| luna + tev1 < 0.8 | 8 | 257 (75%) | 315 (82%) |
+| luna + tev1 < 0.9 | 12 | 259 (75%) | 329 (85%) |
+| luna + kev4b < 0.1 | 0 | 23 (7%) | 4 (1%) |
+| luna + kev4b < 0.2 | 0 | 99 (29%) | 46 (12%) |
+| luna + kev4b < 0.3 | 2 | 161 (47%) | 108 (28%) |
+| luna + kev4b < 0.4 | 3 | 204 (59%) | 191 (49%) |
+| luna + kev4b < 0.5 | 5 | 240 (70%) | 263 (68%) |
+| luna + kev4b < 0.6 | 7 | 252 (73%) | 303 (78%) |
+| luna + kev4b < 0.7 | 11 | 258 (75%) | 321 (83%) |
+| luna + kev4b < 0.8 | 14 | 261 (76%) | 335 (87%) |
+| luna + kev4b < 0.9 | 17 | 269 (78%) | 339 (88%) |
+## Separation (AUC of P(qualifies))
+| voter | positives vs hard | positives vs curated | within Luna's `none` (pos/neg) |
+|---|--:|--:|--:|
+| pplx v1.1 | 0.9842 | 0.9970 | 0.943 (17/608) |
+| pplx v1.2 | 0.9875 | 0.9956 | 0.931 (17/608) |
+| clef | 0.9793 | 0.9926 | 0.914 (17/608) |
+| span02 | 0.9685 | 0.9772 | 0.910 (17/608) |
+| clefflash | 0.9669 | 0.9751 | 0.885 (17/608) |
+| drex15 | 0.9701 | 0.9873 | 0.862 (17/608) |
+| tev1 | 0.9661 | 0.9714 | 0.864 (17/608) |
+| kev4b | 0.9575 | 0.9713 | 0.837 (17/608) |
+## Title-search shortcut (confident Luna + P >= 0.9 + a type at the 0.7 share)
+| rule | positives | hard | curated |
+|---|--:|--:|--:|
+| ds4 + luna both confident | 1363 | 46 | 13 |
+| luna + pplx v1.1 | 1364 | 19 | 4 |
+| luna + pplx v1.2 | 1298 | 10 | 3 |
+| luna + clef | 1179 | 11 | 1 |
+| luna + span02 | 1284 | 15 | 9 |
+| luna + clefflash | 587 | 3 | 1 |
+| luna + drex15 | 1307 | 16 | 3 |
+| luna + tev1 | 1281 | 18 | 3 |
+| luna + kev4b | 196 | 0 | 0 |
+## Cost (provider-reported)
+- pplx v1.1: $0.0435 per 1,000 works
+- pplx v1.2: $0.0427 per 1,000 works
+- clef: $0.1207 per 1,000 works
+- span02: $0.0216 per 1,000 works
+- clefflash: $0.0478 per 1,000 works
+- drex15: $0.0830 per 1,000 works
+- tev1: $0.0918 per 1,000 works
+- kev4b: $0.0872 per 1,000 works
+## Record type vs validators (642 positives)
+| coder | correct / typed | untyped | reproductions found |
+|---|---|--:|---|
+| luna alone | 609/628 (97.0%) | 14 | 33/43 |
+| ds4 first, else luna (production) | 620/635 (97.6%) | 7 | 39/43 |
+| pplx v1.1: own type | 631/642 (98.3%) | 0 | 38/43 |
+| luna, pplx v1.1 overrides at 0.7 share | 629/641 (98.1%) | 1 | 38/43 |
+| pplx v1.2: own type | 628/642 (97.8%) | 0 | 33/43 |
+| luna, pplx v1.2 overrides at 0.7 share | 624/638 (97.8%) | 4 | 34/43 |
+| clef: own type | 629/642 (98.0%) | 0 | 38/43 |
+| luna, clef overrides at 0.7 share | 628/639 (98.3%) | 3 | 39/43 |
+| span02: own type | 628/642 (97.8%) | 0 | 41/43 |
+| luna, span02 overrides at 0.7 share | 624/638 (97.8%) | 4 | 39/43 |
+| clefflash: own type | 623/642 (97.0%) | 0 | 39/43 |
+| luna, clefflash overrides at 0.7 share | 625/639 (97.8%) | 3 | 39/43 |
+| drex15: own type | 627/642 (97.7%) | 0 | 31/43 |
+| luna, drex15 overrides at 0.7 share | 623/640 (97.3%) | 2 | 32/43 |
+| tev1: own type | 620/642 (96.6%) | 0 | 24/43 |
+| luna, tev1 overrides at 0.7 share | 620/640 (96.9%) | 2 | 26/43 |
+| kev4b: own type | 622/642 (96.9%) | 0 | 27/43 |
+| luna, kev4b overrides at 0.7 share | 623/640 (97.3%) | 2 | 32/43 |

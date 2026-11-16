@@ -1,0 +1,37 @@
+cases scored: 2186 / 2186  pos 1456  hard-neg 344  curated-neg 386
+
+| gate (discard only if ALL say none) | positives lost | hard-neg discarded | curated-neg discarded |
+|---|---|---|---|
+| ds4 | 16 (1.1%) {'human': 7, 'screeneval': 4, 'goldpos': 5} | 286/344 (83%) | 355/386 (92%) |
+| luna | 17 (1.2%) {'human': 11, 'screeneval': 3, 'goldpos': 3} | 269/344 (78%) | 339/386 (88%) |
+| jev<0.3 | 3 (0.2%) {'human': 1, 'screeneval': 2} | 199/344 (58%) | 100/386 (26%) |
+| jev<0.5 | 5 (0.3%) {'human': 1, 'screeneval': 3, 'goldpos': 1} | 245/344 (71%) | 183/386 (47%) |
+| jev<0.7 | 13 (0.9%) {'human': 3, 'screeneval': 6, 'goldpos': 4} | 278/344 (81%) | 268/386 (69%) |
+| ds4 + luna | 8 (0.5%) {'human': 5, 'screeneval': 1, 'goldpos': 2} | 262/344 (76%) | 329/386 (85%) |
+| jev<0.5 + luna | 1 (0.1%) {'human': 1} | 215/344 (62%) | 179/386 (46%) |
+| jev<0.7 + luna | 3 (0.2%) {'human': 2, 'goldpos': 1} | 238/344 (69%) | 255/386 (66%) |
+| jev<0.8 + luna | 5 (0.3%) {'human': 3, 'screeneval': 1, 'goldpos': 1} | 248/344 (72%) | 297/386 (77%) |
+| jev<0.5 + ds4 | 1 (0.1%) {'human': 1} | 225/344 (65%) | 181/386 (47%) |
+| jev<0.7 + ds4 | 5 (0.3%) {'human': 1, 'screeneval': 1, 'goldpos': 3} | 253/344 (74%) | 263/386 (68%) |
+| ds4 + luna + jev<0.5 | 1 (0.1%) {'human': 1} | 213/344 (62%) | 179/386 (46%) |
+| ds4 + luna + jev<0.7 | 2 (0.1%) {'human': 1, 'goldpos': 1} | 236/344 (69%) | 253/386 (66%) |
+| ds4 + luna + jev<0.8 | 3 (0.2%) {'human': 1, 'screeneval': 1, 'goldpos': 1} | 246/344 (72%) | 292/386 (76%) |
+
+Jev AUC: vs hard neg 0.970, vs curated 0.986
+
+positives BOTH ds4 and luna discard: 8; Jev P on them: [0.1, 0.56, 0.78, 0.85, 0.85, 0.87, 0.92, 0.96]
+positives Jev<0.5 discards: 5; of those ds4 says none 1, luna says none 1
+  SB0050 [human] P=0.85 An Adaptation and Extension of the Attitudes Toward Seeking Professional Psychological Hel
+  SB0309 [human] P=0.87 An analysis of the value of token reinforcement using a multiple‐schedule assessment
+  SB0319 [human] P=0.1 Principals’ leadership behaviour: values-based, contingent or both?
+  SB0437 [human] P=0.92 Outcome sequences and illusion of control – part II: the effect on post-loss speeding
+  SB0505 [human] P=0.85 Biodiversity Soup II: A bulk‐sample metabarcoding pipeline emphasizing error reduction
+  F005 [screeneval] P=0.78 Morphological effects in word identification: tracking the developmental trajectory of der
+  goldpos_flora:GP685 [goldpos] P=0.56 EEG Beta Power but Not Background Music Predicts the Recall Scores in a Foreign-Vocabulary
+  goldpos_repro:GR065 [goldpos] P=0.96 Party Platforms, Mandates, and Government Spending
+
+| voter | calls bought | cache hits | in tok/call | out tok/call | cached-in % | $/call | $ per 1k works |
+|---|---|---|---|---|---|---|---|
+| ds4 | 1697 | 489 | 2586 | 566 | 77% | $0.000091 | $0.091 |
+| luna | 2186 | 0 | 2568 | 174 | 88% | $0.000070 | $0.070 |
+| jev | 2186 | 0 | 714 | 0 | 0% | $0.000030 | $0.030 |

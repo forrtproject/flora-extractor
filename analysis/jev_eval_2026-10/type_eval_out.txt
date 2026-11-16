@@ -1,0 +1,39 @@
+type truth: 645 positives, Counter({'replication': 602, 'reproduction': 43})
+
+| coder | correct / typed | no type given | reproductions found | replications called reproduction |
+|---|---|---|---|---|
+| luna | 611/631 (96.8%) | 14 | 33/43 | 12 |
+| ds4 | 593/610 (97.2%) | 35 | 38/43 | 14 |
+| today: ds4 first, else luna | 621/638 (97.3%) | 7 | 39/43 | 14 |
+| pplx_full | 633/645 (98.1%) | 0 | 39/43 | 8 |
+| luna, but pplx_full overrides when its share >= 0.7 | 632/645 (98.0%) | 0 | 38/43 | 8 |
+| luna, but pplx_full overrides when its share >= 0.8 | 629/645 (97.5%) | 0 | 36/43 | 9 |
+| luna, but pplx_full overrides when its share >= 0.9 | 627/645 (97.2%) | 0 | 35/43 | 10 |
+| luna, but pplx_full overrides when its share >= 0.95 | 627/645 (97.2%) | 0 | 35/43 | 10 |
+| pplx_full2 | 633/645 (98.1%) | 0 | 38/43 | 7 |
+| luna, but pplx_full2 overrides when its share >= 0.7 | 632/645 (98.0%) | 0 | 38/43 | 8 |
+| luna, but pplx_full2 overrides when its share >= 0.8 | 629/645 (97.5%) | 0 | 36/43 | 9 |
+| luna, but pplx_full2 overrides when its share >= 0.9 | 627/645 (97.2%) | 0 | 35/43 | 10 |
+| luna, but pplx_full2 overrides when its share >= 0.95 | 627/645 (97.2%) | 0 | 35/43 | 10 |
+
+luna wrong on 20:
+  SB0071 truth=replication luna=reproduction ds4=replication pplx=('replication', 0.8742646799970367) SOCIAL DESIRABILITY AND THE TSC SCALES: A REPLICATION AND REPLY TO STE
+  SB0074 truth=replication luna=reproduction ds4=reproduction pplx=('replication', 0.6759029601775092) Associations between episodic detail in young adults’ memory narrative
+  SB0082 truth=reproduction luna=replication ds4=reproduction pplx=('replication', 0.64741677269029) On the financial connectedness of the commodity market: a replication 
+  SB0084 truth=reproduction luna=replication ds4=replication pplx=('reproduction', 0.5008983949962709) How do normalization schemes affect net spillovers? A replication of t
+  SB0156 truth=replication luna=reproduction ds4=reproduction pplx=('reproduction', 0.9901180274029288) Is Behavioral Activation (BA) More Effective than Cognitive Therapy (C
+  SB0231 truth=replication luna=reproduction ds4=replication pplx=('replication', 0.9948915314361935) Replicating the Resource Curse: A Qualitative Replication of Ross 2004
+  SB0322 truth=replication luna=reproduction ds4=replication pplx=('replication', 0.9975041861369534) Evaluating Study Design Rigor in Preclinical Cardiovascular Research: 
+  SB0336 truth=replication luna=reproduction ds4=reproduction pplx=('reproduction', 0.5139370713969748) A Replication of “Meta-Analysis of the Effect of Fiscal Policies on Lo
+  SB0428 truth=replication luna=reproduction ds4=replication pplx=('reproduction', 0.6550988322444761) Electoral Rules and Partisan Control of Government: A Replication Stud
+  SB0566 truth=replication luna=reproduction ds4=reproduction pplx=('reproduction', 0.7129537217552183) Associations between firearm and suicide rates: a replication of Kleck
+  SB0581 truth=replication luna=reproduction ds4=reproduction pplx=('reproduction', 0.944073054249345) Evaluative Conditioning without awareness: Replicable effects do not e
+  SB0643 truth=replication luna=reproduction ds4=replication pplx=('replication', 0.7480471108336272) Unveiling Plant‐Product Productivity via First‐Order Conditions: Robus
+  SB0673 truth=replication luna=reproduction ds4=reproduction pplx=('reproduction', 0.540112942576592) Evidence of Behavioural Compensation in Internal Replication Study of 
+  SB0714 truth=replication luna=reproduction ds4=reproduction pplx=('reproduction', 0.7969838539314524) Do rural banks matter that much? Burgess and Pande (2005) reconsidered
+  goldpos_repro:GR011 truth=reproduction luna=replication ds4=reproduction pplx=('reproduction', 0.7323922524388103) A one covariate at a time, multiple testing approach to variable selec
+  goldpos_repro:GR021 truth=reproduction luna=replication ds4=reproduction pplx=('reproduction', 0.8401905177108393) Improving the Interpretation of Fixed Effects Regression Results
+  goldpos_repro:GR024 truth=reproduction luna=replication ds4=reproduction pplx=('reproduction', 0.7684674495118805) Dementia has a categorical, not dimensional, latent structure.
+  goldpos_repro:GR025 truth=reproduction luna=replication ds4=reproduction pplx=('replication', 0.703870218123642) Self-concept clarity and interoceptive updating in the rubber-hand ill
+  goldpos_repro:GR035 truth=reproduction luna=replication ds4=reproduction pplx=('replication', 0.8252051636905618) Does the effectiveness of IUI in couples with unexplained subfertility
+  goldpos_repro:GR074 truth=reproduction luna=replication ds4=replication pplx=('replication', 0.9774720994137851) Reaffirming a Positive Correlation Between Number of Vaccine Doses and

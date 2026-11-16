@@ -1,0 +1,73 @@
+cases with every run valid: 2186 (positives 1456, hard 344, curated 386)
+  v1.1: 2186 valid, 0 missing/errored
+  pplx12 prod: 2186 valid, 0 missing/errored
+  pplx12 eval: 2186 valid, 0 missing/errored
+  pplx12f prod: 2186 valid, 0 missing/errored
+  pplx12f eval: 2186 valid, 0 missing/errored
+## Gate (discard only when every voter says none)
+| gate | positives lost /1456 | hard discarded /344 | curated discarded /386 |
+|---|--:|--:|--:|
+| ds4 + luna (production) | 8 | 262 (76%) | 329 (85%) |
+| luna + v1.1 < 0.3 | 2 | 254 (74%) | 303 (78%) |
+| luna + v1.1 < 0.4 | 2 | 258 (75%) | 314 (81%) |
+| luna + v1.1 < 0.5 | 4 | 261 (76%) | 320 (83%) |
+| luna + v1.1 < 0.6 | 6 | 263 (76%) | 330 (85%) |
+| luna + pplx12 prod < 0.3 | 3 | 239 (69%) | 291 (75%) |
+| luna + pplx12 prod < 0.4 | 5 | 252 (73%) | 309 (80%) |
+| luna + pplx12 prod < 0.5 | 6 | 257 (75%) | 321 (83%) |
+| luna + pplx12 prod < 0.6 | 7 | 258 (75%) | 331 (86%) |
+| luna + pplx12 eval < 0.3 | 3 | 237 (69%) | 291 (75%) |
+| luna + pplx12 eval < 0.4 | 5 | 250 (73%) | 309 (80%) |
+| luna + pplx12 eval < 0.5 | 6 | 256 (74%) | 321 (83%) |
+| luna + pplx12 eval < 0.6 | 7 | 257 (75%) | 331 (86%) |
+| luna + pplx12f prod < 0.3 | 3 | 235 (68%) | 257 (67%) |
+| luna + pplx12f prod < 0.4 | 5 | 249 (72%) | 293 (76%) |
+| luna + pplx12f prod < 0.5 | 7 | 257 (75%) | 325 (84%) |
+| luna + pplx12f prod < 0.6 | 9 | 262 (76%) | 331 (86%) |
+| luna + pplx12f eval < 0.3 | 3 | 233 (68%) | 256 (66%) |
+| luna + pplx12f eval < 0.4 | 5 | 247 (72%) | 294 (76%) |
+| luna + pplx12f eval < 0.5 | 7 | 255 (74%) | 325 (84%) |
+| luna + pplx12f eval < 0.6 | 9 | 262 (76%) | 331 (86%) |
+## Separation (AUC of P(qualifies), positives vs ...)
+| voter | hard negatives | curated negatives |
+|---|--:|--:|
+| v1.1 | 0.9842 | 0.9970 |
+| pplx12 prod | 0.9875 | 0.9956 |
+| pplx12 eval | 0.9874 | 0.9956 |
+| pplx12f prod | 0.9739 | 0.9781 |
+| pplx12f eval | 0.9737 | 0.9780 |
+## Title-search shortcut (confident Luna + P >= 0.9 + a type at the 0.7 share)
+| rule | positives | hard | curated |
+|---|--:|--:|--:|
+| ds4 + luna both confident | 1363 | 46 | 13 |
+| luna + v1.1 | 1364 | 19 | 4 |
+| luna + pplx12 prod | 1298 | 10 | 3 |
+| luna + pplx12 eval | 1298 | 10 | 3 |
+| luna + pplx12f prod | 1015 | 7 | 0 |
+| luna + pplx12f eval | 1015 | 7 | 0 |
+## Agreement with v1.1 on the discard side (luna says none)
+- pplx12 prod: of 625 works Luna calls none, 18 v1.1-discards would now be kept, 10 v1.1-keeps would now be discarded
+- pplx12 eval: of 625 works Luna calls none, 19 v1.1-discards would now be kept, 9 v1.1-keeps would now be discarded
+- pplx12f prod: of 625 works Luna calls none, 51 v1.1-discards would now be kept, 24 v1.1-keeps would now be discarded
+- pplx12f eval: of 625 works Luna calls none, 51 v1.1-discards would now be kept, 23 v1.1-keeps would now be discarded
+## Cost (provider-reported)
+- v1.1: $0.0435 per 1,000 works, 2174 input tokens per call
+- pplx12 prod: $0.0427 per 1,000 works, 2137 input tokens per call
+- pplx12 eval: $0.0434 per 1,000 works, 2171 input tokens per call
+- pplx12f prod: $0.0214 per 1,000 works, 2137 input tokens per call
+- pplx12f eval: $0.0217 per 1,000 works, 2171 input tokens per call
+## Record type vs validators (642 positives)
+| coder | correct / typed | untyped | reproductions found | replications called reproduction |
+|---|---|--:|---|--:|
+| luna alone | 609/628 (97.0%) | 14 | 33/43 | 11 |
+| ds4 first, else luna (the production pair's rule) | 620/635 (97.6%) | 7 | 39/43 | 12 |
+| v1.1: its own type | 631/642 (98.3%) | 0 | 38/43 | 6 |
+| luna, v1.1 overrides at share >= 0.7 (shipped rule) | 629/641 (98.1%) | 1 | 38/43 | 7 |
+| pplx12 prod: its own type | 628/642 (97.8%) | 0 | 33/43 | 4 |
+| luna, pplx12 prod overrides at share >= 0.7 (shipped rule) | 624/638 (97.8%) | 4 | 34/43 | 6 |
+| pplx12 eval: its own type | 628/642 (97.8%) | 0 | 33/43 | 4 |
+| luna, pplx12 eval overrides at share >= 0.7 (shipped rule) | 624/638 (97.8%) | 4 | 34/43 | 6 |
+| pplx12f prod: its own type | 627/642 (97.7%) | 0 | 38/43 | 10 |
+| luna, pplx12f prod overrides at share >= 0.7 (shipped rule) | 622/638 (97.5%) | 4 | 37/43 | 10 |
+| pplx12f eval: its own type | 627/642 (97.7%) | 0 | 38/43 | 10 |
+| luna, pplx12f eval overrides at share >= 0.7 (shipped rule) | 622/638 (97.5%) | 4 | 37/43 | 10 |
