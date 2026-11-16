@@ -141,8 +141,7 @@ def audit_file(csv_path: Path,
                                str(row.get("authors_o", "") or ""),
                                row.get("year_o", ""),
                                exclude_doi=clean_doi(str(row["doi_r"])),
-                               exclude_title=str(row.get("title_r", "")
-                                                 or row.get("study_r", "") or ""))
+                               exclude_title=str(row.get("title_r", "") or ""))
         prior_status = str(row.get("doi_o_verification", "") or "")
         status = v["doi_o_verification"]
         if keeps_no_doi(status, prior_status, str(row.get("oa_work_id_o", "") or "")):

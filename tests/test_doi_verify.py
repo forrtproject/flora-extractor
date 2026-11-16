@@ -702,6 +702,15 @@ class TestVerifyRowHook:
         row.update(over)
         return row
 
+    def test_study_numbers_are_not_offered_as_the_replication_title(self):
+        """On a finished row study_r holds study numbers, and a work may have no title."""
+        from extract.run_extract import _verify_row
+        v = {"doi_o_verification": "verified", "doi_o": "10.1016/j.biopsycho.2015.07.014",
+             "evidence_note": ""}
+        with patch("extract.run_extract.verify_and_correct", return_value=v) as verify:
+            _verify_row(self._row(title_r="", study_r="1, 2"))
+        assert verify.call_args.kwargs["exclude_title"] == ""
+
     def test_corrected_updates_doi_pair_id_and_evidence(self):
         from extract.run_extract import _verify_row
         from shared.schema import make_pair_id
