@@ -927,6 +927,7 @@ def check_work(label: str, rows: list[dict], model: str, fallback: str = "other"
         results_2 = compare_work(rows, record_2["coding"], sources)
         released = all(r["released"] for r in results_2)
         reason_2 = "" if released else _reasons(rows, results_2)
+        results = results_2  # the coding that decided release owns the quote flags
         reason = "" if released else f"{reason}; fallback {name}: {reason_2}"
         second = (f"{name}: {'released' if released else 'review'}\n"
                   + _blind_text(record_2["coding"]))

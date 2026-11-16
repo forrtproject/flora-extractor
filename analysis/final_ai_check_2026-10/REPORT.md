@@ -72,8 +72,10 @@ The two relaxations were added after the trial below, on the maintainer's decisi
    The confidence flag held two errors and no correct row in both codings, but it is also
    unstable on borderline rows: the fast-mapping poster switched from unconfident to
    confident across the prompt revisions of this pilot, which released it. The rule was
-   added post hoc, after batch 2. The 200-record run should code each row twice, to
-   measure these flips on a larger sample.
+   added post hoc, after batch 2. Since the trial below, a work held only for
+   confidence gets a second coding and is released when that coding would release it,
+   so an unconfident first coding no longer holds a work by itself. The 200-record run
+   should code each row twice, to measure these flips on a larger sample.
 7. **Four fixes during the pilot. Together they took the released rows from 5 correct
    and 2 errors to 7 correct and 3 errors.** The title-matching fix came with batch 2, so
    its effect is already in that count. The metadata reference list then released one
@@ -124,7 +126,9 @@ check was skipped for this trial only; nothing was written to the live check fil
 Under the pilot rule, review reasons (a work can have several) were: blind coder not
 confident 10, originals differ 7, one side `cannot_be_determined` 7, outcomes differ 5,
 type differs 2, no original named 2, prospective 1. Under the relaxed rule, Sol coded the
-13 works held only for confidence and released 9 of them. 19 of 50 puts the full run at
+13 works held only for confidence (more than 10, because the pilot rule lists one reason
+per original and named the `cannot_be_determined` disagreement instead of low confidence
+where both applied) and released 9 of them. 19 of 50 puts the full run at
 roughly 450 to 900 review decisions (95% interval). Sol calls took a median of 21 s.
 
 These works have no human verdict, so the trial measures load, not accuracy. On the
@@ -143,8 +147,9 @@ populations), and Sol released it confidently as `failed`; humans corrected it t
 - **The release rule holds a whole work when its originals do not pair off**, whichever
   side has the extra one. A different count is the clearest sign of a misread paper.
   The 200-record run will show how often it holds correct works.
-- **A confident blind outcome is required for release** (post hoc and unstable;
-  finding 6).
+- **A confident blind outcome is required for release, or a second coding that would
+  release the work on its own** (post hoc and unstable; finding 6 and the live-worklist
+  trial).
 - **The metadata reference list is unordered and has no in-text citations.** The blind
   coder can therefore name an original only when the abstract cites it or describes it
   well enough to single out one entry.
