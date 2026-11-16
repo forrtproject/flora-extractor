@@ -205,7 +205,8 @@ populations), and Sol released it confidently as `failed`; humans corrected it t
 
 Only the wrapper is new. The record type is asked rather than assumed, and each
 original is named by authors, year, title and DOI, because the coder sees no keyed
-candidate list. A DOI is accepted only if it is printed in the text.
+candidate list. The prompt tells the coder to give a DOI only if it is printed in the
+text; the code does not check this, so a DOI pairs an original on its own.
 
 The evidence is the title, the abstract and the parsed document from the pipeline's
 parse cache. The parse is chosen as the ladder chooses it (the best-scoring parse that

@@ -426,6 +426,7 @@ def test_the_check_renders_with_the_flags_the_export_will_use(monkeypatch, tmp_p
     monkeypatch.setattr(fc, "admitted_work_ids", lambda *a, **k: ("r" * 12, set(), {}))
     monkeypatch.setattr(fc, "ClaimsClient", lambda *a, **k: None)
     monkeypatch.setattr(fc, "render", _render)
+    monkeypatch.setattr(fc, "require_subscriptions", lambda *a, **k: None)
     out = tmp_path / "extracted-test.csv"
     assert fc.main(["--include-unconfirmed-search", "--current-generation-only",
                     "--out", str(out)]) == 0

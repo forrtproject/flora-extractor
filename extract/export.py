@@ -1064,7 +1064,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     check_file = set_aside_dir(args.out) / FINAL_CHECK_NAME
     gate = None
     if not args.skip_final_check:
-        gate = apply_final_check(report, previous, read_final_check(check_file),
+        # The check file is written against HEAD (extract/final_check.py), so the gate
+        # compares against HEAD too, whatever --retired-baseline retirement reads.
+        head = (previous_shipped(args.out, ["HEAD"])[0]
+                if manifest_applies and args.retired_baseline else previous)
+        gate = apply_final_check(report, head, read_final_check(check_file),
                                  shipped_before)
     print(f"generation {extract_generation()}  mode {args.mode}")
     print(f"  {report['works']:,} work(s) → {report['rows']:,} row(s)")
