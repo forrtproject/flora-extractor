@@ -11,6 +11,7 @@ owns the flags a person types, the scan lives there. Two commands:
 
     python -m search.run_search --scan                    # full corpus scan
     python -m search.run_search --scan --snapshot-max-files 20
+    python -m search.run_search --scan --refresh-manifest   # pick up a new OpenAlex release
 
 ``--scan`` is required and deliberately not the default: a bare
 ``python -m search.run_search`` must never start a 400+ GB, 13-21 hour read.
@@ -62,6 +63,12 @@ def main() -> None:
         help="Scan at most N snapshot partitions this run, then stop. Omit for all of them.",
     )
     parser.add_argument(
+        "--refresh-manifest",
+        action="store_true",
+        help="Re-fetch the OpenAlex manifest, report new and rewritten partitions, then read "
+             "only those. Add --snapshot-max-files 0 to see the report without reading any.",
+    )
+    parser.add_argument(
         "--force-gate",
         action="store_true",
         help="Scan even though the ledger was written under a DIFFERENT search gate. "
@@ -85,6 +92,7 @@ def main() -> None:
             max_files=args.snapshot_max_files,
             survivor_pool=pool,
             force_gate=args.force_gate,
+            refresh_manifest=args.refresh_manifest,
         )
         log.info("Stage 1 complete: %d row(s) admitted into the survivor pool at %s",
                  n_rows, pool)
