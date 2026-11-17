@@ -337,10 +337,15 @@ out of a joint entry for the model AT the effort the joint era ran,
 `_JOINT_ERA_EFFORTS`). A voter, prompt, decision-question or cut-off change mints a
 new SCREENING GENERATION. The October Luna + Span-02 generation (`d1a64d65a6d66c50`)
 accepted settled DeepSeek + Luna verdicts (`3b93ecf06901e653`) and the
-`gpt-5.4-mini`-era ones (`98bcab0eff366d1d`). The November claim-scope policy changes
-the question, so its new screening and extraction generations accept no earlier
-generations. This invalidates the affected response caches and changes the worklist
-on a later run; it does not itself run the pipeline or change published data. The
+`gpt-5.4-mini`-era ones (`98bcab0eff366d1d`). Lukas declared the November claim-scope
+clarification invariant for settled results: the new screening and extraction
+generations explicitly retain the preceding generations and their reviewed predecessors.
+This does not reopen the backlog. Individual response caches remain versioned; new or
+explicitly reopened work uses the clarified prompts. New or changed works require a
+fresh blind final check before export because that prompt's version also changes;
+unchanged published works are not automatically re-checked. The invariance declarations
+are pinned to these generations, so later prompt/model/effort/threshold edits invalidate
+normally. The
 OpenAI request marks the shared screening rules as an
 explicit prompt-cache prefix; the title and abstract follow the breakpoint. The
 decision model offers no prompt caching and bills no output.

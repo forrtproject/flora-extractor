@@ -226,12 +226,14 @@ def screening_generation(tier: str) -> str:
 
 
 def _expensive_equivalent_generations() -> tuple[str, ...]:
-    """Historical answer-preserving screening equivalences, pinned to their era.
+    """Declared screening invariance, pinned to the reviewed prompt generation.
 
-    The November 2026 claim-scope policy changes both prompts, so the current
-    generation matches neither case below and accepts no earlier results. The
-    historical cost estimate below assumes cached votes and does not price a
-    re-screen under the new policy; inspect a fresh dry-run estimate before spending.
+    2026-11-17: Lukas explicitly requested that the claim-scope clarification retain
+    settled screens rather than reopen screening. Accept the immediately preceding
+    generation and its reviewed predecessors. This is an operational declaration
+    for the existing backlog, not a claim that new model responses are identical.
+    New or incomplete work uses the clarified prompt. A later prompt, voter, effort
+    or decision-threshold change matches no declaration and invalidates strictly.
 
     `d1a64d65a6d66c50` (2026-10, gpt-6-luna + Span-02) accepts the settled
     deepseek-v4-flash + gpt-6-luna screens (`3b93ecf06901e653`) and the
@@ -246,6 +248,8 @@ def _expensive_equivalent_generations() -> tuple[str, ...]:
     stops accepting the older results until reviewed separately.
     """
     current = screening_generation(TIER_EXPENSIVE)
+    if current == "98b46a069eac2228":
+        return ("d1a64d65a6d66c50", "3b93ecf06901e653", "98bcab0eff366d1d")
     if current == "d1a64d65a6d66c50":
         return ("3b93ecf06901e653", "98bcab0eff366d1d")
     if current == "3b93ecf06901e653":

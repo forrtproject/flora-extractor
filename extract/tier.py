@@ -292,10 +292,113 @@ def extract_generation() -> str:
 # Keyed by the CURRENT generation, which is what makes a declaration self-limiting: a
 # later prompt or model change produces a digest that matches no key here, and every
 # work reopens strictly, as it should.
-# 2026-11-17: the claim-scope and verdict-precedence policy changes what the
-# pipeline asks. Retire the previous declarations rather than carrying old answers
-# forward as equivalent; no live re-extraction is triggered by editing this file.
-_GENERATION_EQUIVALENCES: dict[str, tuple[str, ...]] = {}
+# 2026-11-17: Lukas declared the claim-scope clarification invariant for the
+# settled backlog: preserve earlier extraction results and resolve audit cases
+# individually, without an automatic full re-extraction. New/explicitly reopened
+# work uses the clarified prompts. This operational declaration does not assert
+# identical new model answers. It is pinned to this generation so later edits
+# invalidate normally. Retain the earlier declarations and their rationale below.
+_GENERATION_EQUIVALENCES: dict[str, tuple[str, ...]] = {
+    # 2026-08-15: LINKING_MODEL and OUTCOME_MODEL moved from gpt-5.4-mini to
+    # gpt-5.6-luna part-way through the 2026-08 re-extract, with 1,567 of 5,928
+    # works settled under mini. Those verdicts stay current: the question is the
+    # same, the mini answers were bought under an evaluated configuration, and every
+    # verdict stamps the models that produced it. The residue is bought under luna.
+    # 2026-09-02: the two target+outcome prompts gained a `study_status` field, so a
+    # record that is a PLAN rather than a finished study can be filed as
+    # `prospective_registration` instead of settling as `cannot_be_determined` and
+    # reaching a human validator with nothing to validate.
+    #
+    # The edit ADDS a question; it changes no answer to the questions already asked.
+    # A work whose outcome the old prompt settled would settle the same way now — the
+    # outcome enum, the acceptance rule and the evidence blocks are untouched. What the
+    # old answers cannot do is answer the NEW question, and that is what the targeted
+    # reopen is for: the population is nameable
+    # (`--redo-status outcome=cannot_be_determined,abstract_r=`) and costs a fraction
+    # of the 3,025 works a full reopen would re-buy.
+    #
+    # So the claim this entry makes: every work NOT reopened would still get its
+    # recorded outcome. True for the outcome, and deliberately incomplete for
+    # study_status — a settled work outside the named population keeps a blank status,
+    # which reads as "never asked", not as "completed".
+    # `dd7572887420ef65` rides along because the entry must be keyed by the CURRENT
+    # generation (there is a test): the chain is flattened rather than stacked, so the
+    # 2026-08-15 gpt-5.4-mini verdicts stay current through this edit too.
+    # `243ae515c654b6e5` is the intermediate generation from the first half of this
+    # edit, when only the two TARGET prompts asked study_status and the two standalone
+    # coders did not — measured 2026-09-02 in the sandbox at a 26% catch rate, because
+    # a plan resolved by a deterministic rule is coded by the standalone prompt and was
+    # never asked. It shipped nowhere; it is listed so the sandbox verdicts bought
+    # under it stay readable rather than reading as a foreign generation.
+    # 2026-09-04: `build_study_status_prompt` joined the fingerprint. It is a NEW
+    # question — the one thing asked of a work with no abstract and no acquirable
+    # document, once `run_for_doi` Stage 3.5 stopped such a row above the abstract and
+    # search rungs. It changes no answer to any question already asked: every rung a
+    # work WITH text or a document reaches is untouched, and this call is unreachable
+    # for such a work.
+    #
+    # So the claim: every work not reopened would still get its recorded verdict. The
+    # population that would answer differently is nameable and small — the textless
+    # works, `--redo-status abstract_r=`, 555 extracted so far of 881 admitted —
+    # against 3,025 a strict reopen would re-buy.
+    # 2026-09-23: linking and outcome coding now use gpt-6-luna. Already settled
+    # verdicts remain current because the questions and acceptance rules are the
+    # same; each verdict retains its actual model provenance. Flatten the existing
+    # equivalences because this lookup accepts only the generations listed here.
+    # 2026-09-23 (Observatory adjudication, handover step 3): the two target+outcome
+    # prompts now name the sibling records that get picked in place of the original
+    # (same-author works, protocol, materials source, review, meeting abstract) and
+    # require, when the evidence only describes the original, exactly one fitting
+    # record and no fitting same-author record before match_certain; and duplicate
+    # @keys take a `_2` suffix instead of a letter the model confused with the paper's
+    # own "(1999b)". The defect lives in the `llm_references` picks (≈5–8% wrong
+    # originals), and that population is reopened BY NAME
+    # (`--redo-status llm_references`, non-validated works), after a 150-work sandbox
+    # pilot (analysis/pick_pilot/REPORT.md). Everything else settled stays settled:
+    # the edit changes no outcome rule and only tightens WHEN a listed record may be
+    # accepted, so its effect on any other work is a decline (a descent) or a
+    # different pick among siblings — and re-buying the whole campaign for that is
+    # out of proportion. So the claim, deliberately incomplete: every work not
+    # reopened keeps its recorded answer. The `llm_cited_candidates` (265 rows) and
+    # `llm_fulltext` (71) keyed picks carry the same sibling risk and are NOT
+    # reopened here; they can be named the same way (`--redo-status
+    # llm_cited_candidates,llm_fulltext`). `7dbb1e92452d8333` (the gpt-6-luna
+    # switch) joins the flattened chain.
+    # 2026-09-23 (handover step 5, ladder 28): `build_pick_check_prompt` and the
+    # checker's model (PICK_CHECK_MODEL at PICK_CHECK_EFFORT) joined the fingerprint.
+    # The check runs on one population only — links the reference-list rung ACCEPTED
+    # — and a flag can only withhold such a link and send the row down to the
+    # full-text rung; it changes no answer on any work that does not carry an
+    # `llm_references` link. That population is the one step 3 already reopens by
+    # name (`--redo-status llm_references`), so one redo buys both changes. So the
+    # claim, deliberately incomplete as the step-3 entry's is: every work not reopened
+    # keeps its recorded answer. `474e80e4c32a6dfa` joins the flattened chain.
+    # 2026-09-25: `author_year_candidate_keys` (spliced into
+    # `build_author_year_pick_prompt`) disambiguates a repeated surname-and-year key
+    # with `_2`, `_3` instead of a letter, the scheme the reference list moved to on
+    # 2026-09-23 — `@smith2010b` reads as the paper's own "(2010b)" citation of a
+    # different work. The rendered prompt changes ONLY for a pooled list holding two
+    # candidates with one surname and year; every other pick prompt is byte-identical
+    # and its cached answer is re-read under the old version
+    # (`_AUTHOR_YEAR_PICK_LEGACY_VERSIONS` in shared/llm_client.py). So the claim:
+    # every work not reopened keeps its recorded answer, and the works that could
+    # answer differently are the `llm_title_search` / `llm_author_year_search` picks
+    # over such a list — reopened by `--redo` with ids (they have no status of their
+    # own). `765e053cd24611e5` joins the flattened chain.
+    # 2026-10-02: expand quote attribution only on full-body/Methods/fallback
+    # evidence; title/abstract/Introduction/true Discussion prompts remain byte
+    # identical and read their old caches through version-pinned equivalences.
+    # Retain settled works while auditing that named body-evidence population.
+    # This is NOT a claim that affected quote labels, or all new model answers, are
+    # equivalent. Reopen only confirmed attribution errors after the paired pilot;
+    # full extraction is unnecessary for an otherwise correct quote/target/verdict.
+    "b8eeac46f514e2d0": ("619cc46f58c39395", "25e2b6bb31821d84", "765e053cd24611e5",
+                         "474e80e4c32a6dfa", "7dbb1e92452d8333",
+                         "010cf32bb63351e1", "ca0706ef44827229",
+                         "061cb5ca8e1888b6",
+                         "243ae515c654b6e5", "5b716d061bb336f5",
+                         "dd7572887420ef65"),
+}
 
 
 def equivalent_generations() -> tuple[str, ...]:

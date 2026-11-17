@@ -1330,15 +1330,25 @@ def test_a_verdict_from_another_generation_neither_settles_nor_blocks(
 
 @pytest.mark.parametrize("old", ["d1a64d65a6d66c50", "3b93ecf06901e653",
                                  "98bcab0eff366d1d"])
-def test_claim_scope_policy_reopens_earlier_screen_generations(old):
-    """A policy change is not an answer-preserving voter substitution."""
+@pytest.mark.parametrize("verdict", ["none", "replication"])
+def test_claim_scope_clarification_retains_settled_screen_generations(old, verdict):
+    """The explicit invariance declaration must not reopen or drop settled screens."""
     assert tiers.screening_generation("screen_expensive") == "98b46a069eac2228"
     assert tiers.screening_generation("screen_expensive") != old
-    votes = [{"work_id": 11, "verdict": "none", "model": m, "confidence": "confident"}
+    votes = [{"work_id": 11, "verdict": verdict, "model": m, "confidence": "confident"}
              for m in ("deepseek/deepseek-v4-flash", "gpt-6-luna")]
     client = _decided_client("screen_expensive", "live", votes, generation=old)
-    assert tiers.decided_work_ids(client, "screen_expensive") == set()
-    assert handoff_mod.decisions(client)[0] == set()
+    assert tiers.decided_work_ids(client, "screen_expensive") == {11}
+    drop, screen = handoff_mod.decisions(client)
+    assert drop == ({11} if verdict == "none" else set())
+    assert set(screen) == {11}
+
+
+def test_decision_cutoff_change_does_not_inherit_screening_invariance(monkeypatch):
+    before = tiers.screening_generation("screen_expensive")
+    monkeypatch.setattr(tiers, "DECISION_DISCARD_BELOW", 0.5)
+    assert tiers.screening_generation("screen_expensive") != before
+    assert tiers._expensive_equivalent_generations() == ()
 
 
 def test_retained_screen_type_is_independent_of_database_vote_order(monkeypatch):

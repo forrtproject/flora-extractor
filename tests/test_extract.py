@@ -4161,6 +4161,7 @@ class TestOneOriginalSpelledTwoWays:
 @pytest.mark.parametrize("provenance", ["discussion", "tail"])
 @pytest.mark.parametrize("old", ["556e48911415", "31fa7a89fb9a"])
 def test_claim_scope_policy_does_not_reuse_old_outcome_cache(monkeypatch, tmp_path, provenance, old):
+    from shared import prompts
     from shared.cache import write_cache
     model_id = code_outcome.cache_model_id(code_outcome.OUTCOME_MODEL, code_outcome.OUTCOME_EFFORT)
     parts = ("replication", "T", "A", "", "", "", "", "", provenance, "Closing.")
@@ -4176,3 +4177,13 @@ def test_claim_scope_policy_does_not_reuse_old_outcome_cache(monkeypatch, tmp_pa
     assert len(calls) == 1
     assert result.get("sentinel") != "old"
     assert "cache_migrated" not in result
+
+    # Positive control: the current key still reuses an identical paid answer.
+    current = content_key("outcome", "10.1/q", model_id,
+                          prompts.prompt_version("build_outcome_prompt"), *parts)
+    write_cache(tmp_path, current, {"outcome": "successful", "sentinel": "current"})
+    calls.clear()
+    result, _ = code_outcome._outcome_result("10.1/q", "T", "A", "Closing.",
+                                          fulltext_provenance=provenance)
+    assert calls == []
+    assert result["sentinel"] == "current"
