@@ -226,7 +226,12 @@ def screening_generation(tier: str) -> str:
 
 
 def _expensive_equivalent_generations() -> tuple[str, ...]:
-    """Keep settled earlier screens while new work uses the current pair.
+    """Historical answer-preserving screening equivalences, pinned to their era.
+
+    The November 2026 claim-scope policy changes both prompts, so the current
+    generation matches neither case below and accepts no earlier results. The
+    historical cost estimate below assumes cached votes and does not price a
+    re-screen under the new policy; inspect a fresh dry-run estimate before spending.
 
     `d1a64d65a6d66c50` (2026-10, gpt-6-luna + Span-02) accepts the settled
     deepseek-v4-flash + gpt-6-luna screens (`3b93ecf06901e653`) and the

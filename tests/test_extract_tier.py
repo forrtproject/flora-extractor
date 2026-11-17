@@ -809,17 +809,16 @@ def test_a_declared_generation_equivalence_is_keyed_by_the_current_generation():
             f"since it was declared — re-review the equivalence or delete it")
 
 
-def test_the_quote_source_edit_retains_all_prior_settled_extract_generations():
-    """The 2026-10-02 quote-attribution edit must not reopen works settled under any
-    prior declaration. It claims no answer equivalence: only confirmed attribution
-    errors are reopened, by name, after the paired pilot."""
+def test_claim_scope_policy_does_not_accept_earlier_extract_generations():
+    """Changed eligibility and outcome rules must not reuse pre-policy verdicts."""
     from filter.engine.tiers import _generation_current
 
-    assert extract_generation() == "619cc46f58c39395"
-    for previous in ("25e2b6bb31821d84", "765e053cd24611e5", "474e80e4c32a6dfa", "7dbb1e92452d8333", "010cf32bb63351e1", "ca0706ef44827229",
-                     "061cb5ca8e1888b6", "243ae515c654b6e5",
+    assert extract_generation() == "b8eeac46f514e2d0"
+    for previous in ("619cc46f58c39395", "25e2b6bb31821d84", "765e053cd24611e5",
+                     "474e80e4c32a6dfa", "7dbb1e92452d8333", "010cf32bb63351e1",
+                     "ca0706ef44827229", "061cb5ca8e1888b6", "243ae515c654b6e5",
                      "5b716d061bb336f5", "dd7572887420ef65"):
-        assert _generation_current(tier_mod.TIER_EXTRACT, previous, [])
+        assert not _generation_current(tier_mod.TIER_EXTRACT, previous, [])
 
 
 @pytest.mark.parametrize("rows,expected", [

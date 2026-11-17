@@ -1328,44 +1328,35 @@ def test_a_verdict_from_another_generation_neither_settles_nor_blocks(
     assert drop == {11} and set(screen) == {11}
 
 
-def _era_generation(monkeypatch, model_1: str, model_2: str) -> str:
-    """The expensive tier's generation under an earlier voter pair, both at "low"."""
-    for name, value in (("SCREENING_MODEL_1", model_1), ("SCREENING_MODEL_2", model_2),
-                        ("SCREENING_EFFORT_1", "low"), ("SCREENING_EFFORT_2", "low")):
-        monkeypatch.setattr(tiers, name, value)
-    generation = tiers.screening_generation("screen_expensive")
-    monkeypatch.undo()
-    return generation
-
-
-@pytest.mark.parametrize("old_pair", [("deepseek/deepseek-v4-flash", "gpt-5.4-mini"),
-                                      ("deepseek/deepseek-v4-flash", "gpt-6-luna")])
-def test_current_screen_accepts_settled_earlier_generations_without_reopening(
-        monkeypatch, old_pair):
-    """The Luna + Span-02 generation keeps the settled DeepSeek + Luna screens and
-    the mini-era ones that generation accepted; any later change reopens them."""
-    old = _era_generation(monkeypatch, *old_pair)
-    assert old in ("98bcab0eff366d1d", "3b93ecf06901e653")
-    assert tiers.screening_generation("screen_expensive") == "d1a64d65a6d66c50"
-
+@pytest.mark.parametrize("old", ["d1a64d65a6d66c50", "3b93ecf06901e653",
+                                 "98bcab0eff366d1d"])
+def test_claim_scope_policy_reopens_earlier_screen_generations(old):
+    """A policy change is not an answer-preserving voter substitution."""
+    assert tiers.screening_generation("screen_expensive") == "98b46a069eac2228"
+    assert tiers.screening_generation("screen_expensive") != old
     votes = [{"work_id": 11, "verdict": "none", "model": m, "confidence": "confident"}
-             for m in old_pair]
+             for m in ("deepseek/deepseek-v4-flash", "gpt-6-luna")]
     client = _decided_client("screen_expensive", "live", votes, generation=old)
-    assert tiers.decided_work_ids(client, "screen_expensive") == {11}
-    assert handoff_mod.decisions(client)[0] == {11}
+    assert tiers.decided_work_ids(client, "screen_expensive") == set()
+    assert handoff_mod.decisions(client)[0] == set()
 
-    # Retaining the result retains its historical type, even when the database
-    # returns voter 2 first. Today's decision-voter override must not reinterpret it.
+
+def test_retained_screen_type_is_independent_of_database_vote_order(monkeypatch):
+    """Retaining a historical answer must not reinterpret its historical voter order."""
+    from dataclasses import replace
+
+    old = "3b93ecf06901e653"
+    spec = tiers.tier_spec("screen_expensive")
+    monkeypatch.setitem(tiers._TIER_SPECS, "screen_expensive",
+                        replace(spec, equivalent_generations=lambda: (old,)))
     split = [{"work_id": 11, "verdict": label, "model": model,
               "confidence": "confident"}
-             for model, label in zip(old_pair, ("replication", "reproduction"))]
-    split_client = _decided_client("screen_expensive", "live", list(reversed(split)), generation=old)
-    assert tiers.decided_work_ids(split_client, "screen_expensive") == {11}
-    assert handoff_mod.decisions(split_client)[1][11]["record_type"] == "replication"
-
-    monkeypatch.setattr(tiers, "DECISION_DISCARD_BELOW", 0.5)
-    assert tiers.screening_generation("screen_expensive") != "d1a64d65a6d66c50"
-    assert tiers.decided_work_ids(client, "screen_expensive") == set()
+             for model, label in (("deepseek/deepseek-v4-flash", "replication"),
+                                  ("gpt-6-luna", "reproduction"))]
+    for votes in (split, list(reversed(split))):
+        client = _decided_client("screen_expensive", "live", votes, generation=old)
+        assert tiers.decided_work_ids(client, "screen_expensive") == {11}
+        assert handoff_mod.decisions(client)[1][11]["record_type"] == "replication"
 
 
 def test_equivalent_screen_generations_do_not_combine_different_voters():

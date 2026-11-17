@@ -2550,19 +2550,19 @@ class TestCheckReferencePick:
         assert list(tmp_path.glob("*.json")) == []
 
 
-@pytest.mark.parametrize("evidence,expected_calls", [
-    ({}, 0),
-    ({"full_body": "Results: The effect replicated."}, 1),
+@pytest.mark.parametrize("evidence", [
+    {},
+    {"full_body": "Results: The effect replicated."},
     # The fallback excerpt: its old DISCUSSION label cannot be translated unread.
-    ({"discussion": "The effect replicated.", "discussion_provenance": "fallback"}, 1),
+    {"discussion": "The effect replicated.", "discussion_provenance": "fallback"},
 ])
-def test_quote_source_edit_reuses_only_unchanged_target_prompt_cache(monkeypatch, tmp_path, evidence, expected_calls):
+@pytest.mark.parametrize("old", ["e2c602f14d34", "066c4d469ee9"])
+def test_claim_scope_policy_does_not_reuse_old_target_cache(monkeypatch, tmp_path, evidence, old):
     from shared import prompts
     from shared.cache import content_key, write_cache
     entries, _ = llm.assign_target_keys(_CAND, [])
     prompt = prompts.build_target_outcome_prompt("T", "A", entries, **evidence)
     identities = "|".join(f"{e['key']}:{e.get('doi') or e.get('openalex_id') or ''}" for e in entries)
-    old = prompts._QUOTE_SOURCE_VERSION_PAIRS["build_target_outcome_prompt"][1]
     model_id = llm.cache_model_id(llm.LINKING_MODEL, llm.LINKING_EFFORT)
     legacy = content_key("targetoutcome", "10.1/x", old, model_id, "fulltext", "replication", identities, prompt)
     write_cache(tmp_path, legacy, {"targets": [], "resolved": False, "sentinel": "old"})
@@ -2573,8 +2573,8 @@ def test_quote_source_edit_reuses_only_unchanged_target_prompt_cache(monkeypatch
         return dict(_DECLINE), "openai", ""
     monkeypatch.setattr(llm, "call_model", fresh)
     result = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", _CAND, [], rung="fulltext", **evidence)
-    assert len(calls) == expected_calls
-    assert (result.get("sentinel") == "old") == (expected_calls == 0)
+    assert len(calls) == 1
+    assert result.get("sentinel") != "old"
 
 
 def test_quote_source_edit_preserves_blind_checker_cache(monkeypatch, tmp_path):

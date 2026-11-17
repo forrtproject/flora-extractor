@@ -31,9 +31,10 @@ def _held(report: dict) -> list[str]:
     return [r["pair_id"] for r in report["aside"].get("final_check_held.csv", [])]
 
 
-def test_prompt_version_is_the_evaluated_one():
-    """Moving the check must not move this: the pilot's codings are keyed on it."""
-    assert fc.PROMPT_VERSION == "58aa27a6c868"
+def test_claim_scope_prompt_has_its_own_version():
+    """The October pilot predates this policy; its cached codings are not equivalent."""
+    assert fc.PROMPT_VERSION == "42409736717d"
+    assert fc.PROMPT_VERSION != "58aa27a6c868"
 
 
 def test_an_unchanged_work_ships_without_an_entry():

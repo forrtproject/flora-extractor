@@ -17,7 +17,8 @@ These are `SCREENING_MODEL_1` / `_2` and `SCREENING_EFFORT_1` / `_2` in
 in `.env`. The tier name `screen_expensive` identifies this classifier.
 
 Luna reads the title and abstract using `build_classify_prompt()` in
-[shared/prompts.py](../shared/prompts.py) (v3.3) and returns `classification`
+[shared/prompts.py](../shared/prompts.py) (the v3.3 design with the November 2026
+claim-scope clarification) and returns `classification`
 (`replication`, `reproduction`, `both`, `none`, or `unclear`), `confident`,
 `categories`, `evidence_quote` and `reasoning`. Span-02 is asked the same rules as a
 choice over the same five classes (`build_screen_decision()`) and returns one
@@ -58,6 +59,15 @@ calls. See [the admission gates](../filter/spec/CONVENTIONS.md#admission-gates).
 Stage 1 searches the OpenAlex snapshot. Stage 2 rules route candidates or discard
 measured false positives; only the screening tier admits papers to Stage 3.
 **Stage 3 reads the stored screening verdict and does not run the classifier again.**
+
+Both voters require an explicit intention to re-test **a central empirical claim** of
+an identifiable earlier study. Re-testing one of several central claims is enough,
+and replication can be a secondary aim. Literal replication wording and preregistration
+are not required. Uncertain screening can lead to fuller reading, but final inclusion
+needs evidence of the intended re-test and target. Outcome prompts establish that scope
+before applying an explicit relevant author verdict or the fallback comparisons; an
+out-of-scope exploratory difference does not force mixed. See the
+[FLoRA FAQ](https://github.com/forrtproject/fred-data/blob/main/output/flora_faq.md).
 
 ## Other model roles
 
@@ -121,9 +131,16 @@ measured one settled-positive miss and roughly 86–90% hard-negative discard ac
 two in-sample runs; see the [DeepSeek voter evaluation](../analysis/screening_eval/cheap_voter_2026-08.md)
 and [v3.3 report](../analysis/screening_eval/report_v33.md).
 
-Existing results can contain older models. The Luna + Span-02 screening generation
-explicitly accepts settled DeepSeek + Luna and mini-era verdicts; extraction has its own
-explicit generation equivalences. Neither switch rewrote all historical results.
+These evaluations predate the November 2026 claim-scope clarification. The policy
+change has offline prompt-rendering and cache/generation checks, but no new LLM
+classification or outcome benchmark; the earlier scores do not establish its accuracy.
+
+Existing results can contain older models. The October Luna + Span-02 screening generation
+accepted settled DeepSeek + Luna and mini-era verdicts. The November claim-scope change
+mints new screening and extraction generations and declares no earlier generation
+equivalent. The affected response caches also invalidate; unchanged prompts retain their
+cache keys. This changes what a later pipeline run will consider current, not published
+data by itself. It does not start a live re-screen or re-extraction.
 Consult per-vote `model` fields in stored verdicts and exported `screen_votes`,
 and extraction model provenance, to identify what actually graded a particular
 paper. A current configuration constant alone cannot establish that history.

@@ -284,8 +284,9 @@ SCREENING_LEGACY_VOTER_PAIRS = (
 # The task is long-context retrieval: pick the right entries out of ~80 keyed
 # reference lines without confusing them. GPT-6 Luna is $0.05/M input and $0.25/M
 # output at flex tier (2026-09-23). It is not in the free daily token allocation, so
-# set OPENAI_DAILY_TOKEN_BUDGET=0 for a billed run. Previously settled verdicts stay
-# current through `_GENERATION_EQUIVALENCES` in extract/tier.py; each verdict retains
+# set OPENAI_DAILY_TOKEN_BUDGET=0 for a billed run. Previously settled verdicts remain
+# current only when `_GENERATION_EQUIVALENCES` in extract/tier.py explicitly allows it;
+# the November 2026 claim-scope policy declares none. Each verdict retains
 # the model that produced it. Linking has not been scored against data/flora.csv.
 LINKING_MODEL = "gpt-6-luna"
 

@@ -267,8 +267,12 @@ screen_expensive`): two voters of different kinds. `SCREENING_MODEL_1` (default
 `gpt-6-luna` at effort `low`) is an LLM that answers the validated v3.2 schema in
 text: `classification` ∈ {replication, reproduction, both, none, unclear}, boolean
 `confident`, `categories` (11-value enum), `evidence_quote`, `reasoning`. Prompt:
-`_CLASSIFY_PROMPT` in `shared/prompts.py`, now at v3.3 — v3.2 plus the
-partial-overlap rule (evaluated copy: `analysis/screening_eval/prompt_v33.txt`;
+`_CLASSIFY_PROMPT` in `shared/prompts.py`: the v3.3 design plus the November 2026
+claim-scope clarification. Eligibility requires an intentional re-test of a central
+empirical claim of an identifiable earlier study; one of several claims is enough,
+and replication may be a secondary aim. Outcome coding establishes that scope before
+applying the relevant overall author verdict or fallback comparisons. The v3.3
+evaluation predates this policy change (evaluated copy: `analysis/screening_eval/prompt_v33.txt`;
 evidence: `analysis/screening_eval/report_v33.md`; earlier generations are under
 `archive/analysis/screening_eval/`). `SCREENING_MODEL_2` (default
 `respan/span-02-20261015`, open weights, pinned to the dated id) is a DECISION
@@ -331,12 +335,13 @@ that voter's answers while the other's stay cache hits. Entries from the pair-ke
 era are split on first read (`_cached_vote()` in `shared/llm_client.py` lifts a vote
 out of a joint entry for the model AT the effort the joint era ran,
 `_JOINT_ERA_EFFORTS`). A voter, prompt, decision-question or cut-off change mints a
-new SCREENING GENERATION. The Luna + Span-02 generation (`d1a64d65a6d66c50`)
-explicitly accepts settled DeepSeek + Luna verdicts (`3b93ecf06901e653`) and the
-`gpt-5.4-mini`-era ones that generation accepted (`98bcab0eff366d1d`), so the switch
-does not re-screen the backlog; new and incomplete works use the new pair. A later
-change does not inherit that equivalence (`_expensive_equivalent_generations()` in
-`filter/engine/tiers.py`). The OpenAI request marks the shared screening rules as an
+new SCREENING GENERATION. The October Luna + Span-02 generation (`d1a64d65a6d66c50`)
+accepted settled DeepSeek + Luna verdicts (`3b93ecf06901e653`) and the
+`gpt-5.4-mini`-era ones (`98bcab0eff366d1d`). The November claim-scope policy changes
+the question, so its new screening and extraction generations accept no earlier
+generations. This invalidates the affected response caches and changes the worklist
+on a later run; it does not itself run the pipeline or change published data. The
+OpenAI request marks the shared screening rules as an
 explicit prompt-cache prefix; the title and abstract follow the breakpoint. The
 decision model offers no prompt caching and bills no output.
 
