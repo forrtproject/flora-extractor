@@ -1333,15 +1333,44 @@ def test_a_verdict_from_another_generation_neither_settles_nor_blocks(
 @pytest.mark.parametrize("verdict", ["none", "replication"])
 def test_claim_scope_clarification_retains_settled_screen_generations(old, verdict):
     """The explicit invariance declaration must not reopen or drop settled screens."""
+    from dataclasses import replace
+    from shared.cache import content_key
+
     assert tiers.screening_generation("screen_expensive") == "98b46a069eac2228"
     assert tiers.screening_generation("screen_expensive") != old
-    votes = [{"work_id": 11, "verdict": verdict, "model": m, "confidence": "confident"}
+    work = tiers.Work(11, "10.1/x", "A replication", "We replicated Smith.",
+                      "screen_expensive")
+    # Persisted by the pre-clarification classify prompt, including the text it saw.
+    before = content_key("screenquestion", work.doi, "fde7296fafad",
+                         work.title, work.abstract)
+    votes = [{"work_id": 11, "verdict": verdict, "model": m, "confidence": "confident",
+              "prompt_hash": before}
              for m in ("deepseek/deepseek-v4-flash", "gpt-6-luna")]
     client = _decided_client("screen_expensive", "live", votes, generation=old)
     assert tiers.decided_work_ids(client, "screen_expensive") == {11}
+    asked = {11: tiers.question_hash(work, "screen_expensive")}
+    assert tiers.decided_work_ids(client, "screen_expensive", asked) == {11}
+    # The declaration preserves wording changes only; genuinely changed text reopens.
+    for change in ({"title": "A different replication"},
+                   {"abstract": "Newly recovered abstract text."}):
+        moved = {11: tiers.question_hash(replace(work, **change), "screen_expensive")}
+        assert tiers.decided_work_ids(client, "screen_expensive", moved) == set()
     drop, screen = handoff_mod.decisions(client)
     assert drop == ({11} if verdict == "none" else set())
     assert set(screen) == {11}
+
+
+def test_later_classify_prompt_does_not_inherit_question_hash_invariance(monkeypatch):
+    from shared.cache import content_key
+
+    work = tiers.Work(11, "10.1/x", "A replication", "We replicated Smith.",
+                      "screen_expensive")
+    before = tiers.question_hash(work, "screen_expensive")
+    monkeypatch.setattr(tiers, "prompt_version", lambda name: "later-prompt-version")
+    after = tiers.question_hash(work, "screen_expensive")
+    assert after != before
+    assert after == content_key("screenquestion", work.doi, "later-prompt-version",
+                                work.title, work.abstract)
 
 
 def test_decision_cutoff_change_does_not_inherit_screening_invariance(monkeypatch):

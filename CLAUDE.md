@@ -340,7 +340,10 @@ accepted settled DeepSeek + Luna verdicts (`3b93ecf06901e653`) and the
 `gpt-5.4-mini`-era ones (`98bcab0eff366d1d`). Lukas declared the November claim-scope
 clarification invariant for settled results: the new screening and extraction
 generations explicitly retain the preceding generations and their reviewed predecessors.
-This does not reopen the backlog. Individual response caches remain versioned; new or
+The reviewed classify prompt also retains its preceding per-work question hash, so
+the text-change check does not undo the declaration; changed titles/abstracts and
+later prompt versions still move that hash. This does not reopen the backlog.
+Individual response caches remain versioned; new or
 explicitly reopened work uses the clarified prompts. New or changed works require a
 fresh blind final check before export because that prompt's version also changes;
 unchanged published works are not automatically re-checked. The invariance declarations

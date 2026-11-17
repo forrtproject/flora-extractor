@@ -142,6 +142,10 @@ extraction generations explicitly accept the preceding generations and their rev
 predecessors. Existing screens keep their outcomes and record types; this change does
 not reopen screening or extraction. The declaration is pinned to these exact generation
 hashes, so a later prompt, model, effort or threshold change invalidates normally.
+The reviewed classify version also retains the preceding per-work question hash;
+otherwise the text-change check would reopen those screens despite their accepted
+generation. Titles and abstracts still enter that hash, so genuinely changed text
+reopens its work. A later classify prompt version does not inherit this mapping.
 
 Individual response caches remain content/version-keyed. New or explicitly reopened
 work uses the clarified prompts. The blind final-check prompt has its own new version;

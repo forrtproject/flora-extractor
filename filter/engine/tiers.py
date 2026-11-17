@@ -258,7 +258,7 @@ def _expensive_equivalent_generations() -> tuple[str, ...]:
 
 
 def question_hash(work: "Work", tier: str) -> str:
-    """Fingerprint of what this work's voters are ASKED — the prompt, and the text.
+    """Fingerprint of this work's prompt equivalence and the text its voters see.
 
     The generation covers the models and the prompt VERSION, and stops there, so
     nothing in the checkpoint noticed when a work's own text changed underneath a
@@ -274,9 +274,16 @@ def question_hash(work: "Work", tier: str) -> str:
     Per TIER, because each asks its own prompt: a value computed under one tier's
     prompt and compared against another's would read every work as moved.
     """
+    version = prompt_version(_TIER_PROMPT[tier])
+    # The November clarification is explicitly invariant for settled screens. Keep
+    # their per-work question hashes too, or _question_moved would reopen them even
+    # though their generation is accepted. Only this reviewed version is mapped;
+    # later prompt edits and changed title/abstract text still produce new hashes.
+    # Actual prompt provenance remains in the claim generation and LLM cache key.
+    if tier == TIER_EXPENSIVE and version == "b66d59c3a1df":
+        version = "fde7296fafad"
     return content_key("screenquestion", work.doi or work.title,
-                       prompt_version(_TIER_PROMPT[tier]),
-                       work.title, work.abstract)
+                       version, work.title, work.abstract)
 
 
 def _question_moved(rows: list[dict], asked: str, text_fetched: str) -> bool:
