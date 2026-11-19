@@ -226,7 +226,14 @@ def screening_generation(tier: str) -> str:
 
 
 def _expensive_equivalent_generations() -> tuple[str, ...]:
-    """Keep settled earlier screens while new work uses the current pair.
+    """Declared screening invariance, pinned to the reviewed prompt generation.
+
+    2026-11-17: Lukas explicitly requested that the claim-scope clarification retain
+    settled screens rather than reopen screening. Accept the immediately preceding
+    generation and its reviewed predecessors. This is an operational declaration
+    for the existing backlog, not a claim that new model responses are identical.
+    New or incomplete work uses the clarified prompt. A later prompt, voter, effort
+    or decision-threshold change matches no declaration and invalidates strictly.
 
     `d1a64d65a6d66c50` (2026-10, gpt-6-luna + Span-02) accepts the settled
     deepseek-v4-flash + gpt-6-luna screens (`3b93ecf06901e653`) and the
@@ -241,6 +248,8 @@ def _expensive_equivalent_generations() -> tuple[str, ...]:
     stops accepting the older results until reviewed separately.
     """
     current = screening_generation(TIER_EXPENSIVE)
+    if current == "98b46a069eac2228":
+        return ("d1a64d65a6d66c50", "3b93ecf06901e653", "98bcab0eff366d1d")
     if current == "d1a64d65a6d66c50":
         return ("3b93ecf06901e653", "98bcab0eff366d1d")
     if current == "3b93ecf06901e653":
@@ -249,7 +258,7 @@ def _expensive_equivalent_generations() -> tuple[str, ...]:
 
 
 def question_hash(work: "Work", tier: str) -> str:
-    """Fingerprint of what this work's voters are ASKED — the prompt, and the text.
+    """Fingerprint of this work's prompt equivalence and the text its voters see.
 
     The generation covers the models and the prompt VERSION, and stops there, so
     nothing in the checkpoint noticed when a work's own text changed underneath a
@@ -265,9 +274,16 @@ def question_hash(work: "Work", tier: str) -> str:
     Per TIER, because each asks its own prompt: a value computed under one tier's
     prompt and compared against another's would read every work as moved.
     """
+    version = prompt_version(_TIER_PROMPT[tier])
+    # The November clarification is explicitly invariant for settled screens. Keep
+    # their per-work question hashes too, or _question_moved would reopen them even
+    # though their generation is accepted. Only this reviewed version is mapped;
+    # later prompt edits and changed title/abstract text still produce new hashes.
+    # Actual prompt provenance remains in the claim generation and LLM cache key.
+    if tier == TIER_EXPENSIVE and version == "b66d59c3a1df":
+        version = "fde7296fafad"
     return content_key("screenquestion", work.doi or work.title,
-                       prompt_version(_TIER_PROMPT[tier]),
-                       work.title, work.abstract)
+                       version, work.title, work.abstract)
 
 
 def _question_moved(rows: list[dict], asked: str, text_fetched: str) -> bool:

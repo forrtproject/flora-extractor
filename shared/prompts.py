@@ -137,11 +137,18 @@ evidence supplied — an empty list is a correct and expected answer, not a fail
 A minority target several.
 
 What counts as a target:
-- The paper must re-test that study's reported finding: collecting new data to check
-  whether it holds, or re-analysing that study's own data. Judge the RELATIONSHIP,
-  not the wording — a paper that tests whether a specific published result holds in a
-  new sample is a replication whether or not it uses the word "replication". A study
-  cited for background, motivation or context is NOT a target.
+- The paper must explicitly set out, before reporting results, to re-test a central
+  empirical claim of that earlier study: collecting new data to check it, or
+  re-analysing that study's own data. A central claim is enough; it need not be the
+  original's only central claim, and replication may be one of several aims of this
+  paper. The literal word "replication" is not required if that intention is explicit.
+  Screening is provisional: establish this relationship from the supplied evidence,
+  rather than assuming that an admitted paper qualifies. A study cited for background,
+  motivation or context is NOT a target.
+- Re-testing a central association can qualify. A tangential association, reuse of a
+  method or instrument, or agreement noticed only after the results does not. Merely
+  translating or re-validating an instrument is insufficient unless it explicitly
+  re-tests a central empirical claim of an earlier study.
 - Do NOT include a study because it is topically similar, prominent, frequently
   cited, or the only option offered.
 - A listed reference is a target only when THIS paper itself re-tests its finding. A
@@ -320,10 +327,14 @@ key is the JSON value null, not the text "null", and that it is coded all the sa
 _TARGET_RTC_FIELD = """
 - "record_type_check": one of "replication", "reproduction", "neither", "unclear" —
   what the text shows this paper actually did about THIS original: "replication" if
-  it collected new data or used a different sample to re-test the finding,
-  "reproduction" if it re-analysed the original study's own data, "neither" if it
-  does not check that original at all, "unclear" if the text does not say. Answer it
-  from the methods, independently of the outcome fields."""
+  it collected new data or used a different sample with the stated aim of re-testing
+  a central empirical claim of that original, "reproduction" if it re-analysed the
+  original study's own data to check such a claim, "neither" if no such intended
+  re-test exists, "unclear" if the text does not say. Answer it from the aims and
+  methods, independently of the outcome fields. Do not infer that a claim is peripheral
+  merely because only one claim is re-tested or replication is a secondary aim. If the
+  supplied evidence leaves its centrality or the intended re-test unclear, answer
+  "unclear", not "neither"."""
 
 # Which targets a verdict covers, for the papers that re-test several different
 # originals. Spliced into the two COMBINED builders only: the standalone coder is given
@@ -480,10 +491,6 @@ the outcome criteria above and do not infer findings from a Methods plan.
 # receiving a full body, Methods, or an unsectioned excerpt must buy a new answer:
 # their old quote labels cannot be translated without reading the document.
 _QUOTE_SOURCE_VERSION_PAIRS = {
-    "build_target_outcome_prompt": ("066c4d469ee9", "e2c602f14d34"),
-    "build_repro_target_outcome_prompt": ("5dde78a90af0", "117f2c544a69"),
-    "build_outcome_prompt": ("31fa7a89fb9a", "556e48911415"),
-    "build_repro_outcome_prompt": ("30703029542e", "c6bb106a7307"),
     # The checker shares a body renderer but never sends a body. Its text is exact.
     "build_pick_check_prompt": ("d39f84c32048", "8018b9d701fb"),
 }
@@ -670,13 +677,13 @@ Example of the required JSON structure:
 
 STAKES
 
-A confident "none" permanently discards the paper. False discards are costly; false inclusions are cheap, because later stages and human reviewers can still remove them.
+Two "none" votes discard the paper regardless of confidence. False discards are costly; uncertain candidates can be investigated at later stages and by human reviewers. Use "unclear" when the abstract does not settle eligibility; low confidence alone does not protect a "none" vote from discarding.
 
 You never have to identify which earlier study is being checked. A later stage of the pipeline does that. Your only job is to judge whether this paper is the kind of study the database collects.
 
 WHAT QUALIFIES
 
-A paper qualifies when checking a specific finding from earlier published research is one of its stated aims.
+A paper qualifies when it explicitly sets out, before reporting results, to re-test a central empirical claim of an identifiable earlier study (which need not be named in the abstract). A central claim is enough: the paper need not re-test every central claim, and replication may be one of several aims of the new paper. The literal word "replication" is not required if that intention is explicit. Preregistration is not required.
 
 - Code it as "replication" when new data are collected in order to re-test a finding reported in a previously published study.
 - Code it as "reproduction" when an earlier study's own data are re-analysed in order to check the result that was reported from them.
@@ -687,9 +694,9 @@ Each of the following qualifies:
 1. Context transfer. Re-testing the same claim in a different population, country, language or setting qualifies.
 2. Conceptual replication. Re-testing the claim with a changed method, measure or paradigm qualifies.
 3. Self re-test. Authors re-testing their own earlier published finding in a separate paper qualifies.
-4. Measurement re-validation. Re-testing, re-validating, translating or adapting an already published instrument, scale, test or clinical procedure qualifies, including when this is done in a new population, language or setting, and including when the stated aim is that instrument's reliability, test-retest, inter-rater agreement or reproducibility in that new population, language or setting.
+4. Measurement re-validation. Re-validating, translating or adapting an already published instrument, scale, test or procedure qualifies only when it explicitly re-tests a central empirical claim of the earlier study, including a claim about measurement properties. Adaptation or instrument reuse alone does not qualify.
 5. Comment or reply with its own analysis. A comment, reply or letter that presents its own re-analysis of a published result qualifies.
-6. Author self-declaration. If the authors explicitly identify the study itself as a replication or reproduction, accept that framing and use the type they declare. Merely using related vocabulary in one of the non-qualifying senses below is not a self-declaration. Author self-declaration applies only when the declared target is earlier published research in another paper; a declared "replication" whose target is elsewhere in this same paper is an internal replication.
+6. Author self-declaration. If the authors explicitly identify the study itself as a replication or reproduction of a central empirical claim in earlier published research, accept that framing and use the type they declare. Merely using related vocabulary in one of the non-qualifying senses below is not a self-declaration. A declared "replication" whose target is elsewhere in this same paper is an internal replication.
 7. Partial data overlap. Sharing some observations with the original does not disqualify: a re-test that extends the original sample, adds a later wave, or partially overlaps the original data still qualifies when checking the earlier finding is an aim of the paper.
 
 WHAT DOES NOT QUALIFY
@@ -697,14 +704,14 @@ WHAT DOES NOT QUALIFY
 Return "none" in these situations.
 
 - Declared intent. The paper must set out to replicate, reproduce or otherwise check the earlier finding — the check must be something the paper aims to do. Return "none" when the abstract presents the agreement or re-test as an incidental result or interpretive remark rather than an aim of the paper.
-- Target specificity. The thing being checked must be a particular finding that someone reported, not the accepted background knowledge of a field. A study that tests whether something the literature already widely holds applies in its own sample is ordinary research building on prior work. Example of accepted background knowledge: "the well-established association between X and Y". The abstract does not have to name the source study: a paper qualifies if it clearly aims to check a particular finding reported by earlier research.
-- First validation of a new instrument. The initial validation of a newly proposed instrument does not qualify, because there is no earlier reported finding to check. By contrast, re-validating an already published instrument qualifies.
+- Target specificity. The thing being checked must be a central empirical claim of a particular earlier study, not accepted background knowledge or a tangential association. Re-testing a central association can qualify even when the original has other central claims. Example of accepted background knowledge: "the well-established association between X and Y". An abstract that clearly describes checking a specific earlier reported claim still qualifies without naming its source; the later stage identifies the study. Where the abstract does not show whether an intended re-test exists or whether its claim is central, use "unclear" rather than "none".
+- First validation of a new instrument. The initial validation of a newly proposed instrument does not qualify, because there is no earlier reported claim to check. Re-validation of a published instrument must meet the claim and intent requirements above.
 - Comment without analysis. A comment or letter that only argues about an earlier study, presenting no new data and no re-analysis, does not qualify.
 - Internal replication. A re-test of a result obtained elsewhere in this same paper, thesis or dissertation does not qualify, whatever the authors call it — "Study 6 was a replication of Study 2", "two experiments that are a replication of one another", or a second objective that replicates a pattern the paper itself has just reported. The target must be earlier published research in some paper other than this one. This covers the two-stage discovery design: a study that identifies a signal in its own discovery sample and then confirms it in its own second sample does not qualify, however that second sample is labelled. "Replication set", "replication sample", "replication cohort", "stage 2" and "confirmed in an independent cohort" describe a design internal to the paper, not a check on another paper's finding. It qualifies only if the abstract says the association being confirmed was reported by earlier research.
 
 The words "replication", "reproduce", "reproducibility" and their relatives are used in several senses that do not qualify:
 
-1. Technical or measurement precision that does not concern an already published instrument's properties — sample-to-sample precision, device-to-device precision, inter-rater or intra-rater agreement computed as part of this study's own methods, and multi-laboratory round-robin, ring-trial or proficiency-testing exercises run as laboratory quality assurance. The aim of these studies is to quantify the spread of a measurement, not to check a property earlier research reported. Reliability, test-retest, inter-rater or reproducibility work on an already published instrument, scale, test or procedure is rule 4 above and qualifies.
+1. Technical or measurement precision that does not concern an already published instrument's properties — sample-to-sample precision, device-to-device precision, inter-rater or intra-rater agreement computed as part of this study's own methods, and multi-laboratory round-robin, ring-trial or proficiency-testing exercises run as laboratory quality assurance. The aim of these studies is to quantify the spread of a measurement, not to check a property earlier research reported. Work on an already published instrument is governed by rule 4 above: it qualifies only when it explicitly re-tests a central empirical claim of the earlier study, including a claim about measurement properties.
 2. Tool benchmarking: a new model, simulation, numerical method, assay or apparatus demonstrated to reproduce known results in order to show that the tool works. This holds even when the abstract names the published results the tool recovers, and even when it uses the words "reproduce", "replicate", "verify" or "validate against" — recovering what earlier work reported is a property of the tool, and the tool is the paper's subject. Exception: a study whose aim is to settle whether the earlier claim itself holds, including a re-analysis of the earlier study's own data, qualifies.
 3. Ordinary-language, biological and field-specific senses: DNA, viral, cell or histological replication; "replication" as a count of overlapping samples in a chronology; "replicated across sites" describing the internal design of the study being reported; reuse of an earlier paper's framework, element list or protocol as this study's instrument ("using 16 elements of X's research"); and rolling an engineering solution, pilot or intervention out to a further site.
 4. Papers about replication: reviews, commentary on the replication crisis, or a paper that merely states that future replication is needed.
@@ -714,9 +721,10 @@ CONFIDENCE
 Apply both the qualifying rules and the exclusion rules. If the abstract supports more than one reading, use the rules below; do not resolve ambiguity by defaulting to "none".
 
 - Answer "confident": true only when the abstract states plainly what the paper set out to do, so that the rules above settle the case on the wording in front of you.
-- Answer "confident": false when your answer rests on inference, when the abstract is vague about the paper's aims, or when a different reading of the same sentences would change your answer. Both values are ordinary answers: a "none" you are not confident in still means "none", and it means the paper will be looked at rather than dropped. Saying false when you are unsure is the behaviour this field is for.
+- Answer "confident": false when your answer rests on inference, when the abstract is vague about the paper's aims, or when a different reading of the same sentences would change your answer. Confidence does not change eligibility: two "none" votes still discard, so use "unclear" when eligibility itself is unresolved.
 - Be confident about "none" only when the abstract clearly describes a purpose that does not qualify, for example an unambiguous instance of one of the non-qualifying senses of the vocabulary, a first validation of a new instrument, or a plainly incidental agreement with prior work.
 - An abstract that describes checking a specific reported finding but does not name the source study is not grounds for a confident "none". Classify such a paper as qualifying and leave identification of the source to the later stage.
+- An adaptation, translation or re-validation of a published instrument whose abstract does not establish whether it checks the original's reported measurement claims is "unclear", not "none". Do not infer that a claim is peripheral merely because only one claim is re-tested or replication is a secondary aim.
 - When the abstract genuinely does not settle the question in either direction, use "unclear" rather than forcing "none".
 
 Judge only from the title and abstract below. Do not speculate about content the abstract does not contain.
@@ -750,11 +758,12 @@ def build_classify_prompt(study_r: str, abstract_r: str) -> str:
 # (analysis/jev_eval_2026-10/REPORT_pplx.md, `pplx_full2`). Three revisions tried on
 # Span-02 improved nothing on a held-out half (REPORT_prompt_ablation.md).
 _DECISION_CHOICES = {
-    "replication": "Re-tests a particular earlier published finding with newly collected data.",
-    "reproduction": "Re-analyses earlier data to check a published result, robustness, or "
-                    "reproducibility.",
-    "both": "Both re-analysis of earlier data and collection of new data to re-test the "
-            "finding.",
+    "replication": "Intentionally re-tests a central empirical claim of an earlier study "
+                   "with newly collected data.",
+    "reproduction": "Intentionally re-analyses earlier data to check a central empirical "
+                    "claim's robustness or reproducibility.",
+    "both": "Both re-analysis of earlier data and collection of new data to re-test a "
+            "central empirical claim.",
     "none": "Not a check of another paper's finding. This includes: biological or technical "
             "senses of 'replication' (DNA, viral, cell); a discovery-then-replication cohort, "
             "two-stage or 'independent sample' design inside this same paper (GWAS and "
@@ -911,7 +920,7 @@ Example of the required JSON structure:
 
 {
   "outcome": "mixed",
-  "outcome_phrase": "We replicated the main effect of construal level on donation intentions, with an effect size about half that reported originally. The predicted interaction with social distance did not emerge in either sample.",
+  "outcome_phrase": "We set out to replicate both the main effect of construal level on donation intentions and its interaction with social distance. We replicated the main effect, with an effect size about half that reported originally. The targeted interaction did not emerge in either sample.",
   "out_quote_source": "discussion",
   "confident": true,
   "outcome_reasoning": "The authors themselves report one target effect as replicated and another as absent, which is the mixed category rather than a reduced-effect success."
@@ -933,16 +942,30 @@ _OUTCOME_TEMPLATE = _vocab(_OUTCOME_TEMPLATE_SRC, OUTCOME_LABELS)
 # both the standalone coder above and the combined target+outcome prompt. Split out so
 # the two ask the same question in the same words: they were written apart once, and
 # the definition of "mixed" drifted between them.
-_OUTCOME_RULES_SRC = """HOW TO DECIDE, IN ORDER
+_OUTCOME_RULES_SRC = """ESTABLISH THE REPLICATION SCOPE FIRST
 
-1. Where the authors state an OVERALL verdict on the replication, that verdict decides the
-   outcome, even where individual results point elsewhere. Trust it over your own reading
-   of the evidence. An overall verdict is a statement about how the replication came out AS
-   A WHOLE — "our results replicate the original finding", "the original result did not
-   hold". A sentence confirming one particular effect is NOT an overall verdict: it is one
-   of the paper's comparisons, and rule 2 applies.
+Identify the central empirical claim or claims of THIS original that the paper explicitly
+set out to re-test. A central claim is enough; the attempt need not cover all of the
+original's central claims, and replication may be one of several aims of this paper.
+Establish the intended scope from the stated aims and design, not by selecting results
+that agree. Preregistration is not required. Robustness checks, exploratory analyses and
+extensions outside that scope do not change this outcome merely because the authors
+compare them with the original. Include an interaction or another result inside that
+scope when coding from comparisons without a relevant overall verdict. Never import a
+verdict about another original.
+
+HOW TO DECIDE, IN ORDER
+
+1. Where the authors state an OVERALL verdict on the intended replication scope for THIS
+   original, that verdict decides the outcome, even where individual tests point elsewhere.
+   Trust it over your own significance criterion or reading of the evidence. A statement
+   confirming one effect can be the overall verdict when that is the only claim being
+   replicated. If the attempt targets several claims, confirming one alone is not an
+   overall verdict on the others. A generally positive statement about the paper or its
+   contribution is not a replication verdict. The same precedence applies to an explicit
+   special verdict of «flawed» or «uninformative» about this attempt.
 2. Where no overall verdict is stated, code from the authors' comparisons of their results
-   to the original, explicit or implicit. A comparison is implicit when the result the paper
+   to the original WITHIN THAT INTENDED SCOPE, explicit or implicit. A comparison is implicit when the result the paper
    reports IS the original's own finding — the same claim, in the same direction: a study
    built to re-test the original's effect that reports "the predicted effect was found" has
    compared, even without naming the original in that sentence. Two tests before you code
@@ -959,8 +982,9 @@ _OUTCOME_RULES_SRC = """HOW TO DECIDE, IN ORDER
    disagree → «failure»; some agree and some do not → «mixed».
 3. Where the paper's reported results state or imply nothing about the original's finding,
    no replication outcome exists to code: answer «cannot_be_determined». Answer «descriptive»
-   only where the AUTHORS themselves say they applied the original's methods in a new context
-   or population — never as your own reading of what the study did.
+   only where the AUTHORS explicitly describe the results of an intended re-test of a
+   central claim as descriptive, without assessing agreement with the original. Missing
+   comparison evidence alone is not descriptive, and method reuse alone is not eligible.
 
 A changed method, measure, paradigm, population or setting does not by itself mean the paper
 has not compared: a conceptual replication re-tests the original's claim by design, and rule 2
@@ -986,24 +1010,21 @@ OUTCOME CATEGORIES
 These two verdicts are about AGREEMENT with what the original reported, not about this
 paper's own statistical significance: finding no effect where the original also found none is
 "«success»", and finding an effect where the original found none is "«failure»".
-- "«mixed»" — the authors themselves present their evidence as partly supporting and partly not,
-  for example when some of several tested findings replicated and others did not. Use «mixed»
-  only when the paper frames its own result that way; do not infer it from a reduced effect
-  size, or because you would have judged the evidence differently. If this paper re-tests
-  several studies from the original this verdict is about and they came out differently,
-  that is «mixed». Where the paper marks one result as differing from the original in its own
-  words — "in contrast to the original", "unlike Smith et al.", "we did not replicate the
-  second effect" — and reports another as agreeing, the outcome is «mixed». That holds even
-  where the paper opens by confirming the effect it set out to test: confirming the tested
-  effect is one comparison, not a verdict on the whole replication, and only an overall
-  verdict that speaks to the replication as a whole (rule 1) outweighs a stated contrast. A
-  count of how many measures replicated is not by itself such a mark.
-- "«descriptive»" — the AUTHORS say they applied the original's methods, materials or procedure
-  in a new context or population, and the paper compares no result against the original finding.
-  Code this only from the authors' own account of what they did: where they do not say it, you
-  are inferring «descriptive» from the shape of the study, and the answer is
-  «cannot_be_determined» instead. If the paper does compare its results to the original's — even
-  in a new population — code another outcome.
+- "«mixed»" — the authors' overall verdict is partial or mixed. Without an overall verdict,
+  their comparisons WITHIN THE INTENDED REPLICATION SCOPE contain both agreement and
+  disagreement: for example, a targeted main effect replicated but a targeted interaction
+  did not. An explicitly contrasted exploratory or robustness result OUTSIDE that scope
+  does not make the outcome «mixed». A smaller effect size or your own disagreement with
+  the authors' assessment does not make it «mixed» either. Aggregate several studies of
+  this original within the intended scope, following rule 1 when an overall verdict is
+  available. A count of how many measures replicated is not by itself evidence of which
+  targeted claims agreed or disagreed.
+- "«descriptive»" — the AUTHORS state an intention to re-test a central claim of the original
+  in a new context or population, but explicitly present the results descriptively without
+  assessing agreement with the original. Do not infer this from missing comparison evidence:
+  that is «cannot_be_determined». Pure reuse of methods or materials without an intended
+  re-test does not qualify. If the paper compares its results to the original's, code another
+  outcome.
 - "«flawed»" — the authors obtained the original effect but argue
   that their own or the original's method does not validly test the hypothesis, for example
   "we replicated the effect using the original materials, but show that they are not a valid
@@ -1023,32 +1044,47 @@ our verdict about our evidence.
 
 CODING RULES
 
-- Where the authors state no verdict of their own: a manipulation check or preliminary test
+- Where the authors state no relevant overall verdict: a manipulation check or preliminary test
   that failed, so that the hypothesis could not be tested, is "«failure»" — not
   "«uninformative»" and not "«cannot_be_determined»". A manipulation check that succeeded
   followed by a failed main test is also "«failure»".
-- Where the authors state no verdict of their own: if the paper's title focuses on one
-  specific effect and that effect did not replicate, code "«failure»", whatever other checks
-  succeeded.
-- A close replication that works alongside a conceptual replication that does not is "«mixed»".
-- Code the central finding the replication was designed to test. Robustness checks and
-  exploratory analyses around it may be left out of the verdict; a tested finding the paper
-  itself contrasts with the original may not.
+- Where the authors state no relevant overall verdict: if the intended replication scope
+  covers one title-focused effect and that effect did not replicate, code "«failure»",
+  whatever checks outside that scope succeeded. If the stated aims include other targeted
+  claims, compare their outcomes too; the title alone does not override that broader scope.
+- Where the authors state no relevant overall verdict: a close replication that works
+  alongside a conceptual replication that does not is "«mixed»" if both are within the
+  intended replication scope for this original. An extension outside that scope does not
+  change the outcome.
+- Code the central empirical claim or claims the replication was designed to test.
+  A central claim is sufficient. An explicit contrast outside the intended replication
+  scope does not override that scope. When coding from comparisons because no relevant
+  overall verdict is available, a failed interaction inside that scope must be included;
+  this does not override an explicit relevant overall verdict.
 - Where this paper reports several of its own studies against the original this verdict is
   about, aggregate them into one verdict, following the authors' own judgment where they
-  state one; results that conflict with each other are "«mixed»".
+  state a relevant overall verdict; without one, conflicting in-scope results are "«mixed»".
 
 Examples:
 
-1. "Study x used method A to study reasons for 911 calls in city 1. Here, we replicate this
-   method to understand 911 calls in city 2." — «descriptive»: the methods are reused, the
-   original claim is never tested.
-2. "We replicated the main effect but not the interaction." — «mixed».
+1. "We set out to re-test Smith's central account of reasons for 911 calls in city 2, but
+   present our findings descriptively without assessing agreement with Smith's results."
+   — «descriptive»: an intended re-test is stated and the authors explicitly decline an
+   agreement verdict. Simply reusing Smith's method would not qualify.
+2. The stated replication aims target a main effect and an interaction; "We replicated the
+   main effect but not the interaction." — «mixed».
 3. "Our findings confirm Smith et al. (2015)." — «success».
 4. "Our sample was too small to provide a meaningful test of the original effect." —
    «uninformative»: this is the authors' own verdict.
 5. "We obtained the original effect, but demonstrate that it can be explained by mere
    regression to the mean." — «flawed».
+6. The stated replication aim targets a main effect, which the authors report as replicated;
+   an exploratory interaction fails. — «success»: the interaction is outside the scope.
+7. "Our replication supports the target claim", despite an individual nonsignificant
+   test. — «success»: this explicit relevant verdict takes precedence over a significance
+   rule. It would not settle another original's outcome or an untargeted claim.
+8. No relevant overall verdict is given; the title and aims target an effect that failed,
+   but unrelated checks succeeded. — «failure».
 
 Judge the outcome of this paper's own replication, not outcomes it reports for other studies
 in its background or literature review."""
@@ -1065,10 +1101,13 @@ _OUTCOME_CHECK_FIELDS = ('\n- "record_type_check": one of "replication", "reprod
 
 _OUTCOME_CHECK_MEANING = """
 - "record_type_check" — what the text shows this paper actually did: "replication" if it
-  collected new data or used a different sample to re-test the finding, "reproduction" if it
-  re-analysed the original study's own data, "neither" if it does not check the named original
-  at all, "unclear" if the text does not say. Answer it from the methods, independently of the
-  outcome fields.
+  collected new data or used a different sample with the stated aim of re-testing a central
+  empirical claim of the original, "reproduction" if it re-analysed the original study's own
+  data to check such a claim, "neither" if no such intended re-test exists, "unclear" if the
+  text does not say. Answer it from the aims and methods, independently of the outcome fields.
+  Do not infer that a claim is peripheral merely because only one claim is re-tested or
+  replication is a secondary aim. If the evidence leaves its centrality or the intended
+  re-test unclear, answer "unclear", not "neither".
 - "target_check" — whether the text bears out the link given with the evidence below, under
   "AN EARLIER STAGE OF THE PIPELINE LINKED THIS PAPER TO": "this_original" if the
   paper re-tests the named original, "other_original" if it re-tests some other published
@@ -1211,7 +1250,7 @@ Rules that apply to both axes:
   the finding by other means, so code axis 2 independently.
 - Both axes concern re-analysis of the original data. New data collected in a fresh sample is
   a replication, not a robustness check, and does not belong on axis 2.
-- Both axes concern the central finding this paper set out to check, not incidental or
+- Both axes concern a central empirical claim or claims this paper set out to check, not incidental or
   exploratory analyses around it.
 - Where the paper reports several of its own re-analyses against the original this verdict is
   about, settle each axis over them together rather than picking one, following the authors'
@@ -1226,9 +1265,12 @@ background or literature review."""
 
 _REPRO_CHECK_FIELDS = """
 - "record_type_check": one of "reproduction", "replication", "neither", "unclear" — what the
-  text shows this paper actually did: "reproduction" if it re-analysed the original study's own
-  data, "replication" if it collected new data or used a different sample, "neither" if it does
-  not check the named original at all, "unclear" if the text does not say.
+  text shows this paper actually did with the stated aim of re-testing a central empirical
+  claim of the original: "reproduction" if it re-analysed the original study's own data,
+  "replication" if it collected new data or used a different sample, "neither" if no such
+  intended re-test exists, "unclear" if the text does not say. Do not infer that a claim is
+  peripheral merely because only one claim is re-tested or replication is a secondary aim.
+  If its centrality or the intended re-test is unclear, answer "unclear", not "neither".
 - "target_check": one of "this_original", "other_original", "no_original", "unclear" — whether
   the text bears out the link given with the evidence below, under "AN EARLIER STAGE OF THE
   PIPELINE LINKED THIS PAPER TO": the paper re-analyses the named original, some
@@ -1844,7 +1886,6 @@ def _canonical_source(fn: FunctionType) -> str:
 # Generated once (2026-09-22, Python 3.13) against the ast.unparse form; the two
 # plain string constants are omitted because their hash never went through it.
 _FROZEN_VERSIONS: dict[str, tuple[str, str]] = {
-    "build_classify_prompt": ("9bdd4fb8f91f", "fde7296fafad"),
     "build_keyed_confirm_prompt": ("7afb003df03c", "abc811d2859b"),
     "build_prescreen_prompt": ("c8776b9eb527", "df5f7aefb41c"),
     "build_search_confirm_prompt": ("18e6f01de567", "e5e72b9e54fd"),

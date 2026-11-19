@@ -270,24 +270,24 @@ class TestCanonicalForm:
         assert stale == [], f"dead _FROZEN_VERSIONS entries (prompt edited): {stale}"
 
 
-_UNCHANGED_QUOTE_SOURCE_RENDERS = {
-    "build_target_outcome_prompt:abstract": "2a0fd36153b97f2b4312bc3740d8e2800b9b65cb9af3356537f7b8d26a6522e6",
-    "build_target_outcome_prompt:discussion": "2e177d478acd8433adf243e1bccbfae12c8bc293d5c029a39811a5d0ff04af59",
-    "build_target_outcome_prompt:intro": "83271e25c5b645eb80ed27ff6d6218fc563d289d79cdb414cf7e0b7030ba4528",
-    "build_repro_target_outcome_prompt:abstract": "20ab0ad832744956964ad409b12edbd9f211297c414688067d1f056388ba6a52",
-    "build_repro_target_outcome_prompt:discussion": "1cee70dc836da065b2fba4ca615c23845ad9e54812420fa4478c10a12f9be293",
-    "build_repro_target_outcome_prompt:intro": "7ddeec2ca3a55f9cf827fc5eb7179fff947bea0d76554569052dc9397fdbd673",
-    "build_outcome_prompt:abstract": "ea14a246b285989ced7aa9dd9974cdd7f0d17e705de0dc3c4070eeec2d904184",
-    "build_outcome_prompt:discussion": "27b35b79a8a6753facb0778a686b886e8ec0aa75a0df72736e7b4dbedd334748",
-    "build_outcome_prompt:intro": "536d543760a80e2434b0eca267a76321e796a4245f49a0dcb36f194c42fad06d",
-    "build_repro_outcome_prompt:abstract": "0ebf40d84733ac0b9b09383db88e09c8b5d34cb93a56106eb32f9861e964312d",
-    "build_repro_outcome_prompt:discussion": "96afbc06d7e1006bbc672d2fed82ff4cc120176a27c7ba6c3301f3082b4cfadc",
-    "build_repro_outcome_prompt:intro": "e48f79315f185f93709998e94dea226d7802b9c51c1622656b1d2d87ccc85e99"
+_CLAIM_SCOPE_RENDERS = {
+    "build_target_outcome_prompt:abstract": "2276a42ac79c1bc8fcc95c942d7e07db64dcfb39105a8f33425ef74da9865ac6",
+    "build_target_outcome_prompt:intro": "25c2b4328a0c2d7fc85ca06300e46b5954b8fea1196d33d962fb90224f99416a",
+    "build_target_outcome_prompt:discussion": "a5f378e500627afc266f882a7ea68e1c05c38a1f194ae5c5bbc252d167963293",
+    "build_repro_target_outcome_prompt:abstract": "8ea7bdf1ab0e1836e86251f699d5e27cf36ed321a0864bcd0a34aba38a36a065",
+    "build_repro_target_outcome_prompt:intro": "26d2c7ef7da9c66a34776399be5217d2171f3773156060d94937049cf4bf8b43",
+    "build_repro_target_outcome_prompt:discussion": "2c7103ede01c4128d6c9804fc86d8e789d4e949d93fc8b21e81fec772e6496ec",
+    "build_outcome_prompt:abstract": "80380539ce9ecd92388fddaaa290a0bfda21e72f0025eb6d2689c7001c3ab852",
+    "build_outcome_prompt:intro": "7e65a60a4dec545d07857ca821eb3165a4bdba0b8971a88a83277c7172d5ccee",
+    "build_outcome_prompt:discussion": "95fa6302fe84095936b69aecb3245c9bf04d841facadf0f3a4de0d2265e9a9a8",
+    "build_repro_outcome_prompt:abstract": "eba8fb69ebceb125cce393692125c940cd75c9fab9b977988d1b6b10e4525218",
+    "build_repro_outcome_prompt:intro": "83abb245533d4d6879a2c1680b3e3f8ee1ec189c12d041d136cfcdeba82f8616",
+    "build_repro_outcome_prompt:discussion": "18b9d5f224d7228d39087f58f19f9966993e69d8ac8bf6dfc89e31f789ad953b"
 }
 
 
-@pytest.mark.parametrize("key,digest", _UNCHANGED_QUOTE_SOURCE_RENDERS.items())
-def test_quote_source_edit_preserves_unaffected_prompts(key, digest):
+@pytest.mark.parametrize("key,digest", _CLAIM_SCOPE_RENDERS.items())
+def test_claim_scope_rendering_invalidates_pre_policy_answers(key, digest):
     import hashlib
     name, variant = key.split(":")
     combined = "target" in name
@@ -299,7 +299,7 @@ def test_quote_source_edit_preserves_unaffected_prompts(key, digest):
     args = ("Study", "Abstract", []) if combined else ("Study", "Abstract")
     rendered = getattr(prompts, name)(*args, **options[variant])
     assert hashlib.sha256(rendered.encode()).hexdigest() == digest
-    assert prompts.quote_source_legacy_version(name, False)
+    assert not prompts.quote_source_legacy_version(name, False)
     assert not prompts.quote_source_legacy_version(name, True)
 
 

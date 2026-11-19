@@ -292,6 +292,12 @@ def extract_generation() -> str:
 # Keyed by the CURRENT generation, which is what makes a declaration self-limiting: a
 # later prompt or model change produces a digest that matches no key here, and every
 # work reopens strictly, as it should.
+# 2026-11-17: Lukas declared the claim-scope clarification invariant for the
+# settled backlog: preserve earlier extraction results and resolve audit cases
+# individually, without an automatic full re-extraction. New/explicitly reopened
+# work uses the clarified prompts. This operational declaration does not assert
+# identical new model answers. It is pinned to this generation so later edits
+# invalidate normally. Retain the earlier declarations and their rationale below.
 _GENERATION_EQUIVALENCES: dict[str, tuple[str, ...]] = {
     # 2026-08-15: LINKING_MODEL and OUTCOME_MODEL moved from gpt-5.4-mini to
     # gpt-5.6-luna part-way through the 2026-08 re-extract, with 1,567 of 5,928
@@ -386,7 +392,7 @@ _GENERATION_EQUIVALENCES: dict[str, tuple[str, ...]] = {
     # This is NOT a claim that affected quote labels, or all new model answers, are
     # equivalent. Reopen only confirmed attribution errors after the paired pilot;
     # full extraction is unnecessary for an otherwise correct quote/target/verdict.
-    "619cc46f58c39395": ("25e2b6bb31821d84", "765e053cd24611e5",
+    "b8eeac46f514e2d0": ("619cc46f58c39395", "25e2b6bb31821d84", "765e053cd24611e5",
                          "474e80e4c32a6dfa", "7dbb1e92452d8333",
                          "010cf32bb63351e1", "ca0706ef44827229",
                          "061cb5ca8e1888b6",

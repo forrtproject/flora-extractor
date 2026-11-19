@@ -13,6 +13,13 @@ other complete pair proceeds to extraction.
 The cheap pre-screen is dormant. Stage 3 reads the screen verdict and uses
 `gpt-6-luna` for linking and outcome coding.
 
+Eligibility requires an intentional re-test of **a central empirical claim** of an
+identifiable earlier study; replication may be a secondary aim. Outcome coding first
+establishes that intended scope, then uses a relevant overall author verdict or,
+without one, the in-scope comparisons. The maintainer declares this clarification
+invariant for settled screening and extraction results, so it does not reopen the
+backlog. New or explicitly reopened work uses the clarified wording.
+
 **[Models and screening](docs/models-and-screening.md)** explains the decision rule,
 all model roles, required API keys, evaluation evidence and historical results.
 Model settings live in [shared/config.py](shared/config.py).

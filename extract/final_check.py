@@ -115,12 +115,14 @@ Read the paper below and code it from scratch.
 STEP 1 — RECORD TYPE
 
 "record_type": "replication" if the paper collected new data or used a different sample
-to re-test a previously published finding; "reproduction" if it re-analysed the
-original study's own data (or code); "not_a_replication" if it re-tests no specific
-earlier published finding at all (an original study, a review, a meta-analysis, a
-method paper, a commentary); "unclear" if the text does not let you tell. A paper that
-reports "replicating" its own new study within the same paper is not a replication of
-a PUBLISHED finding.
+with the stated aim of re-testing a central empirical claim of an earlier published
+study; "reproduction" if it re-analysed that study's own data or code to check such a
+claim; "not_a_replication" if no such intended re-test exists, for example incidental
+agreement or method/instrument reuse without checking an earlier claim; "unclear" if
+the text does not let you tell. One of several central claims is enough, and replication
+may be a secondary aim. If intent or claim centrality is unresolved, use "unclear" rather
+than infer exclusion. A paper that reports "replicating" its own new study within the
+same paper is not a replication of a PUBLISHED finding.
 
 "study_status": "completed", or "prospective" when the record IS a plan (a
 preregistration, protocol, analysis plan or Stage 1 registered report) that reports no
